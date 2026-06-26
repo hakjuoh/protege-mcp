@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.0"?>
+<plugin>
+
+    <!-- Per-EditorKit lifecycle: starts/stops the embedded MCP HTTP server.
+         The extension 'id' is the unique, non-null hook id used as the key in the
+         EditorKit's disposable registry (a duplicate/null id would orphan the hook
+         and skip its dispose()). -->
+    <extension id="McpServerHook"
+               point="org.protege.editor.core.application.EditorKitHook">
+        <class value="io.github.hakjuoh.protege_mcp.McpServerHook"/>
+        <editorKitId value="OWLEditorKit"/>
+    </extension>
+
+    <!-- Status view: bound URL/port/token, read-only indicator, regenerate-token. -->
+    <extension id="McpServerView"
+               point="org.protege.editor.core.application.ViewComponent">
+        <label value="MCP Server"/>
+        <class value="io.github.hakjuoh.protege_mcp.ui.McpServerView"/>
+    </extension>
+
+    <!-- Preferences tab: port, autostart, bearer token, write-confirm, read-only. -->
+    <extension id="io.github.hakjuoh.protege_mcp.preferences"
+               point="org.protege.editor.core.application.preferencespanel">
+        <label value="MCP"/>
+        <class value="io.github.hakjuoh.protege_mcp.ui.McpPreferencesPanel"/>
+    </extension>
+
+</plugin>

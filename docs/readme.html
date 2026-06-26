@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Protege MCP Server</title>
+</head>
+<body>
+
+<h1>Prot&#233;g&#233; MCP Server</h1>
+
+<p>An <b>MCP (Model Context Protocol) server</b> for <b>Prot&#233;g&#233; Desktop</b>, packaged as a
+single OSGi plugin. It exposes the <b>live, active ontology</b> of a running Prot&#233;g&#233; to MCP
+clients (Claude Code / Desktop, Codex CLI, VS Code MCP, ...) over a localhost HTTP endpoint. Reads
+and edits flow through Prot&#233;g&#233;'s shared <code>OWLModelManager</code>, so they appear in the
+GUI immediately and join the <b>undo stack</b> - exactly like manual edits.</p>
+
+<h3>Requirements</h3>
+
+<p>Prot&#233;g&#233; must run on a <b>Java 17+</b> JVM: the MCP Java SDK and the embedded Jetty 12
+host are Java 17 bytecode, and the OSGi manifest declares
+<code>Require-Capability: osgi.ee ... JavaSE 17</code>. Select a 17+ JDK with the
+<code>PROTEGE_JAVA_HOME</code> environment variable before launching Prot&#233;g&#233;.</p>
+
+<h3>What you get</h3>
+
+<ul>
+    <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
+        <b>Settings &gt; MCP</b> tab.</li>
+    <li><b>19 tools</b> across explore / search, edit, history, and reasoning - every edit goes
+        through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins the
+        shared <b>undo stack</b>.</li>
+    <li>Loopback-only HTTP with <b>OAuth 2.1</b> (dynamic registration + browser consent, persisted
+        across restarts) and a <b>static bearer token</b>, supported in parallel.</li>
+</ul>
+
+<h3>Links</h3>
+
+<p>
+    <a href="https://github.com/hakjuoh/protege-mcp">Project</a> |
+    <a href="https://github.com/hakjuoh/protege-mcp/blob/main/README.md">README</a> |
+    <a href="https://github.com/hakjuoh/protege-mcp/blob/main/docs/check-for-plugins.md">Install via Check for plugins</a> |
+    <a href="https://github.com/hakjuoh/protege-mcp/releases">Releases</a>
+</p>
+
+<h3>Version information</h3>
+
+<h4>v0.1.0</h4>
+<ul>
+    <li>First release - the in-Prot&#233;g&#233; MCP server (Architecture Approach A).</li>
+    <li>Embedded MCP SDK 2.0.0 + Jetty 12 (Jakarta Servlet 6) inlined into the bundle;
+        Prot&#233;g&#233; / OWLAPI / Guava / SLF4J stay provided.</li>
+</ul>
+
+<p><b>Author:</b> Hakju Oh &nbsp;&nbsp; <b>License:</b>
+<a href="https://github.com/hakjuoh/protege-mcp/blob/main/LICENSE">BSD 2-Clause</a></p>
+
+</body>
+</html>

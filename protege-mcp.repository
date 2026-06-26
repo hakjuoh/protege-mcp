@@ -1,0 +1,24 @@
+// protege-mcp self-hosted plugin registry ("Path B").
+//
+// Point Protégé at this file via Settings ▸ Plugins ▸ "Plugin registry",
+// then run File ▸ Check for plugins. Protégé reads it with
+// org.protege.editor.core.update.PluginRegistryImpl:
+//   * one URL per line; blank lines and lines starting with '//' are ignored;
+//   * a URL ending in '.repository' is treated as another (nested) registry;
+//   * any other URL is fetched and parsed as a plugin-update descriptor
+//     (see update.properties).
+//
+// The registry URL you set in Settings must be http(s): Check for plugins
+// does a HttpURLConnection HEAD on it first, so a file:// root will fail there
+// (the 'download' URL inside the descriptor may still be file://).
+//
+// This is the official hakjuoh/protege-mcp registry. It lists two things so that
+// pointing Protégé here surfaces protege-mcp WITHOUT hiding the standard catalog:
+//   1. our own update descriptor (protege-mcp), and
+//   2. Protégé's default registry, nested — so every plugin from the official list
+//      (Cellfie, ELK, OntoGraf, OWLViz, Pellet, SWRLTab, …) still appears too.
+// Forking? Repoint line 1 at your account (see docs/check-for-plugins.md,
+// "Use your own fork"); keep or drop line 2 as you like.
+
+https://raw.githubusercontent.com/hakjuoh/protege-mcp/main/update.properties
+https://raw.githubusercontent.com/protegeproject/autoupdate/master/update-info/5.0.0/plugins.repository
