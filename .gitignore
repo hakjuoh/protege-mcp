@@ -1,0 +1,21 @@
+# Build output
+target/
+*.class
+
+# Recon scratch (API-fact extraction, not source)
+.recon/
+
+# IDE
+*.iml
+.idea/
+.vscode/
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+
+# Maven
+.mvn/
+!.mvn/wrapper/maven-wrapper.properties
