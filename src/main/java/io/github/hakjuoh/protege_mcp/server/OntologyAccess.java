@@ -46,6 +46,15 @@ public final class OntologyAccess {
      * {@link McpAccessException}.
      */
     public <T> T compute(Function<OWLModelManager, T> fn) {
+        return compute(fn, timeoutMillis);
+    }
+
+    /**
+     * Like {@link #compute(Function)} but with an explicit wait bound. A few tools do legitimately
+     * heavy on-EDT work in one shot (e.g. merging a whole document's axioms) and need a longer bound
+     * than the default so a slow-but-succeeding apply is not reported as a timeout.
+     */
+    public <T> T compute(Function<OWLModelManager, T> fn, long boundMillis) {
         OWLModelManager mm = editorKit.getModelManager();
         if (SwingUtilities.isEventDispatchThread()) {
             return fn.apply(mm);
@@ -71,10 +80,10 @@ public final class OntologyAccess {
             }
         });
         try {
-            if (!latch.await(timeoutMillis, TimeUnit.MILLISECONDS)) {
+            if (!latch.await(boundMillis, TimeUnit.MILLISECONDS)) {
                 cancelled.set(true);
                 throw new McpAccessException(
-                        "Timed out after " + timeoutMillis + " ms waiting for the Protégé UI thread "
+                        "Timed out after " + boundMillis + " ms waiting for the Protégé UI thread "
                                 + "(the application may be busy).");
             }
         } catch (InterruptedException e) {

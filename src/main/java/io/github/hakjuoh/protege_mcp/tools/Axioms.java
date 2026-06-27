@@ -1,21 +1,32 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import org.protege.editor.owl.model.OWLModelManager;
+import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLDataFactory;
+import org.semanticweb.owlapi.model.OWLDataPropertyExpression;
+import org.semanticweb.owlapi.model.OWLEntity;
+import org.semanticweb.owlapi.model.OWLIndividual;
 import org.semanticweb.owlapi.model.OWLLiteral;
+import org.semanticweb.owlapi.model.OWLObjectPropertyExpression;
+import org.semanticweb.owlapi.model.OWLPropertyExpression;
 
 /**
  * Builds an {@link OWLAxiom} from a structured {@code axiom_type} + operand arguments. Used by both
  * {@code add_axiom} (wrap in {@code AddAxiom}) and {@code remove_axiom} (wrap in {@code RemoveAxiom})
  * so the two are exactly symmetric. Entity operands are IRIs or display names; class operands may
  * additionally be Manchester-syntax class expressions (e.g. {@code Animal and (hasOwner some Person)}).
+ *
+ * <p>Every axiom may carry an optional {@code annotations} operand (an array of
+ * {@code {property, value | value_iri, lang, datatype}}); these become axiom annotations via
+ * {@link OWLAxiom#getAnnotatedAxiom}, so reified {@code owl:Axiom} blocks are reconstructable.
  */
 public final class Axioms {
 
@@ -23,12 +34,74 @@ public final class Axioms {
     }
 
     public static final String SUPPORTED =
-            "subclass_of, equivalent_classes, disjoint_classes, class_assertion, "
+            "subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, "
                     + "object_property_assertion, data_property_assertion, "
+                    + "negative_object_property_assertion, negative_data_property_assertion, "
+                    + "same_individual, different_individuals, "
+                    + "sub_object_property_of, sub_data_property_of, sub_property_chain_of, "
+                    + "equivalent_object_properties, equivalent_data_properties, "
+                    + "disjoint_object_properties, disjoint_data_properties, "
+                    + "inverse_object_properties, transitive_object_property, "
+                    + "functional_object_property, inverse_functional_object_property, "
+                    + "symmetric_object_property, asymmetric_object_property, "
+                    + "reflexive_object_property, irreflexive_object_property, "
+                    + "functional_data_property, has_key, "
                     + "object_property_domain, object_property_range, "
-                    + "data_property_domain, data_property_range";
+                    + "data_property_domain, data_property_range, "
+                    + "annotation_assertion, sub_annotation_property_of, "
+                    + "annotation_property_domain, annotation_property_range, "
+                    + "declaration, datatype_definition";
+
+    public static Map<String, Object> schema() {
+        return Tools.schema()
+                .strReq("axiom_type", SUPPORTED)
+                .str("sub", "subclass_of: subclass — name, IRI or Manchester class expression")
+                .str("super", "subclass_of: superclass — name, IRI or Manchester class expression")
+                .strArray("classes", "equivalent_classes / disjoint_classes / disjoint_union: classes — "
+                        + "names, IRIs or Manchester class expressions")
+                .str("class", "class_assertion / disjoint_union / has_key: class — name, IRI or "
+                        + "Manchester class expression")
+                .str("individual", "class_assertion: individual IRI/name")
+                .strArray("individuals", "same_individual / different_individuals: individual IRI/name list")
+                .str("property", "*_property_assertion / property characteristic / sub_*_property_of / "
+                        + "*_property_domain|range / annotation_* / has_key seed: property IRI/name")
+                .strArray("properties", "equivalent_/disjoint_object|data_properties: property IRI/name "
+                        + "list; has_key: object/data property IRI/name list")
+                .str("super_property", "sub_object_property_of / sub_data_property_of / "
+                        + "sub_property_chain_of / sub_annotation_property_of: super property IRI/name")
+                .strArray("chain", "sub_property_chain_of: ordered object property IRI/name list")
+                .str("inverse_property", "inverse_object_properties: inverse object property IRI/name")
+                .str("subject", "*_property_assertion / annotation_assertion: subject IRI/name")
+                .str("object", "object_property_assertion / negative_object_property_assertion: object "
+                        + "individual IRI/name")
+                .str("value", "data_property_assertion / annotation_assertion: literal value")
+                .str("value_iri", "annotation_assertion: IRI-valued annotation (entity name/IRI or "
+                        + "absolute IRI; alternative to value)")
+                .str("lang", "data_property_assertion / annotation_assertion: optional language tag")
+                .str("datatype", "data_property_assertion / annotation_assertion: optional datatype "
+                        + "IRI/name; datatype_definition: defined datatype IRI/name")
+                .str("entity", "declaration: entity IRI/name")
+                .str("entity_type", "declaration: class | object_property | data_property | "
+                        + "annotation_property | individual | datatype")
+                .str("domain", "object_property_domain / data_property_domain: domain class expression; "
+                        + "annotation_property_domain: domain IRI")
+                .str("range", "object_property_range: range class expression; "
+                        + "data_property_range / datatype_definition: datatype IRI/name or a "
+                        + "Manchester-syntax data range such as \"xsd:integer[>= 0]\" or \"{1, 2, 3}\"; "
+                        + "annotation_property_range: range IRI")
+                .annotationArray("annotations", "Optional axiom annotations (array of "
+                        + "{property, value | value_iri, lang, datatype}); reconstructs reified "
+                        + "owl:Axiom blocks.")
+                .build();
+    }
 
     public static OWLAxiom build(OWLModelManager mm, Map<String, Object> a) {
+        OWLAxiom base = buildBase(mm, a);
+        Set<OWLAnnotation> annotations = Tools.annotationSet(mm, a, "annotations");
+        return annotations.isEmpty() ? base : base.getAnnotatedAxiom(annotations);
+    }
+
+    private static OWLAxiom buildBase(OWLModelManager mm, Map<String, Object> a) {
         OWLDataFactory df = mm.getOWLDataFactory();
         String type = Tools.reqString(a, "axiom_type").toLowerCase();
         switch (type) {
@@ -40,6 +113,9 @@ public final class Axioms {
                 return df.getOWLEquivalentClassesAxiom(classSet(mm, a));
             case "disjoint_classes":
                 return df.getOWLDisjointClassesAxiom(classSet(mm, a));
+            case "disjoint_union":
+                return df.getOWLDisjointUnionAxiom(
+                        Tools.resolveClass(mm, Tools.reqString(a, "class")), classSet(mm, a));
             case "class_assertion":
                 return df.getOWLClassAssertionAxiom(
                         Tools.resolveClassExpression(mm, Tools.reqString(a, "class")),
@@ -54,6 +130,72 @@ public final class Axioms {
                         Tools.resolveDataProperty(mm, Tools.reqString(a, "property")),
                         Tools.resolveIndividual(mm, Tools.reqString(a, "subject")),
                         literal(mm, a));
+            case "negative_object_property_assertion":
+                return df.getOWLNegativeObjectPropertyAssertionAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")),
+                        Tools.resolveIndividual(mm, Tools.reqString(a, "subject")),
+                        Tools.resolveIndividual(mm, Tools.reqString(a, "object")));
+            case "negative_data_property_assertion":
+                return df.getOWLNegativeDataPropertyAssertionAxiom(
+                        Tools.resolveDataProperty(mm, Tools.reqString(a, "property")),
+                        Tools.resolveIndividual(mm, Tools.reqString(a, "subject")),
+                        literal(mm, a));
+            case "same_individual":
+                return df.getOWLSameIndividualAxiom(individualSet(mm, a));
+            case "different_individuals":
+                return df.getOWLDifferentIndividualsAxiom(individualSet(mm, a));
+            case "sub_object_property_of":
+                return df.getOWLSubObjectPropertyOfAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")),
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "super_property")));
+            case "sub_data_property_of":
+                return df.getOWLSubDataPropertyOfAxiom(
+                        Tools.resolveDataProperty(mm, Tools.reqString(a, "property")),
+                        Tools.resolveDataProperty(mm, Tools.reqString(a, "super_property")));
+            case "sub_property_chain_of":
+                return df.getOWLSubPropertyChainOfAxiom(
+                        objectPropertyChain(mm, a),
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "super_property")));
+            case "equivalent_object_properties":
+                return df.getOWLEquivalentObjectPropertiesAxiom(objectPropertySet(mm, a));
+            case "disjoint_object_properties":
+                return df.getOWLDisjointObjectPropertiesAxiom(objectPropertySet(mm, a));
+            case "equivalent_data_properties":
+                return df.getOWLEquivalentDataPropertiesAxiom(dataPropertySet(mm, a));
+            case "disjoint_data_properties":
+                return df.getOWLDisjointDataPropertiesAxiom(dataPropertySet(mm, a));
+            case "inverse_object_properties":
+                return df.getOWLInverseObjectPropertiesAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")),
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "inverse_property")));
+            case "transitive_object_property":
+                return df.getOWLTransitiveObjectPropertyAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")));
+            case "functional_object_property":
+                return df.getOWLFunctionalObjectPropertyAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")));
+            case "inverse_functional_object_property":
+                return df.getOWLInverseFunctionalObjectPropertyAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")));
+            case "symmetric_object_property":
+                return df.getOWLSymmetricObjectPropertyAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")));
+            case "asymmetric_object_property":
+                return df.getOWLAsymmetricObjectPropertyAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")));
+            case "reflexive_object_property":
+                return df.getOWLReflexiveObjectPropertyAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")));
+            case "irreflexive_object_property":
+                return df.getOWLIrreflexiveObjectPropertyAxiom(
+                        Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")));
+            case "functional_data_property":
+                return df.getOWLFunctionalDataPropertyAxiom(
+                        Tools.resolveDataProperty(mm, Tools.reqString(a, "property")));
+            case "has_key":
+                return df.getOWLHasKeyAxiom(
+                        Tools.resolveClassExpression(mm, Tools.reqString(a, "class")),
+                        propertyExpressionSet(mm, a));
             case "object_property_domain":
                 return df.getOWLObjectPropertyDomainAxiom(
                         Tools.resolveObjectProperty(mm, Tools.reqString(a, "property")),
@@ -69,10 +211,68 @@ public final class Axioms {
             case "data_property_range":
                 return df.getOWLDataPropertyRangeAxiom(
                         Tools.resolveDataProperty(mm, Tools.reqString(a, "property")),
-                        Tools.resolveDatatype(mm, Tools.reqString(a, "range")));
+                        Tools.resolveDataRange(mm, Tools.reqString(a, "range")));
+            case "annotation_assertion":
+                return df.getOWLAnnotationAssertionAxiom(
+                        Tools.annotationProperty(mm, Tools.optString(a, "property")),
+                        Tools.annotationSubject(mm, Tools.reqString(a, "subject")),
+                        Tools.annotationValue(mm, a));
+            case "sub_annotation_property_of":
+                return df.getOWLSubAnnotationPropertyOfAxiom(
+                        Tools.resolveAnnotationProperty(mm, Tools.reqString(a, "property")),
+                        Tools.resolveAnnotationProperty(mm, Tools.reqString(a, "super_property")));
+            case "annotation_property_domain":
+                return df.getOWLAnnotationPropertyDomainAxiom(
+                        Tools.resolveAnnotationProperty(mm, Tools.reqString(a, "property")),
+                        Tools.iriRef(mm, Tools.reqString(a, "domain")));
+            case "annotation_property_range":
+                return df.getOWLAnnotationPropertyRangeAxiom(
+                        Tools.resolveAnnotationProperty(mm, Tools.reqString(a, "property")),
+                        Tools.iriRef(mm, Tools.reqString(a, "range")));
+            case "declaration":
+                return df.getOWLDeclarationAxiom(declarationEntity(mm, a));
+            case "datatype_definition":
+                return df.getOWLDatatypeDefinitionAxiom(
+                        Tools.resolveDatatype(mm, Tools.reqString(a, "datatype")),
+                        Tools.resolveDataRange(mm, Tools.reqString(a, "range")));
             default:
                 throw new ToolArgException("Unsupported axiom_type '" + type + "'. Supported: " + SUPPORTED + ".");
         }
+    }
+
+    private static OWLEntity declarationEntity(OWLModelManager mm, Map<String, Object> a) {
+        String ref = Tools.reqString(a, "entity");
+        String entityType = Tools.reqString(a, "entity_type").toLowerCase();
+        switch (entityType) {
+            case "class":
+                return Tools.resolveClass(mm, ref);
+            case "object_property":
+                return Tools.resolveObjectProperty(mm, ref);
+            case "data_property":
+                return Tools.resolveDataProperty(mm, ref);
+            case "annotation_property":
+                return Tools.resolveAnnotationProperty(mm, ref);
+            case "individual":
+                return Tools.resolveIndividual(mm, ref);
+            case "datatype":
+                return Tools.resolveDatatype(mm, ref);
+            default:
+                throw new ToolArgException("declaration: entity_type must be one of class, "
+                        + "object_property, data_property, annotation_property, individual, datatype.");
+        }
+    }
+
+    private static List<OWLObjectPropertyExpression> objectPropertyChain(OWLModelManager mm,
+            Map<String, Object> a) {
+        List<String> refs = Tools.stringList(a, "chain");
+        if (refs.size() < 2) {
+            throw new ToolArgException("'chain' must list at least two object properties.");
+        }
+        List<OWLObjectPropertyExpression> chain = new ArrayList<>();
+        for (String ref : refs) {
+            chain.add(Tools.resolveObjectProperty(mm, ref));
+        }
+        return chain;
     }
 
     private static Set<OWLClassExpression> classSet(OWLModelManager mm, Map<String, Object> a) {
@@ -86,6 +286,67 @@ public final class Axioms {
             set.add(Tools.resolveClassExpression(mm, ref));
         }
         return set;
+    }
+
+    private static Set<OWLIndividual> individualSet(OWLModelManager mm, Map<String, Object> a) {
+        List<String> refs = Tools.stringList(a, "individuals");
+        if (refs.size() < 2) {
+            throw new ToolArgException("'individuals' must list at least two individuals (names or IRIs).");
+        }
+        Set<OWLIndividual> set = new LinkedHashSet<>();
+        for (String ref : refs) {
+            set.add(Tools.resolveIndividual(mm, ref));
+        }
+        return set;
+    }
+
+    private static Set<OWLObjectPropertyExpression> objectPropertySet(OWLModelManager mm,
+            Map<String, Object> a) {
+        List<String> refs = Tools.stringList(a, "properties");
+        if (refs.size() < 2) {
+            throw new ToolArgException("'properties' must list at least two object properties.");
+        }
+        Set<OWLObjectPropertyExpression> set = new LinkedHashSet<>();
+        for (String ref : refs) {
+            set.add(Tools.resolveObjectProperty(mm, ref));
+        }
+        return set;
+    }
+
+    private static Set<OWLDataPropertyExpression> dataPropertySet(OWLModelManager mm,
+            Map<String, Object> a) {
+        List<String> refs = Tools.stringList(a, "properties");
+        if (refs.size() < 2) {
+            throw new ToolArgException("'properties' must list at least two data properties.");
+        }
+        Set<OWLDataPropertyExpression> set = new LinkedHashSet<>();
+        for (String ref : refs) {
+            set.add(Tools.resolveDataProperty(mm, ref));
+        }
+        return set;
+    }
+
+    /** has_key key properties: each resolved as an object property, falling back to a data property. */
+    private static Set<OWLPropertyExpression> propertyExpressionSet(OWLModelManager mm,
+            Map<String, Object> a) {
+        List<String> refs = Tools.stringList(a, "properties");
+        if (refs.isEmpty()) {
+            throw new ToolArgException("'properties' must list at least one key property.");
+        }
+        Set<OWLPropertyExpression> set = new LinkedHashSet<>();
+        for (String ref : refs) {
+            set.add(resolveObjectOrDataProperty(mm, ref));
+        }
+        return set;
+    }
+
+    private static OWLPropertyExpression resolveObjectOrDataProperty(OWLModelManager mm, String ref) {
+        OWLEntity e = Tools.findEntity(mm, ref);
+        if (e instanceof OWLDataPropertyExpression) {
+            return (OWLPropertyExpression) e;
+        }
+        // Default to object property (and let it mint from an IRI when not yet declared).
+        return Tools.resolveObjectProperty(mm, ref);
     }
 
     /** Build a literal from {@code value} + optional {@code lang} / {@code datatype}. */

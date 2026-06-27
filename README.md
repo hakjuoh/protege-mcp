@@ -182,6 +182,7 @@ joins the shared **undo stack**. Entities are referenced by **IRI or display nam
 | --- | --- |
 | `list_ontologies` | List loaded ontologies (active + imports closure); marks the active one. |
 | `get_active_ontology` | Active ontology details: IRI, axiom counts, and direct imports. |
+| `summarize_ontology` | Signature counts, ontology annotation/import counts, and axiom-type counts; optionally includes the imports closure. |
 | `list_classes` | List named classes in the active ontology's signature (rendering + IRI). |
 | `search_entities` | Search entities by name/IRI fragment (substring match), filtered by type, with `*` wildcards; an empty or wildcard-only query lists the active ontology's signature. |
 | `get_entity` | Look up an entity by IRI or name; returns its type(s), IRI, and rendering. |
@@ -194,9 +195,13 @@ joins the shared **undo stack**. Entities are referenced by **IRI or display nam
 | `create_class` | Create a named class (optional explicit `iri` and `parent` superclass). |
 | `create_entity` | Create a named entity: class, object/data/annotation property, individual, or datatype. |
 | `add_subclass_of` | Assert that one class is a subclass of another. |
-| `add_annotation` | Add an annotation assertion to an entity (default `rdfs:label`). |
+| `add_annotation` | Add an annotation assertion to an entity. Value is a literal (optional `lang`/`datatype`) or an IRI (`value_iri`); optional `annotations` attach axiom annotations. |
 | `add_axiom` | Add a structured axiom (see axiom types below). |
 | `remove_axiom` | Remove a structured axiom (same arguments as `add_axiom`). |
+| `set_ontology_id` | Set the active ontology's IRI and optional version IRI. |
+| `add_import` / `remove_import` | Add or remove an `owl:imports` declaration. |
+| `add_ontology_annotation` / `remove_ontology_annotation` | Add or remove an ontology-level annotation (literal/typed/lang/IRI value, optional nested annotations). |
+| `merge_ontology_document` | Load an OWL document from a local path or URL (GitHub blob URLs are converted to raw URLs) and copy its axioms, imports, ontology annotations, and optionally ontology ID into the active ontology in one bulk step. |
 
 ### History & persistence
 
@@ -215,9 +220,52 @@ joins the shared **undo stack**. Entities are referenced by **IRI or display nam
 | `get_inferred_superclasses` | Read inferred relations: superclasses, subclasses, equivalent, types, instances. |
 | `explain_entailment` | Check whether a structured axiom is entailed by the active reasoner. |
 
-`add_axiom`, `remove_axiom`, and `explain_entailment` take a structured `axiom_type`: `subclass_of`,
-`equivalent_classes`, `disjoint_classes`, `class_assertion`, `object_property_assertion`,
-`data_property_assertion`.
+`add_axiom`, `remove_axiom`, and `explain_entailment` take a structured `axiom_type`:
+
+| `axiom_type` | Description |
+| --- | --- |
+| `subclass_of` | Assert `sub` as a subclass of `super`; both may be names, IRIs, or Manchester class expressions. |
+| `equivalent_classes` | Assert all class expressions in `classes` as equivalent. |
+| `disjoint_classes` | Assert all class expressions in `classes` as mutually disjoint. |
+| `disjoint_union` | Assert `class` as the disjoint union of the class expressions in `classes`. |
+| `class_assertion` | Assert `individual` as an instance of `class`; `class` may be a Manchester class expression. |
+| `object_property_assertion` | Assert an object property relation: `subject` `property` `object`. |
+| `data_property_assertion` | Assert a data property value: `subject` `property` `value`, with optional `lang` or `datatype`. |
+| `negative_object_property_assertion` | Assert that `subject` `property` `object` does **not** hold. |
+| `negative_data_property_assertion` | Assert that `subject` `property` `value` does **not** hold. |
+| `same_individual` | Assert all `individuals` as the same individual. |
+| `different_individuals` | Assert all `individuals` as pairwise different. |
+| `sub_object_property_of` | Assert object `property` as a subproperty of `super_property`. |
+| `sub_data_property_of` | Assert data `property` as a subproperty of `super_property`. |
+| `sub_property_chain_of` | Assert an ordered object property `chain` as a subproperty of `super_property`. |
+| `equivalent_object_properties` / `equivalent_data_properties` | Assert all `properties` as equivalent. |
+| `disjoint_object_properties` / `disjoint_data_properties` | Assert all `properties` as mutually disjoint. |
+| `inverse_object_properties` | Assert object `property` and `inverse_property` as inverses. |
+| `transitive_object_property` | Assert object `property` as transitive. |
+| `functional_object_property` | Assert object `property` as functional. |
+| `inverse_functional_object_property` | Assert object `property` as inverse-functional. |
+| `symmetric_object_property` | Assert object `property` as symmetric. |
+| `asymmetric_object_property` | Assert object `property` as asymmetric. |
+| `reflexive_object_property` | Assert object `property` as reflexive. |
+| `irreflexive_object_property` | Assert object `property` as irreflexive. |
+| `functional_data_property` | Assert data `property` as functional. |
+| `has_key` | Assert that `properties` are a key for `class`. |
+| `object_property_domain` | Set the object `property` domain to `domain`; `domain` may be a Manchester class expression. |
+| `object_property_range` | Set the object `property` range to `range`; `range` may be a Manchester class expression. |
+| `data_property_domain` | Set the data `property` domain to `domain`; `domain` may be a Manchester class expression. |
+| `data_property_range` | Set the data `property` range to `range` — a datatype or a Manchester data range, e.g. `xsd:integer[>= 0]` or `{1, 2, 3}`. |
+| `annotation_assertion` | Assert `property` on `subject` with a literal (`value` + optional `lang`/`datatype`) or IRI (`value_iri`) value. |
+| `sub_annotation_property_of` | Assert annotation `property` as a subproperty of `super_property`. |
+| `annotation_property_domain` / `annotation_property_range` | Set the annotation `property` `domain` / `range` IRI. |
+| `declaration` | Declare `entity` of `entity_type` (class, object/data/annotation property, individual, datatype). |
+| `datatype_definition` | Define datatype `datatype` as `range` — a datatype or a Manchester data range (e.g. `xsd:integer[>= 0]`). |
+
+Any `axiom_type` may also carry an optional `annotations` operand — an array of
+`{property, value | value_iri, lang, datatype}` — which attaches **axiom annotations** (the reified
+`owl:Axiom` pattern). Together with `set_ontology_id`, `add_import`, and `add_ontology_annotation`,
+the granular tools cover the full OWL 2 surface, so a rich document (ontology header, imports,
+typed/IRI annotations, annotated axioms, property chains, characteristics) can be reconstructed
+incrementally; `merge_ontology_document` does the same in one bulk, GUI-visible step.
 
 ## Building from Source
 

@@ -2,6 +2,7 @@ package io.github.hakjuoh.protege_mcp.tools;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +63,20 @@ public final class ReadTools {
                             .append(ctx.controller().isReadOnly() ? "READ-ONLY (plugin setting)" : "writable");
                     return Tools.text(sb.toString());
                 }))));
+
+        tools.add(ToolSpecs.of("summarize_ontology",
+                "Summarize the active ontology: signature counts, ontology annotations, imports and "
+                        + "axiom-type counts. Set include_imports=true to summarize the imports closure.",
+                Tools.schema()
+                        .bool("include_imports", "Also summarize the imports closure (default false).")
+                        .integer("limit", "Max axiom-type rows to return (default 80).")
+                        .build(),
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> a = Tools.args(req);
+                    boolean includeImports = Tools.optBool(a, "include_imports", false);
+                    int limit = Tools.optInt(a, "limit", 80);
+                    return ctx.access().compute(mm -> summarize(mm.getActiveOntology(), includeImports, limit));
+                })));
 
         tools.add(ToolSpecs.of("list_classes",
                 "List named classes in the active ontology's signature (rendering + IRI).",
@@ -146,13 +161,15 @@ public final class ReadTools {
                         sb.append("Axioms referencing ").append(Tools.renderEntity(mm, e))
                                 .append(includeImports ? " (incl. imports)" : "")
                                 .append(" (").append(axioms.size()).append("):\n");
-                        int n = 0;
+                        int max = Math.max(0, limit);
+                        int shown = 0;
                         for (OWLAxiom ax : axioms) {
-                            if (n++ >= limit) {
-                                sb.append("... (").append(axioms.size() - limit).append(" more)\n");
+                            if (shown >= max) {
+                                sb.append("... (").append(axioms.size() - shown).append(" more)\n");
                                 break;
                             }
                             sb.append("  ").append(Tools.renderAxiom(mm, ax)).append('\n');
+                            shown++;
                         }
                         return Tools.text(sb.toString().trim());
                     });
@@ -197,6 +214,73 @@ public final class ReadTools {
         }
     }
 
+    private static io.modelcontextprotocol.spec.McpSchema.CallToolResult summarize(OWLOntology active,
+            boolean includeImports, int limit) {
+        Set<OWLOntology> scope = includeImports
+                ? active.getImportsClosure()
+                : Collections.singleton(active);
+        Set<OWLAxiom> axioms = new LinkedHashSet<>();
+        Set<OWLEntity> signature = new LinkedHashSet<>();
+        int ontologyAnnotations = 0;
+        int importDeclarations = 0;
+        for (OWLOntology o : scope) {
+            axioms.addAll(o.getAxioms());
+            signature.addAll(o.getSignature());
+            ontologyAnnotations += o.getAnnotations().size();
+            importDeclarations += o.getImportsDeclarations().size();
+        }
+
+        Map<String, Integer> entityTypes = new LinkedHashMap<>();
+        for (OWLEntity e : signature) {
+            increment(entityTypes, e.getEntityType().getName());
+        }
+
+        Map<String, Integer> axiomTypes = new LinkedHashMap<>();
+        for (OWLAxiom ax : axioms) {
+            increment(axiomTypes, ax.getAxiomType().getName());
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(includeImports ? "Imports-closure summary" : "Active ontology summary").append('\n');
+        sb.append("Ontologies: ").append(scope.size()).append('\n');
+        sb.append("Axioms: ").append(axioms.size()).append('\n');
+        sb.append("Logical axioms: ").append(logicalAxiomCount(axioms)).append('\n');
+        sb.append("Ontology annotations: ").append(ontologyAnnotations).append('\n');
+        sb.append("Direct import declarations: ").append(importDeclarations).append('\n');
+        sb.append("Signature entities: ").append(signature.size()).append('\n');
+        TreeSet<String> sortedEntityTypes = new TreeSet<>(entityTypes.keySet());
+        for (String type : sortedEntityTypes) {
+            sb.append("  ").append(type).append(": ").append(entityTypes.get(type)).append('\n');
+        }
+        sb.append("Axiom types (").append(axiomTypes.size()).append("):\n");
+        int max = Math.max(0, limit);
+        int shown = 0;
+        for (String type : new TreeSet<>(axiomTypes.keySet())) {
+            if (shown >= max) {
+                sb.append("... (").append(axiomTypes.size() - shown).append(" more; raise 'limit')\n");
+                break;
+            }
+            sb.append("  ").append(type).append(": ").append(axiomTypes.get(type)).append('\n');
+            shown++;
+        }
+        return Tools.text(sb.toString().trim());
+    }
+
+    private static int logicalAxiomCount(Set<OWLAxiom> axioms) {
+        int count = 0;
+        for (OWLAxiom ax : axioms) {
+            if (ax.isLogicalAxiom()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static void increment(Map<String, Integer> counts, String key) {
+        Integer old = counts.get(key);
+        counts.put(key, old == null ? 1 : old + 1);
+    }
+
     /** The active ontology's signature, narrowed to one entity kind (used for match-all queries). */
     private static Set<? extends OWLEntity> signature(OWLModelManager mm, String type) {
         OWLOntology o = mm.getActiveOntology();
@@ -232,13 +316,15 @@ public final class ReadTools {
             lines.add(Tools.renderEntity(mm, e));
         }
         StringBuilder sb = new StringBuilder(heading).append(" (").append(entities.size()).append("):\n");
-        int n = 0;
+        int max = Math.max(0, limit);
+        int shown = 0;
         for (String line : lines) {
-            if (n++ >= limit) {
-                sb.append("... (").append(entities.size() - limit).append(" more; raise 'limit')\n");
+            if (shown >= max) {
+                sb.append("... (").append(entities.size() - shown).append(" more; raise 'limit')\n");
                 break;
             }
             sb.append("  ").append(line).append('\n');
+            shown++;
         }
         return sb.toString().trim();
     }

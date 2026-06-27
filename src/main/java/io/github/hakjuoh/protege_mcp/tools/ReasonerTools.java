@@ -105,20 +105,7 @@ public final class ReasonerTools {
                 "Check whether a structured axiom is entailed by the active reasoner. axiom_type is "
                         + "one of: " + Axioms.SUPPORTED + ". (Reports entailment only; full "
                         + "explanations require Protégé's explanation workbench.)",
-                Tools.schema()
-                        .strReq("axiom_type", Axioms.SUPPORTED)
-                        .str("sub", "subclass_of: subclass")
-                        .str("super", "subclass_of: superclass")
-                        .strArray("classes", "equivalent_classes / disjoint_classes")
-                        .str("class", "class_assertion: class")
-                        .str("individual", "class_assertion: individual")
-                        .str("property", "*_property_assertion: property")
-                        .str("subject", "*_property_assertion: subject")
-                        .str("object", "object_property_assertion: object")
-                        .str("value", "data_property_assertion: literal value")
-                        .str("lang", "data_property_assertion: language tag")
-                        .str("datatype", "data_property_assertion: datatype")
-                        .build(),
+                Axioms.schema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     return ctx.access().compute(mm -> {

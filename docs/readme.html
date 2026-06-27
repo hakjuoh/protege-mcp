@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>19 tools</b> across explore / search, edit, history, and reasoning - every edit goes
+    <li><b>26 tools</b> across explore / search, edit, history, and reasoning - every edit goes
         through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins the
         shared <b>undo stack</b>.</li>
     <li>Loopback-only HTTP with <b>OAuth 2.1</b> (dynamic registration + browser consent, persisted
@@ -43,6 +43,23 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.1.1</h4>
+<ul>
+    <li>Complete OWL 2 incremental authoring surface: <code>add_axiom</code> now covers 38 axiom
+        types (property characteristics, chains, inverses, n-ary class/property/individual axioms,
+        has-key, negative assertions, declarations, datatype definitions, annotation-property
+        axioms), every axiom takes an optional <code>annotations</code> operand (reified
+        <code>owl:Axiom</code>), and <code>add_annotation</code> supports typed / IRI-valued
+        annotation values.</li>
+    <li>New ontology-header tools: <code>set_ontology_id</code>, <code>add_import</code> /
+        <code>remove_import</code>, and <code>add_ontology_annotation</code> /
+        <code>remove_ontology_annotation</code>. Data ranges accept Manchester syntax (e.g.
+        <code>xsd:integer[&gt;= 0]</code>, <code>{1, 2, 3}</code>).</li>
+    <li><code>merge_ontology_document</code> for lossless bulk import, plus robustness fixes
+        (ontology-id collision guard, longer merge timeout, Windows path handling, unresolved-import
+        warning).</li>
+</ul>
 
 <h4>v0.1.0</h4>
 <ul>
