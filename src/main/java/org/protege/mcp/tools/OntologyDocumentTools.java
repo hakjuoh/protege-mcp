@@ -2,6 +2,7 @@ package org.protege.mcp.tools;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -206,30 +207,22 @@ public final class OntologyDocumentTools {
             target.getIRIMappers().add(new SimpleIRIMapper(primaryId.getDefaultDocumentIRI().get(), doc.documentIri));
         }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("Loaded ontology document: ").append(doc.normalized).append('\n');
-        sb.append("Active ontology: ").append(ontologyLabel(primaryManaged.getOntologyID())).append('\n');
-        if (doc.documentIri != null) {
-            sb.append("Document IRI: ").append(doc.documentIri).append('\n');
-        }
-        sb.append("Active ontology has ")
-                .append(primaryManaged.getAxiomCount()).append(" axioms (logical: ")
-                .append(primaryManaged.getLogicalAxiomCount()).append("), ")
-                .append(primaryManaged.getImportsDeclarations().size()).append(" direct imports, and ")
-                .append(primaryManaged.getAnnotations().size()).append(" ontology annotations.\n");
-        sb.append("Added ").append(moved).append(moved == 1 ? " ontology" : " ontologies")
-                .append(" to the workspace");
-        if (alreadyLoaded > 0) {
-            sb.append(" (").append(alreadyLoaded).append(" already loaded, kept the existing instance)");
-        }
-        sb.append("; workspace now has ").append(mm.getOntologies().size()).append(" loaded ontologies.\n");
-        if (!doc.unresolvedImports.isEmpty()) {
-            sb.append("Warning: ").append(doc.unresolvedImports.size())
-                    .append(" import(s) could not be resolved and were skipped: ")
-                    .append(String.join(", ", doc.unresolvedImports)).append('\n');
-        }
-        sb.append("Note: loading is not on the undo stack (undo_change cannot revert it).");
-        return Tools.text(sb.toString());
+        Map<String, Object> active = new LinkedHashMap<>();
+        active.put("axioms", primaryManaged.getAxiomCount());
+        active.put("logical_axioms", primaryManaged.getLogicalAxiomCount());
+        active.put("direct_imports", primaryManaged.getImportsDeclarations().size());
+        active.put("ontology_annotations", primaryManaged.getAnnotations().size());
+        return Tools.json()
+                .put("loaded_document", doc.normalized)
+                .put("active_ontology", ontologyLabel(primaryManaged.getOntologyID()))
+                .putIfNotNull("document_iri", doc.documentIri == null ? null : doc.documentIri.toString())
+                .put("active", active)
+                .put("added_ontologies", moved)
+                .put("already_loaded", alreadyLoaded)
+                .put("workspace_ontologies", mm.getOntologies().size())
+                .put("unresolved_imports", new ArrayList<>(doc.unresolvedImports))
+                .put("note", "Loading is not on the undo stack (undo_change cannot revert it).")
+                .result();
     }
 
     /** The managed ontology in Protégé with the given id, or null if none is loaded. */
@@ -369,35 +362,34 @@ public final class OntologyDocumentTools {
 
         mm.applyChanges(changes);
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("Merged ontology document: ").append(loaded.source).append('\n');
-        sb.append("Source ontology: ").append(ontologyLabel(loaded.ontologyId)).append('\n');
+        Map<String, Object> copied = new LinkedHashMap<>();
+        copied.put("axioms", loaded.axioms.size());
+        copied.put("imports", loaded.importsDeclarations.size());
+        copied.put("ontology_annotations", loaded.annotations.size());
+        copied.put("ontology_id", ontologyIdCopied);
+
+        Map<String, Object> activeCounts = new LinkedHashMap<>();
+        activeCounts.put("axioms", active.getAxiomCount());
+        activeCounts.put("logical_axioms", active.getLogicalAxiomCount());
+        activeCounts.put("direct_imports", active.getImportsDeclarations().size());
+        activeCounts.put("ontology_annotations", active.getAnnotations().size());
+
+        Tools.Json json = Tools.json()
+                .put("merged_document", loaded.source)
+                .put("source_ontology", ontologyLabel(loaded.ontologyId))
+                .put("replace_active", replaceActive);
         if (replaceActive) {
-            sb.append("Removed from active ontology: ")
-                    .append(removedAxioms).append(" axioms, ")
-                    .append(removedImports).append(" imports, ")
-                    .append(removedAnnotations).append(" ontology annotations.\n");
+            Map<String, Object> removed = new LinkedHashMap<>();
+            removed.put("axioms", removedAxioms);
+            removed.put("imports", removedImports);
+            removed.put("ontology_annotations", removedAnnotations);
+            json.put("removed", removed);
         }
-        sb.append("Copied: ")
-                .append(loaded.axioms.size()).append(" axioms, ")
-                .append(loaded.importsDeclarations.size()).append(" imports, ")
-                .append(loaded.annotations.size()).append(" ontology annotations");
-        sb.append(ontologyIdCopied ? ", ontology ID." : ".");
-        sb.append('\n');
-        if (idCollisionSkip != null) {
-            sb.append("Skipped ontology ID copy: ").append(idCollisionSkip).append('\n');
-        }
-        if (!loaded.unresolvedImports.isEmpty()) {
-            sb.append("Warning: ").append(loaded.unresolvedImports.size())
-                    .append(" import(s) could not be resolved (declarations were still copied): ")
-                    .append(String.join(", ", loaded.unresolvedImports)).append('\n');
-        }
-        sb.append("Active ontology now has ")
-                .append(active.getAxiomCount()).append(" axioms (logical: ")
-                .append(active.getLogicalAxiomCount()).append("), ")
-                .append(active.getImportsDeclarations().size()).append(" direct imports, and ")
-                .append(active.getAnnotations().size()).append(" ontology annotations.");
-        return Tools.text(sb.toString());
+        json.put("copied", copied)
+                .putIfNotNull("skipped_ontology_id", idCollisionSkip)
+                .put("unresolved_imports", new ArrayList<>(loaded.unresolvedImports))
+                .put("active", activeCounts);
+        return json.result();
     }
 
     private static String ontologyLabel(OWLOntologyID id) {

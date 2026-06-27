@@ -36,6 +36,7 @@ import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 /**
  * Reasoning tools: select the reasoner, run classification, list unsatisfiable classes, read
  * inferred relations, run DL queries, check entailment, and generate justifications (explanations).
+ * All results are JSON objects.
  */
 public final class ReasonerTools {
 
@@ -71,7 +72,7 @@ public final class ReasonerTools {
                         return Tools.error("No reasoner is selected in Protégé. Choose one from the "
                                 + "Reasoner menu, then retry.");
                     }
-                    return Tools.text(EmbeddedClassificationWaiter.runAndWait(ctx.access(), timeout));
+                    return Tools.ok(EmbeddedClassificationWaiter.runAndWait(ctx.access(), timeout));
                 })));
 
         tools.add(ToolSpecs.of("get_unsatisfiable_classes",
@@ -80,10 +81,9 @@ public final class ReasonerTools {
                 (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
                     OWLReasoner r = requireReasoner(mm);
                     Set<OWLClass> unsat = r.getUnsatisfiableClasses().getEntitiesMinusBottom();
-                    if (unsat.isEmpty()) {
-                        return Tools.text("No unsatisfiable classes — the ontology is coherent.");
-                    }
-                    return Tools.text(render(mm, "Unsatisfiable classes", unsat));
+                    Map<String, Object> result = Tools.entityList(mm, unsat, Integer.MAX_VALUE);
+                    result.put("coherent", unsat.isEmpty());
+                    return Tools.ok(result);
                 }))));
 
         tools.add(ToolSpecs.of("get_inferred_superclasses",
@@ -104,33 +104,30 @@ public final class ReasonerTools {
                     return ctx.access().compute(mm -> {
                         OWLReasoner r = requireReasoner(mm);
                         Set<? extends OWLEntity> result;
-                        String heading;
                         switch (rel) {
                             case "subclasses":
                                 result = r.getSubClasses(Tools.resolveClass(mm, entity), direct).getFlattened();
-                                heading = "Inferred subclasses";
                                 break;
                             case "equivalent":
                                 result = r.getEquivalentClasses(Tools.resolveClass(mm, entity)).getEntities();
-                                heading = "Inferred equivalent classes";
                                 break;
                             case "types":
                                 OWLNamedIndividual ind = Tools.resolveIndividual(mm, entity);
                                 result = r.getTypes(ind, direct).getFlattened();
-                                heading = "Inferred types";
                                 break;
                             case "instances":
                                 result = r.getInstances(Tools.resolveClass(mm, entity), direct).getFlattened();
-                                heading = "Inferred instances";
                                 break;
                             case "superclasses":
                             default:
                                 result = r.getSuperClasses(Tools.resolveClass(mm, entity), direct).getFlattened();
-                                heading = "Inferred superclasses";
                                 break;
                         }
-                        return Tools.text(render(mm, heading + " of " + entity
-                                + (direct ? " (direct)" : " (all)"), result));
+                        Map<String, Object> out = Tools.entityList(mm, result, Integer.MAX_VALUE);
+                        out.put("relation", rel);
+                        out.put("entity", entity);
+                        out.put("direct", direct);
+                        return Tools.ok(out);
                     });
                 })));
 
@@ -145,7 +142,10 @@ public final class ReasonerTools {
                         OWLReasoner r = requireReasoner(mm);
                         OWLAxiom ax = Axioms.build(mm, a);
                         boolean entailed = r.isEntailed(ax);
-                        return Tools.text("Entailed: " + entailed + "\n  " + Tools.renderAxiom(mm, ax));
+                        return Tools.json()
+                                .put("entailed", entailed)
+                                .put("axiom", Tools.axiomJson(mm, ax))
+                                .result();
                     });
                 })));
 
@@ -188,7 +188,7 @@ public final class ReasonerTools {
                         Set<Set<OWLAxiom>> explanations = max > 0
                                 ? gen.getExplanations(ax, max)
                                 : gen.getExplanations(ax);
-                        return Tools.text(renderExplanations(mm, ax, explanations));
+                        return Tools.ok(explanationsJson(mm, ax, explanations));
                     }, timeout);
                 })));
 
@@ -216,25 +216,25 @@ public final class ReasonerTools {
                     return ctx.access().compute(mm -> {
                         OWLReasoner r = requireReasoner(mm);
                         OWLClassExpression ce = Tools.resolveClassExpression(mm, query);
-                        StringBuilder sb = new StringBuilder("DL Query: ").append(query).append('\n');
                         boolean all = "all".equals(rel);
+                        Tools.Json json = Tools.json().put("query", query).put("direct", direct);
                         if (all || "equivalent".equals(rel)) {
-                            sb.append(render(mm, "Equivalent classes",
-                                    r.getEquivalentClasses(ce).getEntities())).append("\n\n");
+                            json.put("equivalent",
+                                    Tools.entityList(mm, r.getEquivalentClasses(ce).getEntities(), Integer.MAX_VALUE));
                         }
                         if (all || "superclasses".equals(rel)) {
-                            sb.append(render(mm, "Superclasses" + (direct ? " (direct)" : " (all)"),
-                                    r.getSuperClasses(ce, direct).getFlattened())).append("\n\n");
+                            json.put("superclasses",
+                                    Tools.entityList(mm, r.getSuperClasses(ce, direct).getFlattened(), Integer.MAX_VALUE));
                         }
                         if (all || "subclasses".equals(rel)) {
-                            sb.append(render(mm, "Subclasses" + (direct ? " (direct)" : " (all)"),
-                                    r.getSubClasses(ce, direct).getFlattened())).append("\n\n");
+                            json.put("subclasses",
+                                    Tools.entityList(mm, r.getSubClasses(ce, direct).getFlattened(), Integer.MAX_VALUE));
                         }
                         if (all || "instances".equals(rel)) {
-                            sb.append(render(mm, "Instances" + (direct ? " (direct)" : " (all)"),
-                                    r.getInstances(ce, direct).getFlattened())).append("\n\n");
+                            json.put("instances",
+                                    Tools.entityList(mm, r.getInstances(ce, direct).getFlattened(), Integer.MAX_VALUE));
                         }
-                        return Tools.text(sb.toString().trim());
+                        return json.result();
                     }, timeout);
                 })));
 
@@ -245,21 +245,22 @@ public final class ReasonerTools {
                 (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
                     OWLReasonerManager rm = mm.getOWLReasonerManager();
                     String currentId = rm.getCurrentReasonerFactoryId();
-                    TreeMap<String, String> byName = new TreeMap<>();
+                    TreeMap<String, Map<String, Object>> byName = new TreeMap<>();
                     for (ProtegeOWLReasonerInfo info : rm.getInstalledReasonerFactories()) {
-                        boolean current = info.getReasonerId().equals(currentId);
-                        byName.put(info.getReasonerName(), info.getReasonerName() + "  [" + info.getReasonerId()
-                                + "]" + (current ? "  (current)" : ""));
+                        Map<String, Object> entry = new LinkedHashMap<>();
+                        entry.put("name", info.getReasonerName());
+                        entry.put("id", info.getReasonerId());
+                        entry.put("current", info.getReasonerId().equals(currentId));
+                        byName.put(info.getReasonerName(), entry);
                     }
                     if (byName.isEmpty()) {
                         return Tools.error("No reasoner plugins are installed in Protégé.");
                     }
-                    StringBuilder sb = new StringBuilder("Installed reasoners (").append(byName.size())
-                            .append("):\n");
-                    for (String line : byName.values()) {
-                        sb.append("  ").append(line).append('\n');
-                    }
-                    return Tools.text(sb.toString().trim());
+                    return Tools.json()
+                            .put("count", byName.size())
+                            .put("reasoners", new ArrayList<>(byName.values()))
+                            .putIfNotNull("current_id", currentId)
+                            .result();
                 }))));
 
         tools.add(ToolSpecs.of("set_reasoner",
@@ -285,8 +286,13 @@ public final class ReasonerTools {
                                     + String.join(", ", available) + ".");
                         }
                         rm.setCurrentReasonerFactoryId(match.getReasonerId());
-                        return Tools.text("Selected reasoner: " + match.getReasonerName() + " ["
-                                + match.getReasonerId() + "]. Call run_reasoner to classify.");
+                        Map<String, Object> selected = new LinkedHashMap<>();
+                        selected.put("name", match.getReasonerName());
+                        selected.put("id", match.getReasonerId());
+                        return Tools.json()
+                                .put("selected", selected)
+                                .put("message", "Selected reasoner. Call run_reasoner to classify.")
+                                .result();
                     });
                 })));
 
@@ -330,25 +336,26 @@ public final class ReasonerTools {
         }
     }
 
-    private static String renderExplanations(OWLModelManager mm, OWLAxiom ax, Set<Set<OWLAxiom>> explanations) {
-        if (explanations.isEmpty()) {
-            return "Not entailed by the active ontology (no justification): " + Tools.renderAxiom(mm, ax);
-        }
-        StringBuilder sb = new StringBuilder("Axiom: ").append(Tools.renderAxiom(mm, ax)).append('\n');
-        sb.append(explanations.size()).append(" justification(s):\n");
-        int i = 1;
+    private static Map<String, Object> explanationsJson(OWLModelManager mm, OWLAxiom ax,
+            Set<Set<OWLAxiom>> explanations) {
+        List<Map<String, Object>> justifications = new ArrayList<>();
         for (Set<OWLAxiom> justification : explanations) {
-            sb.append("\nJustification ").append(i++).append(" (").append(justification.size())
-                    .append(" axioms):\n");
-            TreeSet<String> lines = new TreeSet<>();
+            List<Map<String, Object>> axioms = new ArrayList<>();
             for (OWLAxiom jx : justification) {
-                lines.add("    " + Tools.renderAxiom(mm, jx));
+                axioms.add(Tools.axiomJson(mm, jx));
             }
-            for (String line : lines) {
-                sb.append(line).append('\n');
-            }
+            axioms.sort(java.util.Comparator.comparing(a -> String.valueOf(a.get("rendering"))));
+            Map<String, Object> j = new LinkedHashMap<>();
+            j.put("size", justification.size());
+            j.put("axioms", axioms);
+            justifications.add(j);
         }
-        return sb.toString().trim();
+        return Tools.json()
+                .put("axiom", Tools.axiomJson(mm, ax))
+                .put("entailed", !explanations.isEmpty())
+                .put("justification_count", explanations.size())
+                .put("justifications", justifications)
+                .map();
     }
 
     private static OWLReasoner requireReasoner(OWLModelManager mm) {
@@ -361,17 +368,5 @@ public final class ReasonerTools {
             throw new ToolArgException("The reasoner has not produced results yet — call run_reasoner first.");
         }
         return mm.getReasoner();
-    }
-
-    private static String render(OWLModelManager mm, String heading, Set<? extends OWLEntity> entities) {
-        TreeSet<String> lines = new TreeSet<>();
-        for (OWLEntity e : entities) {
-            lines.add(Tools.renderEntity(mm, e));
-        }
-        StringBuilder sb = new StringBuilder(heading).append(" (").append(entities.size()).append("):\n");
-        for (String line : lines) {
-            sb.append("  ").append(line).append('\n');
-        }
-        return sb.toString().trim();
     }
 }

@@ -4,7 +4,8 @@
 > **Adopted: Architecture Approach A — in-Protégé MCP server.** External LLM clients (Claude Code/Desktop,
 > Codex CLI, VS Code MCP, other IDE extensions) read and edit the user's **live, open ontology** directly;
 > edits appear in the GUI immediately and join the user's **undo** stack. Architecture Approach A is **built and shipping**
-> at version `0.1.0`.
+> (first delivered at `0.1.0`; `0.2.0` adds a natural-language layer — JSON tool output, context/validation/preview
+> tools, and MCP prompts — see §5).
 >
 > See also: [`README.md`](README.md) for install and usage, and
 > [`docs/check-for-plugins.md`](docs/check-for-plugins.md) for in-Protégé distribution.
@@ -141,18 +142,19 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    is still open. The election logic is factored into package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.1.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.2.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
    McpServer.sync(transport)
-            .serverInfo("protege-mcp", "0.1.0")
-            .capabilities(ServerCapabilities.builder().tools(false).build())  // tools listChanged=false; no resources
+            .serverInfo("protege-mcp", "0.2.0")
+            .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())  // tools + prompts (both listChanged=false); no resources
             .immediateExecution(true)     // run handlers on the transport (HTTP) thread; the plugin marshals to the EDT itself
             .validateToolInputs(false)
             .jsonSchemaValidator(new DefaultJsonSchemaValidator(objectMapper))  // sync server still validates tool SCHEMAS even with validateToolInputs(false)
             .instructions(...)
             .tools(allSpecs)              // the §5 tool specs
+            .prompts(Prompts.all())       // the §5 guided-workflow prompts
             .build();
    ```
    `close()` calls `closeGracefully()` then `close()`.
@@ -218,11 +220,20 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (33 tools)
+## 5. MCP Tool Catalog (37 tools + 5 prompts)
 
-Thirty-three tools — 7 read, 11 edit/history/persistence, 5 ontology-header, 2 document, and 8 reasoner —
-each defined by a `name`, a `description`, and a JSON-schema `inputSchema` (a `Map<String,Object>`).
-Entities are referenced by IRI or display name.
+Thirty-seven tools — 7 read, 2 context, 12 edit/history/persistence (incl. `preview_changes`),
+5 ontology-header, 2 document, 8 reasoner, and 1 validation — each defined by a `name`, a
+`description`, and a JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by
+IRI or display name. **Every tool returns a structured JSON object** (set as MCP `structuredContent`
+and mirrored as a serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients
+can compose results programmatically and a human still sees readable JSON. The server also registers
+**5 MCP prompts** (guided workflows) — see the end of this section.
+
+New in `0.2.0` (the natural-language layer): `get_ontology_context` / `get_entity_context`
+(model-friendly orientation + entity cards), `preview_changes` (a non-mutating dry-run / diff),
+`validate_ontology` (a modelling-quality audit complementing the reasoner), the full JSON-output
+migration, and the MCP prompts.
 
 | Tool | Mapping / notes |
 |---|---|
@@ -268,7 +279,22 @@ Entities are referenced by IRI or display name.
   non-interactive MCP call. A `load_ontology` is not an `applyChange`, so it is **not** on the undo stack.
 - **`Axioms`** (used by `add_axiom` / `remove_axiom` / `explain_entailment` / `get_explanations`) supports the
   full structured `axiom_type` surface (see the README catalog).
-- The server registers **tools only** — no MCP `resources` or `prompts` capability.
+- The server registers **tools and prompts** (no MCP `resources` capability). The five prompts
+  (`audit_ontology`, `explain_class`, `add_subclass_safely`, `find_and_fix_unsatisfiable`,
+  `model_domain`) are pure templates (`tools/Prompts.java`): each expands to a single user message that
+  drives the tools in a safe order (orient → preview → confirm/apply → verify). They touch no model
+  state and run on the transport thread.
+- **New context/validation/preview tools (`0.2.0`).** `get_ontology_context` (active-ontology
+  orientation: counts, asserted roots, sampled properties, reasoner state, prefixes) and
+  `get_entity_context` (a one-call "entity card": annotations, deprecation, and the asserted
+  neighbourhood — super/sub/equivalent/disjoint, domain/range, super/sub properties, inverses,
+  characteristics, instances, property assertions) live in `tools/ContextTools.java`.
+  `tools/ValidationTools.java` runs a modelling-quality audit (missing/duplicate labels, missing
+  definitions, deprecated-but-used, undeclared entities, no domain/range, self-subclassing, subclass
+  cycles via iterative Tarjan SCC, isolated classes); its `analyze(Set<OWLOntology>)` core is a pure
+  function unit-tested on a hand-built ontology. `tools/PreviewTools.java` (`preview_changes`) is a
+  non-mutating dry-run that reuses the `Axioms` builder to report each operation's rendering,
+  already-present flag, and the entities an add would introduce — without applying anything.
 
 > *OWL-API mappings verified against [`.recon/05-modelmanager.md`](.recon/05-modelmanager.md); reasoner
 > behavior against [`.recon/07-reasoner.md`](.recon/07-reasoner.md) (`classifyAsynchronously(Set<InferenceType>)`
@@ -337,7 +363,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId org.protege`,
-  `artifactId protege-mcp`, version **`0.1.0`**.
+  `artifactId protege-mcp`, version **`0.2.0`**.
 - `Bundle-SymbolicName org.protege.mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing

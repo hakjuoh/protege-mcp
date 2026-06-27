@@ -8,6 +8,8 @@ import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.json.schema.JsonSchemaValidator;
 import io.modelcontextprotocol.json.schema.jackson2.DefaultJsonSchemaValidator;
+import org.protege.mcp.tools.Prompts;
+
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.server.McpSyncServer;
@@ -27,16 +29,27 @@ import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
 public final class McpServerManager {
 
     public static final String SERVER_NAME = "protege-mcp";
-    public static final String SERVER_VERSION = "0.1.2";
+    public static final String SERVER_VERSION = "0.2.0";
 
     private static final String MCP_ENDPOINT = "/mcp";
 
     private static final String INSTRUCTIONS =
-            "Tools to read and edit the ontology currently open in Protégé Desktop. Edits go through "
-                    + "Protégé's OWLModelManager, so they appear in the GUI immediately and can be "
-                    + "undone with undo_change. Identify entities by IRI where possible; use "
-                    + "search_entities / get_entity to discover IRIs. Call run_reasoner before reading "
-                    + "inferred results.";
+            "Tools to read and edit the ontology currently open in Protégé Desktop. Every tool returns "
+                    + "a JSON object (also mirrored as text). Edits go through Protégé's OWLModelManager, "
+                    + "so they appear in the GUI immediately and can be undone with undo_change.\n\n"
+                    + "Recommended workflow:\n"
+                    + "1. Orient: call get_ontology_context for an overview, or get_entity_context for a "
+                    + "single term's neighbourhood (annotations, parents/children, domain/range, ...).\n"
+                    + "2. Identify entities by IRI where possible; use search_entities / get_entity to "
+                    + "resolve a name to an IRI (a display name can be ambiguous or create a new entity "
+                    + "from a typo).\n"
+                    + "3. Before editing, preview with preview_changes to see the diff and any new "
+                    + "entities; then apply with the write tools (writes may be gated by a read-only "
+                    + "switch or a confirmation dialog).\n"
+                    + "4. Verify: call run_reasoner before reading inferred results, and validate_ontology "
+                    + "for modelling-quality issues.\n"
+                    + "The MCP prompts (audit_ontology, explain_class, add_subclass_safely, "
+                    + "find_and_fix_unsatisfiable, model_domain) package these workflows.";
 
     private McpSyncServer server;
     private HttpServletStreamableServerTransportProvider transport;
@@ -59,13 +72,14 @@ public final class McpServerManager {
 
         this.server = McpServer.sync(transport)
                 .serverInfo(SERVER_NAME, SERVER_VERSION)
-                .capabilities(ServerCapabilities.builder().tools(false).build())
+                .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())
                 .instructions(INSTRUCTIONS)
                 .immediateExecution(true)
                 .validateToolInputs(false)
                 .jsonMapper(jsonMapper)
                 .jsonSchemaValidator(schemaValidator)
                 .tools(tools)
+                .prompts(Prompts.all())
                 .build();
     }
 

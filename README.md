@@ -173,10 +173,17 @@ With `PROTEGE_MCP_TOKEN`:
 
 ## Tools
 
-Every model edit goes through `OWLModelManager.applyChanges`, so it appears in Protégé immediately
-and joins the shared **undo stack**; document open/save (`load_ontology`, `save_ontology`, and the
-file load inside `merge_ontology_document`) use Protégé's own load/save APIs instead. Entities are
-referenced by **IRI or display name**.
+Every tool returns a **structured JSON object** (carried as MCP `structuredContent` and mirrored as a
+JSON text block, so every client and a human reading the transcript see the same result). Every model
+edit goes through `OWLModelManager.applyChanges`, so it appears in Protégé immediately and joins the
+shared **undo stack**; document open/save (`load_ontology`, `save_ontology`, and the file load inside
+`merge_ontology_document`) use Protégé's own load/save APIs instead. Entities are referenced by **IRI
+or display name**.
+
+A typical natural-language flow: **orient** (`get_ontology_context` / `get_entity_context`) → resolve
+names to IRIs (`search_entities` / `get_entity`) → **preview** an edit (`preview_changes`) → apply
+(the edit tools) → **verify** (`run_reasoner`, `validate_ontology`). The [MCP prompts](#prompts-guided-workflows)
+package these flows.
 
 ### Explore & search
 
@@ -190,10 +197,19 @@ referenced by **IRI or display name**.
 | `get_entity` | Look up an entity by IRI or name; returns its type(s), IRI, and rendering. |
 | `get_axioms_for_entity` | Axioms that reference an entity; `include_imports` extends the search to the imports closure (e.g. an imported term's domain/range). |
 
+### Context & validation
+
+| Tool | Description |
+| --- | --- |
+| `get_ontology_context` | One-call orientation: id, signature counts, imports, ontology annotations, asserted root classes, sampled properties, reasoner state, and the prefix map. |
+| `get_entity_context` | An "entity card" for one term: type(s), labels/annotations, deprecation, and the asserted neighbourhood (super/sub/equivalent/disjoint classes, domains/ranges, super/sub properties, inverses, characteristics, instances, property assertions). Resolves puns. |
+| `validate_ontology` | Modelling-quality audit (not logical consistency): missing/duplicate labels, missing definitions, deprecated-but-used terms, undeclared entities, properties with no domain/range, self-subclassing, subclass cycles, and isolated classes — each with a count, sample offenders, and a fix suggestion. |
+
 ### Edit
 
 | Tool | Description |
 | --- | --- |
+| `preview_changes` | Dry-run a batch of axiom add/remove operations **without applying them**: reports, per operation, the rendered axiom, whether it is already present, and the new entities an add would introduce. Apply with the edit tools once the diff looks right. |
 | `create_class` | Create a named class (optional explicit `iri` and `parent` superclass). |
 | `create_entity` | Create a named entity: class, object/data/annotation property, individual, or datatype. |
 | `add_subclass_of` | Assert that one class is a subclass of another. |
@@ -279,6 +295,20 @@ Any `axiom_type` may also carry an optional `annotations` operand — an array o
 the granular tools cover the full OWL 2 surface, so a rich document (ontology header, imports,
 typed/IRI annotations, annotated axioms, property chains, characteristics) can be reconstructed
 incrementally; `merge_ontology_document` does the same in one bulk, GUI-visible step.
+
+## Prompts (guided workflows)
+
+The server also exposes MCP **prompts** — reusable, guided workflows a user can pick in their MCP
+client. Each expands to an instruction that drives the tools in a safe order (get context first,
+preview before applying, confirm writes, verify with the reasoner).
+
+| Prompt | Arguments | Workflow |
+| --- | --- | --- |
+| `audit_ontology` | — | Orient → `validate_ontology` → reasoner checks → drill into offenders → propose fixes (preview before applying). |
+| `explain_class` | `class` | Entity context → axioms → reasoner-inferred relations → plain-language explanation. |
+| `add_subclass_safely` | `child`, `parent` | Resolve both terms → `preview_changes` → apply `add_subclass_of` → re-check satisfiability. |
+| `find_and_fix_unsatisfiable` | — | `run_reasoner` → `get_unsatisfiable_classes` → `get_explanations` → propose minimal fixes. |
+| `model_domain` | `description` | Survey existing terms → propose classes/properties → preview → apply in small batches → validate. |
 
 ## Building from Source
 

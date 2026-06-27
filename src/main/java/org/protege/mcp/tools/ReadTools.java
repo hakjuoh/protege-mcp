@@ -7,7 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.TreeMap;
 
 import org.protege.editor.owl.model.OWLModelManager;
 import org.semanticweb.owlapi.model.OWLAxiom;
@@ -21,7 +21,7 @@ import com.google.common.base.Optional;
 
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 
-/** Read-only tools: list/inspect ontologies, classes, entities and their axioms. */
+/** Read-only tools: list/inspect ontologies, classes, entities and their axioms. All return JSON. */
 public final class ReadTools {
 
     private ReadTools() {
@@ -37,12 +37,22 @@ public final class ReadTools {
                 (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
                     OWLOntology active = mm.getActiveOntology();
                     Set<OWLOntology> onts = mm.getOntologies();
-                    StringBuilder sb = new StringBuilder("Loaded ontologies (").append(onts.size()).append("):\n");
+                    List<Map<String, Object>> list = new ArrayList<>();
                     for (OWLOntology o : onts) {
-                        sb.append(o.equals(active) ? "* " : "  ").append(ontologyLabel(o)).append('\n');
+                        Map<String, Object> entry = new LinkedHashMap<>();
+                        entry.put("id", ontologyLabel(o));
+                        entry.put("anonymous", o.getOntologyID().isAnonymous());
+                        entry.put("active", o.equals(active));
+                        entry.put("axioms", o.getAxiomCount());
+                        entry.put("logical_axioms", o.getLogicalAxiomCount());
+                        list.add(entry);
                     }
-                    sb.append("\n(* = active ontology — the target of edits)");
-                    return Tools.text(sb.toString());
+                    return Tools.json()
+                            .put("count", onts.size())
+                            .put("active", ontologyLabel(active))
+                            .put("ontologies", list)
+                            .put("note", "The active ontology is the target of edits.")
+                            .result();
                 }))));
 
         tools.add(ToolSpecs.of("get_active_ontology",
@@ -50,18 +60,23 @@ public final class ReadTools {
                 Tools.emptySchema(),
                 (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
                     OWLOntology o = mm.getActiveOntology();
-                    StringBuilder sb = new StringBuilder();
-                    sb.append("Active ontology: ").append(ontologyLabel(o)).append('\n');
-                    sb.append("Axioms: ").append(o.getAxiomCount())
-                            .append(" (logical: ").append(o.getLogicalAxiomCount()).append(")\n");
-                    Set<OWLImportsDeclaration> imports = o.getImportsDeclarations();
-                    sb.append("Direct imports: ").append(imports.size());
-                    for (OWLImportsDeclaration d : imports) {
-                        sb.append("\n  ").append(d.getIRI());
+                    OWLOntologyID id = o.getOntologyID();
+                    List<String> imports = new ArrayList<>();
+                    for (OWLImportsDeclaration d : o.getImportsDeclarations()) {
+                        imports.add(d.getIRI().toString());
                     }
-                    sb.append("\nWrite-protection: ")
-                            .append(ctx.controller().isReadOnly() ? "READ-ONLY (plugin setting)" : "writable");
-                    return Tools.text(sb.toString());
+                    return Tools.json()
+                            .put("ontology_iri", id.getOntologyIRI().isPresent()
+                                    ? id.getOntologyIRI().get().toString() : null)
+                            .put("version_iri", id.getVersionIRI().isPresent()
+                                    ? id.getVersionIRI().get().toString() : null)
+                            .put("anonymous", id.isAnonymous())
+                            .put("axioms", o.getAxiomCount())
+                            .put("logical_axioms", o.getLogicalAxiomCount())
+                            .put("direct_imports", imports)
+                            .put("write_protection", ctx.controller().isReadOnly()
+                                    ? "read-only (plugin setting)" : "writable")
+                            .result();
                 }))));
 
         tools.add(ToolSpecs.of("summarize_ontology",
@@ -85,7 +100,7 @@ public final class ReadTools {
                     int limit = Tools.optInt(Tools.args(req), "limit", 200);
                     return ctx.access().compute(mm -> {
                         Set<OWLClass> classes = mm.getActiveOntology().getClassesInSignature();
-                        return Tools.text(renderEntities(mm, "Classes", classes, limit));
+                        return Tools.ok(Tools.entityList(mm, classes, limit));
                     });
                 })));
 
@@ -107,12 +122,17 @@ public final class ReadTools {
                     int limit = Tools.optInt(a, "limit", 50);
                     return ctx.access().compute(mm -> {
                         Set<? extends OWLEntity> matches = search(mm, query, type);
-                        return Tools.text(renderEntities(mm, "Matches for '" + query + "'", matches, limit));
+                        Map<String, Object> result = Tools.entityList(mm, matches, limit);
+                        result.put("query", query);
+                        result.put("type", type == null ? "all" : type);
+                        return Tools.ok(result);
                     });
                 })));
 
         tools.add(ToolSpecs.of("get_entity",
-                "Look up an entity by IRI or display name; returns its type(s), IRI and rendering.",
+                "Look up an entity by IRI or display name; returns its type(s), IRI and rendering. An "
+                        + "IRI may be 'punned' across several entity types, so 'matches' can hold more "
+                        + "than one entity.",
                 Tools.schema().strReq("entity", "Entity IRI or display name.").build(),
                 (ex, req) -> Tools.guard(() -> {
                     String ref = Tools.reqString(Tools.args(req), "entity");
@@ -121,12 +141,17 @@ public final class ReadTools {
                         if (es.isEmpty()) {
                             return Tools.error("No entity found for '" + ref + "'.");
                         }
-                        StringBuilder sb = new StringBuilder();
+                        List<Map<String, Object>> matches = new ArrayList<>();
                         for (OWLEntity e : es) {
-                            sb.append(e.getEntityType().getName()).append(": ")
-                                    .append(Tools.renderEntity(mm, e)).append('\n');
+                            matches.add(Tools.entityJson(mm, e));
                         }
-                        return Tools.text(sb.toString().trim());
+                        return Tools.json()
+                                .put("query", ref)
+                                .put("count", matches.size())
+                                .put("matches", matches)
+                                .putIfNotNull("note", matches.size() > 1
+                                        ? "The IRI is punned across several entity types." : null)
+                                .result();
                     });
                 })));
 
@@ -157,21 +182,11 @@ public final class ReadTools {
                         for (OWLOntology o : scope) {
                             axioms.addAll(o.getReferencingAxioms(e));
                         }
-                        StringBuilder sb = new StringBuilder();
-                        sb.append("Axioms referencing ").append(Tools.renderEntity(mm, e))
-                                .append(includeImports ? " (incl. imports)" : "")
-                                .append(" (").append(axioms.size()).append("):\n");
-                        int max = Math.max(0, limit);
-                        int shown = 0;
-                        for (OWLAxiom ax : axioms) {
-                            if (shown >= max) {
-                                sb.append("... (").append(axioms.size() - shown).append(" more)\n");
-                                break;
-                            }
-                            sb.append("  ").append(Tools.renderAxiom(mm, ax)).append('\n');
-                            shown++;
-                        }
-                        return Tools.text(sb.toString().trim());
+                        return Tools.json()
+                                .put("entity", Tools.entityJson(mm, e))
+                                .put("include_imports", includeImports)
+                                .put("axioms", Tools.axiomList(mm, axioms, limit))
+                                .result();
                     });
                 })));
 
@@ -230,40 +245,42 @@ public final class ReadTools {
             importDeclarations += o.getImportsDeclarations().size();
         }
 
-        Map<String, Integer> entityTypes = new LinkedHashMap<>();
+        Map<String, Integer> entityTypes = new TreeMap<>();
         for (OWLEntity e : signature) {
             increment(entityTypes, e.getEntityType().getName());
         }
 
-        Map<String, Integer> axiomTypes = new LinkedHashMap<>();
+        Map<String, Integer> axiomTypes = new TreeMap<>();
         for (OWLAxiom ax : axioms) {
             increment(axiomTypes, ax.getAxiomType().getName());
         }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append(includeImports ? "Imports-closure summary" : "Active ontology summary").append('\n');
-        sb.append("Ontologies: ").append(scope.size()).append('\n');
-        sb.append("Axioms: ").append(axioms.size()).append('\n');
-        sb.append("Logical axioms: ").append(logicalAxiomCount(axioms)).append('\n');
-        sb.append("Ontology annotations: ").append(ontologyAnnotations).append('\n');
-        sb.append("Direct import declarations: ").append(importDeclarations).append('\n');
-        sb.append("Signature entities: ").append(signature.size()).append('\n');
-        TreeSet<String> sortedEntityTypes = new TreeSet<>(entityTypes.keySet());
-        for (String type : sortedEntityTypes) {
-            sb.append("  ").append(type).append(": ").append(entityTypes.get(type)).append('\n');
-        }
-        sb.append("Axiom types (").append(axiomTypes.size()).append("):\n");
+        // Apply the limit to the axiom-type rows (the largest map), reporting how many were dropped.
+        Map<String, Integer> axiomTypesShown = new LinkedHashMap<>();
         int max = Math.max(0, limit);
         int shown = 0;
-        for (String type : new TreeSet<>(axiomTypes.keySet())) {
+        for (Map.Entry<String, Integer> entry : axiomTypes.entrySet()) {
             if (shown >= max) {
-                sb.append("... (").append(axiomTypes.size() - shown).append(" more; raise 'limit')\n");
                 break;
             }
-            sb.append("  ").append(type).append(": ").append(axiomTypes.get(type)).append('\n');
+            axiomTypesShown.put(entry.getKey(), entry.getValue());
             shown++;
         }
-        return Tools.text(sb.toString().trim());
+
+        Tools.Json json = Tools.json()
+                .put("scope", includeImports ? "imports_closure" : "active")
+                .put("ontologies", scope.size())
+                .put("axioms", axioms.size())
+                .put("logical_axioms", logicalAxiomCount(axioms))
+                .put("ontology_annotations", ontologyAnnotations)
+                .put("import_declarations", importDeclarations)
+                .put("signature_entities", signature.size())
+                .put("entity_types", entityTypes)
+                .put("axiom_types", axiomTypesShown);
+        if (axiomTypes.size() > axiomTypesShown.size()) {
+            json.put("axiom_types_truncated", axiomTypes.size() - axiomTypesShown.size());
+        }
+        return json.result();
     }
 
     private static int logicalAxiomCount(Set<OWLAxiom> axioms) {
@@ -307,26 +324,6 @@ public final class ReadTools {
             default:
                 return o.getSignature();
         }
-    }
-
-    private static String renderEntities(OWLModelManager mm, String heading,
-            Set<? extends OWLEntity> entities, int limit) {
-        TreeSet<String> lines = new TreeSet<>();
-        for (OWLEntity e : entities) {
-            lines.add(Tools.renderEntity(mm, e));
-        }
-        StringBuilder sb = new StringBuilder(heading).append(" (").append(entities.size()).append("):\n");
-        int max = Math.max(0, limit);
-        int shown = 0;
-        for (String line : lines) {
-            if (shown >= max) {
-                sb.append("... (").append(entities.size() - shown).append(" more; raise 'limit')\n");
-                break;
-            }
-            sb.append("  ").append(line).append('\n');
-            shown++;
-        }
-        return sb.toString().trim();
     }
 
     private static String ontologyLabel(OWLOntology o) {
