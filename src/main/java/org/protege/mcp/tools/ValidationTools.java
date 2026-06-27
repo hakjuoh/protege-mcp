@@ -10,12 +10,14 @@ import java.util.Set;
 import java.util.TreeMap;
 
 import org.protege.editor.owl.model.OWLModelManager;
+import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLDataProperty;
+import org.semanticweb.owlapi.model.OWLDeclarationAxiom;
 import org.semanticweb.owlapi.model.OWLEntity;
 import org.semanticweb.owlapi.model.OWLObjectProperty;
 import org.semanticweb.owlapi.model.OWLOntology;
@@ -59,8 +61,10 @@ public final class ValidationTools {
                 "Audit the active ontology for modelling-quality issues (not logical consistency — use "
                         + "run_reasoner for that). Runs structural checks and reports, per check, a "
                         + "count, sample offenders, and a fix suggestion. Checks: "
-                        + String.join(", ", CHECK_IDS) + ". Set include_imports=true to audit the "
-                        + "whole imports closure; pass 'checks' to run a subset.",
+                        + String.join(", ", CHECK_IDS) + ". Imported terms (declared upstream) are not "
+                        + "flagged for missing label/definition/domain/range when auditing the active "
+                        + "ontology alone; set include_imports=true to audit the whole imports closure. "
+                        + "Pass 'checks' to run a subset.",
                 Tools.schema()
                         .bool("include_imports", "Audit the imports closure too (default false).")
                         .strArray("checks", "Subset of check ids to run (default all).")
@@ -152,9 +156,12 @@ public final class ValidationTools {
                         + "(rename_entity / delete_entity). Labels in different languages are NOT duplicates.");
         // Key on the full (lexical form, language) pair: "Bank"@en and "Bank"@fr are distinct labels
         // on legitimately distinct entities, not duplicates.
+        // Iterate labelBearing (the full signature), not the owned subset: a collision between two
+        // labels asserted within scope is a real local issue even if one subject is an imported IRI
+        // that the active ontology annotated locally.
         Map<String, Set<OWLEntity>> byLabel = new TreeMap<>();
         Map<String, String> display = new LinkedHashMap<>();
-        for (OWLEntity e : sig.labelable) {
+        for (OWLEntity e : sig.labelBearing) {
             for (OWLOntology o : scope) {
                 for (OWLAnnotation ann : EntitySearcher.getAnnotations(e, o)) {
                     if (ann.getProperty().isLabel() && ann.getValue().asLiteral().isPresent()) {
@@ -182,7 +189,10 @@ public final class ValidationTools {
         Finding f = new Finding("multiple_labels", "warning",
                 "An entity with more than one rdfs:label in the same language",
                 "Keep one label per language; move the rest to skos:altLabel or rdfs:comment.");
-        for (OWLEntity e : sig.labelable) {
+        // Like duplicate_label, this is about label assertions present in scope, so it runs over the
+        // full labelBearing signature: 2+ same-language labels asserted locally are a smell even when
+        // the subject IRI is imported.
+        for (OWLEntity e : sig.labelBearing) {
             Map<String, Integer> byLang = new LinkedHashMap<>();
             for (OWLOntology o : scope) {
                 for (OWLAnnotation ann : EntitySearcher.getAnnotations(e, o)) {
@@ -449,60 +459,112 @@ public final class ValidationTools {
         }
     }
 
-    /** The audited signature, partitioned once for every check. Entities in reserved vocabularies are dropped. */
+    /**
+     * The audited signature, partitioned once for every check. Entities in reserved vocabularies are dropped.
+     *
+     * <p>Three partitions with deliberately different scopes:
+     * <ul>
+     *   <li>{@link #all} and {@link #classes} hold the full <em>referenced</em> signature of the audited
+     *       ontologies — used by the axiom-structural checks (undeclared, deprecated, self/cycle/isolated),
+     *       which reason about axioms asserted in scope and may legitimately mention imported entities.</li>
+     *   <li>{@link #labelBearing} holds every label-capable entity in the referenced signature. The
+     *       label-collision checks (duplicate_label, multiple_labels) run over it because a collision
+     *       between labels <em>asserted within scope</em> is a real local issue regardless of whether a
+     *       subject IRI happens to be imported (the active ontology may annotate an imported IRI locally).</li>
+     *   <li>{@link #labelable}, {@link #definable}, {@link #objectProperties} and {@link #dataProperties}
+     *       hold only the entities the audited scope is <em>responsible for</em> — i.e. not purely imported.
+     *       The "missing X" quality checks (missing label/definition/domain/range) run over these, so an
+     *       imported term whose label/definition/domain/range lives in its home ontology is not a false
+     *       positive when only the active ontology is audited (include_imports=false). Audit the imports
+     *       closure (include_imports=true) and the upstream ontologies enter scope, so their terms become
+     *       "owned" and are audited normally.</li>
+     * </ul>
+     */
     static final class Signature {
         final Set<OWLEntity> all = new LinkedHashSet<>();
         final Set<OWLClass> classes = new LinkedHashSet<>();
         final Set<OWLObjectProperty> objectProperties = new LinkedHashSet<>();
         final Set<OWLDataProperty> dataProperties = new LinkedHashSet<>();
-        /** Entities expected to carry a label: classes, properties, named individuals. */
+        /** Every label-capable entity in the referenced signature (collision checks; ownership-agnostic). */
+        final Set<OWLEntity> labelBearing = new LinkedHashSet<>();
+        /** Owned-by-scope entities expected to carry a label: classes, properties, named individuals. */
         final Set<OWLEntity> labelable = new LinkedHashSet<>();
-        /** Entities expected to carry a definition: classes and properties. */
+        /** Owned-by-scope entities expected to carry a definition: classes and properties. */
         final Set<OWLEntity> definable = new LinkedHashSet<>();
 
         static Signature of(Set<OWLOntology> scope) {
             Signature s = new Signature();
+            // Full referenced signature (declared OR merely used) for the axiom-structural checks.
             for (OWLOntology o : scope) {
                 s.all.addAll(o.getSignature());
             }
             for (OWLOntology o : scope) {
-                collect(s, o);
+                for (OWLClass c : o.getClassesInSignature()) {
+                    if (!reserved(c)) {
+                        s.classes.add(c);
+                    }
+                }
+            }
+            // Gather declarations once: which entities the scope itself declares, and which the whole
+            // imports closure declares. ownedByScope() is then two O(1) lookups rather than a per-entity
+            // isDeclared() scan over every ontology in scope.
+            Set<OWLEntity> declaredInScope = new LinkedHashSet<>();
+            Set<OWLOntology> closure = new LinkedHashSet<>();
+            for (OWLOntology o : scope) {
+                for (OWLDeclarationAxiom ax : o.getAxioms(AxiomType.DECLARATION)) {
+                    declaredInScope.add(ax.getEntity());
+                }
+                closure.addAll(o.getImportsClosure());
+            }
+            Set<OWLEntity> declaredInClosure = new LinkedHashSet<>(declaredInScope);
+            for (OWLOntology o : closure) {
+                for (OWLDeclarationAxiom ax : o.getAxioms(AxiomType.DECLARATION)) {
+                    declaredInClosure.add(ax.getEntity());
+                }
+            }
+            // Partition the per-entity check inputs. labelBearing sees the full signature; the owned
+            // sets drop purely-imported terms so their upstream label/definition/domain/range are not
+            // reported as locally missing.
+            for (OWLEntity e : s.all) {
+                if (reserved(e)) {
+                    continue;
+                }
+                if (e.isOWLClass() || e.isOWLObjectProperty() || e.isOWLDataProperty()
+                        || e.isOWLNamedIndividual()) {
+                    s.labelBearing.add(e);
+                }
+                if (!ownedByScope(e, declaredInScope, declaredInClosure)) {
+                    continue;
+                }
+                if (e.isOWLClass()) {
+                    s.labelable.add(e);
+                    s.definable.add(e);
+                } else if (e.isOWLObjectProperty()) {
+                    s.objectProperties.add(e.asOWLObjectProperty());
+                    s.labelable.add(e);
+                    s.definable.add(e);
+                } else if (e.isOWLDataProperty()) {
+                    s.dataProperties.add(e.asOWLDataProperty());
+                    s.labelable.add(e);
+                    s.definable.add(e);
+                } else if (e.isOWLNamedIndividual()) {
+                    s.labelable.add(e);
+                } else if (e.isOWLAnnotationProperty()) {
+                    s.definable.add(e);
+                }
             }
             return s;
         }
 
-        private static void collect(Signature s, OWLOntology o) {
-            for (OWLClass c : o.getClassesInSignature()) {
-                if (!reserved(c)) {
-                    s.classes.add(c);
-                    s.labelable.add(c);
-                    s.definable.add(c);
-                }
-            }
-            for (OWLObjectProperty p : o.getObjectPropertiesInSignature()) {
-                if (!reserved(p)) {
-                    s.objectProperties.add(p);
-                    s.labelable.add(p);
-                    s.definable.add(p);
-                }
-            }
-            for (OWLDataProperty p : o.getDataPropertiesInSignature()) {
-                if (!reserved(p)) {
-                    s.dataProperties.add(p);
-                    s.labelable.add(p);
-                    s.definable.add(p);
-                }
-            }
-            o.getIndividualsInSignature().forEach(i -> {
-                if (!reserved(i)) {
-                    s.labelable.add(i);
-                }
-            });
-            o.getAnnotationPropertiesInSignature().forEach(p -> {
-                if (!reserved(p)) {
-                    s.definable.add(p);
-                }
-            });
+        /**
+         * True unless {@code e} is purely imported — declared in the imports closure but not in the audited
+         * scope itself. Declared in scope → owned; declared only upstream → not owned; declared nowhere (a
+         * typo'd reference or a declaration-by-usage local term) → still audited (and, if truly undeclared,
+         * separately flagged by undeclared_entity).
+         */
+        private static boolean ownedByScope(OWLEntity e, Set<OWLEntity> declaredInScope,
+                Set<OWLEntity> declaredInClosure) {
+            return declaredInScope.contains(e) || !declaredInClosure.contains(e);
         }
 
         private static boolean reserved(OWLEntity e) {

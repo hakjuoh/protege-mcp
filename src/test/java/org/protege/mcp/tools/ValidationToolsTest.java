@@ -87,6 +87,15 @@ class ValidationToolsTest {
         return false;
     }
 
+    private boolean hasIri(ValidationTools.Finding f, IRI iri) {
+        for (Object e : f.entities) {
+            if (((org.semanticweb.owlapi.model.OWLEntity) e).getIRI().equals(iri)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Test
     void everyCheckFlagsItsSeededOffender() throws OWLOntologyCreationException {
         OWLOntology o = fixture();
@@ -199,6 +208,107 @@ class ValidationToolsTest {
             assertFalse(((org.semanticweb.owlapi.model.OWLEntity) e).getIRI().equals(upstream.getIRI()),
                     "imported term Continuant must not be flagged undeclared");
         }
+        // ...nor flagged for missing label/definition: those belong to its home ontology, which is not
+        // in the active-only audit scope. (Continuant carries no label/definition here at all.)
+        assertFalse(hasIri(find(findings, "missing_label"), upstream.getIRI()),
+                "imported term must not be flagged missing_label in an active-only audit");
+        assertFalse(hasIri(find(findings, "missing_definition"), upstream.getIRI()),
+                "imported term must not be flagged missing_definition in an active-only audit");
+    }
+
+    @Test
+    void importedTermsAreAuditedForQualityOnlyWhenImportsIncluded() throws OWLOntologyCreationException {
+        // base declares: Continuant (label + comment), partOf (object property with domain + range),
+        // and Incomplete (no label, no definition). active imports base and references all three.
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        IRI baseIri = IRI.create("http://example.org/base");
+        OWLOntology base = m.createOntology(baseIri);
+        OWLClass continuant = df.getOWLClass(IRI.create("http://example.org/base#Continuant"));
+        OWLClass incomplete = df.getOWLClass(IRI.create("http://example.org/base#Incomplete"));
+        OWLObjectProperty partOf = df.getOWLObjectProperty(IRI.create("http://example.org/base#partOf"));
+        m.addAxiom(base, df.getOWLDeclarationAxiom(continuant));
+        m.addAxiom(base, df.getOWLDeclarationAxiom(incomplete));
+        m.addAxiom(base, df.getOWLDeclarationAxiom(partOf));
+        labelAndComment(m, df, base, continuant, "Continuant", "A persistent entity.");
+        m.addAxiom(base, df.getOWLObjectPropertyDomainAxiom(partOf, continuant));
+        m.addAxiom(base, df.getOWLObjectPropertyRangeAxiom(partOf, continuant));
+
+        OWLOntology active = m.createOntology(IRI.create("http://example.org/active"));
+        m.applyChange(new AddImport(active, df.getOWLImportsDeclaration(baseIri)));
+        OWLClass local = cls(df, "MyThing");                       // local, deliberately unlabelled
+        m.addAxiom(active, df.getOWLDeclarationAxiom(local));
+        m.addAxiom(active, df.getOWLSubClassOfAxiom(local, continuant));
+        m.addAxiom(active, df.getOWLSubClassOfAxiom(local, incomplete));
+        m.addAxiom(active, df.getOWLSubClassOfAxiom(local,
+                df.getOWLObjectSomeValuesFrom(partOf, continuant)));   // references partOf
+
+        // include_imports=false: imported terms are out of scope for the per-entity quality checks,
+        // even Incomplete (which genuinely lacks a label upstream). The local term is still audited.
+        List<ValidationTools.Finding> active0 = ValidationTools.analyze(Collections.singleton(active));
+        assertFalse(hasIri(find(active0, "missing_label"), continuant.getIRI()), "Continuant is imported");
+        assertFalse(hasIri(find(active0, "missing_label"), incomplete.getIRI()),
+                "imported term is not audited active-only even when it lacks a label upstream");
+        assertFalse(hasIri(find(active0, "property_missing_domain"), partOf.getIRI()),
+                "imported property is not audited for domain active-only");
+        assertFalse(hasIri(find(active0, "property_missing_range"), partOf.getIRI()),
+                "imported property is not audited for range active-only");
+        assertTrue(hasClass(find(active0, "missing_label"), "MyThing"),
+                "the local term is still audited and flagged");
+
+        // include_imports=true: base enters scope, so its terms become owned and are audited. Continuant
+        // and partOf are complete; Incomplete is now correctly flagged for its missing label/definition.
+        List<ValidationTools.Finding> closure = ValidationTools.analyze(active.getImportsClosure());
+        assertFalse(hasIri(find(closure, "missing_label"), continuant.getIRI()), "Continuant has a label");
+        assertFalse(hasIri(find(closure, "property_missing_domain"), partOf.getIRI()), "partOf has a domain");
+        assertFalse(hasIri(find(closure, "property_missing_range"), partOf.getIRI()), "partOf has a range");
+        assertTrue(hasIri(find(closure, "missing_label"), incomplete.getIRI()),
+                "Incomplete lacks a label and is audited once imports are included");
+        assertTrue(hasIri(find(closure, "missing_definition"), incomplete.getIRI()),
+                "Incomplete lacks a definition and is audited once imports are included");
+    }
+
+    @Test
+    void labelCollisionsAreCheckedOverLocalAssertionsEvenOnImportedIris()
+            throws OWLOntologyCreationException {
+        // The collision checks are about label ASSERTIONS present in scope, not about who "owns" the
+        // term: a label the active ontology asserts on an imported IRI still collides locally. This
+        // guards against the owned-by-scope filter silently dropping such collisions.
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        IRI baseIri = IRI.create("http://example.org/base");
+        OWLOntology base = m.createOntology(baseIri);
+        OWLClass imported = df.getOWLClass(IRI.create("http://example.org/base#Imported"));
+        OWLClass dupImported = df.getOWLClass(IRI.create("http://example.org/base#DupImported"));
+        m.addAxiom(base, df.getOWLDeclarationAxiom(imported));
+        m.addAxiom(base, df.getOWLDeclarationAxiom(dupImported));
+
+        OWLOntology active = m.createOntology(IRI.create("http://example.org/active"));
+        m.applyChange(new AddImport(active, df.getOWLImportsDeclaration(baseIri)));
+        OWLClass local = cls(df, "Local");
+        m.addAxiom(active, df.getOWLDeclarationAxiom(local));
+        m.addAxiom(active, df.getOWLSubClassOfAxiom(local, imported));
+        m.addAxiom(active, df.getOWLSubClassOfAxiom(local, dupImported)); // pull both into the signature
+        // duplicate_label: a local class and an imported IRI both carry "Shared"@en, asserted IN active.
+        m.addAxiom(active, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), local.getIRI(), df.getOWLLiteral("Shared", "en")));
+        m.addAxiom(active, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), imported.getIRI(), df.getOWLLiteral("Shared", "en")));
+        // multiple_labels: two @en labels asserted locally on an imported IRI.
+        m.addAxiom(active, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), dupImported.getIRI(), df.getOWLLiteral("One", "en")));
+        m.addAxiom(active, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), dupImported.getIRI(), df.getOWLLiteral("Two", "en")));
+
+        List<ValidationTools.Finding> findings = ValidationTools.analyze(Collections.singleton(active));
+        // The locally-owned class with a real duplicate label is flagged, together with its partner.
+        assertTrue(hasClass(find(findings, "duplicate_label"), "Local"),
+                "the local class's locally-asserted duplicate label must still be flagged");
+        assertTrue(hasIri(find(findings, "duplicate_label"), imported.getIRI()),
+                "the imported partner of the local collision is part of the duplicate set");
+        // An imported IRI given two same-language labels by LOCAL axioms is a local smell, so flagged.
+        assertTrue(hasIri(find(findings, "multiple_labels"), dupImported.getIRI()),
+                "two same-language labels asserted locally on an imported IRI must be flagged");
     }
 
     @Test
