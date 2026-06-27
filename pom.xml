@@ -213,6 +213,8 @@
                             org.protege.editor.core.*,
                             org.protege.editor.owl.*,
                             org.semanticweb.owlapi.*,
+                            com.clarkparsia.owlapi.explanation,
+                            com.clarkparsia.owlapi.explanation.util,
                             org.slf4j;version="[1.7,2)",
                             com.google.common.*;version="[18.0,19)",
                             javax.swing.*,

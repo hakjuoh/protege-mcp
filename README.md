@@ -173,8 +173,10 @@ With `PROTEGE_MCP_TOKEN`:
 
 ## Tools
 
-Every edit goes through `OWLModelManager.applyChanges`, so it appears in Protégé immediately and
-joins the shared **undo stack**. Entities are referenced by **IRI or display name**.
+Every model edit goes through `OWLModelManager.applyChanges`, so it appears in Protégé immediately
+and joins the shared **undo stack**; document open/save (`load_ontology`, `save_ontology`, and the
+file load inside `merge_ontology_document`) use Protégé's own load/save APIs instead. Entities are
+referenced by **IRI or display name**.
 
 ### Explore & search
 
@@ -198,9 +200,17 @@ joins the shared **undo stack**. Entities are referenced by **IRI or display nam
 | `add_annotation` | Add an annotation assertion to an entity. Value is a literal (optional `lang`/`datatype`) or an IRI (`value_iri`); optional `annotations` attach axiom annotations. |
 | `add_axiom` | Add a structured axiom (see axiom types below). |
 | `remove_axiom` | Remove a structured axiom (same arguments as `add_axiom`). |
+| `rename_entity` | Change an entity's IRI throughout the active ontology (rewrites every referencing axiom; renames all puns at the IRI). |
+| `delete_entity` | Remove an entity and every axiom that references it from the active ontology (optionally narrowed by `entity_type`). |
 | `set_ontology_id` | Set the active ontology's IRI and optional version IRI. |
 | `add_import` / `remove_import` | Add or remove an `owl:imports` declaration. |
 | `add_ontology_annotation` / `remove_ontology_annotation` | Add or remove an ontology-level annotation (literal/typed/lang/IRI value, optional nested annotations). |
+
+### Documents
+
+| Tool | Description |
+| --- | --- |
+| `load_ontology` | Load an OWL document from a local path or URL into the workspace as its own ontology and make it active (fetched off the UI thread; not undoable). |
 | `merge_ontology_document` | Load an OWL document from a local path or URL (GitHub blob URLs are converted to raw URLs) and copy its axioms, imports, ontology annotations, and optionally ontology ID into the active ontology in one bulk step. |
 
 ### History & persistence
@@ -215,12 +225,15 @@ joins the shared **undo stack**. Entities are referenced by **IRI or display nam
 
 | Tool | Description |
 | --- | --- |
+| `list_reasoners` / `set_reasoner` | List the installed reasoner plugins (marking the current one) and select which reasoner Protégé uses. |
 | `run_reasoner` | Run the selected reasoner (classify) and wait; reports status and unsatisfiable-class count. |
 | `get_unsatisfiable_classes` | List unsatisfiable classes (equivalent to `owl:Nothing`). |
 | `get_inferred_superclasses` | Read inferred relations: superclasses, subclasses, equivalent, types, instances. |
-| `explain_entailment` | Check whether a structured axiom is entailed by the active reasoner. |
+| `execute_dl_query` | Run a DL Query: given a Manchester class expression, return the reasoner's equivalent classes, subclasses, superclasses, and instances. |
+| `explain_entailment` | Check whether a structured axiom is entailed by the active reasoner (true/false). |
+| `get_explanations` | Explain *why* a structured axiom is entailed — return minimal justifications (sets of asserted axioms). |
 
-`add_axiom`, `remove_axiom`, and `explain_entailment` take a structured `axiom_type`:
+`add_axiom`, `remove_axiom`, `explain_entailment`, and `get_explanations` take a structured `axiom_type`:
 
 | `axiom_type` | Description |
 | --- | --- |

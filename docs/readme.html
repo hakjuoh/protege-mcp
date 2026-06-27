@@ -26,9 +26,9 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>26 tools</b> across explore / search, edit, history, and reasoning - every edit goes
-        through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins the
-        shared <b>undo stack</b>.</li>
+    <li><b>33 tools</b> across explore / search, edit, documents, history, and reasoning - every model
+        edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
+        the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>Loopback-only HTTP with <b>OAuth 2.1</b> (dynamic registration + browser consent, persisted
         across restarts) and a <b>static bearer token</b>, supported in parallel.</li>
 </ul>
@@ -56,9 +56,17 @@ host are Java 17 bytecode, and the OSGi manifest declares
         <code>remove_import</code>, and <code>add_ontology_annotation</code> /
         <code>remove_ontology_annotation</code>. Data ranges accept Manchester syntax (e.g.
         <code>xsd:integer[&gt;= 0]</code>, <code>{1, 2, 3}</code>).</li>
-    <li><code>merge_ontology_document</code> for lossless bulk import, plus robustness fixes
-        (ontology-id collision guard, longer merge timeout, Windows path handling, unresolved-import
-        warning).</li>
+    <li><code>load_ontology</code> opens a local path or URL into the workspace as its own active
+        ontology (fetched off the UI thread, so a slow remote fetch never freezes Prot&#233;g&#233;;
+        not undoable), and <code>merge_ontology_document</code> provides lossless bulk import with
+        robustness fixes (ontology-id collision guard, longer merge timeout, Windows path handling,
+        unresolved-import warning).</li>
+    <li>Higher-level editing and reasoning tools: <code>rename_entity</code> /
+        <code>delete_entity</code> (rewrite or remove an entity across the active ontology, undoable);
+        <code>list_reasoners</code> / <code>set_reasoner</code> to choose the reasoner;
+        <code>execute_dl_query</code> (Manchester class expression &#8594; equivalent / sub / super /
+        instances); and <code>get_explanations</code> for minimal justifications behind an
+        entailment.</li>
 </ul>
 
 <h4>v0.1.0</h4>
