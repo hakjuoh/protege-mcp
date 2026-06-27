@@ -44,6 +44,20 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h3>Version information</h3>
 
+<h4>v0.1.2</h4>
+<ul>
+    <li><code>load_ontology</code> opens a local path or URL into the workspace as its own active
+        ontology and makes it active. The document is fetched off the UI thread (so a slow remote
+        fetch never freezes Prot&#233;g&#233;) and wired in with Prot&#233;g&#233;'s own
+        copy-ontology / activate path &mdash; no modal load dialogs; not undoable.</li>
+    <li>Higher-level editing tools: <code>rename_entity</code> / <code>delete_entity</code> rewrite
+        or remove an entity (and its referencing axioms) across the active ontology, undoable.</li>
+    <li>Reasoning &amp; query tools: <code>list_reasoners</code> / <code>set_reasoner</code> to
+        choose the reasoner; <code>execute_dl_query</code> (Manchester class expression &#8594;
+        equivalent / sub / super / instances, the DL Query workbench); and
+        <code>get_explanations</code> for minimal justifications behind an entailment.</li>
+</ul>
+
 <h4>v0.1.1</h4>
 <ul>
     <li>Complete OWL 2 incremental authoring surface: <code>add_axiom</code> now covers 38 axiom
@@ -56,17 +70,9 @@ host are Java 17 bytecode, and the OSGi manifest declares
         <code>remove_import</code>, and <code>add_ontology_annotation</code> /
         <code>remove_ontology_annotation</code>. Data ranges accept Manchester syntax (e.g.
         <code>xsd:integer[&gt;= 0]</code>, <code>{1, 2, 3}</code>).</li>
-    <li><code>load_ontology</code> opens a local path or URL into the workspace as its own active
-        ontology (fetched off the UI thread, so a slow remote fetch never freezes Prot&#233;g&#233;;
-        not undoable), and <code>merge_ontology_document</code> provides lossless bulk import with
-        robustness fixes (ontology-id collision guard, longer merge timeout, Windows path handling,
-        unresolved-import warning).</li>
-    <li>Higher-level editing and reasoning tools: <code>rename_entity</code> /
-        <code>delete_entity</code> (rewrite or remove an entity across the active ontology, undoable);
-        <code>list_reasoners</code> / <code>set_reasoner</code> to choose the reasoner;
-        <code>execute_dl_query</code> (Manchester class expression &#8594; equivalent / sub / super /
-        instances); and <code>get_explanations</code> for minimal justifications behind an
-        entailment.</li>
+    <li><code>merge_ontology_document</code> for lossless bulk import, plus robustness fixes
+        (ontology-id collision guard, longer merge timeout, Windows path handling, unresolved-import
+        warning).</li>
 </ul>
 
 <h4>v0.1.0</h4>

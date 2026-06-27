@@ -6,7 +6,7 @@
 
     <groupId>io.github.hakjuoh</groupId>
     <artifactId>protege-mcp</artifactId>
-    <version>0.1.1</version>
+    <version>0.1.2</version>
     <packaging>bundle</packaging>
 
     <name>protege-mcp</name>
