@@ -56,7 +56,13 @@ public final class OntologyMetadataTools {
                             return Tools.error(collision);
                         }
                         mm.applyChange(new SetOntologyID(ont, newId));
-                        return Tools.text("Set ontology id to " + label(newId) + ".");
+                        return Tools.json()
+                                .put("ontology_iri", newId.getOntologyIRI().isPresent()
+                                        ? newId.getOntologyIRI().get().toString() : null)
+                                .putIfNotNull("version_iri", newId.getVersionIRI().isPresent()
+                                        ? newId.getVersionIRI().get().toString() : null)
+                                .put("message", "Set ontology id to " + label(newId) + ".")
+                                .result();
                     });
                 })));
 
@@ -71,10 +77,13 @@ public final class OntologyMetadataTools {
                         OWLOntology ont = mm.getActiveOntology();
                         OWLImportsDeclaration decl = mm.getOWLDataFactory()
                                 .getOWLImportsDeclaration(IRI.create(iri));
+                        boolean alreadyPresent = ont.getImportsDeclarations().contains(decl);
                         mm.applyChange(new AddImport(ont, decl));
-                        boolean present = ont.getImportsDeclarations().contains(decl);
-                        return Tools.text((present ? "Added import " : "Add import had no effect (already "
-                                + "present): ") + iri);
+                        return Tools.json()
+                                .put("added", !alreadyPresent)
+                                .put("iri", iri)
+                                .put("already_present", alreadyPresent)
+                                .result();
                     });
                 })));
 
@@ -92,7 +101,7 @@ public final class OntologyMetadataTools {
                             return Tools.error("Import not present in the active ontology: " + iri);
                         }
                         mm.applyChange(new RemoveImport(ont, decl));
-                        return Tools.text("Removed import " + iri);
+                        return Tools.json().put("removed", true).put("iri", iri).result();
                     });
                 })));
 
@@ -118,10 +127,13 @@ public final class OntologyMetadataTools {
                                 Tools.annotationProperty(mm, Tools.optString(a, "property")),
                                 Tools.annotationValue(mm, a),
                                 Tools.annotationSet(mm, a, "annotations"));
+                        boolean alreadyPresent = ont.getAnnotations().contains(annotation);
                         mm.applyChange(new AddOntologyAnnotation(ont, annotation));
-                        boolean present = ont.getAnnotations().contains(annotation);
-                        return Tools.text((present ? "Added ontology annotation: " : "Add had no effect "
-                                + "(already present): ") + render(mm, annotation));
+                        return Tools.json()
+                                .put("added", !alreadyPresent)
+                                .put("annotation", Tools.annotationJson(mm, annotation))
+                                .put("already_present", alreadyPresent)
+                                .result();
                     });
                 })));
 
@@ -149,7 +161,10 @@ public final class OntologyMetadataTools {
                             return Tools.error("Ontology annotation not present: " + render(mm, annotation));
                         }
                         mm.applyChange(new RemoveOntologyAnnotation(ont, annotation));
-                        return Tools.text("Removed ontology annotation: " + render(mm, annotation));
+                        return Tools.json()
+                                .put("removed", true)
+                                .put("annotation", Tools.annotationJson(mm, annotation))
+                                .result();
                     });
                 })));
 

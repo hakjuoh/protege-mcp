@@ -14,11 +14,14 @@ public final class ToolCatalog {
     public static List<SyncToolSpecification> buildAll(ToolContext ctx) {
         List<SyncToolSpecification> all = new ArrayList<>();
         all.addAll(ReadTools.specs(ctx));
+        all.addAll(ContextTools.specs(ctx));
         all.addAll(WriteTools.specs(ctx));
+        all.addAll(PreviewTools.specs(ctx));
         all.addAll(EntityRefactorTools.specs(ctx));
         all.addAll(OntologyMetadataTools.specs(ctx));
         all.addAll(OntologyDocumentTools.specs(ctx));
         all.addAll(ReasonerTools.specs(ctx));
+        all.addAll(ValidationTools.specs(ctx));
         return all;
     }
 }

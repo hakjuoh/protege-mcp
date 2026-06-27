@@ -2,7 +2,9 @@ package io.github.hakjuoh.protege_mcp.tools;
 
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,9 +31,13 @@ import org.semanticweb.owlapi.model.OWLDataProperty;
 import org.semanticweb.owlapi.model.OWLDataRange;
 import org.semanticweb.owlapi.model.OWLDatatype;
 import org.semanticweb.owlapi.model.OWLEntity;
+import org.semanticweb.owlapi.model.OWLLiteral;
 import org.semanticweb.owlapi.model.OWLNamedIndividual;
+import org.semanticweb.owlapi.model.OWLObject;
 import org.semanticweb.owlapi.model.OWLObjectProperty;
 import org.semanticweb.owlapi.util.mansyntax.ManchesterOWLSyntaxParser;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
@@ -45,14 +51,84 @@ public final class Tools {
     private Tools() {
     }
 
-    // ------------------------------------------------------------------ results
+    // ------------------------------------------------------------------ results (structured JSON)
 
-    public static CallToolResult text(String s) {
-        return CallToolResult.builder().addTextContent(s == null ? "" : s).isError(false).build();
+    /**
+     * Every tool returns a JSON object. The object is carried both as MCP {@code structuredContent}
+     * (for clients that consume structured tool output) and, serialized, as the text content (so every
+     * client — and a human reading the transcript — sees the same JSON). {@link #serialize} is the
+     * single place results turn into a string.
+     */
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /** Build a {@link CallToolResult} from a result object (success). */
+    public static CallToolResult ok(Map<String, Object> data) {
+        Map<String, Object> body = data == null ? new LinkedHashMap<>() : data;
+        return CallToolResult.builder()
+                .structuredContent(body)
+                .addTextContent(serialize(body))
+                .isError(false)
+                .build();
     }
 
-    public static CallToolResult error(String s) {
-        return CallToolResult.builder().addTextContent(s == null ? "error" : s).isError(true).build();
+    /**
+     * A plain confirmation/message result: {@code {"message": s}}. Kept so trivial confirmations stay
+     * one-liners and any not-yet-restructured handler still emits valid JSON.
+     */
+    public static CallToolResult text(String s) {
+        return json().put("message", s == null ? "" : s).result();
+    }
+
+    /** An error result: {@code {"error": message}} with {@code isError=true}. */
+    public static CallToolResult error(String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", message == null ? "error" : message);
+        return CallToolResult.builder()
+                .structuredContent(body)
+                .addTextContent(serialize(body))
+                .isError(true)
+                .build();
+    }
+
+    /** Serialize a result object to pretty JSON; never throws (falls back to {@code toString}). */
+    public static String serialize(Object data) {
+        try {
+            return JSON.writerWithDefaultPrettyPrinter().writeValueAsString(data);
+        } catch (RuntimeException | com.fasterxml.jackson.core.JsonProcessingException e) {
+            return String.valueOf(data);
+        }
+    }
+
+    /** A small fluent builder for an ordered JSON object result. */
+    public static Json json() {
+        return new Json();
+    }
+
+    /** Fluent builder over a {@link LinkedHashMap} (stable key order) that yields a result. */
+    public static final class Json {
+        private final Map<String, Object> m = new LinkedHashMap<>();
+
+        /** Put {@code k=v} (a null {@code v} becomes JSON {@code null}). */
+        public Json put(String k, Object v) {
+            m.put(k, v);
+            return this;
+        }
+
+        /** Put {@code k=v} only when {@code v} is non-null. */
+        public Json putIfNotNull(String k, Object v) {
+            if (v != null) {
+                m.put(k, v);
+            }
+            return this;
+        }
+
+        public Map<String, Object> map() {
+            return m;
+        }
+
+        public CallToolResult result() {
+            return ok(m);
+        }
     }
 
     /** Run a handler body, converting expected exceptions into a non-fatal MCP error result. */
@@ -162,6 +238,16 @@ public final class Tools {
         m.put("type", "object");
         m.put("additionalProperties", false);
         return m;
+    }
+
+    /** A bare {@code {type:string, description}} property map (for hand-assembled schemas). */
+    public static Map<String, Object> stringProperty(String desc) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("type", "string");
+        if (desc != null) {
+            p.put("description", desc);
+        }
+        return p;
     }
 
     /** Builds a JSON-schema {@code object} as a plain {@code Map} (no Jackson needed). */
@@ -528,5 +614,106 @@ public final class Tools {
             r = ax.toString();
         }
         return r;
+    }
+
+    /** Render any OWL object (class expression, axiom, ...) via Protégé, falling back to toString. */
+    public static String renderObject(OWLModelManager mm, OWLObject o) {
+        try {
+            String r = mm.getRendering(o);
+            if (r != null && !r.isEmpty()) {
+                return r;
+            }
+        } catch (RuntimeException ignored) {
+            // some renderers only handle entities; fall back to toString
+        }
+        return o.toString();
+    }
+
+    // ------------------------------------------------------------------ JSON serializers
+
+    /** The standard JSON shape for an entity: {@code {iri, display, type}}. */
+    public static Map<String, Object> entityJson(OWLModelManager mm, OWLEntity e) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("iri", e.getIRI().toString());
+        m.put("display", mm.getRendering(e));
+        m.put("type", e.getEntityType().getName());
+        return m;
+    }
+
+    /** The standard JSON shape for an axiom: {@code {axiom_type, rendering}}. */
+    public static Map<String, Object> axiomJson(OWLModelManager mm, OWLAxiom ax) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("axiom_type", ax.getAxiomType().getName());
+        m.put("rendering", renderAxiom(mm, ax));
+        return m;
+    }
+
+    /**
+     * The canonical JSON shape for an annotation, shared by every annotation-producing tool (read and
+     * write) so they never drift: {@code {property, property_iri, value | value_iri, lang?, datatype?}}.
+     */
+    public static Map<String, Object> annotationJson(OWLModelManager mm, OWLAnnotation ann) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("property", mm.getRendering(ann.getProperty()));
+        m.put("property_iri", ann.getProperty().getIRI().toString());
+        if (ann.getValue().asLiteral().isPresent()) {
+            OWLLiteral lit = ann.getValue().asLiteral().get();
+            m.put("value", lit.getLiteral());
+            if (lit.hasLang()) {
+                m.put("lang", lit.getLang());
+            } else if (!lit.isRDFPlainLiteral()) {
+                m.put("datatype", lit.getDatatype().getIRI().toString());
+            }
+        } else {
+            m.put("value_iri", ann.getValue().toString());
+        }
+        return m;
+    }
+
+    /**
+     * A capped, display-sorted list of entities as {@code {count, items:[entityJson...], truncated?}}.
+     * {@code count} is the full size; {@code truncated} (when present) is how many were omitted.
+     */
+    public static Map<String, Object> entityList(OWLModelManager mm,
+            Collection<? extends OWLEntity> entities, int limit) {
+        List<OWLEntity> sorted = new ArrayList<>(entities);
+        sorted.sort(Comparator.comparing((OWLEntity e) -> mm.getRendering(e).toLowerCase())
+                .thenComparing(e -> e.getIRI().toString()));
+        int max = Math.max(0, limit);
+        List<Map<String, Object>> items = new ArrayList<>();
+        int shown = 0;
+        for (OWLEntity e : sorted) {
+            if (shown >= max) {
+                break;
+            }
+            items.add(entityJson(mm, e));
+            shown++;
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("count", entities.size());
+        m.put("items", items);
+        if (entities.size() > shown) {
+            m.put("truncated", entities.size() - shown);
+        }
+        return m;
+    }
+
+    /** A capped, sorted list of axioms as {@code {count, items:[axiomJson...], truncated?}}. */
+    public static Map<String, Object> axiomList(OWLModelManager mm,
+            Collection<? extends OWLAxiom> axioms, int limit) {
+        List<Map<String, Object>> all = new ArrayList<>();
+        for (OWLAxiom ax : axioms) {
+            all.add(axiomJson(mm, ax));
+        }
+        all.sort(Comparator.comparing(a -> String.valueOf(a.get("rendering"))));
+        int max = Math.max(0, limit);
+        List<Map<String, Object>> items = all.size() > max ? all.subList(0, max) : all;
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("count", axioms.size());
+        m.put("items", new ArrayList<>(items));
+        if (axioms.size() > items.size()) {
+            m.put("truncated", axioms.size() - items.size());
+        }
+        return m;
     }
 }

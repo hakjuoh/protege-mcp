@@ -74,9 +74,11 @@ public final class WriteTools {
                         }
                         mm.applyChanges(changes);
                         boolean present = ont.containsEntityInSignature(cls);
-                        return Tools.text("Created class " + Tools.renderEntity(mm, cls)
-                                + (parent != null ? " ⊑ " + parent : "")
-                                + (present ? "" : " (warning: not present after apply)") + ".");
+                        return Tools.json()
+                                .put("created", Tools.entityJson(mm, cls))
+                                .putIfNotNull("parent", parent)
+                                .put("present", present)
+                                .result();
                     });
                 })));
 
@@ -97,8 +99,7 @@ public final class WriteTools {
                         List<OWLOntologyChange> changes = new ArrayList<>();
                         OWLEntity e = createEntity(mm, type, name, Tools.optString(a, "iri"), changes);
                         mm.applyChanges(changes);
-                        return Tools.text("Created " + e.getEntityType().getName() + " "
-                                + Tools.renderEntity(mm, e) + ".");
+                        return Tools.json().put("created", Tools.entityJson(mm, e)).result();
                     });
                 })));
 
@@ -120,7 +121,7 @@ public final class WriteTools {
                                 Tools.resolveClassExpression(mm, child),
                                 Tools.resolveClassExpression(mm, parent));
                         mm.applyChange(new AddAxiom(ont, ax));
-                        return applied(mm, ont, ax, "Added");
+                        return applied(mm, ont, ax);
                     });
                 })));
 
@@ -153,7 +154,7 @@ public final class WriteTools {
                         OWLAxiom ax = df.getOWLAnnotationAssertionAxiom(prop, subject,
                                 Tools.annotationValue(mm, a), Tools.annotationSet(mm, a, "annotations"));
                         mm.applyChange(new AddAxiom(ont, ax));
-                        return applied(mm, ont, ax, "Added annotation");
+                        return applied(mm, ont, ax);
                     });
                 })));
 
@@ -172,7 +173,7 @@ public final class WriteTools {
                         OWLOntology ont = mm.getActiveOntology();
                         OWLAxiom ax = Axioms.build(mm, a);
                         mm.applyChange(new AddAxiom(ont, ax));
-                        return applied(mm, ont, ax, "Added");
+                        return applied(mm, ont, ax);
                     });
                 })));
 
@@ -191,8 +192,10 @@ public final class WriteTools {
                         }
                         mm.applyChange(new RemoveAxiom(ont, ax));
                         boolean gone = !ont.containsAxiom(ax);
-                        return Tools.text((gone ? "Removed: " : "Remove had no effect: ")
-                                + Tools.renderAxiom(mm, ax));
+                        return Tools.json()
+                                .put("removed", gone)
+                                .put("axiom", Tools.axiomJson(mm, ax))
+                                .result();
                     });
                 })));
 
@@ -205,7 +208,9 @@ public final class WriteTools {
                         return Tools.error("Nothing to undo.");
                     }
                     hm.undo();
-                    return Tools.text("Undid the last change.");
+                    return Tools.json().put("undone", true)
+                            .put("message", "Undid the last change.")
+                            .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
                 }))));
 
         tools.add(ToolSpecs.of("redo_change",
@@ -217,7 +222,9 @@ public final class WriteTools {
                         return Tools.error("Nothing to redo.");
                     }
                     hm.redo();
-                    return Tools.text("Redid the last undone change.");
+                    return Tools.json().put("redone", true)
+                            .put("message", "Redid the last undone change.")
+                            .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
                 }))));
 
         tools.add(ToolSpecs.of("save_ontology",
@@ -294,10 +301,13 @@ public final class WriteTools {
         return approved[0];
     }
 
-    private static CallToolResult applied(OWLModelManager mm, OWLOntology ont, OWLAxiom ax, String verb) {
+    private static CallToolResult applied(OWLModelManager mm, OWLOntology ont, OWLAxiom ax) {
         boolean present = ont.containsAxiom(ax);
-        return Tools.text(verb + (present ? ": " : " (no effect — already present or minimized): ")
-                + Tools.renderAxiom(mm, ax));
+        return Tools.json()
+                .put("applied", present)
+                .put("axiom", Tools.axiomJson(mm, ax))
+                .putIfNotNull("note", present ? null : "No effect — already present or minimized away.")
+                .result();
     }
 
     /**
@@ -320,8 +330,11 @@ public final class WriteTools {
             om.setOntologyFormat(ont, format);
             om.setOntologyDocumentIRI(ont, IRI.create(file));
             saveOrThrow(mm, ont);
-            return Tools.text("Saved the active ontology to " + file + " ("
-                    + format.getClass().getSimpleName() + ").");
+            return Tools.json()
+                    .put("saved", true)
+                    .put("path", file.toString())
+                    .put("format", format.getClass().getSimpleName())
+                    .result();
         }
         IRI doc = om.getOntologyDocumentIRI(ont);
         if (!isFileDocument(doc)) {
@@ -329,7 +342,10 @@ public final class WriteTools {
                     + doc + "). Pass 'path' to choose where to write it, e.g. \"/path/to/ontology.ttl\".");
         }
         saveOrThrow(mm, ont);
-        return Tools.text("Saved the active ontology to " + new File(doc.toURI()) + ".");
+        return Tools.json()
+                .put("saved", true)
+                .put("path", new File(doc.toURI()).toString())
+                .result();
     }
 
     private static void saveOrThrow(OWLModelManager mm, OWLOntology ont) {

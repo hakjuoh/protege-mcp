@@ -68,8 +68,12 @@ public final class EntityRefactorTools {
                                     + "in the active ontology.");
                         }
                         mm.applyChanges(changes);
-                        return Tools.text("Renamed <" + oldIri + "> to <" + newIri + "> ("
-                                + changes.size() + " change(s) in the active ontology).");
+                        return Tools.json()
+                                .put("renamed", true)
+                                .put("old_iri", oldIri.toString())
+                                .put("new_iri", newIri.toString())
+                                .put("changes", changes.size())
+                                .result();
                     });
                 })));
 
@@ -104,8 +108,14 @@ public final class EntityRefactorTools {
                                     + " is not referenced in the active ontology.");
                         }
                         mm.applyChanges(new ArrayList<OWLOntologyChange>(changes));
-                        return Tools.text("Deleted " + describe(mm, targets) + " — removed "
-                                + changes.size() + " axiom(s) from the active ontology.");
+                        List<Map<String, Object>> deleted = new ArrayList<>();
+                        for (OWLEntity e : targets) {
+                            deleted.add(Tools.entityJson(mm, e));
+                        }
+                        return Tools.json()
+                                .put("deleted", deleted)
+                                .put("removed_axioms", changes.size())
+                                .result();
                     });
                 })));
 

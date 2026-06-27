@@ -1,6 +1,8 @@
 package io.github.hakjuoh.protege_mcp.server;
 
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -24,7 +26,13 @@ public final class EmbeddedClassificationWaiter {
     private EmbeddedClassificationWaiter() {
     }
 
-    public static String runAndWait(OntologyAccess access, long timeoutMillis) {
+    /**
+     * Classify and wait, returning a structured result object. On success:
+     * {@code {started:true, completed, reasoner, status, inconsistent, unsatisfiable_count?, message}}.
+     * If classification could not be started (no reasoner, or one already running) the result is the
+     * shorter {@code {started:false, message}}.
+     */
+    public static Map<String, Object> runAndWait(OntologyAccess access, long timeoutMillis) {
         CountDownLatch latch = new CountDownLatch(1);
         OWLModelManagerListener listener = event -> {
             if (event.isType(EventType.ONTOLOGY_CLASSIFIED)) {
@@ -43,7 +51,11 @@ public final class EmbeddedClassificationWaiter {
         });
 
         if (started == null || !started) {
-            return "Could not start classification — no reasoner is selected, or one is already running.";
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("started", false);
+            result.put("message", "Could not start classification — no reasoner is selected, "
+                    + "or one is already running.");
+            return result;
         }
 
         boolean completed;
@@ -59,25 +71,33 @@ public final class EmbeddedClassificationWaiter {
             mm.removeListener(listener);
             OWLReasonerManager rm = mm.getOWLReasonerManager();
             ReasonerStatus status = rm.getReasonerStatus();
-            StringBuilder sb = new StringBuilder();
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("started", true);
+            result.put("completed", done);
+            result.put("reasoner", rm.getCurrentReasonerName());
+            result.put("status", String.valueOf(status));
+            result.put("inconsistent", status == ReasonerStatus.INCONSISTENT);
+            StringBuilder message = new StringBuilder();
             if (!done) {
-                sb.append("Classification did not signal completion within ").append(timeoutMillis)
+                message.append("Classification did not signal completion within ").append(timeoutMillis)
                         .append(" ms. ");
             }
-            sb.append("Reasoner: ").append(rm.getCurrentReasonerName())
+            message.append("Reasoner: ").append(rm.getCurrentReasonerName())
                     .append(". Status: ").append(status).append('.');
             if (status == ReasonerStatus.INCONSISTENT) {
-                sb.append(" The ontology is INCONSISTENT.");
+                message.append(" The ontology is INCONSISTENT.");
             } else if (status.isEnableStop()) {
                 try {
                     OWLReasoner reasoner = mm.getReasoner();
                     int unsat = reasoner.getUnsatisfiableClasses().getEntitiesMinusBottom().size();
-                    sb.append(" Unsatisfiable classes: ").append(unsat).append('.');
+                    result.put("unsatisfiable_count", unsat);
+                    message.append(" Unsatisfiable classes: ").append(unsat).append('.');
                 } catch (RuntimeException ignored) {
                     // reasoner may be unable to answer (e.g. mid-state); status line is enough
                 }
             }
-            return sb.toString();
+            result.put("message", message.toString());
+            return result;
         });
     }
 }
