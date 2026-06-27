@@ -11,6 +11,7 @@ import java.util.TreeMap;
 
 import org.protege.editor.owl.model.OWLModelManager;
 import org.semanticweb.owlapi.model.OWLAnnotation;
+import org.semanticweb.owlapi.model.OWLAnnotationProperty;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLClassExpression;
@@ -132,8 +133,10 @@ public final class ValidationTools {
 
     private static Finding missingDefinition(Set<OWLOntology> scope, Signature sig) {
         Finding f = new Finding("missing_definition", "info",
-                "Classes/properties (incl. annotation properties) with no rdfs:comment or skos:definition",
-                "Add an rdfs:comment (or skos:definition) with add_annotation.");
+                "Classes/properties (incl. annotation properties) with no definition annotation "
+                        + "(rdfs:comment, skos:definition, or a *Definition annotation property)",
+                "Add an rdfs:comment, skos:definition, or e.g. iof-av:naturalLanguageDefinition "
+                        + "with add_annotation.");
         for (OWLEntity e : sig.definable) {
             if (!hasDefinition(e, scope)) {
                 f.entities.add(e);
@@ -356,13 +359,31 @@ public final class ValidationTools {
     private static boolean hasDefinition(OWLEntity e, Set<OWLOntology> scope) {
         for (OWLOntology o : scope) {
             for (OWLAnnotation ann : EntitySearcher.getAnnotations(e, o)) {
-                if (ann.getProperty().isComment()
-                        || ann.getProperty().getIRI().toString().equals(SKOS_DEFINITION)) {
+                if (isDefinitionProperty(ann.getProperty())) {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /**
+     * Recognise a definition-bearing annotation property: rdfs:comment, skos:definition, or any
+     * property whose local name ends with "definition" (case-insensitive). The suffix rule covers the
+     * IOF Annotation Vocabulary's naturalLanguageDefinition / semiFormalNaturalLanguageDefinition /
+     * firstOrderLogicDefinition / logicDefinition (and the same convention in other ontologies), which
+     * the old rdfs:comment-or-skos:definition test treated as "missing a definition".
+     */
+    static boolean isDefinitionProperty(OWLAnnotationProperty p) {
+        if (p.isComment()) {
+            return true;
+        }
+        if (p.getIRI().toString().equals(SKOS_DEFINITION)) {
+            return true;
+        }
+        String shortForm = p.getIRI().getShortForm();
+        return shortForm != null
+                && shortForm.toLowerCase(java.util.Locale.ROOT).endsWith("definition");
     }
 
     /** True if some logical (non-declaration, non-annotation) axiom in scope references {@code e}. */

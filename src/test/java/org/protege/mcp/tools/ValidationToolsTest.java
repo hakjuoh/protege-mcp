@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.AddImport;
 import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.OWLAnnotationProperty;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLObjectProperty;
@@ -198,6 +199,35 @@ class ValidationToolsTest {
             assertFalse(((org.semanticweb.owlapi.model.OWLEntity) e).getIRI().equals(upstream.getIRI()),
                     "imported term Continuant must not be flagged undeclared");
         }
+    }
+
+    @Test
+    void definitionAnnotationsBeyondCommentCountAsDefined() throws OWLOntologyCreationException {
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = m.createOntology(IRI.create("http://example.org/defs"));
+
+        OWLClass withNlDef = cls(df, "WithNlDef");   // iof-av:naturalLanguageDefinition only
+        OWLClass withSkos = cls(df, "WithSkos");     // skos:definition only
+        OWLClass undefined = cls(df, "Undefined");   // no definition at all
+        for (OWLClass c : new OWLClass[]{withNlDef, withSkos, undefined}) {
+            m.addAxiom(o, df.getOWLDeclarationAxiom(c));
+        }
+        OWLAnnotationProperty nlDef = df.getOWLAnnotationProperty(IRI.create(
+                "https://spec.industrialontologies.org/ontology/annotation/naturalLanguageDefinition"));
+        OWLAnnotationProperty skosDef = df.getOWLAnnotationProperty(
+                IRI.create(ValidationTools.SKOS_DEFINITION));
+        m.addAxiom(o, df.getOWLAnnotationAssertionAxiom(
+                nlDef, withNlDef.getIRI(), df.getOWLLiteral("a primitive notion", "en")));
+        m.addAxiom(o, df.getOWLAnnotationAssertionAxiom(
+                skosDef, withSkos.getIRI(), df.getOWLLiteral("the genus-differentia", "en")));
+
+        ValidationTools.Finding missingDef =
+                find(ValidationTools.analyze(Collections.singleton(o)), "missing_definition");
+        assertFalse(hasClass(missingDef, "WithNlDef"),
+                "iof-av:naturalLanguageDefinition counts as a definition");
+        assertFalse(hasClass(missingDef, "WithSkos"), "skos:definition counts as a definition");
+        assertTrue(hasClass(missingDef, "Undefined"), "no definition annotation is still flagged");
     }
 
     private static void labelAndComment(OWLOntologyManager m, OWLDataFactory df, OWLOntology o,

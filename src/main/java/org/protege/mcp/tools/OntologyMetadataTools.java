@@ -68,22 +68,37 @@ public final class OntologyMetadataTools {
 
         tools.add(ToolSpecs.of("add_import",
                 "Add an owl:imports declaration to the active ontology (declaration only; Protégé "
-                        + "resolves/loads the imported document as usual).",
+                        + "resolves/loads the imported document if it can). The result's 'resolved' flag "
+                        + "reports whether the document actually loaded into the workspace — an "
+                        + "unresolved import is a dangling declaration whose terms stay invisible to "
+                        + "lookups and reasoning until it is loaded.",
                 Tools.schema().strReq("iri", "Imported ontology IRI.").build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String iri = Tools.reqString(a, "iri");
                     return WriteTools.write(ctx, "add import " + iri, mm -> {
                         OWLOntology ont = mm.getActiveOntology();
+                        OWLOntologyManager om = mm.getOWLOntologyManager();
                         OWLImportsDeclaration decl = mm.getOWLDataFactory()
                                 .getOWLImportsDeclaration(IRI.create(iri));
                         boolean alreadyPresent = ont.getImportsDeclarations().contains(decl);
                         mm.applyChange(new AddImport(ont, decl));
-                        return Tools.json()
+                        // Did Protégé actually resolve the declaration to a loaded ontology? In a
+                        // catalog-less workspace a remote/unmapped IRI stays unresolved.
+                        boolean resolved = om.getImportedOntology(decl) != null;
+                        Tools.Json json = Tools.json()
                                 .put("added", !alreadyPresent)
                                 .put("iri", iri)
                                 .put("already_present", alreadyPresent)
-                                .result();
+                                .put("resolved", resolved);
+                        if (!resolved) {
+                            json.put("note", "Import declaration added, but Protégé did not resolve/load "
+                                    + "the document (it is not in the workspace). Imported terms won't "
+                                    + "appear in lookups or reasoning until it is loaded — load it with "
+                                    + "load_ontology or merge_ontology_document, or add a catalog mapping "
+                                    + "for the IRI.");
+                        }
+                        return json.result();
                     });
                 })));
 
