@@ -152,7 +152,7 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
             .validateToolInputs(false)
             .jsonSchemaValidator(new DefaultJsonSchemaValidator(objectMapper))  // sync server still validates tool SCHEMAS even with validateToolInputs(false)
             .instructions(...)
-            .tools(allSpecs)              // the 19 tool specs (§5)
+            .tools(allSpecs)              // the §5 tool specs
             .build();
    ```
    `close()` calls `closeGracefully()` then `close()`.
@@ -218,15 +218,17 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (19 tools)
+## 5. MCP Tool Catalog (33 tools)
 
-Nineteen tools — 6 read, 9 write, 4 reasoner — each defined by a `name`, a `description`, and a JSON-schema
-`inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
+Thirty-three tools — 7 read, 11 edit/history/persistence, 5 ontology-header, 2 document, and 8 reasoner —
+each defined by a `name`, a `description`, and a JSON-schema `inputSchema` (a `Map<String,Object>`).
+Entities are referenced by IRI or display name.
 
 | Tool | Mapping / notes |
 |---|---|
 | `list_ontologies` | `OWLModelManager.getOntologies()` / `getActiveOntologies()` + `getActiveOntology()`; marks the active one |
 | `get_active_ontology` | `getActiveOntology().getOntologyID()`, axiom/logical-axiom counts, imports. ⚠️ `isActiveOntologyMutable()` is **always true**, so write protection is a plugin-side setting |
+| `summarize_ontology` | signature, annotation/import, and axiom-type counts over the active ontology, optionally including imports |
 | `list_classes` | `getActiveOntology().getClassesInSignature()` + `OWLModelManager.getRendering(obj)` |
 | `search_entities` | `getOWLEntityFinder().getMatchingOWLClasses(...)` and property/individual/datatype variants. A plain fragment is wrapped `*frag*` (the finder otherwise misses substrings); a blank/wildcard-only query falls back to `getActiveOntology().get…InSignature()` (the finder returns nothing for a bare `*`) |
 | `get_entity` | `OWLEntityFinder.getEntities(IRI)` / `getOWLEntity(...)`; returns type(s), IRI, rendering |
@@ -237,22 +239,35 @@ Nineteen tools — 6 read, 9 write, 4 reasoner — each defined by a `name`, a `
 | `add_annotation` | `getOWLAnnotationAssertionAxiom(prop, subject, value)` → `AddAxiom` → `applyChange` |
 | `add_axiom` | structured axiom builder (`Axioms`) → `AddAxiom` → re-query after apply |
 | `remove_axiom` | `new RemoveAxiom(activeOntology, axiom)` → `applyChange` |
+| `rename_entity` | `OWLEntityRenamer.changeIRI(oldIRI, newIRI)` over the active ontology → `applyChanges` (undoable; renames all puns) |
+| `delete_entity` | `OWLEntityRemover` collects `RemoveAxiom`s for the entity (and puns) over the active ontology → `applyChanges` |
+| `set_ontology_id` | `SetOntologyID` with collision guard against already-loaded ontologies |
+| `add_import` / `remove_import` | `AddImport` / `RemoveImport` over the active ontology |
+| `add_ontology_annotation` / `remove_ontology_annotation` | `AddOntologyAnnotation` / `RemoveOntologyAnnotation` over the active ontology |
+| `load_ontology` | parse off-EDT into a throwaway **concurrent** manager (explicit connection timeout, SILENT imports), then on the EDT `copyOntology(MOVE)` the closure into Protégé's manager + `setActiveOntology` + fire `ONTOLOGY_LOADED` (replicates `OntologyLoader` minus its modal UI; not undoable) |
+| `merge_ontology_document` | load with a temporary OWLAPI manager, then copy axioms/imports/ontology annotations into the active ontology |
 | `undo_change` / `redo_change` | `getHistoryManager().undo()/redo()` (shared with the GUI) |
 | `save_ontology` | `OWLModelManager.save()` |
+| `list_reasoners` / `set_reasoner` | `OWLReasonerManager.getInstalledReasonerFactories()` / `setCurrentReasonerFactoryId(id)` |
 | `run_reasoner` | `classifyAsynchronously(...)` then `EmbeddedClassificationWaiter` (listener + latch, §4.1 item 7) |
 | `get_unsatisfiable_classes` | `getUnsatisfiableClasses()` returns a `Node<OWLClass>`; reported via `getEntitiesMinusBottom()` |
 | `get_inferred_superclasses` | superclasses / subclasses / equivalent / types / instances |
+| `execute_dl_query` | resolve a Manchester class expression, then `reasoner.getEquivalentClasses/getSubClasses/getSuperClasses/getInstances` (DL Query workbench) |
 | `explain_entailment` | `reasoner.isEntailed(axiom)` for a structured axiom |
+| `get_explanations` | `com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator.getExplanations(axiom, max)` — minimal justifications, using the selected reasoner's factory |
 
-- **All writes go through `OWLModelManager.applyChange` (singular, the majority) and `applyChanges` (plural,
-  for `create_class` / `create_entity`).** Both delegate to the same path, so the GUI and undo outcome are
-  identical. Writes are gated by the **live read-only switch** and an optional **modal write-confirmation
-  dialog** (the confirm runs on the EDT **outside** the bounded `OntologyAccess.compute`, so a slow human click
-  cannot trip the 30s timeout), and the resulting state is re-queried because `ChangeListMinimizer` may
-  drop/merge changes.
-- **`Axioms`** (used by `add_axiom` / `remove_axiom` / `explain_entailment`) supports: `subclass_of`,
-  `equivalent_classes`, `disjoint_classes`, `class_assertion`, `object_property_assertion`,
-  `data_property_assertion`.
+- **Ontology edits go through `OWLModelManager.applyChange` (singular, the majority) and `applyChanges`
+  (plural, for `create_class` / `create_entity` / `rename_entity` / `delete_entity` / document merge).** Both
+  delegate to the same path, so the GUI and undo outcome are identical. Mutating tools are gated by the **live
+  read-only switch** and an optional **modal write-confirmation dialog** (the confirm runs on the EDT **outside**
+  the bounded `OntologyAccess.compute`, so a slow human click cannot trip the 30s timeout), and edit tools
+  re-query the resulting state because `ChangeListMinimizer` may drop/merge changes. Document load/save use
+  Protégé's own load/save APIs under the same gates: `merge_ontology_document` and `load_ontology` fetch the
+  document **off the EDT** (explicit connection timeout, SILENT missing-import handling) and only do the cheap
+  model wiring on the EDT, so a slow remote fetch never freezes the UI and no Protégé load dialog is raised by a
+  non-interactive MCP call. A `load_ontology` is not an `applyChange`, so it is **not** on the undo stack.
+- **`Axioms`** (used by `add_axiom` / `remove_axiom` / `explain_entailment` / `get_explanations`) supports the
+  full structured `axiom_type` surface (see the README catalog).
 - The server registers **tools only** — no MCP `resources` or `prompts` capability.
 
 > *OWL-API mappings verified against [`.recon/05-modelmanager.md`](.recon/05-modelmanager.md); reasoner
@@ -451,7 +466,7 @@ single user-global preference key, effectively shared by whichever window curren
 
 **Status: designed, not yet built.** Architecture Approach B is a new Swing chat panel inside Protégé where the user
 converses with Claude, and Claude reads/edits the open ontology by calling **Architecture Approach A's existing
-tool layer**. B sits **cleanly atop A**: everything below the tool boundary already exists — the 19 tools in
+tool layer**. B sits **cleanly atop A**: everything below the tool boundary already exists — the §5 tools in
 `org.protege.mcp.tools`, the `OntologyAccess` EDT choke point, the live read-only/confirm-write gates on
 `McpServerController`, the shared GUI undo stack, and `McpConfig` preference storage. The genuinely new code is
 exactly three things: (1) a `ChatView` `ViewComponent`, (2) an `AnthropicAgentLoop` (a client-side, manual
@@ -467,12 +482,12 @@ _not_ use Claude's server-side MCP connector.**
 `McpServerRegistry` for the live gate flags (`isReadOnly()` / `isConfirmWrites()`). If no controller is
 registered for that window (the MCP server was never started there), it falls back to a fresh `McpConfig.load()`
 snapshot — so the chat works even with the MCP server stopped. It builds `ToolContext(access, controller)` and
-calls `ToolCatalog.buildAll(ctx)` to obtain the same 19 `SyncToolSpecification`s the MCP server exposes.
+calls `ToolCatalog.buildAll(ctx)` to obtain the same `SyncToolSpecification`s the MCP server exposes.
 
 Each spec's `McpSchema.Tool` carries `name()`, `description()`, and `inputSchema()` — a `Map<String,Object>`
 that is already valid JSON Schema (built with a `LinkedHashMap`, so key order is stable). A single
 `AnthropicToolBridge` lifts each into an Anthropic tool definition (`name` + `description` + `input_schema`).
-**The 19 MCP schemas are the single source of truth** — they feed both the MCP server and the chat, so the model
+**The MCP schemas are the single source of truth** — they feed both the MCP server and the chat, so the model
 always sees exactly what external clients see, and schemas are never duplicated. Index the specs by
 `tool().name()` for O(1) dispatch.
 
@@ -495,7 +510,7 @@ state is re-queried. Chat edits are indistinguishable from MCP-client edits and 
   (beta `mcp-client-2025-11-20`) has Anthropic's servers dial the MCP server, so it can never reach a loopback
   endpoint. **The tool-use loop must therefore run client-side.**
 - **Guardrail:** "handlers ignore `ex`" is an internal contract of the current handlers, not a guarantee. Add a
-  test asserting all 19 handlers run with a stub exchange (or have `ToolCatalog` expose an exchange-free dispatch
+  test asserting all tool handlers run with a stub exchange (or have `ToolCatalog` expose an exchange-free dispatch
   entry point), so a future tool that reads `ex` fails a test rather than the live panel.
 
 ### 9.2 A thin provider seam (no overbuilding)
@@ -566,7 +581,7 @@ is the official SDK whenever one exists.
 ### 9.4 The agentic loop (client-side, manual)
 
 A hand-written state machine over the SSE stream, run entirely on a daemon worker thread in the panel's JVM. Per
-turn, send `{model, max_tokens, thinking, output_config, system, tools (19 converted), messages, stream:true}`
+turn, send `{model, max_tokens, thinking, output_config, system, tools (all §5, converted), messages, stream:true}`
 in the API-mandated render order **tools → system → messages**. Loop rules:
 
 - **Loop until `stop_reason == end_turn`.**
@@ -637,8 +652,8 @@ response stream. `disposeOWLView()` signals the worker to stop and closes any op
 Architecture Approach B carries the ~1.5–2.5× cost premium that the architecture comparison (§2) flags. Blunt it with
 **prompt caching** in the render order tools → system → messages:
 
-- Put a `CacheControlEphemeral` breakpoint on the **last system block** so the 19 tool definitions + the system
-  prompt cache together as one prefix. The Opus-4.8 minimum cacheable prefix is **4096 tokens** — the 19 schemas
+- Put a `CacheControlEphemeral` breakpoint on the **last system block** so the tool definitions + the system
+  prompt cache together as one prefix. The Opus-4.8 minimum cacheable prefix is **4096 tokens** — the tool schemas
   + a substantial system prompt should clear it; a trimmed subset under 4096 silently won't cache.
 - **Keep the system prompt frozen.** Do **not** interpolate the active-ontology IRI / axiom counts / timestamps
   / session ids into `system` — that invalidates the whole prefix every turn. Inject volatile ontology context
@@ -679,9 +694,9 @@ whole reason raw HTTP is the default for this bundle.
   2.20.1 over the SDK for this bundle (record the tradeoff); define the `ChatProvider` SPI. Spike one streaming
   `POST /v1/messages` with adaptive thinking + effort, parse SSE with the embedded `ObjectMapper`, print deltas;
   decide `max_tokens` (~64000) and the model menu (`claude-opus-4-8` default).
-- **Phase 1 — Tool bridge.** `AnthropicToolBridge` maps the 19 specs → Anthropic tool defs, indexes handlers by
+- **Phase 1 — Tool bridge.** `AnthropicToolBridge` maps the §5 specs → Anthropic tool defs, indexes handlers by
   name, dispatches `tool_use` → stub-exchange `CallToolRequest` → `CallToolResult` → `tool_result`. Add the
-  stub-exchange test over all 19 handlers; unit-test a read tool and a gated write tool through a stub controller.
+  stub-exchange test over all tool handlers; unit-test a read tool and a gated write tool through a stub controller.
 - **Phase 2 — Agent loop.** `AnthropicAgentLoop` on the daemon worker: stream → accumulate text + thinking +
   `tool_use` → execute all tools off-EDT → one `tool_results` user message → repeat to `end_turn`. Handle
   `max_tokens`, errors → `is_error`, Stop/Cancel, and the iteration cap.
@@ -821,7 +836,7 @@ offers an update.
 | `oauth/OAuthStore` | clients/auth-codes/access/refresh tokens; persisted, size-bounded |
 | `oauth/OAuthSupport`, `oauth/PkceUtil` | shared helpers; PKCE S256 + constant-time compare |
 | `tools/ToolCatalog`, `ToolSpecs`, `ToolContext` | tool aggregation, spec factory, handler context |
-| `tools/ReadTools`, `WriteTools`, `ReasonerTools`, `Axioms` | the 19 tools + structured-axiom support |
+| `tools/ReadTools`, `WriteTools`, `EntityRefactorTools`, `ReasonerTools`, `Axioms` | the §5 tools + structured-axiom support |
 | `tools/Tools`, `tools/ToolArgException` | shared OWLAPI/finder/render helpers; an invalid-argument signal turned into a non-fatal MCP error result |
 | `config/McpConfig` | preferences snapshot (`org.protege.mcp` / `server`); token + OAuth state keys |
 | `ui/McpServerView`, `ui/McpPreferencesPanel` | status view (connected-clients table) + settings panel |

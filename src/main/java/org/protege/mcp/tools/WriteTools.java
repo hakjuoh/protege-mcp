@@ -274,7 +274,7 @@ public final class WriteTools {
         final boolean[] approved = {false};
         Runnable prompt = () -> {
             int choice = JOptionPane.showConfirmDialog(null,
-                    "An MCP client requests this edit:\n\n" + summary,
+                    "An MCP client requests this action:\n\n" + summary,
                     "protege-mcp — confirm write", JOptionPane.OK_CANCEL_OPTION,
                     JOptionPane.WARNING_MESSAGE);
             approved[0] = choice == JOptionPane.OK_OPTION;
