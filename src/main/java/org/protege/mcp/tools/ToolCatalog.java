@@ -15,6 +15,8 @@ public final class ToolCatalog {
         List<SyncToolSpecification> all = new ArrayList<>();
         all.addAll(ReadTools.specs(ctx));
         all.addAll(WriteTools.specs(ctx));
+        all.addAll(OntologyMetadataTools.specs(ctx));
+        all.addAll(OntologyDocumentTools.specs(ctx));
         all.addAll(ReasonerTools.specs(ctx));
         return all;
     }

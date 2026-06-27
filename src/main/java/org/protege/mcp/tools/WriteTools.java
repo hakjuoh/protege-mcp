@@ -27,7 +27,6 @@ import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLEntity;
-import org.semanticweb.owlapi.model.OWLLiteral;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyChange;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
@@ -126,26 +125,33 @@ public final class WriteTools {
                 })));
 
         tools.add(ToolSpecs.of("add_annotation",
-                "Add an annotation assertion to an entity (default property rdfs:label).",
+                "Add an annotation assertion to an entity (default property rdfs:label). The value is a "
+                        + "literal (optionally typed with 'datatype' or tagged with 'lang') or, with "
+                        + "'value_iri', an IRI; pass 'annotations' to attach axiom annotations (reified "
+                        + "owl:Axiom). For a non-entity subject or full OWL 2 symmetry use add_axiom "
+                        + "with axiom_type=annotation_assertion.",
                 Tools.schema()
-                        .strReq("entity", "Target entity IRI or name.")
+                        .strReq("entity", "Target subject: entity IRI/name or any absolute IRI.")
                         .str("property", "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name "
                                 + "(default rdfs:label).")
-                        .strReq("value", "Literal text value.")
-                        .str("lang", "Optional language tag, e.g. 'en'.")
+                        .str("value", "Literal text value (omit if value_iri is given).")
+                        .str("value_iri", "IRI-valued annotation: an entity name/IRI or absolute IRI "
+                                + "(alternative to value).")
+                        .str("lang", "Optional language tag for a literal value, e.g. 'en'.")
+                        .str("datatype", "Optional datatype IRI/name for a typed literal value.")
+                        .annotationArray("annotations", "Optional axiom annotations on this assertion "
+                                + "(array of {property, value | value_iri, lang, datatype}).")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
-                    String value = Tools.reqString(a, "value");
                     return write(ctx, "annotate " + entityRef, mm -> {
                         OWLDataFactory df = mm.getOWLDataFactory();
                         OWLOntology ont = mm.getActiveOntology();
-                        IRI subject = annotationSubject(mm, entityRef);
-                        OWLAnnotationProperty prop = annotationProperty(mm, Tools.optString(a, "property"));
-                        String lang = Tools.optString(a, "lang");
-                        OWLLiteral lit = lang != null ? df.getOWLLiteral(value, lang) : df.getOWLLiteral(value);
-                        OWLAxiom ax = df.getOWLAnnotationAssertionAxiom(prop, subject, lit);
+                        IRI subject = Tools.annotationSubject(mm, entityRef);
+                        OWLAnnotationProperty prop = Tools.annotationProperty(mm, Tools.optString(a, "property"));
+                        OWLAxiom ax = df.getOWLAnnotationAssertionAxiom(prop, subject,
+                                Tools.annotationValue(mm, a), Tools.annotationSet(mm, a, "annotations"));
                         mm.applyChange(new AddAxiom(ont, ax));
                         return applied(mm, ont, ax, "Added annotation");
                     });
@@ -159,7 +165,7 @@ public final class WriteTools {
                         + "full IRI, or a Manchester-syntax class expression such as "
                         + "\"Animal and (hasOwner some Person)\" — so defined classes and restrictions "
                         + "are expressible via equivalent_classes / subclass_of.",
-                axiomSchema(),
+                Axioms.schema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     return write(ctx, "add_axiom " + Tools.optString(a, "axiom_type"), mm -> {
@@ -173,7 +179,7 @@ public final class WriteTools {
         tools.add(ToolSpecs.of("remove_axiom",
                 "Remove a structured axiom (same arguments as add_axiom). axiom_type is one of: "
                         + Axioms.SUPPORTED + ".",
-                axiomSchema(),
+                Axioms.schema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     return write(ctx, "remove_axiom " + Tools.optString(a, "axiom_type"), mm -> {
@@ -239,8 +245,16 @@ public final class WriteTools {
     // ------------------------------------------------------------------ shared helpers
 
     /** Apply the read-only + confirmation gates, then run {@code body} on the EDT. */
-    private static CallToolResult write(ToolContext ctx, String summary,
+    static CallToolResult write(ToolContext ctx, String summary,
             Function<OWLModelManager, CallToolResult> body) {
+        CallToolResult denied = checkWriteAllowed(ctx, summary);
+        if (denied != null) {
+            return denied;
+        }
+        return ctx.access().compute(body);
+    }
+
+    static CallToolResult checkWriteAllowed(ToolContext ctx, String summary) {
         if (ctx.controller().isReadOnly()) {
             return Tools.error("Server is in read-only mode; writes are disabled "
                     + "(toggle in Protégé ▸ Preferences ▸ MCP).");
@@ -252,7 +266,7 @@ public final class WriteTools {
         if (ctx.controller().isConfirmWrites() && !confirmOnEdt(summary)) {
             return Tools.error("Write declined by the user.");
         }
-        return ctx.access().compute(body);
+        return null;
     }
 
     /** Show the modal confirmation on the EDT with no timeout; returns true if the user approves. */
@@ -428,47 +442,4 @@ public final class WriteTools {
         }
     }
 
-    private static IRI annotationSubject(OWLModelManager mm, String ref) {
-        OWLEntity e = Tools.findEntity(mm, ref);
-        if (e != null) {
-            return e.getIRI();
-        }
-        IRI iri = Tools.asIri(ref);
-        if (iri != null) {
-            return iri;
-        }
-        throw new ToolArgException("Entity not found: '" + ref + "'. Pass a full IRI to annotate it.");
-    }
-
-    private static OWLAnnotationProperty annotationProperty(OWLModelManager mm, String ref) {
-        OWLDataFactory df = mm.getOWLDataFactory();
-        if (ref == null || "rdfs:label".equalsIgnoreCase(ref) || "label".equalsIgnoreCase(ref)) {
-            return df.getRDFSLabel();
-        }
-        if ("rdfs:comment".equalsIgnoreCase(ref) || "comment".equalsIgnoreCase(ref)) {
-            return df.getRDFSComment();
-        }
-        return Tools.resolveAnnotationProperty(mm, ref);
-    }
-
-    private static Map<String, Object> axiomSchema() {
-        return Tools.schema()
-                .strReq("axiom_type", Axioms.SUPPORTED)
-                .str("sub", "subclass_of: subclass — name, IRI or Manchester class expression")
-                .str("super", "subclass_of: superclass — name, IRI or Manchester class expression")
-                .strArray("classes", "equivalent_classes / disjoint_classes: classes — names, IRIs or "
-                        + "Manchester class expressions")
-                .str("class", "class_assertion: class — name, IRI or Manchester class expression")
-                .str("individual", "class_assertion: individual IRI/name")
-                .str("property", "*_property_assertion / *_property_domain|range: property IRI/name")
-                .str("subject", "*_property_assertion: subject individual IRI/name")
-                .str("object", "object_property_assertion: object individual IRI/name")
-                .str("value", "data_property_assertion: literal value")
-                .str("lang", "data_property_assertion: optional language tag")
-                .str("datatype", "data_property_assertion: optional datatype IRI/name")
-                .str("domain", "object_property_domain / data_property_domain: domain class expression")
-                .str("range", "object_property_range: range class expression; "
-                        + "data_property_range: datatype IRI/name")
-                .build();
-    }
 }

@@ -4,6 +4,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -13,18 +14,24 @@ import java.util.function.Supplier;
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.classexpression.OWLExpressionParserException;
 import org.protege.editor.owl.model.find.OWLEntityFinder;
+import org.protege.editor.owl.model.parser.ProtegeOWLEntityChecker;
 import org.protege.mcp.server.McpAccessException;
+import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
+import org.semanticweb.owlapi.model.OWLAnnotationValue;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLDataProperty;
+import org.semanticweb.owlapi.model.OWLDataRange;
 import org.semanticweb.owlapi.model.OWLDatatype;
 import org.semanticweb.owlapi.model.OWLEntity;
 import org.semanticweb.owlapi.model.OWLNamedIndividual;
 import org.semanticweb.owlapi.model.OWLObjectProperty;
+import org.semanticweb.owlapi.util.mansyntax.ManchesterOWLSyntaxParser;
 
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
@@ -127,6 +134,23 @@ public final class Tools {
         return out;
     }
 
+    /** Read {@code key} as a list of object maps (e.g. the {@code annotations} operand). */
+    @SuppressWarnings("unchecked")
+    public static List<Map<String, Object>> objList(Map<String, Object> a, String key) {
+        Object v = a.get(key);
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (v instanceof List) {
+            for (Object o : (List<?>) v) {
+                if (o instanceof Map) {
+                    out.add((Map<String, Object>) o);
+                }
+            }
+        } else if (v instanceof Map) {
+            out.add((Map<String, Object>) v);
+        }
+        return out;
+    }
+
     // ------------------------------------------------------------------ schema builder
 
     public static SchemaBuilder schema() {
@@ -167,6 +191,43 @@ public final class Tools {
 
         public SchemaBuilder strArrayReq(String name, String desc) {
             return arrayProp(name, desc, true);
+        }
+
+        /**
+         * An array of annotation objects, each {@code {property, value | value_iri, lang, datatype}},
+         * used as the optional axiom-annotation operand. Mirrors how a single annotation value is
+         * resolved by {@link Tools#buildAnnotation}.
+         */
+        public SchemaBuilder annotationArray(String name, String desc) {
+            Map<String, Object> itemProps = new LinkedHashMap<>();
+            itemProps.put("property", strProp("Annotation property: 'rdfs:label', 'rdfs:comment', "
+                    + "or an IRI/name (default rdfs:label)."));
+            itemProps.put("value", strProp("Literal text value (omit if value_iri is given)."));
+            itemProps.put("value_iri", strProp("IRI-valued annotation: an entity name/IRI or absolute "
+                    + "IRI (alternative to value)."));
+            itemProps.put("lang", strProp("Optional language tag for a literal value, e.g. 'en'."));
+            itemProps.put("datatype", strProp("Optional datatype IRI/name for a typed literal value."));
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("type", "object");
+            item.put("properties", itemProps);
+            item.put("additionalProperties", false);
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("type", "array");
+            p.put("items", item);
+            if (desc != null) {
+                p.put("description", desc);
+            }
+            properties.put(name, p);
+            return this;
+        }
+
+        private static Map<String, Object> strProp(String desc) {
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("type", "string");
+            if (desc != null) {
+                p.put("description", desc);
+            }
+            return p;
         }
 
         private SchemaBuilder arrayProp(String name, String desc, boolean req) {
@@ -336,6 +397,118 @@ public final class Tools {
     public static OWLDatatype resolveDatatype(OWLModelManager mm, String ref) {
         OWLDataFactory df = mm.getOWLDataFactory();
         return resolve(mm, ref, OWLDatatype.class, df::getOWLDatatype, "datatype");
+    }
+
+    /**
+     * Resolve {@code ref} to a data range. A named datatype (existing or a full IRI) resolves
+     * directly (fast path); anything else is parsed as a Manchester OWL syntax data range, e.g.
+     * {@code "xsd:integer[>= 0 , <= 130]"}, {@code "{1, 2, 3}"}, or {@code "xsd:string and not {\"\"}"}.
+     * Parsing uses the OWL API Manchester parser with a Protégé entity checker, so datatype names
+     * resolve exactly as they render in the GUI. Must run on the EDT (the checker touches Protégé
+     * renderers/entity finders).
+     */
+    public static OWLDataRange resolveDataRange(OWLModelManager mm, String ref) {
+        OWLEntity e = findEntity(mm, ref);
+        if (e instanceof OWLDatatype) {
+            return (OWLDatatype) e;
+        }
+        try {
+            ManchesterOWLSyntaxParser parser = OWLManager.createManchesterParser();
+            parser.setOWLEntityChecker(new ProtegeOWLEntityChecker(mm.getOWLEntityFinder()));
+            parser.setDefaultOntology(mm.getActiveOntology());
+            parser.setStringToParse(ref);
+            return parser.parseDataRange();
+        } catch (RuntimeException parseError) {
+            if (e != null) {
+                throw new ToolArgException("'" + ref + "' is a " + e.getEntityType().getName()
+                        + ", not a data range.");
+            }
+            IRI iri = asIri(ref);
+            if (iri != null) {
+                return mm.getOWLDataFactory().getOWLDatatype(iri);
+            }
+            throw new ToolArgException("Could not resolve data range '" + ref + "': "
+                    + parseError.getMessage() + " — pass a datatype name, a full IRI, or a "
+                    + "Manchester-syntax data range such as \"xsd:integer[>= 0]\" or \"{1, 2, 3}\".");
+        }
+    }
+
+    /** Resolve {@code ref} to a bare IRI: an existing entity's IRI, or an absolute IRI string. */
+    public static IRI iriRef(OWLModelManager mm, String ref) {
+        OWLEntity e = findEntity(mm, ref);
+        if (e != null) {
+            return e.getIRI();
+        }
+        IRI iri = asIri(ref);
+        if (iri != null) {
+            return iri;
+        }
+        throw new ToolArgException("Expected an entity name/IRI or an absolute IRI: '" + ref + "'.");
+    }
+
+    // ------------------------------------------------------------------ annotations
+
+    /** Resolve the subject of an annotation assertion: an existing entity's IRI, or an absolute IRI. */
+    public static IRI annotationSubject(OWLModelManager mm, String ref) {
+        OWLEntity e = findEntity(mm, ref);
+        if (e != null) {
+            return e.getIRI();
+        }
+        IRI iri = asIri(ref);
+        if (iri != null) {
+            return iri;
+        }
+        throw new ToolArgException("Entity not found: '" + ref + "'. Pass a full IRI to annotate it.");
+    }
+
+    /** Resolve an annotation property; {@code null}/'rdfs:label' → label, 'rdfs:comment' → comment. */
+    public static OWLAnnotationProperty annotationProperty(OWLModelManager mm, String ref) {
+        OWLDataFactory df = mm.getOWLDataFactory();
+        if (ref == null || "rdfs:label".equalsIgnoreCase(ref) || "label".equalsIgnoreCase(ref)) {
+            return df.getRDFSLabel();
+        }
+        if ("rdfs:comment".equalsIgnoreCase(ref) || "comment".equalsIgnoreCase(ref)) {
+            return df.getRDFSComment();
+        }
+        return resolveAnnotationProperty(mm, ref);
+    }
+
+    /**
+     * Build an annotation value from {@code a}: {@code value_iri} → an IRI value; otherwise
+     * {@code value} as a literal, typed by {@code datatype} or tagged by {@code lang} if present.
+     */
+    public static OWLAnnotationValue annotationValue(OWLModelManager mm, Map<String, Object> a) {
+        OWLDataFactory df = mm.getOWLDataFactory();
+        String iriValue = optString(a, "value_iri");
+        if (iriValue != null) {
+            return iriRef(mm, iriValue);
+        }
+        String value = reqString(a, "value");
+        String datatype = optString(a, "datatype");
+        String lang = optString(a, "lang");
+        if (datatype != null) {
+            return df.getOWLLiteral(value, resolveDatatype(mm, datatype));
+        }
+        if (lang != null) {
+            return df.getOWLLiteral(value, lang);
+        }
+        return df.getOWLLiteral(value);
+    }
+
+    /** Build a single annotation from a map {@code {property, value | value_iri, lang, datatype}}. */
+    public static OWLAnnotation buildAnnotation(OWLModelManager mm, Map<String, Object> a) {
+        OWLDataFactory df = mm.getOWLDataFactory();
+        return df.getOWLAnnotation(annotationProperty(mm, optString(a, "property")),
+                annotationValue(mm, a));
+    }
+
+    /** Build the (possibly empty) set of axiom/ontology annotations from the {@code key} array operand. */
+    public static Set<OWLAnnotation> annotationSet(OWLModelManager mm, Map<String, Object> a, String key) {
+        Set<OWLAnnotation> set = new LinkedHashSet<>();
+        for (Map<String, Object> item : objList(a, key)) {
+            set.add(buildAnnotation(mm, item));
+        }
+        return set;
     }
 
     // ------------------------------------------------------------------ rendering
