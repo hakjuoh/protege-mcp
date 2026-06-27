@@ -44,6 +44,24 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h3>Version information</h3>
 
+<h4>v0.2.0</h4>
+<ul>
+    <li>Natural-language layer: every tool now returns a structured JSON object (mirrored as text),
+        so an LLM client gets machine-readable results instead of prose.</li>
+    <li>Orientation &amp; safety tools: <code>get_ontology_context</code> /
+        <code>get_entity_context</code> summarise the ontology or a single term's neighbourhood;
+        <code>preview_changes</code> shows an edit's diff (and any new entities) before it is applied;
+        <code>validate_ontology</code> audits modelling quality (missing labels/definitions, duplicate
+        labels, undeclared entities, properties with no domain/range, subclass cycles, &#8230;).</li>
+    <li>Guided workflows as MCP prompts: <code>audit_ontology</code>, <code>explain_class</code>,
+        <code>add_subclass_safely</code>, <code>find_and_fix_unsatisfiable</code>,
+        <code>model_domain</code>.</li>
+    <li><code>validate_ontology</code> is import-aware: the per-entity quality checks audit only the
+        terms the active ontology is responsible for, so imported BFO/IOF terms are not false-flagged
+        for label/definition/domain/range that lives upstream (set <code>include_imports=true</code>
+        to audit the whole imports closure).</li>
+</ul>
+
 <h4>v0.1.2</h4>
 <ul>
     <li><code>load_ontology</code> opens a local path or URL into the workspace as its own active
