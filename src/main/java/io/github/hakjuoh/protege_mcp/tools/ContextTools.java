@@ -12,6 +12,7 @@ import java.util.function.Predicate;
 
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.inference.OWLReasonerManager;
+import org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo;
 import org.protege.editor.owl.model.inference.ReasonerStatus;
 import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
@@ -182,11 +183,7 @@ public final class ContextTools {
         Map<String, Object> r = new LinkedHashMap<>();
         String currentId = rm.getCurrentReasonerFactoryId();
         r.put("selected_id", currentId);
-        try {
-            r.put("selected_name", rm.getCurrentReasonerName());
-        } catch (RuntimeException ignored) {
-            r.put("selected_name", null);
-        }
+        r.put("selected_name", selectedReasonerName(rm, currentId));
         r.put("status", String.valueOf(status));
         // Results are trustworthy only when up to date with the asserted axioms. OUT_OF_SYNC also
         // satisfies isEnableStop() but holds STALE results — report it as not-current so the model
@@ -197,6 +194,27 @@ public final class ContextTools {
             r.put("stale", true);
         }
         return r;
+    }
+
+    /**
+     * Display name of the <em>selected</em> reasoner factory (matched by id, as list_reasoners does),
+     * NOT {@link OWLReasonerManager#getCurrentReasonerName()} — that returns the live reasoner instance,
+     * which is a NoOpReasoner ("Protégé Null Reasoner") until run_reasoner has classified. So before a
+     * classification this now reports e.g. "HermiT" (the selected factory) instead of the placeholder.
+     */
+    private static String selectedReasonerName(OWLReasonerManager rm, String currentId) {
+        if (currentId != null) {
+            for (ProtegeOWLReasonerInfo info : rm.getInstalledReasonerFactories()) {
+                if (currentId.equals(info.getReasonerId())) {
+                    return info.getReasonerName();
+                }
+            }
+        }
+        try {
+            return rm.getCurrentReasonerName();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
     }
 
     private static Map<String, String> prefixes(OWLModelManager mm, OWLOntology o) {
