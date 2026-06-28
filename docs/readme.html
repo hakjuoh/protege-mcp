@@ -44,6 +44,26 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h3>Version information</h3>
 
+<h4>v0.2.1</h4>
+<ul>
+    <li>Tool-driven construction ergonomics (37 &#8594; 41 tools). <code>set_active_ontology</code>
+        switches which loaded ontology your edits target; <code>load_ontology</code>
+        (<code>keep_active</code>) and <code>add_import</code> (<code>document=&#8230;</code>) resolve
+        imports without stealing the active ontology.</li>
+    <li><code>apply_changes</code> applies a previewed batch of axiom add/remove operations in one call
+        and one undo entry, reporting per-operation results and any new entities introduced;
+        <code>strict=true</code> refuses to mint a brand-new entity from an unrecognized IRI/name (a
+        signal now surfaced by every write tool).</li>
+    <li><code>set_label</code> upserts an <code>rdfs:label</code>; <code>set_prefix</code> registers a
+        prefix; <code>create_class</code> / <code>create_entity</code> gain <code>namespace</code> /
+        <code>label</code> / <code>label_lang</code> / <code>no_label</code> for term-namespace and
+        language-tagged labels.</li>
+    <li>Manchester <code>&lt;IRI&gt;</code> operands resolve inside compound class expressions;
+        <code>validate_ontology</code> (<code>with_reasoner=true</code>) adds a consistency /
+        unsatisfiable-class verdict; <code>get_entity_context</code> neighbours are structured
+        <code>{iri, display, type}</code>.</li>
+</ul>
+
 <h4>v0.2.0</h4>
 <ul>
     <li>Natural-language layer: every tool now returns a structured JSON object (mirrored as text),
