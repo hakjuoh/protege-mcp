@@ -250,6 +250,16 @@ public final class Tools {
         return p;
     }
 
+    /** A bare {@code {type:boolean, description}} property map (for hand-assembled schemas). */
+    public static Map<String, Object> boolProperty(String desc) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("type", "boolean");
+        if (desc != null) {
+            p.put("description", desc);
+        }
+        return p;
+    }
+
     /** Builds a JSON-schema {@code object} as a plain {@code Map} (no Jackson needed). */
     public static final class SchemaBuilder {
         private final Map<String, Object> properties = new LinkedHashMap<>();
@@ -445,6 +455,14 @@ public final class Tools {
         try {
             return mm.getOWLExpressionCheckerFactory().getOWLClassExpressionChecker().createObject(ref);
         } catch (OWLExpressionParserException parseError) {
+            // Fallback: the OWL API Manchester parser natively accepts full <IRI> tokens that Protégé's
+            // class-expression checker rejects, while still resolving short names via a Protégé entity
+            // checker — so a compound expression can reference terms by full IRI, e.g.
+            // "<http://…/Identifier> and (<http://…/designates> some <http://…/Agent>)".
+            OWLClassExpression viaApi = tryManchesterClassExpression(mm, ref);
+            if (viaApi != null) {
+                return viaApi;
+            }
             if (e != null) {
                 throw new ToolArgException("'" + ref + "' is a " + e.getEntityType().getName()
                         + ", not a class expression.");
@@ -456,6 +474,19 @@ public final class Tools {
             throw new ToolArgException("Could not resolve class expression '" + ref + "': "
                     + parseError.getMessage() + " — pass a class name, a full IRI, or a "
                     + "Manchester-syntax class expression such as \"Animal and (hasOwner some Person)\".");
+        }
+    }
+
+    /** Parse {@code ref} with the OWL API Manchester parser (full-IRI aware); null if it cannot. */
+    private static OWLClassExpression tryManchesterClassExpression(OWLModelManager mm, String ref) {
+        try {
+            ManchesterOWLSyntaxParser parser = OWLManager.createManchesterParser();
+            parser.setOWLEntityChecker(new ProtegeOWLEntityChecker(mm.getOWLEntityFinder()));
+            parser.setDefaultOntology(mm.getActiveOntology());
+            parser.setStringToParse(ref);
+            return parser.parseClassExpression();
+        } catch (RuntimeException ignored) {
+            return null;
         }
     }
 

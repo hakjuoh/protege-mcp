@@ -69,6 +69,12 @@ public final class PreviewTools {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("index", i);
             row.put("op", op);
+            if (!"add".equals(op) && !"remove".equals(op)) {
+                row.put("error", "Unsupported op '" + op + "'. Use add or remove.");
+                errors++;
+                rows.add(row);
+                continue;
+            }
             try {
                 OWLAxiom ax = Axioms.build(mm, item);
                 row.put("axiom", Tools.axiomJson(mm, ax));
@@ -145,7 +151,7 @@ public final class PreviewTools {
     }
 
     /** Schema: {@code {operations: [ {op, ...add_axiom operands} ]}}. */
-    private static Map<String, Object> operationsSchema() {
+    static Map<String, Object> operationsSchema() {
         Map<String, Object> itemSchema = Axioms.schema();
         @SuppressWarnings("unchecked")
         Map<String, Object> itemProps = (Map<String, Object>) itemSchema.get("properties");
