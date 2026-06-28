@@ -202,39 +202,43 @@ package these flows.
 | Tool | Description |
 | --- | --- |
 | `get_ontology_context` | One-call orientation: id, signature counts, imports, ontology annotations, asserted root classes, sampled properties, reasoner state, and the prefix map. |
-| `get_entity_context` | An "entity card" for one term: type(s), labels/annotations, deprecation, and the asserted neighbourhood (super/sub/equivalent/disjoint classes, domains/ranges, super/sub properties, inverses, characteristics, instances, property assertions). Resolves puns. |
-| `validate_ontology` | Modelling-quality audit (not logical consistency): missing/duplicate labels, missing definitions, deprecated-but-used terms, undeclared entities, properties with no domain/range, self-subclassing, subclass cycles, and isolated classes — each with a count, sample offenders, and a fix suggestion. |
+| `get_entity_context` | An "entity card" for one term: type(s), labels/annotations, deprecation, and the asserted neighbourhood (super/sub/equivalent/disjoint classes, domains/ranges, super/sub properties, inverses, characteristics, instances, property assertions). Named neighbours are returned as `{iri, display, type}` (anonymous restriction/intersection supers as `{expression, anonymous:true}`) so they resolve to IRIs without a second lookup. Resolves puns. |
+| `validate_ontology` | Modelling-quality audit (not logical consistency): missing/duplicate labels, missing definitions, deprecated-but-used terms, undeclared entities, properties with no domain/range, self-subclassing, subclass cycles, and isolated classes — each with a count, sample offenders, and a fix suggestion. Pass `with_reasoner=true` to also include the reasoner's consistency / unsatisfiable-class verdict (a clean audit is **not** proof of logical consistency). |
 
 ### Edit
 
 | Tool | Description |
 | --- | --- |
-| `preview_changes` | Dry-run a batch of axiom add/remove operations **without applying them**: reports, per operation, the rendered axiom, whether it is already present, and the new entities an add would introduce. Apply with the edit tools once the diff looks right. |
-| `create_class` | Create a named class (optional explicit `iri` and `parent` superclass). |
-| `create_entity` | Create a named entity: class, object/data/annotation property, individual, or datatype. |
-| `add_subclass_of` | Assert that one class is a subclass of another. |
-| `add_annotation` | Add an annotation assertion to an entity. Value is a literal (optional `lang`/`datatype`) or an IRI (`value_iri`); optional `annotations` attach axiom annotations. |
-| `add_axiom` | Add a structured axiom (see axiom types below). |
+| `preview_changes` | Dry-run a batch of axiom add/remove operations **without applying them**: reports, per operation, the rendered axiom, whether it is already present, and the new entities an add would introduce. Apply with `apply_changes` or the single-axiom edit tools once the diff looks right. |
+| `apply_changes` | Apply a whole batch of axiom add/remove operations (the same `operations` array as `preview_changes`) in **one call** and one undo entry, with a per-operation result and an aggregated `new_entities`. `strict=true` skips any add that would mint a brand-new entity. |
+| `create_class` | Create a named class. Mint the IRI from an explicit `iri`, a `namespace` (IRI = namespace + name, for terms in a shared namespace distinct from the ontology IRI), or `name`. Adds an `rdfs:label` (`label`/`name`, tagged with `label_lang`) unless `no_label`. Optional `parent`. |
+| `create_entity` | Create a named entity (class, object/data/annotation property, individual, datatype) with the same `iri`/`namespace`/`label`/`label_lang`/`no_label` options. |
+| `add_subclass_of` | Assert that one class is a subclass of another. Reports `new_entities`; `strict=true` fails instead of minting from an unrecognized IRI/name. |
+| `add_annotation` | Add an annotation assertion to an entity. Value is a literal (optional `lang`/`datatype`) or an IRI (`value_iri`); optional `annotations` attach axiom annotations. Reports `new_entities`; honours `strict`. |
+| `set_label` | Set (upsert) an entity's `rdfs:label`: removes the existing label(s) in the same language and adds the new one — relabel without hand-removing the old axiom (`rename_entity` changes the IRI, not the label). |
+| `add_axiom` | Add a structured axiom (see axiom types below). Reports `new_entities`; `strict=true` fails instead of minting from an unrecognized IRI/name. |
 | `remove_axiom` | Remove a structured axiom (same arguments as `add_axiom`). |
 | `rename_entity` | Change an entity's IRI throughout the active ontology (rewrites every referencing axiom; renames all puns at the IRI). |
 | `delete_entity` | Remove an entity and every axiom that references it from the active ontology (optionally narrowed by `entity_type`). |
 | `set_ontology_id` | Set the active ontology's IRI and optional version IRI. |
-| `add_import` / `remove_import` | Add or remove an `owl:imports` declaration. |
+| `set_prefix` | Register/update a prefix in the active ontology's prefix map (e.g. `iof-av` → its namespace) so CURIEs render, parse, and serialize. |
+| `add_import` / `remove_import` | Add or remove an `owl:imports` declaration. `add_import` reports `resolved`; pass `document` (path/URL/IRI) to resolve the import by loading that document **without changing the active ontology**. |
 | `add_ontology_annotation` / `remove_ontology_annotation` | Add or remove an ontology-level annotation (literal/typed/lang/IRI value, optional nested annotations). |
 
 ### Documents
 
 | Tool | Description |
 | --- | --- |
-| `load_ontology` | Load an OWL document from a local path or URL into the workspace as its own ontology and make it active (fetched off the UI thread; not undoable). |
+| `load_ontology` | Load an OWL document from a local path or URL into the workspace as its own ontology and make it active (fetched off the UI thread; not undoable). Pass `keep_active=true` to load it (e.g. to resolve an import) **without** changing the active edit target. |
+| `set_active_ontology` | Select which already-loaded ontology is the **active edit target**, by ontology IRI or version IRI (see `list_ontologies`). Loads/fetches nothing — switches focus, e.g. back to your module after `load_ontology` brought in an imported ontology. |
 | `merge_ontology_document` | Load an OWL document from a local path or URL (GitHub blob URLs are converted to raw URLs) and copy its axioms, imports, ontology annotations, and optionally ontology ID into the active ontology in one bulk step. |
 
 ### History & persistence
 
 | Tool | Description |
 | --- | --- |
-| `undo_change` | Undo the last change on Protégé's shared undo stack. |
-| `redo_change` | Redo the last undone change. |
+| `undo_change` | Undo the last change on Protégé's shared undo stack; reports the net axiom-count change so the caller can see what the undo did. |
+| `redo_change` | Redo the last undone change (also reports the net axiom-count change). |
 | `save_ontology` | Save the active ontology to its document on disk. |
 
 ### Reasoning

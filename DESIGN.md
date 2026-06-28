@@ -220,20 +220,31 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (37 tools + 5 prompts)
+## 5. MCP Tool Catalog (41 tools + 5 prompts)
 
-Thirty-seven tools — 7 read, 2 context, 12 edit/history/persistence (incl. `preview_changes`),
-5 ontology-header, 2 document, 8 reasoner, and 1 validation — each defined by a `name`, a
-`description`, and a JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by
-IRI or display name. **Every tool returns a structured JSON object** (set as MCP `structuredContent`
-and mirrored as a serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients
-can compose results programmatically and a human still sees readable JSON. The server also registers
-**5 MCP prompts** (guided workflows) — see the end of this section.
+Forty-one tools — 7 read, 2 context, 14 edit/history/persistence (incl. `preview_changes`,
+`apply_changes`, `set_label`), 6 ontology-header (incl. `set_prefix`), 3 document (incl.
+`set_active_ontology`), 8 reasoner, and 1 validation — each defined by a `name`, a `description`, and a
+JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
+**Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
+serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results
+programmatically and a human still sees readable JSON. The server also registers **5 MCP prompts**
+(guided workflows) — see the end of this section.
 
 New in `0.2.0` (the natural-language layer): `get_ontology_context` / `get_entity_context`
 (model-friendly orientation + entity cards), `preview_changes` (a non-mutating dry-run / diff),
 `validate_ontology` (a modelling-quality audit complementing the reasoner), the full JSON-output
 migration, and the MCP prompts.
+
+New in `0.2.1` (tool-driven-construction ergonomics, found by reconstructing IOF Biopharma through the
+tools — see [`docs/biopharma-recon-0.2.1.md`](docs/biopharma-recon-0.2.1.md)): `set_active_ontology`
+(switch the active edit target) and `load_ontology`/`add_import` options that resolve imports without
+stealing it; `apply_changes` (apply a previewed batch in one call); write tools now report minted
+`new_entities` and take `strict` (refuse to mint from a typo'd IRI); `create_*` gain `namespace` +
+language-tagged labels; `set_label` (relabel upsert); `set_prefix` (prefix-map management); the
+Manchester parser accepts full `<IRI>` operands inside compound expressions; `get_entity_context`
+returns structured `{iri, …}` neighbours; `validate_ontology` takes `with_reasoner`; and `undo`/`redo`
+report the axiom-count delta.
 
 | Tool | Mapping / notes |
 |---|---|

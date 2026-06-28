@@ -10,6 +10,7 @@ import org.semanticweb.owlapi.model.AddOntologyAnnotation;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLDataFactory;
+import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLImportsDeclaration;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyID;
@@ -19,6 +20,7 @@ import org.semanticweb.owlapi.model.RemoveOntologyAnnotation;
 import org.semanticweb.owlapi.model.SetOntologyID;
 
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
+import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
  * Ontology-level metadata writes — the ontology IRI/version, import declarations, and ontology
@@ -67,38 +69,98 @@ public final class OntologyMetadataTools {
                 })));
 
         tools.add(ToolSpecs.of("add_import",
-                "Add an owl:imports declaration to the active ontology (declaration only; Protégé "
-                        + "resolves/loads the imported document if it can). The result's 'resolved' flag "
+                "Add an owl:imports declaration to the active ontology. The result's 'resolved' flag "
                         + "reports whether the document actually loaded into the workspace — an "
                         + "unresolved import is a dangling declaration whose terms stay invisible to "
-                        + "lookups and reasoning until it is loaded.",
-                Tools.schema().strReq("iri", "Imported ontology IRI.").build(),
+                        + "lookups and reasoning until it is loaded. Pass 'document' (a path/URL/IRI) to "
+                        + "resolve the import NOW by loading that document WITHOUT changing your active "
+                        + "edit target.",
+                Tools.schema()
+                        .strReq("iri", "Imported ontology IRI.")
+                        .str("document", "Optional path/URL/IRI of the import's document to load now so "
+                                + "the import resolves (keeps the active ontology unchanged).")
+                        .integer("connection_timeout_ms", "Document connection timeout when 'document' is "
+                                + "given (default 15000).")
+                        .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String iri = Tools.reqString(a, "iri");
-                    return WriteTools.write(ctx, "add import " + iri, mm -> {
+                    String document = Tools.optString(a, "document");
+                    int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);
+                    CallToolResult denied = WriteTools.checkWriteAllowed(ctx, "add import " + iri);
+                    if (denied != null) {
+                        return denied;
+                    }
+                    OWLImportsDeclaration decl = ctx.access().compute(mm ->
+                            mm.getOWLDataFactory().getOWLImportsDeclaration(IRI.create(iri)));
+                    boolean[] alreadyPresent = {false};
+                    boolean resolved = ctx.access().compute(mm -> {
                         OWLOntology ont = mm.getActiveOntology();
-                        OWLOntologyManager om = mm.getOWLOntologyManager();
-                        OWLImportsDeclaration decl = mm.getOWLDataFactory()
-                                .getOWLImportsDeclaration(IRI.create(iri));
-                        boolean alreadyPresent = ont.getImportsDeclarations().contains(decl);
+                        alreadyPresent[0] = ont.getImportsDeclarations().contains(decl);
                         mm.applyChange(new AddImport(ont, decl));
-                        // Did Protégé actually resolve the declaration to a loaded ontology? In a
-                        // catalog-less workspace a remote/unmapped IRI stays unresolved.
-                        boolean resolved = om.getImportedOntology(decl) != null;
-                        Tools.Json json = Tools.json()
-                                .put("added", !alreadyPresent)
-                                .put("iri", iri)
-                                .put("already_present", alreadyPresent)
-                                .put("resolved", resolved);
-                        if (!resolved) {
-                            json.put("note", "Import declaration added, but Protégé did not resolve/load "
-                                    + "the document (it is not in the workspace). Imported terms won't "
-                                    + "appear in lookups or reasoning until it is loaded — load it with "
-                                    + "load_ontology or merge_ontology_document, or add a catalog mapping "
-                                    + "for the IRI.");
+                        // Did Protégé resolve the declaration to a loaded ontology? In a catalog-less
+                        // workspace a remote/unmapped IRI stays unresolved.
+                        return mm.getOWLOntologyManager().getImportedOntology(decl) != null;
+                    });
+                    if (!resolved && document != null) {
+                        CallToolResult loadResult = OntologyDocumentTools.doLoad(ctx, document, timeoutMs, true);
+                        if (Boolean.TRUE.equals(loadResult.isError())) {
+                            return loadResult;
                         }
-                        return json.result();
+                        resolved = ctx.access().compute(mm ->
+                                mm.getOWLOntologyManager().getImportedOntology(decl) != null);
+                    }
+                    Tools.Json json = Tools.json()
+                            .put("added", !alreadyPresent[0])
+                            .put("iri", iri)
+                            .put("already_present", alreadyPresent[0])
+                            .put("resolved", resolved);
+                    if (document != null) {
+                        json.put("document", document);
+                    }
+                    if (!resolved) {
+                        json.put("note", "Import declaration added, but the document is not in the "
+                                + "workspace, so imported terms won't appear in lookups or reasoning "
+                                + "until it is loaded — pass 'document', or use load_ontology with "
+                                + "keep_active=true, or add a catalog mapping for the IRI.");
+                    }
+                    return json.result();
+                })));
+
+        tools.add(ToolSpecs.of("set_prefix",
+                "Register or update a prefix in the active ontology's prefix map (e.g. prefix 'iof-av' "
+                        + "→ 'https://spec.industrialontologies.org/ontology/annotation/'), so CURIEs "
+                        + "like 'iof-av:maturity' render and parse and the document serializes with the "
+                        + "prefix. The prefix map lives in the ontology's document format — this changes "
+                        + "no axioms and is NOT on the undo stack.",
+                Tools.schema()
+                        .strReq("prefix", "Prefix name, with or without a trailing ':' (e.g. 'iof-av' or "
+                                + "'iof-av:'); use ':' for the default namespace.")
+                        .strReq("namespace", "Namespace IRI the prefix expands to.")
+                        .build(),
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> a = Tools.args(req);
+                    String prefix = Tools.reqString(a, "prefix");
+                    String namespace = Tools.reqString(a, "namespace");
+                    CallToolResult denied = WriteTools.checkWriteAllowed(ctx, "set prefix " + prefix);
+                    if (denied != null) {
+                        return denied;
+                    }
+                    return ctx.access().compute(mm -> {
+                        OWLOntology ont = mm.getActiveOntology();
+                        OWLDocumentFormat fmt = mm.getOWLOntologyManager().getOntologyFormat(ont);
+                        if (fmt == null || !fmt.isPrefixOWLOntologyFormat()) {
+                            return Tools.error("The active ontology's document format has no prefix map "
+                                    + "(format: " + (fmt == null ? "none" : fmt.getClass().getSimpleName())
+                                    + ").");
+                        }
+                        String name = prefix.endsWith(":") ? prefix : prefix + ":";
+                        fmt.asPrefixOWLOntologyFormat().setPrefix(name, namespace);
+                        return Tools.json()
+                                .put("prefix", name)
+                                .put("namespace", namespace)
+                                .put("prefixes", fmt.asPrefixOWLOntologyFormat().getPrefixName2PrefixMap())
+                                .result();
                     });
                 })));
 

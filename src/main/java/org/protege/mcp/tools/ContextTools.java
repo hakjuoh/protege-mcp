@@ -244,30 +244,30 @@ public final class ContextTools {
 
         if (e.isOWLClass()) {
             OWLClass c = e.asOWLClass();
-            card.put("super_classes", renderings(mm, EntitySearcher.getSuperClasses(c, scope), limit));
-            card.put("sub_classes", renderings(mm, EntitySearcher.getSubClasses(c, scope), limit));
-            card.put("equivalent_classes", renderings(mm, EntitySearcher.getEquivalentClasses(c, scope), limit));
-            card.put("disjoint_classes", renderings(mm, EntitySearcher.getDisjointClasses(c, scope), limit));
+            card.put("super_classes", members(mm, EntitySearcher.getSuperClasses(c, scope), limit));
+            card.put("sub_classes", members(mm, EntitySearcher.getSubClasses(c, scope), limit));
+            card.put("equivalent_classes", members(mm, EntitySearcher.getEquivalentClasses(c, scope), limit));
+            card.put("disjoint_classes", members(mm, EntitySearcher.getDisjointClasses(c, scope), limit));
             card.put("instances", instances(mm, c, scope, limit));
         } else if (e.isOWLObjectProperty()) {
             OWLObjectProperty p = e.asOWLObjectProperty();
-            card.put("domains", renderings(mm, EntitySearcher.getDomains(p, scope), limit));
-            card.put("ranges", renderings(mm, EntitySearcher.getRanges(p, scope), limit));
-            card.put("super_properties", renderings(mm, EntitySearcher.getSuperProperties(p, scope), limit));
-            card.put("sub_properties", renderings(mm, EntitySearcher.getSubProperties(p, scope), limit));
-            card.put("inverses", renderings(mm, EntitySearcher.getInverses(p, scope), limit));
+            card.put("domains", members(mm, EntitySearcher.getDomains(p, scope), limit));
+            card.put("ranges", members(mm, EntitySearcher.getRanges(p, scope), limit));
+            card.put("super_properties", members(mm, EntitySearcher.getSuperProperties(p, scope), limit));
+            card.put("sub_properties", members(mm, EntitySearcher.getSubProperties(p, scope), limit));
+            card.put("inverses", members(mm, EntitySearcher.getInverses(p, scope), limit));
             card.put("characteristics", objectCharacteristics(p, scope));
         } else if (e.isOWLDataProperty()) {
             OWLDataProperty p = e.asOWLDataProperty();
-            card.put("domains", renderings(mm, EntitySearcher.getDomains(p, scope), limit));
-            card.put("ranges", renderings(mm, EntitySearcher.getRanges(p, scope), limit));
-            card.put("super_properties", renderings(mm, EntitySearcher.getSuperProperties(p, scope), limit));
-            card.put("sub_properties", renderings(mm, EntitySearcher.getSubProperties(p, scope), limit));
+            card.put("domains", members(mm, EntitySearcher.getDomains(p, scope), limit));
+            card.put("ranges", members(mm, EntitySearcher.getRanges(p, scope), limit));
+            card.put("super_properties", members(mm, EntitySearcher.getSuperProperties(p, scope), limit));
+            card.put("sub_properties", members(mm, EntitySearcher.getSubProperties(p, scope), limit));
             card.put("functional", has(scope, ont -> EntitySearcher.isFunctional(p, ont)));
         } else if (e.isOWLAnnotationProperty()) {
             OWLAnnotationProperty p = e.asOWLAnnotationProperty();
-            card.put("super_properties", renderings(mm, EntitySearcher.getSuperProperties(p, scope), limit));
-            card.put("sub_properties", renderings(mm, EntitySearcher.getSubProperties(p, scope), limit));
+            card.put("super_properties", members(mm, EntitySearcher.getSuperProperties(p, scope), limit));
+            card.put("sub_properties", members(mm, EntitySearcher.getSubProperties(p, scope), limit));
             List<String> domains = new ArrayList<>();
             EntitySearcher.getDomains(p, scope).forEach(iri -> domains.add(iri.toString()));
             List<String> ranges = new ArrayList<>();
@@ -276,17 +276,18 @@ public final class ContextTools {
             card.put("ranges", ranges);
         } else if (e.isOWLNamedIndividual()) {
             OWLNamedIndividual ind = e.asOWLNamedIndividual();
-            card.put("types", renderings(mm, EntitySearcher.getTypes(ind, scope), limit));
+            card.put("types", members(mm, EntitySearcher.getTypes(ind, scope), limit));
             card.put("object_property_values", objectPropertyValues(mm, ind, scope, limit));
             card.put("data_property_values", dataPropertyValues(mm, ind, scope, limit));
-            card.put("same_as", renderings(mm, EntitySearcher.getSameIndividuals(ind, scope), limit));
-            card.put("different_from", renderings(mm, EntitySearcher.getDifferentIndividuals(ind, scope), limit));
+            card.put("same_as", members(mm, EntitySearcher.getSameIndividuals(ind, scope), limit));
+            card.put("different_from", members(mm, EntitySearcher.getDifferentIndividuals(ind, scope), limit));
         }
         return card;
     }
 
     /** Asserted instances of a class via ClassAssertion axioms across the scope. */
-    private static List<String> instances(OWLModelManager mm, OWLClass c, Set<OWLOntology> scope, int limit) {
+    private static List<Map<String, Object>> instances(OWLModelManager mm, OWLClass c,
+            Set<OWLOntology> scope, int limit) {
         Set<OWLNamedIndividual> set = new TreeSet<>();
         for (OWLOntology o : scope) {
             for (OWLIndividual i : EntitySearcher.getIndividuals(c, o)) {
@@ -295,7 +296,7 @@ public final class ContextTools {
                 }
             }
         }
-        return renderings(mm, set, limit);
+        return members(mm, set, limit);
     }
 
     private static List<Map<String, Object>> objectPropertyValues(OWLModelManager mm,
@@ -415,6 +416,52 @@ public final class ContextTools {
             return lit.getLiteral() + "@" + lit.getLang();
         }
         return lit.getLiteral();
+    }
+
+    /**
+     * Sorted, capped structured neighbour list: a named entity becomes {@code {iri, display, type}};
+     * an anonymous class/data-range expression becomes {@code {expression, anonymous:true}}. This lets
+     * the model resolve a neighbour to its IRI directly (no second lookup) and tell named terms from
+     * restriction/intersection superclasses.
+     */
+    private static List<Map<String, Object>> members(OWLModelManager mm,
+            Collection<? extends OWLObject> objects, int limit) {
+        List<OWLObject> sorted = new ArrayList<>(objects);
+        sorted.sort((a, b) -> {
+            String ar = Tools.renderObject(mm, a);
+            String br = Tools.renderObject(mm, b);
+            int byRendering = ar.compareToIgnoreCase(br);
+            if (byRendering != 0) {
+                return byRendering;
+            }
+            return memberTieBreak(a).compareTo(memberTieBreak(b));
+        });
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (OWLObject o : sorted) {
+            if (out.size() >= Math.max(0, limit)) {
+                break;
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            if (o instanceof OWLEntity) {
+                OWLEntity ent = (OWLEntity) o;
+                m.put("iri", ent.getIRI().toString());
+                m.put("display", mm.getRendering(ent));
+                m.put("type", ent.getEntityType().getName());
+            } else {
+                m.put("expression", Tools.renderObject(mm, o));
+                m.put("anonymous", true);
+            }
+            out.add(m);
+        }
+        return out;
+    }
+
+    private static String memberTieBreak(OWLObject o) {
+        if (o instanceof OWLEntity) {
+            OWLEntity e = (OWLEntity) o;
+            return e.getEntityType().getName() + " " + e.getIRI();
+        }
+        return o.toString();
     }
 
     /** Sorted, capped renderings of OWL objects (entities or class/data-range expressions). */

@@ -60,30 +60,22 @@ public final class OntologyDocumentTools {
                         + "URLs automatically. The document is fetched off the UI thread (so a slow "
                         + "remote fetch does not freeze Protégé) and missing imports are skipped "
                         + "silently. Note: a load is not an applyChange edit, so it does NOT join "
-                        + "the shared undo stack — undo_change cannot revert it.",
+                        + "the shared undo stack — undo_change cannot revert it. Pass keep_active=true "
+                        + "to load the document (e.g. to resolve an import) WITHOUT changing your "
+                        + "current active edit target.",
                 Tools.schema()
                         .strReq("source", "Local file path, file: IRI, http(s) document IRI, or GitHub blob URL.")
+                        .bool("keep_active", "Keep the current active ontology instead of switching to the "
+                                + "loaded document (default false). Use this to resolve an unresolved "
+                                + "import without losing your edit target.")
                         .integer("connection_timeout_ms", "Remote document connection timeout (default 15000).")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String source = Tools.reqString(a, "source");
-                    String normalized = normalizeSource(source);
+                    boolean keepActive = Tools.optBool(a, "keep_active", false);
                     int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);
-                    CallToolResult denied = WriteTools.checkWriteAllowed(ctx,
-                            "load " + normalized + " as a new ontology and make it active");
-                    if (denied != null) {
-                        return denied;
-                    }
-                    // Fetch + parse OFF the EDT: network I/O and parsing must not block the Swing UI
-                    // thread (a slow remote fetch would otherwise freeze Protégé and could trip the
-                    // bounded compute() wait). This mirrors Protégé's own OntologyLoader, minus its
-                    // interactive modal dialogs (missing-import resolver, load-error/reload prompt),
-                    // which a non-interactive MCP call must not raise.
-                    LoadedDocument doc = fetch(normalized, timeoutMs);
-                    // Only the cheap model wiring (move the parsed closure into Protégé's manager,
-                    // switch the active ontology, refresh the UI) runs on the EDT.
-                    return ctx.access().compute(mm -> attach(mm, doc), LOAD_TIMEOUT_MS);
+                    return doLoad(ctx, source, timeoutMs, keepActive);
                 })));
 
         tools.add(ToolSpecs.of("merge_ontology_document",
@@ -122,7 +114,75 @@ public final class OntologyDocumentTools {
                             MERGE_TIMEOUT_MS);
                 })));
 
+        tools.add(ToolSpecs.of("set_active_ontology",
+                "Select which already-loaded ontology is the ACTIVE edit target (every edit tool writes "
+                        + "to the active ontology). Resolve by ontology IRI or version IRI (see "
+                        + "list_ontologies). Unlike load_ontology this loads/fetches nothing — it just "
+                        + "switches focus among ontologies already in the workspace, e.g. back to your "
+                        + "module after load_ontology brought an imported ontology into the workspace.",
+                Tools.schema()
+                        .strReq("ontology_iri", "Ontology IRI or version IRI of a loaded ontology "
+                                + "(see list_ontologies).")
+                        .build(),
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> a = Tools.args(req);
+                    String ref = Tools.reqString(a, "ontology_iri");
+                    return ctx.access().compute(mm -> {
+                        OWLOntology target = findLoadedOntology(mm, ref);
+                        if (target == null) {
+                            return Tools.error("No loaded ontology matches '" + ref + "'. See "
+                                    + "list_ontologies for the loaded ontology ids.");
+                        }
+                        boolean changed = !target.equals(mm.getActiveOntology());
+                        if (changed) {
+                            mm.setActiveOntology(target);
+                            mm.fireEvent(EventType.ACTIVE_ONTOLOGY_CHANGED);
+                        }
+                        return Tools.json()
+                                .put("active_ontology", ontologyLabel(target.getOntologyID()))
+                                .put("changed", changed)
+                                .put("axioms", target.getAxiomCount())
+                                .put("logical_axioms", target.getLogicalAxiomCount())
+                                .put("direct_imports", target.getImportsDeclarations().size())
+                                .result();
+                    });
+                })));
+
         return tools;
+    }
+
+    /** Find a loaded ontology by ontology IRI or version IRI string (exact match). */
+    private static OWLOntology findLoadedOntology(OWLModelManager mm, String ref) {
+        for (OWLOntology o : mm.getOntologies()) {
+            OWLOntologyID id = o.getOntologyID();
+            if (id.getOntologyIRI().isPresent() && id.getOntologyIRI().get().toString().equals(ref)) {
+                return o;
+            }
+            if (id.getVersionIRI().isPresent() && id.getVersionIRI().get().toString().equals(ref)) {
+                return o;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Fetch + parse {@code source} off the EDT, then wire it into the workspace on the EDT. When
+     * {@code keepActive} is set the previously-active ontology stays active (the document is loaded
+     * only to resolve imports / be available), otherwise the loaded primary becomes active.
+     */
+    static CallToolResult doLoad(ToolContext ctx, String source, int timeoutMs, boolean keepActive) {
+        String normalized = normalizeSource(source);
+        CallToolResult denied = WriteTools.checkWriteAllowed(ctx,
+                "load " + normalized + (keepActive ? " into the workspace" : " and make it active"));
+        if (denied != null) {
+            return denied;
+        }
+        // Fetch + parse OFF the EDT: network I/O and parsing must not block the Swing UI thread (a
+        // slow remote fetch would otherwise freeze Protégé and could trip the bounded compute() wait).
+        // This mirrors Protégé's own OntologyLoader, minus its interactive modal dialogs.
+        LoadedDocument doc = fetch(normalized, timeoutMs);
+        // Only the cheap model wiring (move the parsed closure in, switch active, refresh) runs on EDT.
+        return ctx.access().compute(mm -> attach(mm, doc, keepActive), LOAD_TIMEOUT_MS);
     }
 
     /** Wait bound for wiring a parsed document into the workspace on the EDT (move + activate + UI refresh). */
@@ -164,7 +224,8 @@ public final class OntologyDocumentTools {
      * (copyOntology MOVE for each not-already-loaded ontology, then setActiveOntology + fire
      * ONTOLOGY_LOADED), but with no modal UI. Runs on the EDT.
      */
-    private static CallToolResult attach(OWLModelManager mm, LoadedDocument doc) {
+    private static CallToolResult attach(OWLModelManager mm, LoadedDocument doc, boolean keepActive) {
+        OWLOntology prevActive = mm.getActiveOntology();
         OWLOntologyManager target = mm.getOWLOntologyManager();
         OWLOntologyID primaryId = doc.primary.getOntologyID();
         OWLOntology primaryManaged = null;
@@ -200,28 +261,46 @@ public final class OntologyDocumentTools {
             primaryManaged = byId != null ? byId : doc.primary;
         }
 
+        // Activate the loaded primary FIRST: a real setActiveOntology recomputes Protégé's
+        // active-ontologies (imports-closure) cache that the entity finder and renderers read. A no-op
+        // setActiveOntology to the already-active ontology does NOT recompute it — which is why merely
+        // firing ACTIVE_ONTOLOGY_CHANGED while keeping the active ontology is not enough.
         mm.setActiveOntology(primaryManaged);
         mm.fireEvent(EventType.ONTOLOGY_LOADED);
         // Register the logical -> document IRI mapping so re-resolution (and save) finds the document.
         if (!primaryId.isAnonymous() && doc.documentIri != null && primaryId.getDefaultDocumentIRI().isPresent()) {
             target.getIRIMappers().add(new SimpleIRIMapper(primaryId.getDefaultDocumentIRI().get(), doc.documentIri));
         }
-
+        // keep_active: switch BACK to the caller's prior edit target. This SECOND real setActiveOntology
+        // recomputes the closure for prevActive — now including the just-loaded document — so its
+        // imported terms resolve by name (search_entities / Manchester) with no manual round-trip.
+        boolean keptActive = keepActive && prevActive != null && !prevActive.equals(primaryManaged)
+                && mm.getOntologies().contains(prevActive);
+        OWLOntology finalActive = keptActive ? prevActive : primaryManaged;
+        if (keptActive) {
+            mm.setActiveOntology(prevActive);
+        }
         Map<String, Object> active = new LinkedHashMap<>();
-        active.put("axioms", primaryManaged.getAxiomCount());
-        active.put("logical_axioms", primaryManaged.getLogicalAxiomCount());
-        active.put("direct_imports", primaryManaged.getImportsDeclarations().size());
-        active.put("ontology_annotations", primaryManaged.getAnnotations().size());
+        active.put("axioms", finalActive.getAxiomCount());
+        active.put("logical_axioms", finalActive.getLogicalAxiomCount());
+        active.put("direct_imports", finalActive.getImportsDeclarations().size());
+        active.put("ontology_annotations", finalActive.getAnnotations().size());
         return Tools.json()
                 .put("loaded_document", doc.normalized)
-                .put("active_ontology", ontologyLabel(primaryManaged.getOntologyID()))
+                .put("loaded_ontology", ontologyLabel(primaryManaged.getOntologyID()))
+                .put("loaded_axioms", primaryManaged.getAxiomCount())
+                .put("active_ontology", ontologyLabel(finalActive.getOntologyID()))
+                .put("kept_active", keptActive)
                 .putIfNotNull("document_iri", doc.documentIri == null ? null : doc.documentIri.toString())
                 .put("active", active)
                 .put("added_ontologies", moved)
                 .put("already_loaded", alreadyLoaded)
                 .put("workspace_ontologies", mm.getOntologies().size())
                 .put("unresolved_imports", new ArrayList<>(doc.unresolvedImports))
-                .put("note", "Loading is not on the undo stack (undo_change cannot revert it).")
+                .put("note", keptActive
+                        ? "Loaded into the workspace; active ontology unchanged. Loading is not on the "
+                                + "undo stack (undo_change cannot revert it)."
+                        : "Loading is not on the undo stack (undo_change cannot revert it).")
                 .result();
     }
 

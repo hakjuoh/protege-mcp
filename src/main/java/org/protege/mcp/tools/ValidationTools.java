@@ -10,6 +10,8 @@ import java.util.Set;
 import java.util.TreeMap;
 
 import org.protege.editor.owl.model.OWLModelManager;
+import org.protege.editor.owl.model.inference.OWLReasonerManager;
+import org.protege.editor.owl.model.inference.ReasonerStatus;
 import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
@@ -22,6 +24,7 @@ import org.semanticweb.owlapi.model.OWLEntity;
 import org.semanticweb.owlapi.model.OWLObjectProperty;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.parameters.Imports;
+import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.search.EntitySearcher;
 
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
@@ -64,15 +67,22 @@ public final class ValidationTools {
                         + String.join(", ", CHECK_IDS) + ". Imported terms (declared upstream) are not "
                         + "flagged for missing label/definition/domain/range when auditing the active "
                         + "ontology alone; set include_imports=true to audit the whole imports closure. "
-                        + "Pass 'checks' to run a subset.",
+                        + "Pass 'checks' to run a subset. These are modelling-quality checks only; set "
+                        + "with_reasoner=true to also include the reasoner's consistency / "
+                        + "unsatisfiable-class verdict (a clean audit is NOT proof of logical "
+                        + "consistency).",
                 Tools.schema()
                         .bool("include_imports", "Audit the imports closure too (default false).")
                         .strArray("checks", "Subset of check ids to run (default all).")
+                        .bool("with_reasoner", "Also report the reasoner's consistency / unsatisfiable "
+                                + "classes (uses the already-classified reasoner; run_reasoner first for "
+                                + "a current verdict). Default false.")
                         .integer("limit", "Max sample offenders/details per check (default 25).")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
+                    boolean withReasoner = Tools.optBool(a, "with_reasoner", false);
                     List<String> requested = Tools.stringList(a, "checks");
                     int limit = Tools.optInt(a, "limit", 25);
                     return ctx.access().compute(mm -> {
@@ -90,18 +100,57 @@ public final class ValidationTools {
                             totalIssues += f.count();
                             checksJson.add(f.toJson(mm, limit));
                         }
-                        return Tools.json()
+                        Tools.Json json = Tools.json()
                                 .put("scope", includeImports ? "imports_closure" : "active")
                                 .put("total_issues", totalIssues)
-                                .put("checks", checksJson)
+                                .put("checks", checksJson);
+                        if (withReasoner) {
+                            json.put("reasoner", reasonerVerdict(mm, limit));
+                        }
+                        return json
                                 .put("reasoner_note", "These are modelling-quality checks. For logical "
                                         + "consistency/satisfiability run run_reasoner then "
-                                        + "get_unsatisfiable_classes.")
+                                        + "get_unsatisfiable_classes (or pass with_reasoner=true).")
                                 .result();
                     });
                 })));
 
         return tools;
+    }
+
+    /**
+     * The reasoner's logical verdict to complement the structural checks: status, whether results are
+     * current, consistency, and (when consistent) the unsatisfiable named classes. Uses the
+     * already-selected/classified reasoner — it does not run a classification itself (run_reasoner
+     * does), so when results are stale/absent it says so rather than blocking.
+     */
+    private static Map<String, Object> reasonerVerdict(OWLModelManager mm, int limit) {
+        OWLReasonerManager rm = mm.getOWLReasonerManager();
+        ReasonerStatus status = rm.getReasonerStatus();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("status", String.valueOf(status));
+        boolean current = status == ReasonerStatus.INITIALIZED || status == ReasonerStatus.INCONSISTENT;
+        m.put("results_available", current);
+        if (!current) {
+            m.put("note", "No current reasoner results — run run_reasoner first for a logical verdict.");
+            return m;
+        }
+        try {
+            OWLReasoner reasoner = rm.getCurrentReasoner();
+            boolean consistent = reasoner.isConsistent();
+            m.put("consistent", consistent);
+            if (consistent) {
+                Set<OWLClass> unsat = reasoner.getUnsatisfiableClasses().getEntitiesMinusBottom();
+                m.put("unsatisfiable_count", unsat.size());
+                m.put("unsatisfiable_classes", Tools.entityList(mm, unsat, limit));
+            } else {
+                m.put("note", "Ontology is INCONSISTENT — everything is entailed. Use "
+                        + "get_unsatisfiable_classes / get_explanations to diagnose.");
+            }
+        } catch (RuntimeException e) {
+            m.put("error", e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage()));
+        }
+        return m;
     }
 
     // ================================================================== analysis core (pure)

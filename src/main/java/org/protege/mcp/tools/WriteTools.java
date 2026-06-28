@@ -2,8 +2,11 @@ package org.protege.mcp.tools;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 import javax.swing.JOptionPane;
@@ -20,13 +23,16 @@ import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.AddAxiom;
 import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.OWLAnnotationAssertionAxiom;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
+import org.semanticweb.owlapi.model.OWLAnnotationValue;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLEntity;
+import org.semanticweb.owlapi.model.OWLLiteral;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyChange;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
@@ -52,11 +58,20 @@ public final class WriteTools {
         List<SyncToolSpecification> tools = new ArrayList<>();
 
         tools.add(ToolSpecs.of("create_class",
-                "Create a named class. Optionally give a full 'iri' (else one is minted from 'name' "
-                        + "using Protégé's entity-creation settings) and a 'parent' superclass.",
+                "Create a named class. Give a full 'iri', or a 'namespace' to mint the IRI in (IRI = "
+                        + "namespace + name — useful when terms live in a shared namespace distinct from "
+                        + "the ontology IRI), else the IRI is minted from 'name' using Protégé's "
+                        + "entity-creation settings. An rdfs:label ('label' or 'name', tagged with "
+                        + "'label_lang') is added unless 'no_label'. Optionally set a 'parent' superclass.",
                 Tools.schema()
-                        .strReq("name", "Short name / label for the new class.")
-                        .str("iri", "Full IRI to use (optional).")
+                        .strReq("name", "Short name for the class — the IRI local part when minting, and "
+                                + "the default rdfs:label.")
+                        .str("iri", "Full IRI to use (optional; overrides 'namespace').")
+                        .str("namespace", "Namespace to mint the IRI in: IRI becomes namespace + name "
+                                + "(optional).")
+                        .str("label", "rdfs:label text (default: 'name').")
+                        .str("label_lang", "Language tag for the rdfs:label, e.g. 'en-US' (default: none).")
+                        .bool("no_label", "Do not add any rdfs:label (default false).")
                         .str("parent", "Superclass: IRI, name or Manchester class expression (optional).")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
@@ -66,7 +81,7 @@ public final class WriteTools {
                         OWLDataFactory df = mm.getOWLDataFactory();
                         OWLOntology ont = mm.getActiveOntology();
                         List<OWLOntologyChange> changes = new ArrayList<>();
-                        OWLClass cls = (OWLClass) createEntity(mm, "class", name, Tools.optString(a, "iri"), changes);
+                        OWLClass cls = (OWLClass) createEntity(mm, "class", a, changes);
                         String parent = Tools.optString(a, "parent");
                         if (parent != null) {
                             OWLClassExpression sup = Tools.resolveClassExpression(mm, parent);
@@ -84,12 +99,21 @@ public final class WriteTools {
 
         tools.add(ToolSpecs.of("create_entity",
                 "Create a named entity of a given type: class, object_property, data_property, "
-                        + "annotation_property, individual or datatype.",
+                        + "annotation_property, individual or datatype. Give a full 'iri', or a "
+                        + "'namespace' to mint it in (IRI = namespace + name), else the IRI is minted "
+                        + "from 'name'. An rdfs:label ('label' or 'name', tagged with 'label_lang') is "
+                        + "added unless 'no_label'.",
                 Tools.schema()
                         .strReq("entity_type", "class | object_property | data_property | "
                                 + "annotation_property | individual | datatype")
-                        .strReq("name", "Short name / label.")
-                        .str("iri", "Full IRI to use (optional).")
+                        .strReq("name", "Short name — the IRI local part when minting, and the default "
+                                + "rdfs:label.")
+                        .str("iri", "Full IRI to use (optional; overrides 'namespace').")
+                        .str("namespace", "Namespace to mint the IRI in: IRI becomes namespace + name "
+                                + "(optional).")
+                        .str("label", "rdfs:label text (default: 'name').")
+                        .str("label_lang", "Language tag for the rdfs:label, e.g. 'en-US' (default: none).")
+                        .bool("no_label", "Do not add any rdfs:label (default false).")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
@@ -97,7 +121,7 @@ public final class WriteTools {
                     String name = Tools.reqString(a, "name");
                     return write(ctx, "create_entity " + type + " " + name, mm -> {
                         List<OWLOntologyChange> changes = new ArrayList<>();
-                        OWLEntity e = createEntity(mm, type, name, Tools.optString(a, "iri"), changes);
+                        OWLEntity e = createEntity(mm, type, a, changes);
                         mm.applyChanges(changes);
                         return Tools.json().put("created", Tools.entityJson(mm, e)).result();
                     });
@@ -105,23 +129,25 @@ public final class WriteTools {
 
         tools.add(ToolSpecs.of("add_subclass_of",
                 "Assert that 'child' is a subclass of 'parent'. Each may be a class name, a full IRI, "
-                        + "or a Manchester-syntax class expression (e.g. 'hasOwner some Person').",
+                        + "or a Manchester-syntax class expression (e.g. 'hasOwner some Person'). Any "
+                        + "entities introduced as a side effect are reported as 'new_entities'.",
                 Tools.schema()
                         .strReq("child", "Subclass: IRI, name or class expression.")
                         .strReq("parent", "Superclass: IRI, name or class expression.")
+                        .bool("strict", STRICT_DESC)
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String child = Tools.reqString(a, "child");
                     String parent = Tools.reqString(a, "parent");
+                    boolean strict = Tools.optBool(a, "strict", false);
                     return write(ctx, child + " ⊑ " + parent, mm -> {
                         OWLDataFactory df = mm.getOWLDataFactory();
                         OWLOntology ont = mm.getActiveOntology();
                         OWLAxiom ax = df.getOWLSubClassOfAxiom(
                                 Tools.resolveClassExpression(mm, child),
                                 Tools.resolveClassExpression(mm, parent));
-                        mm.applyChange(new AddAxiom(ont, ax));
-                        return applied(mm, ont, ax);
+                        return applyAxiom(mm, ont, ax, strict);
                     });
                 })));
 
@@ -142,10 +168,12 @@ public final class WriteTools {
                         .str("datatype", "Optional datatype IRI/name for a typed literal value.")
                         .annotationArray("annotations", "Optional axiom annotations on this assertion "
                                 + "(array of {property, value | value_iri, lang, datatype}).")
+                        .bool("strict", STRICT_DESC)
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
+                    boolean strict = Tools.optBool(a, "strict", false);
                     return write(ctx, "annotate " + entityRef, mm -> {
                         OWLDataFactory df = mm.getOWLDataFactory();
                         OWLOntology ont = mm.getActiveOntology();
@@ -153,8 +181,7 @@ public final class WriteTools {
                         OWLAnnotationProperty prop = Tools.annotationProperty(mm, Tools.optString(a, "property"));
                         OWLAxiom ax = df.getOWLAnnotationAssertionAxiom(prop, subject,
                                 Tools.annotationValue(mm, a), Tools.annotationSet(mm, a, "annotations"));
-                        mm.applyChange(new AddAxiom(ont, ax));
-                        return applied(mm, ont, ax);
+                        return applyAxiom(mm, ont, ax, strict);
                     });
                 })));
 
@@ -165,15 +192,16 @@ public final class WriteTools {
                         + "property/domain, property/range). Any class operand may be a named class, a "
                         + "full IRI, or a Manchester-syntax class expression such as "
                         + "\"Animal and (hasOwner some Person)\" — so defined classes and restrictions "
-                        + "are expressible via equivalent_classes / subclass_of.",
-                Axioms.schema(),
+                        + "are expressible via equivalent_classes / subclass_of. Entities introduced as "
+                        + "a side effect are reported as 'new_entities'.",
+                withStrict(Axioms.schema()),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
+                    boolean strict = Tools.optBool(a, "strict", false);
                     return write(ctx, "add_axiom " + Tools.optString(a, "axiom_type"), mm -> {
                         OWLOntology ont = mm.getActiveOntology();
                         OWLAxiom ax = Axioms.build(mm, a);
-                        mm.applyChange(new AddAxiom(ont, ax));
-                        return applied(mm, ont, ax);
+                        return applyAxiom(mm, ont, ax, strict);
                     });
                 })));
 
@@ -199,6 +227,76 @@ public final class WriteTools {
                     });
                 })));
 
+        tools.add(ToolSpecs.of("apply_changes",
+                "Apply a batch of axiom add/remove operations in ONE call — the same 'operations' array "
+                        + "as preview_changes (each item: axiom_type + operands, optional op=add|remove, "
+                        + "default add). Closes the gap where preview batches but the write tools apply "
+                        + "one axiom per call. The whole batch is applied as a SINGLE undoable "
+                        + "transaction, so one undo_change reverts all of it at once (like create_class). "
+                        + "Reports, per operation, what was applied/removed and any new entities "
+                        + "introduced, plus a summary. Run preview_changes first to dry-run; set "
+                        + "strict=true to skip any add that would mint a brand-new entity from an "
+                        + "unrecognized IRI/name. Note: because nothing is applied until the batch "
+                        + "completes, an operation that references an entity introduced by an EARLIER "
+                        + "operation in the same batch must refer to it by full IRI.",
+                applyChangesSchema(),
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> a = Tools.args(req);
+                    List<Map<String, Object>> operations = Tools.objList(a, "operations");
+                    if (operations.isEmpty()) {
+                        return Tools.error("Provide at least one operation in 'operations' "
+                                + "(each: axiom_type + operands, optional op=add|remove).");
+                    }
+                    boolean strict = Tools.optBool(a, "strict", false);
+                    return write(ctx, "apply " + operations.size() + " change(s)",
+                            mm -> applyBatch(mm, operations, strict));
+                })));
+
+        tools.add(ToolSpecs.of("set_label",
+                "Set (upsert) an entity's rdfs:label: removes any existing rdfs:label on the entity in "
+                        + "the SAME language and adds the new one. Use this to fix a label without "
+                        + "hand-removing the old axiom — rename_entity changes the IRI, not the label.",
+                Tools.schema()
+                        .strReq("entity", "Target entity: IRI or display name.")
+                        .strReq("value", "New rdfs:label text.")
+                        .str("lang", "Language tag, e.g. 'en-US' (default none). Only labels in the same "
+                                + "language are replaced.")
+                        .build(),
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> a = Tools.args(req);
+                    String entityRef = Tools.reqString(a, "entity");
+                    String value = Tools.reqString(a, "value");
+                    String lang = Tools.optString(a, "lang");
+                    return write(ctx, "set label of " + entityRef, mm -> {
+                        OWLDataFactory df = mm.getOWLDataFactory();
+                        OWLOntology ont = mm.getActiveOntology();
+                        IRI subject = Tools.annotationSubject(mm, entityRef);
+                        List<OWLOntologyChange> changes = new ArrayList<>();
+                        int removed = 0;
+                        for (OWLAnnotationAssertionAxiom ax : ont.getAnnotationAssertionAxioms(subject)) {
+                            if (!ax.getProperty().isLabel() || !ax.getValue().asLiteral().isPresent()) {
+                                continue;
+                            }
+                            OWLLiteral lit = ax.getValue().asLiteral().get();
+                            boolean sameLang = lang == null ? !lit.hasLang() : lang.equalsIgnoreCase(lit.getLang());
+                            if (sameLang) {
+                                changes.add(new RemoveAxiom(ont, ax));
+                                removed++;
+                            }
+                        }
+                        OWLLiteral newLit = lang != null ? df.getOWLLiteral(value, lang) : df.getOWLLiteral(value);
+                        changes.add(new AddAxiom(ont,
+                                df.getOWLAnnotationAssertionAxiom(df.getRDFSLabel(), subject, newLit)));
+                        mm.applyChanges(changes);
+                        return Tools.json()
+                                .put("entity", subject.toString())
+                                .put("label", value)
+                                .putIfNotNull("lang", lang)
+                                .put("removed_previous", removed)
+                                .result();
+                    });
+                })));
+
         tools.add(ToolSpecs.of("undo_change",
                 "Undo the last change on the shared Protégé undo stack.",
                 Tools.emptySchema(),
@@ -207,9 +305,14 @@ public final class WriteTools {
                     if (!hm.canUndo()) {
                         return Tools.error("Nothing to undo.");
                     }
+                    long before = totalAxioms(mm);
                     hm.undo();
+                    long after = totalAxioms(mm);
                     return Tools.json().put("undone", true)
                             .put("message", "Undid the last change.")
+                            .put("axioms_before", before)
+                            .put("axioms_after", after)
+                            .put("net_axiom_change", after - before)
                             .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
                 }))));
 
@@ -221,9 +324,14 @@ public final class WriteTools {
                     if (!hm.canRedo()) {
                         return Tools.error("Nothing to redo.");
                     }
+                    long before = totalAxioms(mm);
                     hm.redo();
+                    long after = totalAxioms(mm);
                     return Tools.json().put("redone", true)
                             .put("message", "Redid the last undone change.")
+                            .put("axioms_before", before)
+                            .put("axioms_after", after)
+                            .put("net_axiom_change", after - before)
                             .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
                 }))));
 
@@ -301,13 +409,200 @@ public final class WriteTools {
         return approved[0];
     }
 
-    private static CallToolResult applied(OWLModelManager mm, OWLOntology ont, OWLAxiom ax) {
+    static final String STRICT_DESC = "If true, fail instead of minting a brand-new entity from an "
+            + "unrecognized absolute IRI / display name (guards against typo'd references). Default false.";
+
+    /**
+     * Apply an add-axiom change, reporting any entities it introduces into the ontology that were not
+     * already declared anywhere in the imports closure (the silent-minting signal). When {@code strict}
+     * is set and the change would introduce such entities, nothing is applied and an error is returned.
+     */
+    private static CallToolResult applyAxiom(OWLModelManager mm, OWLOntology ont, OWLAxiom ax,
+            boolean strict) {
+        Set<OWLEntity> minted = PreviewTools.newEntities(ont.getImportsClosure(), ax);
+        if (strict && !minted.isEmpty()) {
+            return mintError(mm, minted);
+        }
+        mm.applyChange(new AddAxiom(ont, ax));
+        return applied(mm, ont, ax, minted);
+    }
+
+    private static CallToolResult applied(OWLModelManager mm, OWLOntology ont, OWLAxiom ax,
+            Set<OWLEntity> minted) {
         boolean present = ont.containsAxiom(ax);
-        return Tools.json()
+        Tools.Json json = Tools.json()
                 .put("applied", present)
-                .put("axiom", Tools.axiomJson(mm, ax))
-                .putIfNotNull("note", present ? null : "No effect — already present or minimized away.")
-                .result();
+                .put("axiom", Tools.axiomJson(mm, ax));
+        if (minted != null && !minted.isEmpty()) {
+            List<Map<String, Object>> ne = new ArrayList<>();
+            for (OWLEntity e : minted) {
+                ne.add(Tools.entityJson(mm, e));
+            }
+            json.put("new_entities", ne);
+        }
+        return json.putIfNotNull("note", present ? null
+                : "No effect — already present or minimized away.").result();
+    }
+
+    private static CallToolResult mintError(OWLModelManager mm, Set<OWLEntity> minted) {
+        return Tools.error("Refusing to apply (strict): the reference(s) " + renderMinted(mm, minted)
+                + " are not declared anywhere in the imports closure and would be created as new, empty "
+                + "entities — likely a typo'd IRI/name. Fix the reference, create the entity first, or "
+                + "set strict=false to allow minting.");
+    }
+
+    private static String renderMinted(OWLModelManager mm, Set<OWLEntity> minted) {
+        List<String> parts = new ArrayList<>();
+        for (OWLEntity e : minted) {
+            parts.add(mm.getRendering(e) + " <" + e.getIRI() + ">");
+        }
+        return String.join(", ", parts);
+    }
+
+    /** Total asserted axioms across all loaded ontologies — a simple "what changed" delta for undo/redo. */
+    private static long totalAxioms(OWLModelManager mm) {
+        long n = 0;
+        for (OWLOntology o : mm.getOntologies()) {
+            n += o.getAxiomCount();
+        }
+        return n;
+    }
+
+    /** add_axiom's schema is Axioms.schema() plus the optional 'strict' typo-guard flag. */
+    private static Map<String, Object> withStrict(Map<String, Object> schema) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
+        props.put("strict", Tools.boolProperty(STRICT_DESC));
+        return schema;
+    }
+
+    /** apply_changes' schema is preview_changes' operations[] plus the optional 'strict' flag. */
+    private static Map<String, Object> applyChangesSchema() {
+        Map<String, Object> schema = PreviewTools.operationsSchema();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
+        props.put("strict", Tools.boolProperty(STRICT_DESC));
+        return schema;
+    }
+
+    /**
+     * Apply each operation in {@code operations} (add/remove) against the active ontology as ONE
+     * undoable transaction. A first pass builds + strict-checks each axiom and records per-operation
+     * results against a simulated copy of the batch's effect; a single {@link OWLModelManager#applyChanges}
+     * then commits every resulting change at once, so the whole batch reverts in a single
+     * {@code undo_change}. Because nothing is applied until that final pass, an operation referencing an
+     * entity introduced by an earlier operation in the same batch must refer to it by full IRI.
+     */
+    private static CallToolResult applyBatch(OWLModelManager mm, List<Map<String, Object>> operations,
+            boolean strict) {
+        OWLOntology ont = mm.getActiveOntology();
+        Set<OWLOntology> closure = ont.getImportsClosure();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        List<OWLOntologyChange> toApply = new ArrayList<>();
+        Set<OWLAxiom> simAdded = new LinkedHashSet<>();    // net-new axioms this batch plans to add
+        Set<OWLAxiom> simRemoved = new LinkedHashSet<>();  // existing axioms this batch plans to remove
+        int added = 0;
+        int removed = 0;
+        int noOps = 0;
+        int errors = 0;
+        for (int i = 0; i < operations.size(); i++) {
+            Map<String, Object> item = operations.get(i);
+            String opRaw = Tools.optString(item, "op");
+            String op = opRaw == null ? "add" : opRaw.toLowerCase();
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("index", i);
+            row.put("op", op);
+            if (!"add".equals(op) && !"remove".equals(op)) {
+                row.put("error", "Unsupported op '" + op + "'. Use add or remove.");
+                errors++;
+                rows.add(row);
+                continue;
+            }
+            try {
+                OWLAxiom ax = Axioms.build(mm, item);
+                row.put("axiom", Tools.axiomJson(mm, ax));
+                // Present == in the ontology now, plus/minus what earlier ops in this batch plan.
+                boolean present = (ont.containsAxiom(ax) || simAdded.contains(ax))
+                        && !simRemoved.contains(ax);
+                if ("remove".equals(op)) {
+                    if (present) {
+                        toApply.add(new RemoveAxiom(ont, ax));
+                        if (ont.containsAxiom(ax)) {
+                            simRemoved.add(ax);
+                        }
+                        simAdded.remove(ax);
+                        row.put("removed", true);
+                        removed++;
+                    } else {
+                        row.put("removed", false);
+                        row.put("note", "not present");
+                        noOps++;
+                    }
+                } else {
+                    Set<OWLEntity> minted = newEntitiesAfterSimulatedAdds(closure, simAdded, ax);
+                    if (strict && !minted.isEmpty()) {
+                        row.put("error", "strict: would mint " + renderMinted(mm, minted));
+                        errors++;
+                    } else if (present) {
+                        row.put("applied", true);
+                        row.put("note", "already present");
+                        noOps++;
+                    } else {
+                        toApply.add(new AddAxiom(ont, ax));
+                        simAdded.add(ax);
+                        simRemoved.remove(ax);
+                        row.put("applied", true);
+                        added++;
+                        if (!minted.isEmpty()) {
+                            List<Map<String, Object>> ne = new ArrayList<>();
+                            for (OWLEntity e : minted) {
+                                ne.add(Tools.entityJson(mm, e));
+                            }
+                            row.put("new_entities", ne);
+                        }
+                    }
+                }
+            } catch (RuntimeException e) {
+                String msg = e.getMessage();
+                row.put("error", msg == null ? e.getClass().getSimpleName() : msg);
+                errors++;
+            }
+            rows.add(row);
+        }
+        if (!toApply.isEmpty()) {
+            mm.applyChanges(toApply);  // one broadcast → one Protégé undo entry for the whole batch
+        }
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("operations", operations.size());
+        summary.put("added", added);
+        summary.put("removed", removed);
+        summary.put("no_ops", noOps);
+        summary.put("errors", errors);
+        summary.put("single_undo", !toApply.isEmpty());
+        summary.put("new_entities", Tools.entityList(mm,
+                newEntitiesIntroducedByAxioms(closure, simAdded), Integer.MAX_VALUE));
+        return Tools.json().put("operations", rows).put("summary", summary).result();
+    }
+
+    /** Entities in {@code ax} that are not already known now or by earlier net additions in the batch. */
+    private static Set<OWLEntity> newEntitiesAfterSimulatedAdds(Set<OWLOntology> closure,
+            Set<OWLAxiom> simAdded, OWLAxiom ax) {
+        Set<OWLEntity> out = PreviewTools.newEntities(closure, ax);
+        if (out.isEmpty() || simAdded.isEmpty()) {
+            return out;
+        }
+        out.removeAll(newEntitiesIntroducedByAxioms(closure, simAdded));
+        return out;
+    }
+
+    /** New entities introduced by the simulated net-add axiom set. */
+    private static Set<OWLEntity> newEntitiesIntroducedByAxioms(Set<OWLOntology> closure,
+            Set<OWLAxiom> axioms) {
+        Set<OWLEntity> out = new LinkedHashSet<>();
+        for (OWLAxiom ax : axioms) {
+            out.addAll(PreviewTools.newEntities(closure, ax));
+        }
+        return out;
     }
 
     /**
@@ -389,31 +684,80 @@ public final class WriteTools {
     }
 
     /**
-     * Create an entity of {@code type}. If {@code iri} is given the entity is declared at that exact
-     * IRI (plus an rdfs:label = name); otherwise Protégé's entity factory mints the IRI from
-     * {@code name}. Accumulates the resulting changes into {@code changes}.
+     * Create an entity of {@code type} from the create_* arguments {@code a} (name, iri, namespace,
+     * label, label_lang, no_label). With an explicit {@code iri} (or {@code namespace} + name) the
+     * entity is declared at that exact IRI; otherwise Protégé's entity factory mints the IRI from
+     * {@code name}. Unless {@code no_label}, an rdfs:label ('label' or 'name', tagged with
+     * {@code label_lang}) is added. Accumulates the resulting changes into {@code changes}.
      */
-    private static OWLEntity createEntity(OWLModelManager mm, String type, String name, String iri,
+    private static OWLEntity createEntity(OWLModelManager mm, String type, Map<String, Object> a,
             List<OWLOntologyChange> changes) {
         OWLDataFactory df = mm.getOWLDataFactory();
         OWLOntology ont = mm.getActiveOntology();
         String t = type.toLowerCase();
+        String name = Tools.reqString(a, "name");
+        String iri = Tools.optString(a, "iri");
+        String namespace = Tools.optString(a, "namespace");
+        if (iri == null && namespace != null) {
+            iri = joinNamespace(namespace, name);
+        }
+        boolean noLabel = Tools.optBool(a, "no_label", false);
+        String labelText = Tools.optString(a, "label");
+        String labelLang = Tools.optString(a, "label_lang");
         if (iri != null) {
             OWLEntity e = entityAtIri(df, t, IRI.create(iri));
             changes.add(new AddAxiom(ont, df.getOWLDeclarationAxiom(e)));
-            if (name != null) {
+            if (!noLabel) {
                 changes.add(new AddAxiom(ont, df.getOWLAnnotationAssertionAxiom(
-                        df.getRDFSLabel(), e.getIRI(), df.getOWLLiteral(name))));
+                        df.getRDFSLabel(), e.getIRI(), label(df, labelText != null ? labelText : name, labelLang))));
             }
             return e;
         }
         try {
             OWLEntityCreationSet<? extends OWLEntity> set = createViaFactory(mm, t, name);
-            changes.addAll(set.getOntologyChanges());
-            return set.getOWLEntity();
+            OWLEntity e = set.getOWLEntity();
+            boolean customLabel = labelText != null || labelLang != null;
+            for (OWLOntologyChange change : set.getOntologyChanges()) {
+                if ((noLabel || customLabel) && isLabelChangeFor(change, e)) {
+                    continue;
+                }
+                changes.add(change);
+            }
+            if (!noLabel && customLabel) {
+                changes.add(new AddAxiom(ont, df.getOWLAnnotationAssertionAxiom(
+                        df.getRDFSLabel(), e.getIRI(), label(df, labelText != null ? labelText : name, labelLang))));
+            }
+            return e;
         } catch (OWLEntityCreationException e) {
             throw new ToolArgException("Could not create " + t + ": " + e.getMessage());
         }
+    }
+
+    /** True for Protégé entity-factory auto-label changes for the entity being created. */
+    private static boolean isLabelChangeFor(OWLOntologyChange change, OWLEntity e) {
+        if (!(change instanceof AddAxiom)) {
+            return false;
+        }
+        OWLAxiom ax = ((AddAxiom) change).getAxiom();
+        if (!(ax instanceof OWLAnnotationAssertionAxiom)) {
+            return false;
+        }
+        OWLAnnotationAssertionAxiom ann = (OWLAnnotationAssertionAxiom) ax;
+        return ann.getProperty().isLabel() && ann.getSubject().equals(e.getIRI());
+    }
+
+    private static OWLLiteral label(OWLDataFactory df, String text, String lang) {
+        return lang != null ? df.getOWLLiteral(text, lang) : df.getOWLLiteral(text);
+    }
+
+    /** Join a namespace and a local name (insert '/' unless the namespace already ends in /, # or :). */
+    private static String joinNamespace(String namespace, String name) {
+        String local = name.trim().replace(" ", "");
+        if (namespace.isEmpty()) {
+            return local;
+        }
+        char last = namespace.charAt(namespace.length() - 1);
+        return (last == '/' || last == '#' || last == ':') ? namespace + local : namespace + "/" + local;
     }
 
     private static OWLEntity entityAtIri(OWLDataFactory df, String type, IRI iri) {
