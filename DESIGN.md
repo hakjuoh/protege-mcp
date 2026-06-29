@@ -220,11 +220,12 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (41 tools + 5 prompts)
+## 5. MCP Tool Catalog (47 tools + 5 prompts)
 
-Forty-one tools — 7 read, 2 context, 14 edit/history/persistence (incl. `preview_changes`,
-`apply_changes`, `set_label`), 6 ontology-header (incl. `set_prefix`), 3 document (incl.
-`set_active_ontology`), 8 reasoner, and 1 validation — each defined by a `name`, a `description`, and a
+Forty-seven tools — 7 read, 2 context, 14 edit/history/persistence (incl. `preview_changes`,
+`apply_changes`, `set_label`), 6 ontology-header (incl. `set_prefix`), 5 document (incl.
+`set_active_ontology`, `create_ontology`, `write_catalog`), 3 rule (`list_rules`/`add_rule`/`remove_rule`),
+8 reasoner, and 2 validation (incl. `diff_ontologies`) — each defined by a `name`, a `description`, and a
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
 **Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
 serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results
@@ -246,6 +247,16 @@ Manchester parser accepts full `<IRI>` operands inside compound expressions; `ge
 returns structured `{iri, …}` neighbours; `validate_ontology` takes `with_reasoner`; and `undo`/`redo`
 report the axiom-count delta.
 
+New in `0.2.2` (closing the multi-module reconstruction gaps found by rebuilding the IOF ontology
+through the tools): structured SWRL rule editing — `list_rules` / `add_rule` / `remove_rule` read,
+add, and remove `swrl:Imp` axioms as body/head atoms, preserving named rule-variable IRIs (e.g.
+`iof-var:process1`) and rule-level annotations that the conventional `?x` text syntax cannot
+round-trip; `create_ontology` mints a new empty module in the workspace (paired with the existing
+`set_ontology_id`); `write_catalog` generates the OASIS `catalog-v001.xml` that maps a module's
+imports to their local files (a file outside the OWL axiom model, so no other tool can produce it);
+and `diff_ontologies` performs an axiom-level semantic diff / round-trip check between two loaded
+ontologies, or the active ontology against a freshly-loaded document.
+
 | Tool | Mapping / notes |
 |---|---|
 | `list_ontologies` | `OWLModelManager.getOntologies()` / `getActiveOntologies()` + `getActiveOntology()`; marks the active one |
@@ -266,8 +277,11 @@ report the axiom-count delta.
 | `set_ontology_id` | `SetOntologyID` with collision guard against already-loaded ontologies |
 | `add_import` / `remove_import` | `AddImport` / `RemoveImport` over the active ontology |
 | `add_ontology_annotation` / `remove_ontology_annotation` | `AddOntologyAnnotation` / `RemoveOntologyAnnotation` over the active ontology |
-| `load_ontology` | parse off-EDT into a throwaway **concurrent** manager (explicit connection timeout, SILENT imports), then on the EDT `copyOntology(MOVE)` the closure into Protégé's manager + `setActiveOntology` + fire `ONTOLOGY_LOADED` (replicates `OntologyLoader` minus its modal UI; not undoable) |
+| `load_ontology` | parse off-EDT into a throwaway **concurrent** manager (explicit connection timeout, SILENT imports; for a local-file source — plain path **or** `file:` IRI, via the shared `localFile` helper — a sibling `catalog-v001.xml` is registered as an `XMLCatalogIRIMapper` so imports resolve to local files offline; the same `normalizeSource`/`addFolderCatalogMapper`/`documentSource` helpers back `merge_ontology_document` and `diff_ontologies`' `right_document`), then on the EDT `copyOntology(MOVE)` the closure into Protégé's manager + `setActiveOntology` + fire `ONTOLOGY_LOADED` (replicates `OntologyLoader` minus its modal UI; not undoable) |
 | `merge_ontology_document` | load with a temporary OWLAPI manager, then copy axioms/imports/ontology annotations into the active ontology |
+| `create_ontology` | `OWLModelManager.createNewOntology(id, physicalURI)` (collision guard; sets active + fires `ONTOLOGY_CREATED`; optional `keep_active`; not undoable) |
+| `write_catalog` | build an `org.protege.xmlcatalog.XMLCatalog` of `UriEntry`s mapping each `owl:imports` declaration IRI (and the resolved ontology's IRI/version) to its local file (relativized via `CatalogUtilities.relativize`), then `CatalogUtilities.save(catalog, catalog-v001.xml)` — a filesystem write, not undoable |
+| `list_rules` / `add_rule` / `remove_rule` | `getAxioms(AxiomType.SWRL_RULE)`; build `SWRLRule`s from structured body/head atoms via `getSWRL*` factory methods (`?name`/`?<IRI>` → `getSWRLVariable(IRI)` preserves named variable IRIs); rule annotations via `getSWRLRule(body, head, annotations)`; remove via `RemoveAxiom` |
 | `undo_change` / `redo_change` | `getHistoryManager().undo()/redo()` (shared with the GUI) |
 | `save_ontology` | `OWLModelManager.save()` |
 | `list_reasoners` / `set_reasoner` | `OWLReasonerManager.getInstalledReasonerFactories()` / `setCurrentReasonerFactoryId(id)` |
@@ -277,6 +291,7 @@ report the axiom-count delta.
 | `execute_dl_query` | resolve a Manchester class expression, then `reasoner.getEquivalentClasses/getSubClasses/getSuperClasses/getInstances` (DL Query workbench) |
 | `explain_entailment` | `reasoner.isEntailed(axiom)` for a structured axiom |
 | `get_explanations` | `com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator.getExplanations(axiom, max)` — minimal justifications, using the selected reasoner's factory |
+| `diff_ontologies` | pure set difference over `getAxioms()` / `getLogicalAxioms()` (optionally imports closures) of two loaded ontologies, or the active ontology vs. a document loaded into a throwaway manager; `identical=true` ⇔ both sides empty (a faithful round-trip) |
 
 - **Ontology edits go through `OWLModelManager.applyChange` (singular, the majority) and `applyChanges`
   (plural, for `create_class` / `create_entity` / `rename_entity` / `delete_entity` / document merge).** Both

@@ -204,6 +204,7 @@ package these flows.
 | `get_ontology_context` | One-call orientation: id, signature counts, imports, ontology annotations, asserted root classes, sampled properties, reasoner state, and the prefix map. |
 | `get_entity_context` | An "entity card" for one term: type(s), labels/annotations, deprecation, and the asserted neighbourhood (super/sub/equivalent/disjoint classes, domains/ranges, super/sub properties, inverses, characteristics, instances, property assertions). Named neighbours are returned as `{iri, display, type}` (anonymous restriction/intersection supers as `{expression, anonymous:true}`) so they resolve to IRIs without a second lookup. Resolves puns. |
 | `validate_ontology` | Modelling-quality audit (not logical consistency): missing/duplicate labels, missing definitions, deprecated-but-used terms, undeclared entities, properties with no domain/range, self-subclassing, subclass cycles, and isolated classes — each with a count, sample offenders, and a fix suggestion. Pass `with_reasoner=true` to also include the reasoner's consistency / unsatisfiable-class verdict (a clean audit is **not** proof of logical consistency). |
+| `diff_ontologies` | Axiom-level diff between two ontologies (or the active ontology against a freshly-loaded `right_document`, without adding it to the workspace): reports counts and capped samples of axioms only-in-left / only-in-right, and `identical=true` when the two match — the round-trip safety net for verifying a reconstruction. `include_imports` / `logical_only` scope the comparison; a `right_document` is loaded catalog-aware (sibling `catalog-v001.xml`), so an `include_imports` diff compares like-for-like import closures. |
 
 ### Edit
 
@@ -229,9 +230,19 @@ package these flows.
 
 | Tool | Description |
 | --- | --- |
-| `load_ontology` | Load an OWL document from a local path or URL into the workspace as its own ontology and make it active (fetched off the UI thread; not undoable). Pass `keep_active=true` to load it (e.g. to resolve an import) **without** changing the active edit target. |
+| `load_ontology` | Load an OWL document from a local path, a `file:` IRI, or an `http(s)` URL into the workspace as its own ontology and make it active (fetched off the UI thread; not undoable). A sibling `catalog-v001.xml` next to a local-file document (path **or** `file:` IRI) resolves its imports to local files offline, like Protégé's File ▸ Open. An import declaration matching the imported ontology's IRI/version links in-session; a bare document-URL declaration loads the document and is resolved on reopen through the catalog. Pass `keep_active=true` to load it (e.g. to resolve an import) **without** changing the active edit target. |
 | `set_active_ontology` | Select which already-loaded ontology is the **active edit target**, by ontology IRI or version IRI (see `list_ontologies`). Loads/fetches nothing — switches focus, e.g. back to your module after `load_ontology` brought in an imported ontology. |
 | `merge_ontology_document` | Load an OWL document from a local path or URL (GitHub blob URLs are converted to raw URLs) and copy its axioms, imports, ontology annotations, and optionally ontology ID into the active ontology in one bulk step. |
+| `create_ontology` | Create a brand-new empty ontology in the workspace (given an `ontology_iri`, optional `version_iri`, and optional file `path`) and make it the active edit target — start a new module before adding imports/axioms. Not undoable. `set_ontology_id` re-ids an existing ontology; this mints a new one. |
+| `write_catalog` | Generate/refresh an OASIS `catalog-v001.xml` next to the active ontology that maps each `owl:imports` **declaration IRI** (what Protégé resolves on reopen — it can differ from the ontology IRI, e.g. a BFO/cache document URL) and the resolved ontology's IRI/version to the local file it loaded from, so the module re-opens with imports resolved offline. `direct_imports_only` maps just the direct imports; unresolved / non-file imports are reported as skipped. Writes a file (not undoable). |
+
+### Rules
+
+| Tool | Description |
+| --- | --- |
+| `list_rules` | List SWRL rules (`swrl:Imp`) in the active ontology as structured body/head atoms plus rule annotations and a text rendering. Variable arguments are emitted as `?<absolute IRI>` and each named atom predicate carries a `predicate_iri`, so a listed rule round-trips through `add_rule` verbatim across ontologies. `include_imports` includes imported rules. |
+| `add_rule` | Add a SWRL rule from structured body/head atoms (`class` / `object_property` / `data_property` / `same_as` / `different_from` / `builtin`). A `?`-prefixed argument is a rule variable (`?name` → `variable_namespace` + name, `?<IRI>` → that IRI exactly), so named variable IRIs (e.g. `iof-var:process1`) are preserved; an atom predicate may be given as a display `predicate` or a full `predicate_iri` (preferred when present). Optional `annotations` attach rule-level `rdfs:label`/comment/etc. The head must be non-empty (body may be empty). |
+| `remove_rule` | Remove a SWRL rule by `index` (the rendering-sorted order `list_rules` returns) and/or `label` (its `rdfs:label`), or by passing the same structured `body`/`head`/`annotations` to remove that exact rule. |
 
 ### History & persistence
 

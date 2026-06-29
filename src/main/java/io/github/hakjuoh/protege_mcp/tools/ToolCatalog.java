@@ -20,6 +20,9 @@ public final class ToolCatalog {
         all.addAll(EntityRefactorTools.specs(ctx));
         all.addAll(OntologyMetadataTools.specs(ctx));
         all.addAll(OntologyDocumentTools.specs(ctx));
+        all.addAll(RuleTools.specs(ctx));
+        all.addAll(CatalogTools.specs(ctx));
+        all.addAll(DiffTools.specs(ctx));
         all.addAll(ReasonerTools.specs(ctx));
         all.addAll(ValidationTools.specs(ctx));
         return all;
