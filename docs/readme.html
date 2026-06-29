@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>33 tools</b> across explore / search, edit, documents, history, and reasoning - every model
+    <li><b>47 tools</b> across explore / search, edit, documents, rules, history, and reasoning - every model
         edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
         the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>Loopback-only HTTP with <b>OAuth 2.1</b> (dynamic registration + browser consent, persisted
@@ -43,6 +43,24 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.2.2</h4>
+<ul>
+    <li>Full-fidelity SWRL rule editing (41 &#8594; 47 tools): <code>list_rules</code> /
+        <code>add_rule</code> / <code>remove_rule</code> read, add and remove SWRL rules
+        (<code>swrl:Imp</code>) as structured body/head atoms, preserving named rule-variable IRIs
+        (e.g. <code>iof-var:process1</code>) and rule-level annotations that a <code>?x</code> text
+        syntax cannot round-trip.</li>
+    <li><code>create_ontology</code> mints a new empty module in the workspace and makes it the active
+        edit target (pairs with <code>set_ontology_id</code>), so a multi-module ontology can be built
+        from nothing.</li>
+    <li><code>write_catalog</code> generates an OASIS <code>catalog-v001.xml</code> mapping the active
+        ontology's imports to their local files, so a reconstructed module re-opens in
+        Prot&#233;g&#233; with imports resolved offline.</li>
+    <li><code>diff_ontologies</code> compares two ontologies (or the active ontology against a
+        document) at the axiom level &#8212; a round-trip safety net that reports
+        <code>identical=true</code> when a reconstruction is axiom-for-axiom faithful.</li>
+</ul>
 
 <h4>v0.2.1</h4>
 <ul>
