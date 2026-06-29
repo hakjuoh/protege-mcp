@@ -44,6 +44,23 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h3>Version information</h3>
 
+<h4>v0.3.1</h4>
+<ul>
+    <li>The <strong>Ontology Assistant</strong> input now takes attachments. Long pasted text is compacted to a
+        <code>[Pasted content #N: ... chars]</code> placeholder (the full body still reaches the assistant), and
+        the <strong>Attach</strong> button, drag/drop, or clipboard paste add files and images as placeholders
+        such as <code>[Image #1]</code> / <code>[File #1: name]</code>.</li>
+    <li>Attachments are handled privately: each file/image is copied into its own temporary folder and only that
+        single-file copy is exposed to the CLI &#8212; never the rest of its containing folder &#8212; and the
+        copies are deleted when the turn finishes. The one-time egress banner now names attachments and pasted
+        content (and is shown once more so the wider disclosure is acknowledged).</li>
+    <li>A placeholder you edit away before sending is reported and not sent, so nothing is silently dropped.
+        Pressing <strong>Backspace</strong> next to a placeholder removes the whole <code>[Image #N]</code>
+        token (and its attachment) at once.</li>
+    <li>Composer layout: <strong>+</strong> (bottom-left) attaches files/images; the send button sits at the
+        bottom-right and is replaced in place by a stop button while a turn is streaming.</li>
+</ul>
+
 <h4>v0.3.0</h4>
 <ul>
     <li><strong>In-Prot&#233;g&#233; chat assistant (Architecture Approach B).</strong> A new <strong>Ontology
