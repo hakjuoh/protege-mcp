@@ -692,7 +692,11 @@ public final class Tools {
             m.put("value", lit.getLiteral());
             if (lit.hasLang()) {
                 m.put("lang", lit.getLang());
-            } else if (!lit.isRDFPlainLiteral()) {
+            } else if (!lit.isRDFPlainLiteral() && !lit.getDatatype().isString()) {
+                // xsd:string is the implicit type of a plain string in RDF 1.1 (and OWL API treats
+                // the two as equal), so reporting it would be noise that also makes a tool-built label
+                // look different from the same label parsed from a document. Only surface a genuinely
+                // non-string datatype (e.g. xsd:integer, xsd:dateTime).
                 m.put("datatype", lit.getDatatype().getIRI().toString());
             }
         } else {

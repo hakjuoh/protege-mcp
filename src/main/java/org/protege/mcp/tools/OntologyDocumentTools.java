@@ -1,6 +1,8 @@
 package org.protege.mcp.tools;
 
 import java.io.File;
+import java.io.IOException;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -10,6 +12,7 @@ import java.util.Set;
 
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.event.EventType;
+import org.protege.xmlcatalog.owlapi.XMLCatalogIRIMapper;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.io.FileDocumentSource;
 import org.semanticweb.owlapi.io.IRIDocumentSource;
@@ -59,7 +62,9 @@ public final class OntologyDocumentTools {
                         + "ontology. GitHub blob URLs are converted to raw.githubusercontent.com "
                         + "URLs automatically. The document is fetched off the UI thread (so a slow "
                         + "remote fetch does not freeze Protégé) and missing imports are skipped "
-                        + "silently. Note: a load is not an applyChange edit, so it does NOT join "
+                        + "silently — but a sibling catalog-v001.xml next to a local-file document "
+                        + "first resolves its imports to local files (offline), like Protégé's own "
+                        + "File ▸ Open. Note: a load is not an applyChange edit, so it does NOT join "
                         + "the shared undo stack — undo_change cannot revert it. Pass keep_active=true "
                         + "to load the document (e.g. to resolve an import) WITHOUT changing your "
                         + "current active edit target.",
@@ -148,7 +153,88 @@ public final class OntologyDocumentTools {
                     });
                 })));
 
+        tools.add(ToolSpecs.of("create_ontology",
+                "Create a brand-new empty ontology in the workspace and make it the active edit target "
+                        + "(so add_axiom/create_* write into it). Give its 'ontology_iri' and optionally a "
+                        + "'version_iri'. Pass 'path' to bind it to a file now (so an argument-less "
+                        + "save_ontology writes there, and write_catalog has a folder); otherwise it is "
+                        + "untitled until you save_ontology with a path. Use this to start a new module "
+                        + "before adding imports/axioms; set_ontology_id changes an existing ontology's "
+                        + "id, whereas this mints a new one. Creating an ontology is not on the undo stack.",
+                Tools.schema()
+                        .strReq("ontology_iri", "IRI of the new ontology.")
+                        .str("version_iri", "Optional version IRI.")
+                        .str("path", "Optional file path to bind the new ontology to (e.g. "
+                                + "/tmp/mymodule/MyModule.rdf).")
+                        .bool("keep_active", "Keep the current active ontology instead of switching to the "
+                                + "new one (default false).")
+                        .build(),
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> a = Tools.args(req);
+                    String ontologyIri = Tools.reqString(a, "ontology_iri");
+                    String versionIri = Tools.optString(a, "version_iri");
+                    String path = Tools.optString(a, "path");
+                    boolean keepActive = Tools.optBool(a, "keep_active", false);
+                    CallToolResult denied = WriteTools.checkWriteAllowed(ctx,
+                            "create new ontology " + ontologyIri);
+                    if (denied != null) {
+                        return denied;
+                    }
+                    return ctx.access().compute(mm -> createOntology(mm, ontologyIri, versionIri, path,
+                            keepActive));
+                })));
+
         return tools;
+    }
+
+    /**
+     * Mint a new empty ontology via Protégé's {@link OWLModelManager#createNewOntology} (which sets it
+     * active and fires ONTOLOGY_CREATED). When {@code path} is given the ontology is bound to that file
+     * document; with {@code keepActive} the previously-active ontology is restored as the edit target.
+     */
+    private static CallToolResult createOntology(OWLModelManager mm, String ontologyIri, String versionIri,
+            String path, boolean keepActive) {
+        OWLOntologyID newId = versionIri != null
+                ? new OWLOntologyID(IRI.create(ontologyIri), IRI.create(versionIri))
+                : new OWLOntologyID(IRI.create(ontologyIri));
+        String collision = OntologyMetadataTools.idCollision(mm, mm.getActiveOntology(), newId);
+        if (collision != null) {
+            return Tools.error(collision);
+        }
+        OWLOntology prevActive = mm.getActiveOntology();
+        URI physicalUri = null;
+        if (path != null) {
+            File file = new File(path).getAbsoluteFile();
+            File dir = file.getParentFile();
+            if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
+                return Tools.error("Cannot create directory: " + dir);
+            }
+            physicalUri = file.toURI();
+        }
+        OWLOntology created;
+        try {
+            created = mm.createNewOntology(newId, physicalUri);
+        } catch (OWLOntologyCreationException e) {
+            throw new ToolArgException("Could not create ontology " + ontologyIri + ": "
+                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+        boolean keptActive = keepActive && prevActive != null && !prevActive.equals(created)
+                && mm.getOntologies().contains(prevActive);
+        if (keptActive) {
+            mm.setActiveOntology(prevActive);
+        }
+        OWLOntology active = keptActive ? prevActive : created;
+        return Tools.json()
+                .put("created_ontology", ontologyLabel(created.getOntologyID()))
+                .put("active_ontology", ontologyLabel(active.getOntologyID()))
+                .put("kept_active", keptActive)
+                .putIfNotNull("document_iri",
+                        physicalUri == null ? null : mm.getOWLOntologyManager()
+                                .getOntologyDocumentIRI(created).toString())
+                .put("workspace_ontologies", mm.getOntologies().size())
+                .put("note", "New ontology created; this is not on the undo stack (undo_change cannot "
+                        + "revert it).")
+                .result();
     }
 
     /** Find a loaded ontology by ontology IRI or version IRI string (exact match). */
@@ -208,6 +294,7 @@ public final class OntologyDocumentTools {
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                 .setFollowRedirects(true)
                 .setConnectionTimeout(timeoutMs);
+        addFolderCatalogMapper(manager, normalized);
         try {
             OWLOntology primary = manager.loadOntologyFromOntologyDocument(documentSource(normalized), config);
             return new LoadedDocument(normalized, manager, primary,
@@ -344,6 +431,7 @@ public final class OntologyDocumentTools {
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                 .setFollowRedirects(true)
                 .setConnectionTimeout(timeoutMs);
+        addFolderCatalogMapper(manager, normalized);
         try {
             OWLOntology sourceOntology = manager.loadOntologyFromOntologyDocument(
                     documentSource(normalized), config);
@@ -360,11 +448,11 @@ public final class OntologyDocumentTools {
         }
     }
 
-    private static OWLOntologyDocumentSource documentSource(String source) {
-        // An existing local file wins over IRI parsing — this also handles a Windows drive path like
-        // "C:/x.rdf", which java.net.URI would otherwise treat as a URI with scheme "c".
-        File asFile = new File(source);
-        if (asFile.isFile()) {
+    static OWLOntologyDocumentSource documentSource(String source) {
+        // An existing local file (plain path or file: URI) wins over IRI parsing — this also handles a
+        // Windows drive path like "C:/x.rdf", which java.net.URI would otherwise treat as scheme "c".
+        File asFile = localFile(source);
+        if (asFile != null) {
             return new FileDocumentSource(asFile.getAbsoluteFile());
         }
         IRI iri = looksLikeWindowsPath(source) ? null : Tools.asIri(source);
@@ -372,7 +460,34 @@ public final class OntologyDocumentTools {
             return new IRIDocumentSource(iri);
         }
         throw new ToolArgException("Ontology document is not a readable file and is not an absolute IRI: "
-                + asFile.getAbsoluteFile());
+                + new File(source).getAbsoluteFile());
+    }
+
+    /**
+     * The local {@link File} a source string denotes — a plain path OR a {@code file:} URI — or
+     * {@code null} if it is not an existing local file. Shared so a path and a {@code file:} IRI are
+     * treated identically everywhere (document source AND sibling-catalog resolution).
+     */
+    static File localFile(String source) {
+        if (source == null) {
+            return null;
+        }
+        File asPath = new File(source);
+        if (asPath.isFile()) {
+            return asPath;
+        }
+        try {
+            URI uri = new URI(source);
+            if ("file".equalsIgnoreCase(uri.getScheme())) {
+                File asUri = new File(uri);
+                if (asUri.isFile()) {
+                    return asUri;
+                }
+            }
+        } catch (Exception ignored) {
+            // not a file: URI
+        }
+        return null;
     }
 
     /** A bare Windows drive path such as {@code C:\x} or {@code C:/x} — not a document IRI. */
@@ -380,7 +495,36 @@ public final class OntologyDocumentTools {
         return source.length() >= 2 && Character.isLetter(source.charAt(0)) && source.charAt(1) == ':';
     }
 
-    private static String normalizeSource(String source) {
+    /**
+     * If {@code source} is a local file (plain path or {@code file:} URI) with a sibling Protégé
+     * catalog ({@code catalog-v001.xml}) in its folder, register an {@link XMLCatalogIRIMapper} on
+     * {@code manager} so the document's owl:imports resolve to the local files the catalog maps them
+     * to, like Protégé's File ▸ Open (offline import resolution). An import declaration whose IRI
+     * matches the imported ontology's IRI/version links in-memory after load; a bare-document-URL
+     * declaration loads the document, and reopening through the catalog resolves it. No-op for a
+     * non-file source or when no catalog is present; a malformed catalog is ignored, not fatal.
+     */
+    static void addFolderCatalogMapper(OWLOntologyManager manager, String source) {
+        File asFile = localFile(source);
+        if (asFile == null) {
+            return;
+        }
+        File folder = asFile.getAbsoluteFile().getParentFile();
+        if (folder == null) {
+            return;
+        }
+        File catalog = new File(folder, "catalog-v001.xml");
+        if (!catalog.isFile()) {
+            return;
+        }
+        try {
+            manager.getIRIMappers().add(new XMLCatalogIRIMapper(catalog));
+        } catch (IOException | RuntimeException ignored) {
+            // A missing/malformed catalog must not block loading the document itself.
+        }
+    }
+
+    static String normalizeSource(String source) {
         String trimmed = source.trim();
         String prefix = "https://github.com/";
         int blob = trimmed.indexOf("/blob/");
