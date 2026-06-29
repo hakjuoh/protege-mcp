@@ -1,16 +1,12 @@
-# protege-mcp
+# Protégé MCP
 
-An **MCP (Model Context Protocol) server** for **Protégé Desktop**, packaged as a single OSGi
-plugin. It exposes the **live, active ontology** of a running Protégé to MCP clients over a localhost
-HTTP endpoint. Reads and edits flow through Protégé's shared `OWLModelManager`, so they appear in the
-GUI immediately and join the **undo stack** — exactly like manual edits.
+[![CI](https://github.com/hakjuoh/protege-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/hakjuoh/protege-mcp/actions/workflows/ci.yml)
+[![Release](https://github.com/hakjuoh/protege-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/hakjuoh/protege-mcp/actions/workflows/release.yml)
+[![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](LICENSE)
 
-It also ships an **in-Protégé chat assistant** (Architecture Approach B, new in `0.3.0`): a chat panel
-that drives your locally-installed `claude` or `codex` CLI to edit the ontology for you — see
-[In-Protégé chat](#in-protégé-chat-ontology-assistant) below.
-
-For the full design rationale — both architectures (Architecture Approach A, the in-Protégé MCP server;
-Architecture Approach B, the chat assistant above) and distribution — see [`DESIGN.md`](DESIGN.md).
+**Protégé MCP** is a plugin for **Protégé Desktop** that runs a local **MCP (Model Context Protocol)
+server**. It gives MCP-compatible AI tools — such as **Claude Code** and **Codex** — live access to the
+ontology you have open in Protégé, so they can explore it and make edits for you.
 
 ## Requirements
 
