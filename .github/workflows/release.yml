@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish, for example v0.3.1'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release tag
+        id: release_tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release_tag.outputs.tag }}
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Verify tag matches Maven version
+        id: project
+        run: |
+          project_version="$(python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("pom.xml").getroot()
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          print(root.findtext("m:version", namespaces=ns))
+          PY
+          )"
+          expected_tag="v${project_version}"
+          actual_tag="${{ steps.release_tag.outputs.tag }}"
+
+          if [ "$actual_tag" != "$expected_tag" ]; then
+            echo "Release tag '$actual_tag' does not match Maven version '$project_version' (expected '$expected_tag')." >&2
+            exit 1
+          fi
+
+          asset="target/protege-mcp-${project_version}.jar"
+          echo "version=${project_version}" >> "$GITHUB_OUTPUT"
+          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: mvn -B clean package
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release_tag.outputs.tag }}
+          ASSET: ${{ steps.project.outputs.asset }}
+        run: |
+          test -f "$ASSET"
+          gh release create "$TAG" "$ASSET" \
+            --title "$TAG" \
+            --generate-notes
