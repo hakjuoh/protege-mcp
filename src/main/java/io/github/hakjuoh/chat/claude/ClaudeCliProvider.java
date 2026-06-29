@@ -99,6 +99,13 @@ public final class ClaudeCliProvider implements ChatProvider {
         cmd.add(mcpConfigJson(req.endpoint()));
         cmd.add("--allowedTools");
         cmd.add("mcp__" + McpEndpoint.SERVER_NAME);
+        List<java.io.File> attachmentDirs = req.attachmentDirectories();
+        if (!attachmentDirs.isEmpty()) {
+            cmd.add("--add-dir");
+            for (java.io.File dir : attachmentDirs) {
+                cmd.add(dir.getAbsolutePath());
+            }
+        }
         if (req.model() != null && !req.model().isBlank()) {
             cmd.add("--model");
             cmd.add(req.model().trim());
@@ -108,7 +115,7 @@ public final class ClaudeCliProvider implements ChatProvider {
             cmd.add(req.sessionId().trim());
         }
         cmd.add("--");
-        cmd.add(req.prompt());
+        cmd.add(req.providerPrompt());
         return cmd;
     }
 

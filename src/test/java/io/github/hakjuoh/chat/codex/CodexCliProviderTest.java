@@ -1,5 +1,6 @@
 package io.github.hakjuoh.chat.codex;
 
+import io.github.hakjuoh.chat.ChatAttachment;
 import io.github.hakjuoh.chat.ChatRequest;
 import io.github.hakjuoh.chat.McpEndpoint;
 
@@ -8,8 +9,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /** The Codex {@code exec --json} argv, its {@code -c} overrides, and that the token stays off the CLI. */
 class CodexCliProviderTest {
@@ -54,6 +58,30 @@ class CodexCliProviderTest {
                 new ChatRequest("gpt-5.5", "hi", "", ENDPOINT));
         assertTrue(cmd.stream().noneMatch(a -> a.contains("SECRET-TOKEN")),
                 "the token must travel via the PROTEGE_MCP_TOKEN env var, never argv");
+    }
+
+    @Test
+    void imageAttachmentsUseCodexImageFlag(@TempDir Path dir) throws Exception {
+        Path image = Files.writeString(dir.resolve("screen.png"), "fake");
+        ChatRequest req = new ChatRequest("", "look at [Image #1]", "", ENDPOINT,
+                List.of(ChatAttachment.image("Image #1", image.toFile(), "image/png")));
+
+        List<String> cmd = CodexCliProvider.buildCommand("codex", req);
+
+        assertAdjacent(cmd, "--image", image.toFile().getAbsolutePath());
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));
+    }
+
+    @Test
+    void fileAttachmentsDoNotUseCodexImageFlag(@TempDir Path dir) throws Exception {
+        Path doc = Files.writeString(dir.resolve("notes.txt"), "x");
+        ChatRequest req = new ChatRequest("", "look at [File #1: notes.txt]", "", ENDPOINT,
+                List.of(ChatAttachment.file("File #1: notes.txt", doc.toFile(), null)));
+
+        List<String> cmd = CodexCliProvider.buildCommand("codex", req);
+
+        assertFalse(cmd.contains("--image"), "a plain file must not be passed via --image");
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));
     }
 
     private static void assertAdjacent(List<String> cmd, String flag, String value) {

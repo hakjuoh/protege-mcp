@@ -1,21 +1,49 @@
 package io.github.hakjuoh.ui;
 
+import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
+import java.awt.Image;
+import java.awt.Insets;
+import java.awt.RenderingHints;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.Line2D;
+import java.awt.geom.RoundRectangle2D;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.Transferable;
+import java.awt.datatransfer.UnsupportedFlavorException;
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.ArrayList;
 import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Deque;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
+import javax.imageio.ImageIO;
+import javax.swing.Action;
 import javax.swing.BorderFactory;
-import javax.swing.Box;
 import javax.swing.DefaultListCellRenderer;
+import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
+import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
@@ -25,13 +53,18 @@ import javax.swing.JTextArea;
 import javax.swing.JTextPane;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
 import javax.swing.Timer;
+import javax.swing.TransferHandler;
 import javax.swing.text.BadLocationException;
+import javax.swing.text.JTextComponent;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
 
 import org.protege.editor.owl.ui.view.AbstractOWLViewComponent;
+import io.github.hakjuoh.chat.ChatAttachment;
+import io.github.hakjuoh.chat.CliSupport;
 import io.github.hakjuoh.chat.ChatListener;
 import io.github.hakjuoh.chat.ChatProcess;
 import io.github.hakjuoh.chat.ChatProvider;
@@ -65,6 +98,16 @@ public class ChatView extends AbstractOWLViewComponent {
     private static final String NO_CLI = "No coding-agent CLI found. Install Claude Code (`claude`) or "
             + "Codex (`codex`) and log in, then reopen this view. You can also set the CLI path in "
             + "Preferences ▸ Ontology Assistant.\n";
+    private static final int PASTED_TEXT_ATTACHMENT_THRESHOLD = 2000;
+    private static final int PASTED_TEXT_LINE_THRESHOLD = 50;
+    /** A many-line paste is compacted only when it is also at least this large, so short multi-line
+     *  pastes (lists, short stack traces) stay visible inline instead of vanishing behind a placeholder. */
+    private static final int PASTED_TEXT_LINE_MIN_CHARS = 1500;
+    /** Pasted bodies larger than this are buffered to a temp file and referenced by path, so a huge paste
+     *  cannot overflow the single-argv command line (ARG_MAX). */
+    private static final int PASTED_TEXT_INLINE_MAX = 8000;
+    /** Files larger than this are refused (avoids copying huge files and oversized provider arguments). */
+    private static final long MAX_ATTACHMENT_BYTES = 25L * 1024 * 1024;
 
     private enum Kind { USER, ASSISTANT, TOOL, THINKING, ERROR, SYSTEM }
 
@@ -74,6 +117,7 @@ public class ChatView extends AbstractOWLViewComponent {
     private JTextPane transcript;
     private JTextArea input;
     private JButton sendButton;
+    private JButton attachButton;
     private JButton stopButton;
     private JButton newChatButton;
     private JComboBox<ChatProvider> providerCombo;
@@ -108,6 +152,20 @@ public class ChatView extends AbstractOWLViewComponent {
     private Timer statusTimer;
     private Timer workingTimer;
 
+    private final List<ChatAttachment> pendingAttachments = new ArrayList<>();
+    // Each file-backed attachment lives alone in its own scratch subdir (so Claude's --add-dir grants access
+    // to exactly that one file, never the user's real folder). Tracked here for prompt-time / turn-end cleanup.
+    private final List<File> sessionTempDirs = new ArrayList<>();
+    private List<ChatAttachment> inFlightAttachments = List.of();
+    // Bumped whenever the conversation is reset/closed, so an in-flight clipboard-image worker can tell its
+    // result belongs to a conversation that no longer exists and discard it instead of injecting a stale
+    // attachment (whose scratch file was already reclaimed).
+    private int attachGeneration;
+    private int nextScratchSeq = 1;
+    private int nextPastedTextIndex = 1;
+    private int nextImageIndex = 1;
+    private int nextFileIndex = 1;
+
     @Override
     protected void initialiseOWLView() throws Exception {
         setLayout(new BorderLayout(8, 8));
@@ -136,18 +194,14 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     private JComponent buildControlBar() {
-        providerBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        providerBar.add(new JLabel("Provider:"));
-
-        // Only locally-installed CLIs appear in the picker; if none, say so and leave the panel unusable.
+        // Only locally-installed CLIs appear in the picker. The Provider + Model pickers are created here but
+        // laid out in the composer (just left of Send) — see buildInputBar(); the top bar keeps New chat and
+        // the edit/reasoning toggles.
         List<ChatProvider> available = Providers.available();
-        if (available.isEmpty()) {
-            JLabel none = new JLabel("none found — install Claude Code (claude) or Codex (codex), then reopen");
-            none.setForeground(new Color(0xB00020));
-            providerBar.add(none);
-        } else {
+        if (!available.isEmpty()) {
             String savedProvider = McpConfig.prefs().getString(McpConfig.KEY_CHAT_PROVIDER, "");
             providerCombo = new JComboBox<>();
+            providerCombo.setToolTipText("Provider");
             providerCombo.setRenderer(new DefaultListCellRenderer() {
                 private static final long serialVersionUID = 1L;
 
@@ -177,24 +231,23 @@ public class ChatView extends AbstractOWLViewComponent {
                     selectProvider(p);
                 }
             });
-            providerBar.add(providerCombo);
+            Dimension pc = providerCombo.getPreferredSize();
+            providerCombo.setPreferredSize(new Dimension(96, pc.height));
         }
 
-        providerBar.add(Box.createHorizontalStrut(8));
-        providerBar.add(new JLabel("Model:"));
         modelCombo = new JComboBox<>();
-        modelCombo.setEditable(true);
+        // Non-editable to match the Provider picker (an editable combo renders as a different, taller widget on
+        // macOS Aqua, which is what made the two look mismatched and misaligned). Pick from the provider's list.
+        modelCombo.setToolTipText("Model ((default) = the CLI's own default)");
         modelCombo.addActionListener(e -> onModelChanged());
-        providerBar.add(modelCombo);
-
-        newChatButton = new JButton("New chat");
-        newChatButton.addActionListener(e -> startNewConversation(true));
-        providerBar.add(Box.createHorizontalStrut(8));
-        providerBar.add(newChatButton);
-
         if (currentProvider != null) {
             populateModels(currentProvider);
         }
+        Dimension mc = modelCombo.getPreferredSize();
+        modelCombo.setPreferredSize(new Dimension(132, mc.height));
+
+        newChatButton = new JButton("New chat");
+        newChatButton.addActionListener(e -> startNewConversation(true));
 
         confirmEdits = new JCheckBox("Confirm each edit",
                 McpConfig.prefs().getBoolean(McpConfig.KEY_CONFIRM_WRITES, false));
@@ -210,27 +263,34 @@ public class ChatView extends AbstractOWLViewComponent {
         showThinking.addActionListener(e ->
                 McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_SHOW_THINKING, showThinking.isSelected()));
 
-        JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        options.add(confirmEdits);
-        options.add(showThinking);
+        providerBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        if (available.isEmpty()) {
+            JLabel none = new JLabel("No coding-agent CLI found — install Claude Code (claude) or Codex "
+                    + "(codex), then reopen");
+            none.setForeground(new Color(0xB00020));
+            providerBar.add(none);
+        }
+        providerBar.add(newChatButton);
+        providerBar.add(confirmEdits);
+        providerBar.add(showThinking);
 
+        // The live status strip (server/edits state, working indicator, token count) is created here but laid
+        // out inside the composer's bottom row (between "+" and Send) — see buildInputBar() — so the otherwise
+        // empty middle of the composer surfaces useful live info instead of wasting space.
+        Font small = new JLabel().getFont().deriveFont(Font.PLAIN, 11f);
+        Color muted = new Color(0x666666);
         statusLabel = new JLabel(" ");
+        statusLabel.setFont(small);
+        statusLabel.setForeground(muted);
         usageLabel = new JLabel(" ");
+        usageLabel.setFont(small);
+        usageLabel.setForeground(muted);
         workingLabel = new JLabel(" ");
+        workingLabel.setFont(small);
         workingLabel.setForeground(new Color(0x1A4F8B));
         workingLabel.setHorizontalAlignment(JLabel.CENTER);
-        JPanel statusRow = new JPanel(new BorderLayout(8, 0));
-        statusRow.add(statusLabel, BorderLayout.WEST);
-        statusRow.add(workingLabel, BorderLayout.CENTER);
-        statusRow.add(usageLabel, BorderLayout.EAST);
 
-        JPanel top = new JPanel(new BorderLayout(4, 4));
-        JPanel rows = new JPanel(new BorderLayout(4, 4));
-        rows.add(providerBar, BorderLayout.NORTH);
-        rows.add(options, BorderLayout.SOUTH);
-        top.add(rows, BorderLayout.NORTH);
-        top.add(statusRow, BorderLayout.SOUTH);
-        return top;
+        return providerBar;
     }
 
     private JComponent buildInputBar() {
@@ -248,23 +308,581 @@ public class ChatView extends AbstractOWLViewComponent {
             }
         });
         input.getInputMap().put(KeyStroke.getKeyStroke("shift ENTER"), "insert-break");
+        // Backspace next to a `[Image #N]`/`[File …]`/`[Pasted …]` placeholder removes the whole token (and
+        // its attachment) at once, instead of nibbling it one bracket at a time.
+        installSmartBackspace();
+        // Replace the transfer handler so paste/drop can become attachments. We intentionally do NOT call
+        // setDragEnabled(true): that only makes the field a drag *source*, and since this handler does not
+        // implement export it would break the built-in drag-to-move-text. Drop import works regardless.
+        input.setTransferHandler(new AttachmentTransferHandler(input.getTransferHandler()));
+        input.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
 
-        sendButton = new JButton("Send");
+        // Composer layout: a "+" attaches at the bottom-left; the send button sits at the bottom-right and is
+        // swapped in place for a stop button while a turn streams, so the two share one slot.
+        Color accent = new Color(0x1A4F8B);
+        attachButton = iconButton(icon(Glyph.PLUS, 22, new Color(0x555555), null), "Attach files or images");
+        attachButton.addActionListener(e -> attachFilesFromChooser());
+        sendButton = iconButton(icon(Glyph.SEND, 26, Color.WHITE, accent), "Send (Enter)");
         sendButton.addActionListener(e -> send());
-        stopButton = new JButton("Stop");
-        stopButton.setEnabled(false);
+        stopButton = iconButton(icon(Glyph.STOP, 26, Color.WHITE, new Color(0xD93025)), "Stop");
         stopButton.addActionListener(e -> stop());
+        stopButton.setVisible(false);   // only shown (in the send slot) while a turn is running
 
-        JPanel buttons = new JPanel();
-        buttons.setLayout(new javax.swing.BoxLayout(buttons, javax.swing.BoxLayout.Y_AXIS));
-        buttons.add(sendButton);
-        buttons.add(Box.createVerticalStrut(4));
-        buttons.add(stopButton);
+        JPanel sendSlot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        sendSlot.setOpaque(false);
+        sendSlot.add(sendButton);
+        sendSlot.add(stopButton);
 
-        JPanel bar = new JPanel(new BorderLayout(6, 0));
-        bar.add(new JScrollPane(input), BorderLayout.CENTER);
-        bar.add(buttons, BorderLayout.EAST);
+        // Fill the gap between "+" and Send with the live status strip (server/edits state · working · tokens).
+        // Status text and the "● running Ns" indicator group on the LEFT (the indicator just after the status);
+        // the token readout stays on the right. GridBagLayout (not FlowLayout) so the short labels are centered
+        // vertically in the row — FlowLayout pins its row to the top, which made the strip sit too high.
+        JPanel leftStatus = new JPanel(new java.awt.GridBagLayout());
+        leftStatus.setOpaque(false);
+        java.awt.GridBagConstraints gbc = new java.awt.GridBagConstraints();
+        gbc.gridy = 0;
+        gbc.anchor = java.awt.GridBagConstraints.CENTER;
+        gbc.insets = new Insets(0, 0, 0, 12);
+        leftStatus.add(statusLabel, gbc);
+        gbc.insets = new Insets(0, 0, 0, 0);
+        leftStatus.add(workingLabel, gbc);
+
+        JPanel middleInfo = new JPanel(new BorderLayout(8, 0));
+        middleInfo.setOpaque(false);
+        middleInfo.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
+        middleInfo.add(leftStatus, BorderLayout.WEST);
+        middleInfo.add(usageLabel, BorderLayout.EAST);
+
+        // Right cluster: the Provider + Model pickers sit just to the LEFT of the send/stop button.
+        JPanel east = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        east.setOpaque(false);
+        if (providerCombo != null) {
+            east.add(providerCombo);
+        }
+        east.add(modelCombo);
+        east.add(sendSlot);
+
+        JPanel controlRow = new JPanel(new BorderLayout());
+        controlRow.setOpaque(false);
+        controlRow.setBorder(BorderFactory.createEmptyBorder(2, 2, 0, 2));
+        controlRow.add(attachButton, BorderLayout.WEST);
+        controlRow.add(middleInfo, BorderLayout.CENTER);
+        controlRow.add(east, BorderLayout.EAST);
+
+        JScrollPane inputScroll = new JScrollPane(input,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        inputScroll.setBorder(BorderFactory.createEmptyBorder());
+
+        JPanel inputPanel = new JPanel(new BorderLayout(0, 2));
+        inputPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(0xC8C8C8)),
+                BorderFactory.createEmptyBorder(4, 4, 4, 4)));
+        inputPanel.add(inputScroll, BorderLayout.CENTER);
+        inputPanel.add(controlRow, BorderLayout.SOUTH);
+
+        JPanel bar = new JPanel(new BorderLayout());
+        bar.add(inputPanel, BorderLayout.CENTER);
         return bar;
+    }
+
+    /** Show the stop button in the send slot while a turn runs; restore send when idle. */
+    private void showStop(boolean running) {
+        if (sendButton != null) {
+            sendButton.setVisible(!running);
+        }
+        if (stopButton != null) {
+            stopButton.setVisible(running);
+            stopButton.setEnabled(running);
+            Component slot = stopButton.getParent();
+            if (slot != null) {
+                slot.revalidate();
+                slot.repaint();
+            }
+        }
+    }
+
+    private static JButton iconButton(Icon icon, String tooltip) {
+        JButton b = new JButton(icon);
+        b.setToolTipText(tooltip);
+        b.setBorderPainted(false);
+        b.setContentAreaFilled(false);
+        b.setFocusPainted(false);
+        b.setMargin(new Insets(2, 2, 2, 2));
+        b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        return b;
+    }
+
+    private enum Glyph { PLUS, SEND, STOP }
+
+    /** A small flat-drawn composer icon: a plus, an up-arrow send (filled circle), or a stop square. */
+    private static Icon icon(Glyph glyph, int size, Color fg, Color bg) {
+        return new Icon() {
+            @Override
+            public int getIconWidth() {
+                return size;
+            }
+
+            @Override
+            public int getIconHeight() {
+                return size;
+            }
+
+            @Override
+            public void paintIcon(Component c, Graphics g, int x, int y) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                try {
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    g2.translate(x, y);
+                    float s = size;
+                    if (bg != null) {
+                        g2.setColor(bg);
+                        g2.fill(new Ellipse2D.Float(0, 0, s, s));
+                    }
+                    g2.setColor(fg);
+                    switch (glyph) {
+                        case PLUS -> {
+                            g2.setStroke(new BasicStroke(Math.max(1.6f, s * 0.11f),
+                                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                            float m = s * 0.24f;
+                            g2.draw(new Line2D.Float(s / 2, m, s / 2, s - m));
+                            g2.draw(new Line2D.Float(m, s / 2, s - m, s / 2));
+                        }
+                        case SEND -> {
+                            g2.setStroke(new BasicStroke(Math.max(1.7f, s * 0.10f),
+                                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                            float cx = s / 2;
+                            float top = s * 0.30f;
+                            float bot = s * 0.72f;
+                            float head = s * 0.17f;
+                            g2.draw(new Line2D.Float(cx, top, cx, bot));
+                            g2.draw(new Line2D.Float(cx, top, cx - head, top + head));
+                            g2.draw(new Line2D.Float(cx, top, cx + head, top + head));
+                        }
+                        case STOP -> {
+                            float m = s * 0.34f;
+                            g2.fill(new RoundRectangle2D.Float(m, m, s - 2 * m, s - 2 * m, s * 0.08f, s * 0.08f));
+                        }
+                        default -> {
+                        }
+                    }
+                } finally {
+                    g2.dispose();
+                }
+            }
+        };
+    }
+
+    private void installSmartBackspace() {
+        Action deletePrev = input.getActionMap().get(javax.swing.text.DefaultEditorKit.deletePrevCharAction);
+        input.getInputMap().put(KeyStroke.getKeyStroke("BACK_SPACE"), "smart-backspace");
+        input.getActionMap().put("smart-backspace", new javax.swing.AbstractAction() {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                if (!deletePlaceholderBefore() && deletePrev != null) {
+                    deletePrev.actionPerformed(e);
+                }
+            }
+        });
+    }
+
+    /**
+     * If the caret sits immediately after an attachment placeholder (and there is no selection), delete the
+     * whole {@code [ … ]} token and drop its attachment in one keystroke. Returns false to fall back to a
+     * normal one-character backspace.
+     */
+    private boolean deletePlaceholderBefore() {
+        if (input.getSelectionStart() != input.getSelectionEnd()) {
+            return false;
+        }
+        int caret = input.getCaretPosition();
+        String text = input.getText();
+        if (caret <= 0 || caret > text.length() || text.charAt(caret - 1) != ']') {
+            return false;
+        }
+        int open = text.lastIndexOf('[', caret - 1);
+        if (open < 0) {
+            return false;
+        }
+        String token = text.substring(open, caret);
+        ChatAttachment match = null;
+        for (ChatAttachment a : pendingAttachments) {
+            if (a.placeholder().equals(token)) {
+                match = a;
+                break;
+            }
+        }
+        if (match == null) {
+            return false;   // a literal "[…]" the user typed, not an attachment — ordinary backspace
+        }
+        try {
+            input.getDocument().remove(open, caret - open);
+        } catch (BadLocationException ex) {
+            return false;
+        }
+        pendingAttachments.remove(match);
+        if (match.file() != null) {
+            deleteScratchDir(match.file().getParentFile());
+        }
+        return true;
+    }
+
+    private void attachFilesFromChooser() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setMultiSelectionEnabled(true);
+        int choice = chooser.showOpenDialog(this);
+        if (choice == JFileChooser.APPROVE_OPTION) {
+            attachFiles(Arrays.asList(chooser.getSelectedFiles()));
+        }
+    }
+
+    private final class AttachmentTransferHandler extends TransferHandler {
+        private static final long serialVersionUID = 1L;
+
+        private final TransferHandler delegate;
+
+        AttachmentTransferHandler(TransferHandler delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public boolean canImport(TransferSupport support) {
+            return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
+                    || support.isDataFlavorSupported(DataFlavor.imageFlavor)
+                    || support.isDataFlavorSupported(DataFlavor.stringFlavor)
+                    || (delegate != null && delegate.canImport(support));
+        }
+
+        @Override
+        public boolean importData(TransferSupport support) {
+            try {
+                moveCaretToDropLocation(support);
+                Transferable t = support.getTransferable();
+                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                    @SuppressWarnings("unchecked")
+                    List<File> files = (List<File>) t.getTransferData(DataFlavor.javaFileListFlavor);
+                    return attachFiles(files);
+                }
+                if (support.isDataFlavorSupported(DataFlavor.imageFlavor)) {
+                    Image image = (Image) t.getTransferData(DataFlavor.imageFlavor);
+                    return attachClipboardImage(image);
+                }
+                if (support.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                    String text = (String) t.getTransferData(DataFlavor.stringFlavor);
+                    if (shouldAttachPastedText(text)) {
+                        attachPastedText(text);
+                    } else {
+                        input.replaceSelection(text == null ? "" : text);
+                    }
+                    return true;
+                }
+            } catch (UnsupportedFlavorException | IOException | RuntimeException ex) {
+                append(Kind.ERROR, "\n[error] Could not attach pasted or dropped content: "
+                        + ex.getMessage() + "\n");
+                return false;
+            }
+            return delegate != null && delegate.importData(support);
+        }
+    }
+
+    private void moveCaretToDropLocation(TransferHandler.TransferSupport support) {
+        if (!support.isDrop()) {
+            return;
+        }
+        TransferHandler.DropLocation loc = support.getDropLocation();
+        if (loc instanceof JTextComponent.DropLocation textLoc) {
+            input.setCaretPosition(textLoc.getIndex());
+        }
+    }
+
+    private boolean shouldAttachPastedText(String text) {
+        if (text == null) {
+            return false;
+        }
+        if (text.length() >= PASTED_TEXT_ATTACHMENT_THRESHOLD) {
+            return true;
+        }
+        // A many-line paste is only compacted when it is also reasonably large; otherwise a short multi-line
+        // snippet the user expects to see (a 60-line list, a brief stack trace) would needlessly vanish.
+        if (text.length() < PASTED_TEXT_LINE_MIN_CHARS) {
+            return false;
+        }
+        int lines = 1;
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n' && ++lines >= PASTED_TEXT_LINE_THRESHOLD) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void attachPastedText(String text) {
+        String label = "Pasted content #" + nextPastedTextIndex++ + ": " + String.format("%,d", text.length())
+                + " chars";
+        ChatAttachment attachment;
+        if (text.length() > PASTED_TEXT_INLINE_MAX) {
+            // Too large to inline on the command line — buffer it to an isolated temp file and pass the path,
+            // so the provider prompt stays bounded regardless of paste size.
+            File dir = null;
+            try {
+                dir = newScratchDir();
+                File file = new File(dir, "pasted-" + System.currentTimeMillis() + ".txt");
+                Files.writeString(file.toPath(), text);
+                restrict(file.toPath(), false);
+                attachment = ChatAttachment.pastedTextFile(label, text, file);
+            } catch (IOException ex) {
+                // Re-inlining a body this large would just reintroduce the command-line overflow the temp file
+                // exists to prevent, so drop it back into the visible input for the user to see and trim.
+                append(Kind.ERROR, "\n[error] Could not buffer large pasted text; left it in the input box "
+                        + "instead: " + ex.getMessage() + "\n");
+                deleteScratchDir(dir);
+                nextPastedTextIndex--;
+                input.replaceSelection(text);
+                return;
+            }
+        } else {
+            attachment = ChatAttachment.pastedText(label, text);
+        }
+        pendingAttachments.add(attachment);
+        insertAttachmentPlaceholder(attachment);
+    }
+
+    private boolean attachClipboardImage(Image image) throws IOException {
+        if (image == null) {
+            return false;
+        }
+        // Reserve the label/index and create the (cheap) scratch dir on the EDT; do the potentially heavy
+        // encode + PNG write off the EDT so a large screenshot can't freeze the UI.
+        final int idx = nextImageIndex++;
+        final String label = "Image #" + idx;
+        final File dir = newScratchDir();
+        final File file = new File(dir, "image-" + System.currentTimeMillis() + "-" + idx + ".png");
+        final int generation = attachGeneration;
+        new SwingWorker<Void, Void>() {
+            @Override
+            protected Void doInBackground() throws Exception {
+                ImageIO.write(toBufferedImage(image), "png", file);
+                restrict(file.toPath(), false);
+                return null;
+            }
+
+            @Override
+            protected void done() {
+                if (generation != attachGeneration) {
+                    // The conversation was reset/closed while we encoded — discard rather than inject a stale
+                    // attachment whose scratch file deleteAllScratch() may already have reclaimed.
+                    deleteScratchDir(dir);
+                    return;
+                }
+                try {
+                    get();
+                    ChatAttachment attachment = ChatAttachment.image(label, file, "image/png");
+                    pendingAttachments.add(attachment);
+                    insertAttachmentPlaceholder(attachment);
+                } catch (Exception ex) {
+                    append(Kind.ERROR, "\n[error] Could not attach pasted image: " + causeMessage(ex) + "\n");
+                    deleteScratchDir(dir);
+                }
+            }
+        }.execute();
+        return true;
+    }
+
+    private boolean attachFiles(List<File> files) {
+        if (files == null || files.isEmpty()) {
+            return false;
+        }
+        boolean attached = false;
+        for (File f : files) {
+            if (f == null) {
+                continue;
+            }
+            File source = f.getAbsoluteFile();
+            if (!source.isFile()) {
+                append(Kind.ERROR, "\n[error] Cannot attach non-file path: " + source + "\n");
+                continue;
+            }
+            if (source.length() > MAX_ATTACHMENT_BYTES) {
+                append(Kind.ERROR, "\n[error] Attachment too large (" + (source.length() / (1024 * 1024))
+                        + " MB, max " + (MAX_ATTACHMENT_BYTES / (1024 * 1024)) + " MB): " + source.getName()
+                        + "\n");
+                continue;
+            }
+            // Copy the user's file into its own isolated scratch dir and reference the copy, so granting the
+            // provider read access to that dir never exposes the user's real folder contents.
+            File dir = null;
+            try {
+                dir = newScratchDir();
+                File copy = new File(dir, source.getName());
+                Files.copy(source.toPath(), copy.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                restrict(copy.toPath(), false);
+                ChatAttachment attachment;
+                if (isImageFile(source)) {
+                    attachment = ChatAttachment.image("Image #" + nextImageIndex++, copy, imageMediaType(source));
+                } else {
+                    attachment = ChatAttachment.file("File #" + nextFileIndex++ + ": "
+                            + ChatAttachment.sanitizeLabel(source.getName()), copy, null);
+                }
+                pendingAttachments.add(attachment);
+                insertAttachmentPlaceholder(attachment);
+                attached = true;
+            } catch (IOException ex) {
+                append(Kind.ERROR, "\n[error] Could not attach " + source.getName() + ": "
+                        + ex.getMessage() + "\n");
+                deleteScratchDir(dir);   // null-safe: reclaim the just-created dir on a failed copy
+            }
+        }
+        return attached;
+    }
+
+    private void insertAttachmentPlaceholder(ChatAttachment attachment) {
+        String placeholder = attachment.placeholder();
+        String current = input.getText();
+        // replaceSelection() inserts at the selection START and deletes the selected range, so base the spacing
+        // decision on the selection bounds — not getCaretPosition(), which is the selection END after a drag.
+        int start = Math.max(0, Math.min(input.getSelectionStart(), current.length()));
+        int end = Math.max(start, Math.min(input.getSelectionEnd(), current.length()));
+        boolean addLeadingSpace = start > 0 && !Character.isWhitespace(current.charAt(start - 1));
+        boolean addTrailingSpace = end < current.length() && !Character.isWhitespace(current.charAt(end));
+        input.replaceSelection((addLeadingSpace ? " " : "") + placeholder + (addTrailingSpace ? " " : ""));
+    }
+
+    private static BufferedImage toBufferedImage(Image image) throws IOException {
+        if (image instanceof BufferedImage b) {
+            return b;
+        }
+        javax.swing.ImageIcon icon = new javax.swing.ImageIcon(image);
+        int width = icon.getIconWidth();
+        int height = icon.getIconHeight();
+        if (width <= 0 || height <= 0) {
+            throw new IOException("clipboard image has no readable size");
+        }
+        BufferedImage buffered = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = buffered.createGraphics();
+        try {
+            g.drawImage(image, 0, 0, null);
+        } finally {
+            g.dispose();
+        }
+        return buffered;
+    }
+
+    /** A fresh, owner-only scratch subdir holding exactly one attachment file; tracked for later cleanup. */
+    private File newScratchDir() throws IOException {
+        File root = new File(CliSupport.neutralWorkingDir(), "attachments");
+        if (!root.isDirectory() && !root.mkdirs()) {
+            throw new IOException("could not create attachment directory: " + root);
+        }
+        restrict(root.toPath(), true);
+        File dir = new File(root, "att-" + System.currentTimeMillis() + "-" + (nextScratchSeq++));
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            throw new IOException("could not create attachment directory: " + dir);
+        }
+        restrict(dir.toPath(), true);
+        dir.deleteOnExit();
+        sessionTempDirs.add(dir);
+        return dir;
+    }
+
+    /** Best-effort owner-only permissions on POSIX filesystems (no-op on Windows / non-POSIX). */
+    private static void restrict(java.nio.file.Path path, boolean directory) {
+        Set<PosixFilePermission> perms = directory
+                ? EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
+                        PosixFilePermission.OWNER_EXECUTE)
+                : EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
+        try {
+            Files.setPosixFilePermissions(path, perms);
+        } catch (UnsupportedOperationException | IOException ignored) {
+            // non-POSIX filesystem or transient failure — fall back to the platform's default ACLs
+        }
+    }
+
+    /** Delete one of our scratch dirs (and its single file). Guarded so only tracked dirs are removed. */
+    private void deleteScratchDir(File dir) {
+        if (dir != null && sessionTempDirs.remove(dir)) {
+            deleteRecursively(dir);
+        }
+    }
+
+    /** Delete the scratch dirs backing the given attachments (no-op for inline pasted text). */
+    private void deleteScratchFor(Collection<ChatAttachment> attachments) {
+        for (ChatAttachment a : attachments) {
+            File f = a.file();
+            if (f != null) {
+                deleteScratchDir(f.getParentFile());
+            }
+        }
+    }
+
+    /** Remove every scratch dir created this conversation (New Chat / view close). */
+    private void deleteAllScratch() {
+        for (File dir : new ArrayList<>(sessionTempDirs)) {
+            deleteRecursively(dir);
+        }
+        sessionTempDirs.clear();
+    }
+
+    private static void deleteRecursively(File f) {
+        if (f == null) {
+            return;
+        }
+        File[] kids = f.listFiles();
+        if (kids != null) {
+            for (File k : kids) {
+                deleteRecursively(k);
+            }
+        }
+        f.delete();
+    }
+
+    private static String causeMessage(Exception ex) {
+        Throwable t = ex.getCause() != null ? ex.getCause() : ex;
+        String m = t.getMessage();
+        return m == null ? t.getClass().getSimpleName() : m;
+    }
+
+    private static boolean isImageFile(File file) {
+        String name = file.getName().toLowerCase(java.util.Locale.ROOT);
+        return name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")
+                || name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".bmp")
+                || name.endsWith(".tif") || name.endsWith(".tiff");
+    }
+
+    private static String imageMediaType(File file) {
+        String name = file.getName().toLowerCase(java.util.Locale.ROOT);
+        if (name.endsWith(".png")) {
+            return "image/png";
+        }
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (name.endsWith(".gif")) {
+            return "image/gif";
+        }
+        if (name.endsWith(".webp")) {
+            return "image/webp";
+        }
+        if (name.endsWith(".bmp")) {
+            return "image/bmp";
+        }
+        if (name.endsWith(".tif") || name.endsWith(".tiff")) {
+            return "image/tiff";
+        }
+        return "image/*";
+    }
+
+    private List<ChatAttachment> activeAttachments(String displayPrompt) {
+        if (pendingAttachments.isEmpty()) {
+            return List.of();
+        }
+        List<ChatAttachment> active = new ArrayList<>();
+        for (ChatAttachment attachment : pendingAttachments) {
+            if (displayPrompt.contains(attachment.placeholder())) {
+                active.add(attachment);
+            }
+        }
+        return List.copyOf(active);
     }
 
     /** The opening transcript line: the usage hint, or the install hint when no CLI is present. */
@@ -306,7 +924,7 @@ public class ChatView extends AbstractOWLViewComponent {
 
     /** The model id to pass to the provider ("" = the CLI's own default). */
     private String selectedModel() {
-        Object sel = modelCombo.getEditor().getItem();
+        Object sel = modelCombo.getSelectedItem();
         String s = sel == null ? "" : sel.toString().trim();
         return (s.isEmpty() || MODEL_DEFAULT_LABEL.equals(s)) ? "" : s;
     }
@@ -322,6 +940,13 @@ public class ChatView extends AbstractOWLViewComponent {
             atTurnStartOfLine = true;
             liveUsage = null;
             usageLabel.setText(" ");
+            pendingAttachments.clear();
+            attachGeneration++;   // invalidate any in-flight clipboard-image worker for the old conversation
+            deleteAllScratch();
+            nextScratchSeq = 1;
+            nextPastedTextIndex = 1;
+            nextImageIndex = 1;
+            nextFileIndex = 1;
             showIntro();
         }
     }
@@ -333,6 +958,7 @@ public class ChatView extends AbstractOWLViewComponent {
             return;
         }
         String prompt = input.getText().trim();
+        List<ChatAttachment> turnAttachments = activeAttachments(prompt);
         if (prompt.isEmpty()) {
             return;
         }
@@ -350,10 +976,25 @@ public class ChatView extends AbstractOWLViewComponent {
         }
 
         input.setText("");
+        // Any pending attachment whose placeholder the user edited away is NOT sent — surface that and reclaim
+        // its temp files instead of silently dropping it while the transcript still shows the mangled text.
+        List<ChatAttachment> dropped = new ArrayList<>();
+        for (ChatAttachment a : pendingAttachments) {
+            if (!turnAttachments.contains(a)) {
+                dropped.add(a);
+            }
+        }
+        pendingAttachments.clear();
+        inFlightAttachments = turnAttachments;
         if (!atTurnStartOfLine) {
             append(Kind.SYSTEM, "\n");
         }
         append(Kind.USER, "> " + prompt + "\n");
+        if (!dropped.isEmpty()) {
+            append(Kind.SYSTEM, "[note] " + dropped.size() + " attachment(s) were not referenced in your "
+                    + "message and were not sent.\n");
+            deleteScratchFor(dropped);
+        }
 
         completedExit = null;
         lastUsage = null;
@@ -364,7 +1005,7 @@ public class ChatView extends AbstractOWLViewComponent {
         cancelRequested = false;
         usageLabel.setText("tokens: …");
         setInputEnabled(false);
-        stopButton.setEnabled(true);
+        showStop(true);
         startWorking();
         flushTimer.start();
 
@@ -378,7 +1019,7 @@ public class ChatView extends AbstractOWLViewComponent {
                     controller.start();
                 }
                 McpEndpoint endpoint = new McpEndpoint(controller.getEndpointUrl(), controller.getToken());
-                ChatRequest req = new ChatRequest(model, prompt, resume, endpoint);
+                ChatRequest req = new ChatRequest(model, prompt, resume, endpoint, turnAttachments);
                 ChatProcess proc = provider.startTurn(req, uiListener());
                 // Publish on the EDT: if this turn already finalized (a fast turn) or the user hit Stop during
                 // the launch window, publishProcess cancels the freshly-spawned process instead of leaking it.
@@ -425,18 +1066,21 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     private boolean confirmEgress() {
-        if (McpConfig.prefs().getBoolean(McpConfig.KEY_CHAT_CONSENTED, false)) {
+        if (McpConfig.prefs().getBoolean(McpConfig.KEY_CHAT_CONSENTED_V2, false)) {
             return true;
         }
         int choice = JOptionPane.showConfirmDialog(this,
-                "The chat runs your local '" + currentProvider.id() + "' CLI, which sends your prompts and "
-                        + "the ontology content the assistant reads (entity names, labels, axioms) to the "
-                        + "model provider.\n\nProtégé stores no API key — the CLI uses your existing login. "
-                        + "Edits still obey the MCP server's read-only / confirm-write settings.\n\nContinue?",
+                "The chat runs your local '" + currentProvider.id() + "' CLI, which sends your prompts, any "
+                        + "attachments or pasted content you include, and the ontology content the assistant "
+                        + "reads (entity names, labels, axioms) to the model provider.\n\nAttached files and "
+                        + "images are made available to the CLI; for Claude, it is granted read access to a "
+                        + "per-attachment temporary copy of each one.\n\nProtégé stores no API key — the CLI "
+                        + "uses your existing login. Edits still obey the MCP server's read-only / confirm-write "
+                        + "settings.\n\nContinue?",
                 "Chat sends data to your model provider", JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.INFORMATION_MESSAGE);
         if (choice == JOptionPane.OK_OPTION) {
-            McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_CONSENTED, true);
+            McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_CONSENTED_V2, true);
             return true;
         }
         return false;
@@ -553,6 +1197,11 @@ public class ChatView extends AbstractOWLViewComponent {
         currentProcess = null;
         activeTurn = 0;
         cancelRequested = false;
+        // The CLI has exited, so it is done reading any attachment files — reclaim this turn's scratch dirs.
+        if (!inFlightAttachments.isEmpty()) {
+            deleteScratchFor(inFlightAttachments);
+            inFlightAttachments = List.of();
+        }
         if (flushTimer != null) {
             flushTimer.stop();
         }
@@ -565,7 +1214,7 @@ public class ChatView extends AbstractOWLViewComponent {
             usageLabel.setText(formatUsage(u));
         }
         setInputEnabled(true);
-        stopButton.setEnabled(false);
+        showStop(false);
         input.requestFocusInWindow();
     }
 
@@ -634,25 +1283,29 @@ public class ChatView extends AbstractOWLViewComponent {
 
     private void refreshStatus() {
         McpServerController c = controller();
+        // Kept compact: the strip now shares the composer's bottom row with the Provider/Model pickers. The
+        // egress note lives in the one-time consent banner + Preferences, so it isn't repeated here.
         String server;
         if (c == null) {
-            server = "MCP server: not available in this window";
+            server = "server: n/a";
         } else if (c.isRunning()) {
-            server = "MCP server: running";
+            server = "server: running";
         } else {
-            server = "MCP server: stopped (will start on first message)";
+            server = "server: stopped";
         }
         String mode;
         if (c == null) {
             mode = "";
         } else if (c.isReadOnly()) {
-            mode = "  ·  edits: READ-ONLY";
+            mode = "  ·  read-only";
         } else if (c.isConfirmWrites()) {
-            mode = "  ·  edits: confirm each";
+            mode = "  ·  confirm-each";
         } else {
-            mode = "  ·  edits: writable";
+            mode = "  ·  writable";
         }
-        statusLabel.setText(server + mode + "  ·  prompts go to your model provider");
+        statusLabel.setText(server + mode);
+        statusLabel.setToolTipText("MCP server status and edit mode · prompts/attachments go to your model "
+                + "provider via the CLI");
         if (confirmEdits != null && c != null) {
             boolean live = c.isConfirmWrites();
             if (confirmEdits.isSelected() != live) {
@@ -663,7 +1316,9 @@ public class ChatView extends AbstractOWLViewComponent {
 
     /** Enable/disable every control that mutates conversation state (everything but Stop). */
     private void setInputEnabled(boolean enabled) {
-        for (Component comp : new Component[] {sendButton, input, newChatButton, providerCombo, modelCombo}) {
+        for (Component comp : new Component[] {
+                sendButton, attachButton, input, newChatButton, providerCombo, modelCombo
+        }) {
             if (comp != null) {
                 comp.setEnabled(enabled);
             }
@@ -691,5 +1346,7 @@ public class ChatView extends AbstractOWLViewComponent {
             p.cancel();     // non-blocking; the kill escalation runs off the EDT
             currentProcess = null;
         }
+        attachGeneration++;   // invalidate any in-flight clipboard-image worker before tearing down
+        deleteAllScratch();   // reclaim any attachment temp files this view created
     }
 }

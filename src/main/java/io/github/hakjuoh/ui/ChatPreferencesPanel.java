@@ -56,12 +56,13 @@ public class ChatPreferencesPanel extends PreferencesPanel {
                 + "to the executable if Protégé (launched from Finder/Dock) cannot find it.");
 
         panel.addGroup("Privacy");
-        panel.addHelpText("The chat sends your prompts and the ontology content the assistant reads to "
-                + "your model provider via the CLI. Edits obey the MCP server's read-only / confirm-write "
-                + "settings (Preferences ▸ MCP).");
+        panel.addHelpText("The chat sends your prompts, any attachments or pasted content you include, and the "
+                + "ontology content the assistant reads to your model provider via the CLI. Edits obey the MCP "
+                + "server's read-only / confirm-write settings (Preferences ▸ MCP).");
         JButton resetConsent = new JButton("Reset egress consent prompt");
         resetConsent.addActionListener(e -> {
             McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_CONSENTED, false);
+            McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_CONSENTED_V2, false);
             resetConsent.setText("Egress consent will be asked again");
             resetConsent.setEnabled(false);
         });

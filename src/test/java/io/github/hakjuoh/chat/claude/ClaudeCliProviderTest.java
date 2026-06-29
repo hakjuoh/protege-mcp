@@ -1,5 +1,6 @@
 package io.github.hakjuoh.chat.claude;
 
+import io.github.hakjuoh.chat.ChatAttachment;
 import io.github.hakjuoh.chat.ChatRequest;
 import io.github.hakjuoh.chat.McpEndpoint;
 
@@ -7,9 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,6 +46,30 @@ class ClaudeCliProviderTest {
                 new ChatRequest("", "hi", null, ENDPOINT));
         assertFalse(cmd.contains("--model"));
         assertFalse(cmd.contains("--resume"));
+    }
+
+    @Test
+    void attachmentDirectoriesAreAllowedForClaudeReads(@TempDir Path dir) throws Exception {
+        Path image = Files.writeString(dir.resolve("screen.png"), "fake");
+        ChatRequest req = new ChatRequest("", "look at [Image #1]", null, ENDPOINT,
+                List.of(ChatAttachment.image("Image #1", image.toFile(), "image/png")));
+
+        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req);
+
+        assertAdjacent(cmd, "--add-dir", dir.toFile().getAbsolutePath());
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));
+    }
+
+    @Test
+    void fileAttachmentDirectoriesAreAllowedForClaudeReads(@TempDir Path dir) throws Exception {
+        Path doc = Files.writeString(dir.resolve("notes.txt"), "x");
+        ChatRequest req = new ChatRequest("", "see [File #1: notes.txt]", null, ENDPOINT,
+                List.of(ChatAttachment.file("File #1: notes.txt", doc.toFile(), null)));
+
+        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req);
+
+        assertAdjacent(cmd, "--add-dir", dir.toFile().getAbsolutePath());
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));
     }
 
     @Test

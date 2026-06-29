@@ -148,12 +148,12 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    is still open. The election logic is factored into package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.3.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.3.1`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
    McpServer.sync(transport)
-            .serverInfo("protege-mcp", "0.3.0")
+            .serverInfo("protege-mcp", "0.3.1")
             .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())  // tools + prompts (both listChanged=false); no resources
             .immediateExecution(true)     // run handlers on the transport (HTTP) thread; the plugin marshals to the EDT itself
             .validateToolInputs(false)
@@ -395,7 +395,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.3.0`**.
+  `artifactId protege-mcp`, version **`0.3.1`**.
 - `Bundle-SymbolicName io.github.hakjuoh;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing
@@ -557,15 +557,17 @@ The original design remains a viable direct-API alternative behind the `ChatProv
   stderr pipe cannot deadlock the stdout reader), stdin closed, and exactly one `completionHandler(exit, stderr)`.
 - **`ClaudeCliProvider` / `CodexCliProvider`** — build the headless invocation (§9.3) and parse the CLI's JSONL
   with `ClaudeEventParser` / `CodexEventParser`.
-- Records/callbacks: `ChatRequest {model, prompt, sessionId, McpEndpoint}`, `McpEndpoint {url, token}`,
-  `ChatUsage`, `ChatListener`, `ChatProcess` (cancel handle).
+- Records/callbacks: `ChatRequest {model, prompt, sessionId, McpEndpoint, attachments}`,
+  `ChatAttachment`, `McpEndpoint {url, token}`, `ChatUsage`, `ChatListener`, `ChatProcess` (cancel handle).
 
 `io.github.hakjuoh.ui`:
 - **`ChatView extends AbstractOWLViewComponent`** (sibling of `McpServerView`) — a streaming transcript
-  `JTextPane`, an input box, Send/Stop, **provider toggle buttons** ("Use Claude" / "Use Codex"; only installed
-  providers appear), a **model picker** repopulated from the active provider, a **"Confirm each edit"** box bound
-  live to the server's `confirmWrites`, a **"Show reasoning"** toggle, a per-turn token/cost readout, and a
-  server/egress status line. Borrows the window's `McpServerController` via
+  `JTextPane`, an input box, Send/Attach/Stop, paste/drop attachment handling (long pasted text becomes
+  `[Pasted content #N: … chars]`; files/images become placeholders such as `[Image #1]`), **provider toggle
+  buttons** ("Use Claude" / "Use Codex"; only installed providers appear), a **model picker** repopulated from
+  the active provider, a **"Confirm each edit"** box bound live to the server's `confirmWrites`, a **"Show
+  reasoning"** toggle, a per-turn token/cost readout, and a server/egress status line. Borrows the window's
+  `McpServerController` via
   `McpServerRegistry.get(getOWLEditorKit())` and starts it off-EDT on the first turn.
 - **`ChatPreferencesPanel`** — per-provider CLI path overrides + a reset for the one-time egress consent. No
   API-key field.
@@ -584,7 +586,7 @@ keychain/OAuth):
 claude -p --output-format stream-json --include-partial-messages --verbose \
   --strict-mcp-config \
   --mcp-config '{"mcpServers":{"protege":{"type":"http","url":"<endpointUrl>","headers":{"Authorization":"Bearer <token>"}}}}' \
-  --allowedTools mcp__protege  [--model <alias>]  [--resume <session-id>]  -- "<prompt>"
+  --allowedTools mcp__protege  [--add-dir <attachment-dir>...]  [--model <alias>]  [--resume <session-id>]  -- "<prompt>"
 ```
 `--strict-mcp-config` means the run sees *exactly* Protégé's server; `--allowedTools mcp__protege` pre-approves
 the whole server so the non-interactive run never blocks on a permission prompt (server-side gates still apply).
@@ -595,7 +597,7 @@ PROTEGE_MCP_TOKEN=<token>  codex \
   -c approval_policy="never" -c sandbox_mode="read-only" \
   -c mcp_servers.protege.url="<endpointUrl>" \
   -c mcp_servers.protege.bearer_token_env_var="PROTEGE_MCP_TOKEN" \
-  exec [resume <session-id>] --json --skip-git-repo-check  [-m <model>]  -- "<prompt>"
+  exec [resume <session-id>] --json --skip-git-repo-check  [-m <model>]  [--image <image-path>]...  -- "<prompt>"
 ```
 `codex mcp add --help` confirms `--url` + `--bearer-token-env-var` for streamable-HTTP servers. `-s/--sandbox`
 is unavailable on `exec resume`, so sandbox/approval are set via global `-c` overrides (valid for both a fresh
@@ -603,9 +605,15 @@ is unavailable on `exec resume`, so sandbox/approval are set via global `-c` ove
 editing is via the MCP server).
 
 The prompt is passed as a single argv element after `--` (no shell), so its content cannot break the command
-line. The model picker offers Claude aliases (opus/sonnet/haiku/fable) and common Codex ids and is editable;
-`""` means "the CLI's own default model". A non-blank session id resumes the conversation (Claude `--resume`;
-Codex `exec resume <thread-id>`).
+line. When attachments are present, the transcript keeps compact placeholders while `ChatRequest.providerPrompt()`
+appends the pasted text and local file paths for the CLI. Each attached file/image is **copied into its own
+owner-only scratch subdir** (under the neutral working dir) and referenced there, so granting read access never
+exposes the user's real folder: Codex image attachments are passed through its native `--image` flag; Claude
+receives each attachment's isolated scratch dir via `--add-dir` (one file per dir). A **large pasted body** is
+written to a scratch `.txt` and referenced by path rather than inlined, so no paste can overflow the single-argv
+command line. Scratch dirs are reclaimed when the turn completes (and on New Chat / view close). The model picker
+offers Claude aliases (opus/sonnet/haiku/fable) and common Codex ids and is editable; `""` means "the CLI's own
+default model". A non-blank session id resumes the conversation (Claude `--resume`; Codex `exec resume <thread-id>`).
 
 ### 9.4 Event parsing (captured schemas)
 
@@ -633,10 +641,15 @@ Send, render usage) only **after** the queue empties, so the transcript tail is 
 
 ### 9.6 Security and egress
 
-- **Egress is the CLI's, disclosed once.** The chat sends the user's prompts and the ontology content the
-  assistant reads to the user's model provider *via the CLI*. A one-time consent banner (`KEY_CHAT_CONSENTED`)
-  plus a persistent status-line note cover it (README documents it). The plugin opens **no** new outbound socket
-  and stores **no** provider API key.
+- **Egress is the CLI's, disclosed once.** The chat sends the user's prompts, attachments/pasted content, and
+  the ontology content the assistant reads to the user's model provider *via the CLI*. A one-time consent banner
+  (`KEY_CHAT_CONSENTED_V2` — re-versioned when the disclosure grew to name attachments, so prior users
+  acknowledge the wider scope once) plus a persistent status-line note cover it (README documents it). The plugin
+  opens **no** new outbound socket and stores **no** provider API key.
+- **Attachments are isolated, not folder-wide.** Each attached file/image is copied into its own owner-only
+  scratch dir and only that dir is exposed (Claude `--add-dir`) or the copy passed (Codex `--image`), so the
+  provider never receives the user's surrounding folder. Files over a size cap are refused; scratch dirs are
+  deleted when the turn ends and on New Chat / view close.
 - **The MCP bearer token never lands on a command line.** Claude receives it inside the `--mcp-config` JSON;
   Codex receives only the env-var *name* on argv and the value via the `PROTEGE_MCP_TOKEN` environment variable.
 - **Gates inherited, not re-implemented.** Edits go through the MCP server → `WriteTools` gates, so the read-only
@@ -652,8 +665,9 @@ Send, render usage) only **after** the queue empties, so the transcript tail is 
 A droppable **Ontology Assistant** `ViewComponent` *and* a dedicated **Ontology Assistant** `WorkspaceTab` (reusing
 `org.protege.editor.owl.ui.OWLWorkspaceViewsTab` + `viewconfig-ontologyassistanttab.xml`, which references the view by its
 fully-qualified id `io.github.hakjuoh.ChatView`). Provider selection is "Use Claude"/"Use Codex" toggle buttons;
-the model picker repopulates from the chosen provider; a per-turn token/cost readout and the server/egress status
-line keep state visible.
+the model picker repopulates from the chosen provider; the input box supports long-paste compaction plus
+file/image paste, drag/drop, and Attach; a per-turn token/cost readout and the server/egress status line keep
+state visible.
 
 ### 9.8 Packaging (Architecture Approach B)
 

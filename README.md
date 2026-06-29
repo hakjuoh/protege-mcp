@@ -199,12 +199,16 @@ Protégé** — each CLI uses your existing login.
    model (blank uses the CLI's own default; the field is editable for any model your account supports).
 3. Type a request and press **Enter** (Shift+Enter for a newline). Try a read first — *"What classes are
    in this ontology?"* — then an edit — *"Create a class FooBar under Thing with label 'Foo Bar'."*
-   Watch it stream; **Stop** cancels mid-turn; **Edit ▸ Undo** reverts any edit.
+   Long pasted text is compacted in the input as `[Pasted content #N: … chars]`, and **Attach** or
+   drag/drop adds files/images as placeholders such as `[Image #1]`. Watch it stream; **Stop** cancels
+   mid-turn; **Edit ▸ Undo** reverts any edit.
 
-**Privacy & cost.** The chat sends your prompts and the ontology content the assistant reads to your model
-provider **via the CLI** (a one-time banner discloses this). Cost and rate limits are governed by your
-CLI's own subscription/account. Edits obey the **MCP** preferences (read-only, confirm-each-write); a
-**Confirm each edit** checkbox in the panel toggles confirmation live.
+**Privacy & cost.** The chat sends your prompts, attachments/pasted content, and the ontology content the
+assistant reads to your model provider **via the CLI** (a one-time banner discloses this). Each attached file
+or image is copied into its own private temp folder and only that copy is exposed to the CLI — never the rest
+of its containing folder — and the temp copies are deleted when the turn finishes. Cost and rate limits are
+governed by your CLI's own subscription/account. Edits obey the **MCP** preferences (read-only,
+confirm-each-write); a **Confirm each edit** checkbox in the panel toggles confirmation live.
 
 **Settings (Settings ▸ Ontology Assistant).** If Protégé was launched from the macOS Dock/Finder it may not have
 your shell `PATH`, so a CLI can fail to resolve — set an explicit path to the `claude` / `codex`
