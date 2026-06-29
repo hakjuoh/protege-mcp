@@ -7,6 +7,11 @@
 > (first delivered at `0.1.0`; `0.2.0` adds a natural-language layer — JSON tool output, context/validation/preview
 > tools, and MCP prompts — see §5).
 >
+> **Architecture Approach B — in-Protégé chat assistant — is also now built (`0.3.0`).** A chat panel (and a
+> dedicated **Ontology Assistant** tab) drives a locally-installed coding-agent CLI (`claude` / `codex`) that connects back
+> to Approach A's own MCP server, so the assistant reads/edits the live ontology with no API key stored by the
+> plugin (see §9).
+>
 > See also: [`README.md`](README.md) for install and usage, and
 > [`docs/check-for-plugins.md`](docs/check-for-plugins.md) for in-Protégé distribution.
 
@@ -36,8 +41,8 @@ Provided platform libraries (supplied by Protégé, not embedded): `protege-edit
 - Ship as a **single OSGi bundle** dropped into `plugins/`, with no changes to Protégé core.
 
 **Non-goals (this track)**
-- An in-app LLM chat UI — this is **Architecture Approach B** (in-app Claude chat). It is now a first-class
-  design (§9), no longer a one-line future note.
+- An in-app LLM chat UI — this is **Architecture Approach B**, now **built in `0.3.0`** (§9): a chat panel that
+  drives a local agent CLI rather than the plugin calling a model API directly.
 - Headless / batch file editing — this is **Architecture Approach C** (a separate complement track, §10).
 - Multi-user remote access — the server binds **`127.0.0.1`** only
   (`EmbeddedHttpServer`: `LOOPBACK = "127.0.0.1"`, `connector.setHost(LOOPBACK)`).
@@ -51,21 +56,22 @@ Provided platform libraries (supplied by Protégé, not embedded): `protege-edit
 
 Three candidates were designed and validated; **Architecture Approach A was adopted and is now built.**
 
-| | **A. In-Protégé MCP server** ✅ built | B. In-Protégé chat (MCP client) | C. Standalone MCP server |
+| | **A. In-Protégé MCP server** ✅ built | **B. In-Protégé chat** ✅ built | C. Standalone MCP server |
 |---|---|---|---|
-| Form | Protégé plugin (OSGi bundle) | Plugin + LLM chat panel | Separate process (shaded JAR) |
-| Edit target | **Live active ontology** | Live + optional external MCP | Ontology **files** on disk |
-| Transport | localhost HTTP (Streamable) | outbound only (to the LLM) | stdio |
+| Form | Protégé plugin (OSGi bundle) | Plugin + chat panel driving a local agent CLI | Separate process (shaded JAR) |
+| Edit target | **Live active ontology** | **Live** (via A's MCP server) | Ontology **files** on disk |
+| Transport | localhost HTTP (Streamable) | spawns a local CLI → A's loopback MCP | stdio |
 | GUI reflect / Undo | ✅ (core value) | ✅ (reuses A's tool layer) | ❌ (file snapshots) |
 | External clients | as-is | not required (in-app) | as-is |
-| Auth | OAuth 2.1 + static bearer | LLM API key (outbound) | n/a (stdio child) |
-| Status | **shipped** | designed (§9, v2) | designed (§10, complement) |
+| Auth | OAuth 2.1 + static bearer | the CLI's own login (no key stored) | n/a (stdio child) |
+| Status | **shipped** | **shipped (`0.3.0`)** | designed (§10, complement) |
 
-**Why A.** The request is "add MCP to the Protégé app," and the largest value is an LLM acting on the
-**model the user already has open** — the shared `OWLModelManager`, renderers, reasoner, and undo stack. Only
-Architecture Approach A delivers this cleanly: Architecture Approach C edits stale file snapshots; Architecture Approach B carries an
-entire LLM-chat product the original request did not ask for (it is now planned as a v2 that *reuses* A's tool
-layer, §9).
+**Why A (and then B atop it).** The request is "add MCP to the Protégé app," and the largest value is an LLM
+acting on the **model the user already has open** — the shared `OWLModelManager`, renderers, reasoner, and undo
+stack. Only Architecture Approach A delivers this cleanly: Architecture Approach C edits stale file snapshots.
+Architecture Approach B was originally deferred as an LLM-chat product the request did not ask for; the `0.3.0`
+build sidesteps that cost entirely by **driving the user's existing agent CLI** (which reuses A's tool layer over
+loopback), so B ships as a thin UI + subprocess driver with no API-key custody (§9).
 
 **Feasibility verdict: built.** Three real costs were confronted and solved, addressed head-on in this document —
 (1) OSGi / Jackson packaging (§7), (2) servlet hosting (§6), (3) Swing EDT threading (§8).
@@ -80,7 +86,7 @@ layer, §9).
   contains `"plugin"`** (`protege-editor-core/.../ProtegeApplication.java:211-241`).
 - **`Bundle-SymbolicName ...;singleton:=true` is mandatory** — otherwise the Equinox registry **silently ignores
   `plugin.xml`** (`pluginSanityCheck` only warns) (`ProtegeApplication.java:211-241`).
-- **`plugin.xml` lives at the JAR root.** As built, it declares three extensions with bare ids:
+- **`plugin.xml` lives at the JAR root.** As built, it declares the three server extensions with bare ids:
   `EditorKitHook` (`McpServerHook`, `editorKitId=OWLEditorKit`), `ViewComponent` (`McpServerView`, label
   `"MCP Server"`), and `preferencespanel` (`io.github.hakjuoh.protege_mcp.preferences` → `McpPreferencesPanel`, label `"MCP"`).
   The framework prepends the bundle namespace at runtime to form fully-qualified ids
@@ -111,8 +117,8 @@ layer, §9).
 
 ### 4.1 Components (as built)
 
-A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers three extensions
-(`McpServerHook`, `McpServerView`, `McpPreferencesPanel`). The server is composed of:
+A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers three server extensions
+(`McpServerHook`, `McpServerView`, `McpPreferencesPanel`; the Approach B chat extensions are covered in §9). The server is composed of:
 
 1. **`McpServerHook`** (`EditorKitHook`) — per-window lifecycle owner. `initialise()` builds an
    `OntologyAccess` and a `McpServerController`, registers the controller in `McpServerRegistry` keyed by the
@@ -142,12 +148,12 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    is still open. The election logic is factored into package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.2.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.3.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
    McpServer.sync(transport)
-            .serverInfo("protege-mcp", "0.2.0")
+            .serverInfo("protege-mcp", "0.3.0")
             .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())  // tools + prompts (both listChanged=false); no resources
             .immediateExecution(true)     // run handlers on the transport (HTTP) thread; the plugin marshals to the EDT itself
             .validateToolInputs(false)
@@ -389,7 +395,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.2.0`**.
+  `artifactId protege-mcp`, version **`0.3.0`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing
@@ -510,267 +516,160 @@ single user-global preference key, effectively shared by whichever window curren
 
 ---
 
-## 9. Architecture Approach B — In-Protégé Claude Chat (v2)
+## 9. Architecture Approach B — In-Protégé chat assistant (built, `0.3.0`)
 
 > *This "B" is the **architecture** axis (the plugin's internal shape). It is unrelated to the README/docs
 > **"Distribution Path B"** (Check for plugins, §11), which describes how the jar is delivered. They are
 > different things.*
 
-**Status: designed, not yet built.** Architecture Approach B is a new Swing chat panel inside Protégé where the user
-converses with Claude, and Claude reads/edits the open ontology by calling **Architecture Approach A's existing
-tool layer**. B sits **cleanly atop A**: everything below the tool boundary already exists — the §5 tools in
-`io.github.hakjuoh.protege_mcp.tools`, the `OntologyAccess` EDT choke point, the live read-only/confirm-write gates on
-`McpServerController`, the shared GUI undo stack, and `McpConfig` preference storage. The genuinely new code is
-exactly three things: (1) a `ChatView` `ViewComponent`, (2) an `AnthropicAgentLoop` (a client-side, manual
-`/v1/messages` loop), and (3) a small consent/cost policy layer.
+**Status: built (`0.3.0`).** Approach B is a Swing chat panel — and a dedicated **Ontology Assistant** workspace tab —
+inside Protégé where the user converses with an assistant that reads and edits the open ontology.
 
-### 9.1 Tool boundary — in-process reuse as the single schema source
+**As-built decision (supersedes the original raw-HTTP plan in earlier drafts of this section).** Rather than the
+plugin itself calling `api.anthropic.com`, the chat **drives a locally-installed coding-agent CLI** — Claude Code
+(`claude`) or OpenAI Codex (`codex`) — as a subprocess, one per user turn, configured to connect **back to this
+plugin's own MCP server** (Approach A). Those CLIs are themselves MCP clients, so the agent loop and provider
+authentication live inside the CLI; the plugin is a chat UI + subprocess driver. Consequences:
 
-**Decision: call A's in-process Java tool layer directly. Do _not_ stand up an in-process MCP client, and do
-_not_ use Claude's server-side MCP connector.**
+- **Reuses Approach A wholesale.** Edits flow through the same MCP-over-HTTP path into the §5 tools, the
+  `OntologyAccess` EDT choke point, the read-only/confirm-write gates, and the shared undo stack — so chat edits
+  are indistinguishable from any other MCP client's, appear in the GUI, and undo normally.
+- **No API-key custody and no new outbound socket from the plugin.** Each CLI uses the user's *existing* login
+  (Claude keychain/subscription; Codex `codex login`). The plugin opens no connection to a model provider and
+  stores no provider secret. (The egress is the CLI's, disclosed to the user.)
+- **Requires the Approach A server running.** The CLI reaches the tools over loopback HTTP, so `ChatView` starts
+  the window's controller (off-EDT) before the first turn.
 
-`ChatView extends AbstractOWLViewComponent` (exactly like `McpServerView`), reaches the live window via
-`getOWLEditorKit()`, builds `OntologyAccess(editorKit)`, and borrows the window's `McpServerController` from
-`McpServerRegistry` for the live gate flags (`isReadOnly()` / `isConfirmWrites()`). If no controller is
-registered for that window (the MCP server was never started there), it falls back to a fresh `McpConfig.load()`
-snapshot — so the chat works even with the MCP server stopped. It builds `ToolContext(access, controller)` and
-calls `ToolCatalog.buildAll(ctx)` to obtain the same `SyncToolSpecification`s the MCP server exposes.
+Why this over the original in-process-bridge + raw-HTTP plan: it eliminates API-key custody, the hand-written
+`/v1/messages` SSE loop, the Anthropic tool-bridge, prompt-cache bookkeeping, and provider lock-in, in exchange
+for subprocess management — and it lets the user pick whichever agent CLI (and subscription) they already have.
+The original design remains a viable direct-API alternative behind the `ChatProvider` SPI (§9.9).
 
-Each spec's `McpSchema.Tool` carries `name()`, `description()`, and `inputSchema()` — a `Map<String,Object>`
-that is already valid JSON Schema (built with a `LinkedHashMap`, so key order is stable). A single
-`AnthropicToolBridge` lifts each into an Anthropic tool definition (`name` + `description` + `input_schema`).
-**The MCP schemas are the single source of truth** — they feed both the MCP server and the chat, so the model
-always sees exactly what external clients see, and schemas are never duplicated. Index the specs by
-`tool().name()` for O(1) dispatch.
+### 9.1 Components (as built)
 
-On a `tool_use` block, dispatch synthesizes a `CallToolRequest(name, inputMap)` (where `inputMap` is the parsed
-`tool_use.input`) and invokes the matching `BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult>`
-handler. Every handler is written `(ex, req) -> …` and never reads `ex`, so a stub/null exchange suffices; the
-result's `isError()` + text map straight back to an Anthropic `tool_result` block with `is_error` mirrored.
+`io.github.hakjuoh.protege_mcp.chat`:
+- **`ChatProvider`** (SPI): `id` / `displayName` / `isAvailable` / `listModels` / `defaultModel` /
+  `startTurn(ChatRequest, ChatListener) → ChatProcess`. **`Providers`** enumerates the known providers and which
+  are installed.
+- **`CliSupport`** — resolves the CLI's absolute path (`$PATH` + well-known install dirs + a per-provider override
+  pref, because a Finder/Dock-launched Protégé has a minimal `PATH`), probes `--version`, and `spawn(...)`s the
+  process with stdout pumped line-by-line on a daemon worker, stderr drained on a second daemon thread (so a full
+  stderr pipe cannot deadlock the stdout reader), stdin closed, and exactly one `completionHandler(exit, stderr)`.
+- **`ClaudeCliProvider` / `CodexCliProvider`** — build the headless invocation (§9.3) and parse the CLI's JSONL
+  with `ClaudeEventParser` / `CodexEventParser`.
+- Records/callbacks: `ChatRequest {model, prompt, sessionId, McpEndpoint}`, `McpEndpoint {url, token}`,
+  `ChatUsage`, `ChatListener`, `ChatProcess` (cancel handle).
 
-Because dispatch runs `WriteTools.write()` unchanged, **gates, EDT marshalling, and undo come for free**: the
-live read-only switch and the modal confirm-each-write dialog apply, edits go through
-`OntologyAccess.compute → OWLModelManager.applyChange(s) → the shared HistoryManager`, and post-`ChangeListMinimizer`
-state is re-queried. Chat edits are indistinguishable from MCP-client edits and join the **same** undo stack.
+`io.github.hakjuoh.protege_mcp.ui`:
+- **`ChatView extends AbstractOWLViewComponent`** (sibling of `McpServerView`) — a streaming transcript
+  `JTextPane`, an input box, Send/Stop, **provider toggle buttons** ("Use Claude" / "Use Codex"; only installed
+  providers appear), a **model picker** repopulated from the active provider, a **"Confirm each edit"** box bound
+  live to the server's `confirmWrites`, a **"Show reasoning"** toggle, a per-turn token/cost readout, and a
+  server/egress status line. Borrows the window's `McpServerController` via
+  `McpServerRegistry.get(getOWLEditorKit())` and starts it off-EDT on the first turn.
+- **`ChatPreferencesPanel`** — per-provider CLI path overrides + a reset for the one-time egress consent. No
+  API-key field.
 
-- **Why not an in-process local MCP client (`HttpClient → 127.0.0.1/mcp`):** it would force the chat through
-  `AccessTokenFilter` (needing the bearer/OAuth token), the async servlet, and a second JSON round-trip inside
-  one JVM for zero benefit, and it requires the server to be started, bound, and authenticated. The direct
-  in-process path skips all of it.
-- **Why not the server-side connector (load-bearing):** A binds Jetty to `127.0.0.1` only, and
-  `api.anthropic.com` cannot route to a user's loopback endpoint. Claude's server-side MCP connector
-  (beta `mcp-client-2025-11-20`) has Anthropic's servers dial the MCP server, so it can never reach a loopback
-  endpoint. **The tool-use loop must therefore run client-side.**
-- **Guardrail:** "handlers ignore `ex`" is an internal contract of the current handlers, not a guarantee. Add a
-  test asserting all tool handlers run with a stub exchange (or have `ToolCatalog` expose an exchange-free dispatch
-  entry point), so a future tool that reads `ex` fails a test rather than the live panel.
+### 9.2 The provider seam
 
-### 9.2 A thin provider seam (no overbuilding)
+`ChatProvider` is the SPI the design always anticipated, now with **CLI-backed** implementations rather than a
+single Anthropic-API one. The UI and the subprocess driver are provider-agnostic; a future direct-API provider,
+or user-configured external MCP servers, can slot in behind it without touching either.
 
-A deliberately minimal internal SPI — one interface and one implementation, **not** a plugin registry:
+### 9.3 CLI invocation contracts (locked from `--help` + a captured run)
 
+**Claude** (reuses the existing keychain/OAuth login — `--bare` is deliberately *not* used, as it would disable
+keychain/OAuth):
 ```
-ChatProvider { stream(ChatRequest, ToolRuntime, TokenSink) }
-ProviderModel, ProviderUsage, ToolDef, ToolRuntime
+claude -p --output-format stream-json --include-partial-messages --verbose \
+  --strict-mcp-config \
+  --mcp-config '{"mcpServers":{"protege":{"type":"http","url":"<endpointUrl>","headers":{"Authorization":"Bearer <token>"}}}}' \
+  --allowedTools mcp__protege  [--model <alias>]  [--resume <session-id>]  -- "<prompt>"
 ```
+`--strict-mcp-config` means the run sees *exactly* Protégé's server; `--allowedTools mcp__protege` pre-approves
+the whole server so the non-interactive run never blocks on a permission prompt (server-side gates still apply).
 
-The only initial implementation is `AnthropicChatProvider`. The seam earns its place because (a) it keeps
-model/provider knobs out of the loop and UI code; (b) the cost/consent controls (caching, effort, model picker,
-per-write confirm, egress disclosure, key custody) become provider-agnostic **policy objects**; and (c)
-`ToolRuntime` ("given a `tool_use`, run it and return a result block") is the seam that later lets the same loop
-dispatch to in-process Protégé tools **and** — optionally — a local MCP client for user-configured **external**
-MCP servers (filesystem, web, other domain servers). External servers are internet-reachable, so a local MCP
-client is viable for them; Protégé's own loopback tools stay in-process. That external-MCP feature is phased
-last, behind a flag. Do not ship a second provider, and do not promise one.
+**Codex** (reuses `codex login`; the bearer token travels via env var, never argv):
+```
+PROTEGE_MCP_TOKEN=<token>  codex \
+  -c approval_policy="never" -c sandbox_mode="read-only" \
+  -c mcp_servers.protege.url="<endpointUrl>" \
+  -c mcp_servers.protege.bearer_token_env_var="PROTEGE_MCP_TOKEN" \
+  exec [resume <session-id>] --json --skip-git-repo-check  [-m <model>]  -- "<prompt>"
+```
+`codex mcp add --help` confirms `--url` + `--bearer-token-env-var` for streamable-HTTP servers. `-s/--sandbox`
+is unavailable on `exec resume`, so sandbox/approval are set via global `-c` overrides (valid for both a fresh
+`exec` and `exec resume`); `read-only` keeps the local filesystem read-only while MCP tool calls still run (all
+editing is via the MCP server).
 
-### 9.3 LLM transport — a Phase-0 decision (recommend raw HTTP for this bundle)
+The prompt is passed as a single argv element after `--` (no shell), so its content cannot break the command
+line. The model picker offers Claude aliases (opus/sonnet/haiku/fable) and common Codex ids and is editable;
+`""` means "the CLI's own default model". A non-blank session id resumes the conversation (Claude `--resume`;
+Codex `exec resume <thread-id>`).
 
-This is presented as an explicit Phase-0 tradeoff rather than a silent default, because the idiomatic preference
-is the official SDK whenever one exists.
+### 9.4 Event parsing (captured schemas)
 
-- **The idiomatic default** is `com.anthropic:anthropic-java:2.34.0`:
-  `AnthropicOkHttpClient.builder().apiKey(key).build()`, `client.messages().createStreaming(params)` returning
-  `StreamResponse<RawMessageStreamEvent>`, typed `ThinkingConfigAdaptive`, `OutputConfig.Effort`,
-  `CacheControlEphemeral`, `Tool.InputSchema`, plus automatic retry/backoff and SSE handling. For a greenfield
-  service this is the right call.
-- **For this bundle, the OSGi-embedding cost overrides that default.** The pom inlines its entire compile
-  classpath wholesale and pins Jackson to exactly 2.20.1; the SDK transitively pulls OkHttp + Okio +
-  Kotlin-stdlib + its own Jackson. Embedding it would inline Kotlin-stdlib (~1.5–1.7 MB) + OkHttp/Okio (~1 MB)
-  on top of the existing mass, and re-open the §7 Jackson-skew problem (the SDK's Jackson overlapping the pinned
-  2.20.1). Mitigating that means excluding the SDK's transitive Jackson, growing the `Import-Package` `!`-list
-  (`okhttp3.*`, `okio.*`, `kotlin.*`, `org.jetbrains.annotations.*`), and build-verifying single-classloader
-  resolution — real, ongoing manifest and supply-chain risk for the life of the bundle.
-- **Recommendation: `java.net.http.HttpClient` (JDK 17, already required via `Require-Capability JavaSE 17`) +
-  the already-embedded Jackson 2.20.1** for request/response JSON. This adds **zero new embedded jars and zero
-  new `Import-Package` entries** — `java.net.http` and `javax.net.ssl` come from the OSGi system bundle and are
-  never imported (the manifest already imports `javax.swing`/`java.awt` and deliberately omits `java.net`).
-  Net manifest delta: effectively nil. The honest cost is hand-rolling (1) **SSE parsing** — read the
-  `InputStream` line-by-line, split on `\n\n` boundaries, parse `data:` lines as JSON with the embedded
-  `ObjectMapper`, accumulate `input_json_delta` partial JSON for `tool_use` blocks — and (2) **retry/backoff** —
-  honor `429` `retry-after` and exponential backoff on 5xx, which the SDK would give for free. Keep this code
-  behind the `ChatProvider` boundary and unit-test the line parser hard.
-- **Keep the SDK as a documented Phase-7 alternative** behind the same SPI; if the embed size and Jackson skew
-  prove acceptable at build, `AnthropicChatProvider` can be swapped for an SDK-backed implementation without
-  touching the loop, UI, or tool bridge. A separate **loopback-dogfood** configuration (SDK + a real MCP client
-  to `127.0.0.1/mcp`) remains legitimately buildable for anyone who wants the chat to exercise the same
-  transport/auth/schema path an external client uses; its honest cost (a redundant localhost hop, a second auth
-  handshake, a heavier jar) is why it is not the default.
-
-**Model and request shape (Claude API facts):**
-- Default model **`claude-opus-4-8`** (1M context / 128K output). Alternates **`claude-sonnet-4-6`** (1M/64K)
-  and **`claude-haiku-4-5`** (200K/64K) in the panel picker. **`claude-fable-5`** only on explicit user request —
-  and if added, ship the server-side `fallbacks` parameter (`betas:["server-side-fallback-2026-06-01"]`,
-  `fallbacks:[{"model":"claude-opus-4-8"}]`) plus `stop_reason == "refusal"` handling (Fable refusals are
-  HTTP 200), and note Fable's 30-day data-retention requirement. **Use the exact id strings with the full
-  `claude-` prefix and no date suffixes — the bare forms `sonnet-4-6` / `haiku-4-5` / `fable-5` are not valid
-  ids.**
-- **Adaptive thinking only:** `thinking: {type: "adaptive"}`. `budget_tokens` is removed on Opus 4.8 (400).
-  Set it explicitly — omitting `thinking` means thinking is off. `display` defaults to `"omitted"`; set
-  `"summarized"` when the panel renders reasoning (otherwise the user sees a long pause before tokens).
-- **Effort** via `output_config: {effort: …}`, default `"high"`; expose `low | medium | high | xhigh | max`.
-- **Stream** (`max_tokens` default ~64000 for streaming, where timeouts are not a concern).
-
-### 9.4 The agentic loop (client-side, manual)
-
-A hand-written state machine over the SSE stream, run entirely on a daemon worker thread in the panel's JVM. Per
-turn, send `{model, max_tokens, thinking, output_config, system, tools (all §5, converted), messages, stream:true}`
-in the API-mandated render order **tools → system → messages**. Loop rules:
-
-- **Loop until `stop_reason == end_turn`.**
-- Each turn, **append the full assistant `response.content` unchanged** to `messages` — text blocks, **thinking
-  blocks (echoed back verbatim on the same model, or the API rejects the turn)**, and every `tool_use` block.
-- When `stop_reason == tool_use`, execute **each** `tool_use` block via `ToolRuntime` (in-process dispatch,
-  §9.1), gather **all** `tool_result` blocks into **one** user message, each carrying the matching `tool_use_id`,
-  with `is_error: true` for failures (mapped from `CallToolResult.isError()`; `McpAccessException` / timeouts
-  also become `is_error` results — never drop a block).
-- Handle `stop_reason == max_tokens` (offer to continue). Guard `stop_reason == refusal` before indexing
-  `content` (only reachable if `claude-fable-5` is selected).
-- Bound the loop with a max-tool-round cap (e.g. 12–25) to prevent runaway loops, surfacing a "reached step
-  limit" note.
-
-Write tools are intercepted by the consent layer (§9.6) **before** dispatch. Mid-stream, push text deltas to the
-UI; thinking display defaults to omitted, with a panel "show reasoning" toggle that sets `display: "summarized"`.
+Both CLIs stream line-delimited JSON; each parser maps a line to `ChatListener` callbacks and ignores unknown
+event/item types so a newer CLI degrades gracefully.
+- **Claude** (`stream-json`): `system`/`init` → session id; `stream_event` `content_block_delta`
+  `text_delta`/`thinking_delta` → streamed text / reasoning; `content_block_start` with a `tool_use` block → tool
+  activity (the `mcp__protege__<tool>` prefix is stripped); `result` → session id + `usage` + `total_cost_usd`.
+  Text is taken **only** from the streamed deltas (the roll-up `assistant` event is ignored), so it is never
+  double-counted.
+- **Codex** (`--json`): `thread.started` → session id (the thread id used to resume); `item.completed` items of
+  type `agent_message` (text — emitted incrementally by tracking the per-item already-emitted length, so it works
+  whether updates stream or arrive only on completion), `reasoning`, `mcp_tool_call`, `error`; `turn.completed` →
+  `usage` (Codex reports no dollar cost).
 
 ### 9.5 Threading and EDT safety
 
-Mirror `McpServerView`'s proven pattern (a daemon `Thread` for blocking work; `SwingUtilities.invokeLater` for
-UI — see `McpServerView.java:274-288`). Three strictly-separated domains:
-
-1. **EDT — Swing only.** `ChatView.initialiseOWLView()/disposeOWLView()` build the transcript pane, input box,
-   model/effort selectors, and Stop button.
-2. **Agent worker** — a dedicated daemon thread (`protege-chat-agent`). All `HttpClient`/SSE I/O and the whole
-   loop run here, **never on the EDT** (network on the EDT freezes Protégé). Token deltas marshal to the
-   transcript via `SwingUtilities.invokeLater` (fire-and-forget, **not** `invokeAndWait`), **coalesced** (batch
-   deltas every ~16–60 ms or N characters, `SwingWorker` `publish`/`process`-style) so thousands of SSE events
-   do not flood the EDT.
-3. **Tool execution** — the worker invokes tool handlers **off-EDT**, so `OntologyAccess.compute` does its own
-   EDT hop and the modal confirm runs on the EDT **without** freezing the loop's thread. This is the critical
-   nuance: if the loop ran a handler on the EDT, `compute()` would run inline but a confirm-write dialog would
-   block the EDT and freeze Protégé. The write-confirmation dialog runs on the EDT **outside** the bounded
-   `compute()` (reused unchanged from A).
-
-**Cancel/Stop:** a volatile flag the worker checks between turns, plus closing the in-flight `HttpClient`
-response stream. `disposeOWLView()` signals the worker to stop and closes any open stream, with a bounded join
-(the same discipline as `McpServerHook.dispose()`).
+Mirrors `McpServerView`'s proven pattern. `initialiseOWLView`/`disposeOWLView` and all Swing work run on the EDT.
+Each turn spawns a launcher daemon thread that starts the server if needed (off-EDT) and spawns the CLI;
+`CliSupport` pumps stdout on the `protege-chat-agent` worker. Streamed callbacks (on the worker) enqueue styled
+chunks onto a thread-safe deque; a 40 ms Swing `Timer` drains it onto the EDT, **batching** inserts so a burst of
+events cannot flood the EDT. `onComplete` sets a volatile exit code; the drain finalizes the turn (re-enable
+Send, render usage) only **after** the queue empties, so the transcript tail is never dropped. Stop and
+`disposeOWLView` cancel the process (`destroy` → `destroyForcibly`) with a bounded join.
 
 ### 9.6 Security and egress
 
-- **New external transmission — disclose it.** Outbound HTTPS to `api.anthropic.com` only. This is a
-  transmission the read-only MCP server never made: the chat sends ontology content (entity IRIs, labels,
-  axioms returned by tools, the system-prompt ontology snapshot, and the user's prompts) to a third party.
-  Surface a one-time consent banner + a persistent egress indicator in the panel, and document it in the README.
-  The chat opens **no inbound socket** — no new attack surface, unlike A's loopback Jetty.
-- **API-key custody.** Store under a new `KEY_ANTHROPIC_API_KEY` in the **same** Preferences set as the bearer
-  token (`McpConfig.prefs()` = `getPreferencesForSet("io.github.hakjuoh.protege_mcp", "server")`), read/write via
-  `getString`/`putString` exactly like `KEY_TOKEN`. A ~108-char key is far under the 8192-char per-value limit,
-  so no chunking. **Not encrypted at rest** — `java.util.prefs` is plaintext (a plist on macOS, XML on Linux,
-  the registry on Windows), identical to how the bearer/OAuth tokens already sit; there is no keychain or
-  encryption layer anywhere in Protégé. The panel must say so plainly, and offer reading the key from the
-  `ANTHROPIC_API_KEY` environment variable as a no-storage alternative. **Never log the key.** Keep the two
-  secrets — the inbound MCP bearer token vs. the outbound Anthropic API key — in clearly-separated, clearly-labeled
-  fields.
-- **Consent reuse.** Chat writes go through `WriteTools.write()`, so A's read-only switch and confirm-each-write
-  modal apply unchanged, and the chat **cannot** escalate past read-only or confirm-writes. Because an LLM can
-  emit many edits autonomously, default the chat to honor `confirmWrites`, consider a chat-scoped "confirm all
-  model edits" toggle (default on) plus a running edit-log, disable write tools at request-build time in
-  read-only mode (don't even offer them to the model), and always confirm destructive tools (`remove_axiom`,
-  `save_ontology`).
-- **Proxy.** Protégé exposes no proxy UI; `HttpClient` honors the JVM `https.proxyHost`/`https.proxyPort` system
-  properties if set — document this, and optionally add a panel field. Disclose provider lock-in and per-token
-  cost (the explicit Architecture Approach B downsides).
+- **Egress is the CLI's, disclosed once.** The chat sends the user's prompts and the ontology content the
+  assistant reads to the user's model provider *via the CLI*. A one-time consent banner (`KEY_CHAT_CONSENTED`)
+  plus a persistent status-line note cover it (README documents it). The plugin opens **no** new outbound socket
+  and stores **no** provider API key.
+- **The MCP bearer token never lands on a command line.** Claude receives it inside the `--mcp-config` JSON;
+  Codex receives only the env-var *name* on argv and the value via the `PROTEGE_MCP_TOKEN` environment variable.
+- **Gates inherited, not re-implemented.** Edits go through the MCP server → `WriteTools` gates, so the read-only
+  switch and the confirm-each-write modal apply unchanged and the chat **cannot** escalate past them. The panel's
+  "Confirm each edit" checkbox toggles the server's `confirmWrites` live.
+- **macOS PATH.** A Finder/Dock-launched Protégé often lacks the user's shell `PATH`;
+  `CliSupport.resolveExecutable` searches `PATH` + well-known install dirs, and the preferences panel exposes a
+  per-provider path override. The CLI's own login authenticates to the provider — a first run may surface a
+  keychain prompt.
 
-### 9.7 Cost handling
+### 9.7 UI surface
 
-Architecture Approach B carries the ~1.5–2.5× cost premium that the architecture comparison (§2) flags. Blunt it with
-**prompt caching** in the render order tools → system → messages:
-
-- Put a `CacheControlEphemeral` breakpoint on the **last system block** so the tool definitions + the system
-  prompt cache together as one prefix. The Opus-4.8 minimum cacheable prefix is **4096 tokens** — the tool schemas
-  + a substantial system prompt should clear it; a trimmed subset under 4096 silently won't cache.
-- **Keep the system prompt frozen.** Do **not** interpolate the active-ontology IRI / axiom counts / timestamps
-  / session ids into `system` — that invalidates the whole prefix every turn. Inject volatile ontology context
-  **after** the cached prefix: as a tool result, or as a mid-conversation `{"role": "system", …}` message
-  (supported on Opus 4.8, no beta header; must follow a user message and be last or be followed by an assistant
-  turn).
-- Serialize the tool list **deterministically** (`ToolCatalog` order is stable; the schema builder uses
-  `LinkedHashMap`) so the tools-prefix bytes don't drift.
-- **Multi-turn:** also place a breakpoint on the last content block of the latest turn so the growing
-  conversation prefix is reused (max 4 breakpoints per request).
-- **Verify** via `usage.cache_read_input_tokens` — if it stays zero across turns, a silent invalidator is at work
-  (e.g. ontology state leaked into `system`); the premium balloons with no error otherwise.
-
-Cost levers in the panel: default `claude-opus-4-8` at effort `high`; expose `claude-haiku-4-5` / effort
-`low`/`medium` for cheap sessions; adaptive thinking lets Claude self-moderate depth; a per-turn token/cost
-readout (input / cached / output from `ProviderUsage`) keeps spend visible; the max-tool-round bound caps
-worst-case spend. Caches are per-model, so switching models mid-conversation cold-writes the new model's cache —
-start a new chat to change model. Optionally pre-warm the tools+system cache with a `max_tokens: 0` request on
-panel open (worth it only for interactive latency).
+A droppable **Ontology Assistant** `ViewComponent` *and* a dedicated **Ontology Assistant** `WorkspaceTab` (reusing
+`org.protege.editor.owl.ui.OWLWorkspaceViewsTab` + `viewconfig-ontologyassistanttab.xml`, which references the view by its
+fully-qualified id `io.github.hakjuoh.protege-mcp.ChatView`). Provider selection is "Use Claude"/"Use Codex" toggle buttons;
+the model picker repopulates from the chosen provider; a per-turn token/cost readout and the server/egress status
+line keep state visible.
 
 ### 9.8 Packaging (Architecture Approach B)
 
-Lowest-risk variant by design. `ChatView` is one more extension in `src/main/resources/plugin.xml` against
-`org.protege.editor.core.application.ViewComponent` (sibling to the `McpServerView` block), `<label>MCP Chat</label>`,
-`<class>io.github.hakjuoh.protege_mcp.ui.ChatView</class>`, user-creatable by default (droppable into any tab via
-Window ▸ Views; optionally its own `WorkspaceTab` + viewconfig). A new `preferencespanel` (or new keys on the
-existing MCP panel) carries the API key + model/effort defaults + chat-scoped always-confirm + optional proxy.
-New Java lives under bundle-internal `io.github.hakjuoh.protege_mcp.*` (`Export-Package` stays `io.github.hakjuoh.protege_mcp` only); the
-agent loop reuses the already-inlined `McpSchema.Tool` / `CallToolRequest` / `CallToolResult` types, so no new
-types cross the bundle boundary. With the recommended raw-HTTP transport, **net manifest delta is effectively
-nil** — no `Embed-Dependency`/`Multi-Release` change, no new `Import-Package` entry, no Jackson-skew. Java 17
-stays required (already enforced). The SDK alternative (§9.3) raises packaging cost materially — which is the
-whole reason raw HTTP is the default for this bundle.
+**No new embedded jars and no new mandatory `Import-Package`.** The driver uses `java.lang.ProcessBuilder` +
+`java.io`, and JSONL parsing reuses the already-embedded Jackson `ObjectMapper`. The new code stays under
+bundle-internal `io.github.hakjuoh.protege_mcp.*` (`Export-Package` stays `io.github.hakjuoh.protege_mcp` only); `plugin.xml` gains a
+`ViewComponent`, a `WorkspaceTab`, and a `preferencespanel`. Java 17 stays required. This is markedly lower
+packaging risk than the original raw-HTTP plan (which would still have been fine) and far lower than the
+SDK-embedding alternative.
 
-### 9.9 Phasing (Architecture Approach B)
+### 9.9 Deferred (behind the `ChatProvider` SPI)
 
-- **Phase 0 — Provider/transport decision + spike.** Confirm `java.net.http.HttpClient` + embedded Jackson
-  2.20.1 over the SDK for this bundle (record the tradeoff); define the `ChatProvider` SPI. Spike one streaming
-  `POST /v1/messages` with adaptive thinking + effort, parse SSE with the embedded `ObjectMapper`, print deltas;
-  decide `max_tokens` (~64000) and the model menu (`claude-opus-4-8` default).
-- **Phase 1 — Tool bridge.** `AnthropicToolBridge` maps the §5 specs → Anthropic tool defs, indexes handlers by
-  name, dispatches `tool_use` → stub-exchange `CallToolRequest` → `CallToolResult` → `tool_result`. Add the
-  stub-exchange test over all tool handlers; unit-test a read tool and a gated write tool through a stub controller.
-- **Phase 2 — Agent loop.** `AnthropicAgentLoop` on the daemon worker: stream → accumulate text + thinking +
-  `tool_use` → execute all tools off-EDT → one `tool_results` user message → repeat to `end_turn`. Handle
-  `max_tokens`, errors → `is_error`, Stop/Cancel, and the iteration cap.
-- **Phase 3 — ChatView.** `AbstractOWLViewComponent`; build `OntologyAccess(getOWLEditorKit())` + borrow the
-  `McpServerController` (fallback to `McpConfig.load()` flags). Swing UI: a streaming transcript `JTextPane`
-  (coalesced `invokeLater`), input field, model + effort selectors, Stop button, edit-log/undo hint, persistent
-  egress indicator. Register in `plugin.xml`.
-- **Phase 4 — Secrets + settings.** `KEY_ANTHROPIC_API_KEY` (+ model/effort defaults, optional proxy,
-  chat-scoped always-confirm, env-var key alternative); a masked field; never-log; disclose plaintext-at-rest +
-  external HTTPS egress + cost + provider lock-in in the panel and README.
-- **Phase 5 — Caching + cost hardening.** `CacheControlEphemeral` on the last system block; a frozen system
-  prompt with ontology context injected after the prefix; deterministic tool serialization; verify
-  `cache_read_input_tokens`; per-turn token/cost readout; optional `max_tokens: 0` pre-warm; expose haiku/effort
-  knobs.
-- **Phase 6 — Robustness + tests.** SSE edge cases (partial `tool_use` JSON, heartbeats, mid-stream errors), 429
-  `retry-after` + 5xx backoff, EDT-timeout → `is_error` recovery, `disposeOWLView` cancellation, multi-window
-  controller-absent fallback.
-- **Phase 7 (optional, last) — alternatives behind the SPI.** An SDK-backed `AnthropicChatProvider`; the
-  loopback-dogfood configuration; `claude-fable-5` + server-side fallbacks / refusal handling; and the
-  **external MCP servers** feature (a local MCP client via `ToolRuntime`, so the same loop exposes "Protégé tools
-  + others"), each behind a flag with its own consent/egress disclosure. Compaction / context-editing for very
-  long 1M-context sessions also lands here.
+A **direct-API** provider (`api.anthropic.com` with an in-process tool-bridge, a hand-written `/v1/messages` SSE
+loop, API-key custody, and prompt caching) — the original design, now superseded by the CLI-driven approach but
+kept viable behind the SPI for anyone who wants it; user-configured **external** MCP servers exposed to the chat;
+`claude-fable-5` + server-side fallbacks; and long-context compaction.
 
 ---
 
@@ -820,7 +719,12 @@ offers an update.
 | **6. Status UI / multi-window / docs** | `McpServerView` with the connected-clients table + per-client revocation; per-window controllers | ✅ done |
 | **7. Hardening** | deadlock/perf/OSGi regression coverage across all tool paths | ⏳ ongoing |
 
-**Next tracks:** Architecture Approach B phasing (§9.9) and Architecture Approach C (§10).
+**Architecture Approach B — delivered (`0.3.0`).** The in-Protégé chat assistant (§9): a `ChatView` + dedicated
+**Ontology Assistant** tab, the `io.github.hakjuoh.protege_mcp.chat` provider/driver layer (Claude Code and Codex CLIs), and the
+event-stream parsers — built atop A's tool layer with no new embedded jars and no API-key custody.
+
+**Next tracks:** the §9.9 deferred items behind the `ChatProvider` SPI (direct-API provider, external MCP servers,
+`claude-fable-5`, long-context compaction) and Architecture Approach C (§10).
 
 ---
 
@@ -846,9 +750,13 @@ offers an update.
   re-authorize; per-client `lastSeenAt` / `staticTokenLastSeen` can read stale right after a restart.
 - **Loopback OAuth over plain HTTP** — no TLS in the plugin; relies on the client's loopback-http exemption.
 - **`mcp-remote` dependency** — stdio-only clients (e.g. Claude Desktop) need Node/`npx`.
-- **Architecture Approach B forward risks (when built)** — new outbound egress of ontology content to `api.anthropic.com`;
-  the API key plaintext-at-rest; per-token cost premium; provider lock-in; autonomous multi-edit volume
-  (mitigated by the confirm-writes default + edit-log + max-round cap).
+- **Architecture Approach B risks (as built, `0.3.0`)** — egress of ontology content + prompts to the user's model
+  provider happens **via the local CLI** (disclosed by a one-time consent banner; the plugin itself stores no API
+  key and opens no new socket); the chat **requires** a working `claude`/`codex` install + login and a running
+  Approach A server (the panel starts it); a Finder/Dock-launched Protégé may not have the CLI on `PATH`
+  (mitigated by well-known-dir search + a path-override pref); and the CLIs' JSONL event schemas can drift across
+  versions (mitigated by tolerant parsers that ignore unknown event types). Autonomous multi-edit volume is
+  bounded by the inherited read-only / confirm-each-write gates.
 
 ---
 

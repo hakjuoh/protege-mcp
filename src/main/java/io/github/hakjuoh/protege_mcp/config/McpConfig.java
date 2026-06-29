@@ -14,6 +14,7 @@ import org.protege.editor.core.prefs.PreferencesManager;
  */
 public final class McpConfig {
 
+    // Preferences node holding this plugin's persisted settings (token / OAuth clients / port).
     public static final String PREFS_SET = "io.github.hakjuoh.protege_mcp";
     public static final String PREFS_GROUP = "server";
 
@@ -24,6 +25,22 @@ public final class McpConfig {
     public static final String KEY_TOKEN = "bearerToken";
     /** Persisted embedded-OAuth state (registered clients + access/refresh tokens) as a JSON blob. */
     public static final String KEY_OAUTH_STATE = "oauthState";
+
+    // ---- In-Protégé chat (Architecture Approach B) settings ----
+    /** Selected chat provider id ({@code claude} / {@code codex}). */
+    public static final String KEY_CHAT_PROVIDER = "chatProvider";
+    /** Last model picked for the Claude provider (blank = the CLI's own default). */
+    public static final String KEY_CHAT_MODEL_CLAUDE = "chatModelClaude";
+    /** Last model picked for the Codex provider (blank = the CLI's own default). */
+    public static final String KEY_CHAT_MODEL_CODEX = "chatModelCodex";
+    /** Optional absolute path / dir override when the {@code claude} CLI is not on the GUI's PATH. */
+    public static final String KEY_CHAT_CLAUDE_PATH = "chatClaudePath";
+    /** Optional absolute path / dir override when the {@code codex} CLI is not on the GUI's PATH. */
+    public static final String KEY_CHAT_CODEX_PATH = "chatCodexPath";
+    /** Whether the user has acknowledged the one-time chat egress disclosure. */
+    public static final String KEY_CHAT_CONSENTED = "chatEgressConsented";
+    /** Whether the chat should show the model's reasoning ("thinking") in the transcript. */
+    public static final String KEY_CHAT_SHOW_THINKING = "chatShowThinking";
 
     /** Default listen port. A configured port of {@code 0} means "pick an ephemeral port". */
     public static final int DEFAULT_PORT = 8123;

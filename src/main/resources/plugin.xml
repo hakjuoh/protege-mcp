@@ -26,4 +26,32 @@
         <class value="io.github.hakjuoh.protege_mcp.ui.McpPreferencesPanel"/>
     </extension>
 
+    <!-- In-Protégé chat assistant (Architecture Approach B): drives a local coding-agent CLI that
+         connects back to this plugin's MCP server to read/edit the live ontology.
+         The extension id 'ChatView' becomes the fully-qualified view id 'io.github.hakjuoh.protege-mcp.ChatView'
+         referenced by viewconfig-ontologyassistanttab.xml. -->
+    <extension id="ChatView"
+               point="org.protege.editor.core.application.ViewComponent">
+        <label value="Ontology Assistant"/>
+        <class value="io.github.hakjuoh.protege_mcp.ui.ChatView"/>
+    </extension>
+
+    <!-- Dedicated top-level tab hosting the Ontology Assistant view (reuses the generic OWL views tab + a
+         default layout). -->
+    <extension id="OntologyAssistantTab"
+               point="org.protege.editor.core.application.WorkspaceTab">
+        <label value="Ontology Assistant"/>
+        <class value="io.github.hakjuoh.protege_mcp.ui.ChatTab"/>
+        <editorKitId value="OWLEditorKit"/>
+        <index value="Z"/>
+        <defaultViewConfigFileName value="viewconfig-ontologyassistanttab.xml"/>
+    </extension>
+
+    <!-- Preferences tab for the chat: CLI path overrides + egress consent reset. -->
+    <extension id="io.github.hakjuoh.protege_mcp.chat.preferences"
+               point="org.protege.editor.core.application.preferencespanel">
+        <label value="Ontology Assistant"/>
+        <class value="io.github.hakjuoh.protege_mcp.ui.ChatPreferencesPanel"/>
+    </extension>
+
 </plugin>

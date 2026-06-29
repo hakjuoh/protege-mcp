@@ -1,0 +1,64 @@
+package io.github.hakjuoh.protege_mcp.chat.codex;
+
+import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
+import io.github.hakjuoh.protege_mcp.chat.McpEndpoint;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+
+/** The Codex {@code exec --json} argv, its {@code -c} overrides, and that the token stays off the CLI. */
+class CodexCliProviderTest {
+
+    private static final McpEndpoint ENDPOINT = new McpEndpoint("http://127.0.0.1:8123/mcp", "SECRET-TOKEN");
+
+    @Test
+    void buildsFreshExecArgvWithConfigOverrides() {
+        List<String> cmd = CodexCliProvider.buildCommand("codex",
+                new ChatRequest("gpt-5.5", "hi there", "", ENDPOINT));
+
+        assertEquals("codex", cmd.get(0));
+        assertTrue(cmd.contains("exec"));
+        assertFalse(cmd.contains("resume"));
+        assertTrue(cmd.contains("--json"));
+        assertTrue(cmd.contains("--skip-git-repo-check"));
+        assertAdjacent(cmd, "-m", "gpt-5.5");
+
+        assertTrue(cmd.contains("approval_policy=\"never\""));
+        assertTrue(cmd.contains("sandbox_mode=\"read-only\""));
+        assertTrue(cmd.contains("mcp_servers.protege.url=\"http://127.0.0.1:8123/mcp\""));
+        assertTrue(cmd.contains("mcp_servers.protege.bearer_token_env_var=\"PROTEGE_MCP_TOKEN\""));
+        assertTrue(cmd.contains("mcp_servers.protege.default_tools_approval_mode=\"approve\""));
+
+        assertEquals("--", cmd.get(cmd.size() - 2));
+        assertEquals("hi there", cmd.get(cmd.size() - 1));
+    }
+
+    @Test
+    void resumeUsesThreadId() {
+        List<String> cmd = CodexCliProvider.buildCommand("codex",
+                new ChatRequest("", "again", "thread-7", ENDPOINT));
+        int exec = cmd.indexOf("exec");
+        assertTrue(exec >= 0);
+        assertEquals("resume", cmd.get(exec + 1));
+        assertEquals("thread-7", cmd.get(exec + 2));
+    }
+
+    @Test
+    void neverPutsTheBearerTokenOnTheCommandLine() {
+        List<String> cmd = CodexCliProvider.buildCommand("codex",
+                new ChatRequest("gpt-5.5", "hi", "", ENDPOINT));
+        assertTrue(cmd.stream().noneMatch(a -> a.contains("SECRET-TOKEN")),
+                "the token must travel via the PROTEGE_MCP_TOKEN env var, never argv");
+    }
+
+    private static void assertAdjacent(List<String> cmd, String flag, String value) {
+        int i = cmd.indexOf(flag);
+        assertTrue(i >= 0 && i + 1 < cmd.size(), "missing flag " + flag);
+        assertEquals(value, cmd.get(i + 1), "value after " + flag);
+    }
+}
