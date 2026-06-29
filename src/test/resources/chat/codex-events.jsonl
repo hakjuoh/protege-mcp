@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"thread-codex-1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Skill descriptions were shortened."}}
+{"type":"item.completed","item":{"id":"item_1","type":"reasoning","text":"Looking at the ontology."}}
+{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"protege","tool":"list_classes"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"There are 3 classes."}}
+{"type":"turn.completed","usage":{"input_tokens":18554,"cached_input_tokens":3456,"output_tokens":25,"reasoning_output_tokens":18}}

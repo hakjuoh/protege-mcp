@@ -1,0 +1,30 @@
+package io.github.hakjuoh.tools;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
+
+/** Aggregates every tool specification the server exposes. */
+public final class ToolCatalog {
+
+    private ToolCatalog() {
+    }
+
+    public static List<SyncToolSpecification> buildAll(ToolContext ctx) {
+        List<SyncToolSpecification> all = new ArrayList<>();
+        all.addAll(ReadTools.specs(ctx));
+        all.addAll(ContextTools.specs(ctx));
+        all.addAll(WriteTools.specs(ctx));
+        all.addAll(PreviewTools.specs(ctx));
+        all.addAll(EntityRefactorTools.specs(ctx));
+        all.addAll(OntologyMetadataTools.specs(ctx));
+        all.addAll(OntologyDocumentTools.specs(ctx));
+        all.addAll(RuleTools.specs(ctx));
+        all.addAll(CatalogTools.specs(ctx));
+        all.addAll(DiffTools.specs(ctx));
+        all.addAll(ReasonerTools.specs(ctx));
+        all.addAll(ValidationTools.specs(ctx));
+        return all;
+    }
+}

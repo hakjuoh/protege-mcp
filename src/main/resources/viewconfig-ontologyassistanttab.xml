@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Default layout for the "Ontology Assistant" workspace tab: a single Ontology Assistant view filling the tab.
+     The pluginId is the fully-qualified ViewComponent extension id (bundle symbolic name +
+     the bare extension id "ChatView" from plugin.xml). -->
+<layout>
+    <VSNode splits="1.0">
+        <CNode>
+            <Component label="Ontology Assistant">
+                <Property id="pluginId" value="io.github.hakjuoh.ChatView"/>
+            </Component>
+        </CNode>
+    </VSNode>
+</layout>

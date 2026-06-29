@@ -3,7 +3,7 @@
 Protégé can discover and install this plugin from **File ▸ Check for plugins** — no manual jar
 copying. That menu reads a **plugin registry** (a `.repository` URL list) and, for each listed
 **update descriptor** (`update.properties`), offers the plugin when its `id`
-(= `Bundle-SymbolicName`, here `org.protege.mcp`) is either not yet installed, or installed at a
+(= `Bundle-SymbolicName`, here `io.github.hakjuoh`) is either not yet installed, or installed at a
 lower `version`. Both files are **published from this GitHub repo**, so you can install straight from
 the official registry with nothing to fill in:
 

@@ -5,8 +5,12 @@ plugin. It exposes the **live, active ontology** of a running Protégé to MCP c
 HTTP endpoint. Reads and edits flow through Protégé's shared `OWLModelManager`, so they appear in the
 GUI immediately and join the **undo stack** — exactly like manual edits.
 
-Design and rationale — the shipped in-Protégé MCP server (Architecture Approach A), the planned in-app
-Claude chat (Architecture Approach B), and distribution: [`DESIGN.md`](DESIGN.md).
+It also ships an **in-Protégé chat assistant** (Architecture Approach B, new in `0.3.0`): a chat panel
+that drives your locally-installed `claude` or `codex` CLI to edit the ontology for you — see
+[In-Protégé chat](#in-protégé-chat-ontology-assistant) below.
+
+For the full design rationale — both architectures (Architecture Approach A, the in-Protégé MCP server;
+Architecture Approach B, the chat assistant above) and distribution — see [`DESIGN.md`](DESIGN.md).
 
 ## Requirements
 
@@ -37,7 +41,7 @@ export PROTEGE_JAVA_HOME=/path/to/jdk-17
 3. Restart Protégé (on a Java 17+ JVM — see [Requirements](#requirements)).
 
 On load you get a **MCP Server** view (Window ▸ Views ▸ Miscellaneous views, or add it to any tab)
-and a **MCP** settings tab (Settings ▸ MCP). The bundle id is `org.protege.mcp` (singleton).
+and a **MCP** settings tab (Settings ▸ MCP). The bundle id is `io.github.hakjuoh` (singleton).
 
 > Prefer automatic discovery and updates from inside Protégé? See
 > [docs/check-for-plugins.md](docs/check-for-plugins.md).
@@ -170,6 +174,41 @@ With `PROTEGE_MCP_TOKEN`:
   }
 }
 ```
+
+## In-Protégé chat (Ontology Assistant)
+
+New in `0.3.0`: a chat assistant **inside Protégé** that edits the live ontology for you. Instead of the
+plugin calling a model API directly, it **drives a coding-agent CLI you already have installed** — Claude
+Code (`claude`) or OpenAI Codex (`codex`) — and points it back at this plugin's own MCP server. So the
+assistant reads/edits through the same tools an external client uses: changes appear in the GUI and join
+the **undo stack**, and the read-only / confirm-write gates still apply. **No API key is stored by
+Protégé** — each CLI uses your existing login.
+
+**Prerequisites**
+
+- Install and log in to at least one CLI:
+  - Claude Code: <https://docs.claude.com/en/docs/claude-code> (then `claude` works in your terminal)
+  - Codex: <https://github.com/openai/codex> (`codex login`)
+- The MCP server must be running (the chat starts it automatically on the first message).
+
+**Use**
+
+1. Open the **Ontology Assistant** tab (it appears as a top-level tab), or add the **Ontology Assistant** view to any tab via
+   Window ▸ Views.
+2. Pick a provider — **Use Claude** / **Use Codex** (only installed CLIs are shown) — and optionally a
+   model (blank uses the CLI's own default; the field is editable for any model your account supports).
+3. Type a request and press **Enter** (Shift+Enter for a newline). Try a read first — *"What classes are
+   in this ontology?"* — then an edit — *"Create a class FooBar under Thing with label 'Foo Bar'."*
+   Watch it stream; **Stop** cancels mid-turn; **Edit ▸ Undo** reverts any edit.
+
+**Privacy & cost.** The chat sends your prompts and the ontology content the assistant reads to your model
+provider **via the CLI** (a one-time banner discloses this). Cost and rate limits are governed by your
+CLI's own subscription/account. Edits obey the **MCP** preferences (read-only, confirm-each-write); a
+**Confirm each edit** checkbox in the panel toggles confirmation live.
+
+**Settings (Settings ▸ Ontology Assistant).** If Protégé was launched from the macOS Dock/Finder it may not have
+your shell `PATH`, so a CLI can fail to resolve — set an explicit path to the `claude` / `codex`
+executable there. The panel also shows what was detected and can reset the egress consent prompt.
 
 ## Tools
 

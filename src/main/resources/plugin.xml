@@ -8,7 +8,7 @@
          and skip its dispose()). -->
     <extension id="McpServerHook"
                point="org.protege.editor.core.application.EditorKitHook">
-        <class value="org.protege.mcp.McpServerHook"/>
+        <class value="io.github.hakjuoh.McpServerHook"/>
         <editorKitId value="OWLEditorKit"/>
     </extension>
 
@@ -16,14 +16,42 @@
     <extension id="McpServerView"
                point="org.protege.editor.core.application.ViewComponent">
         <label value="MCP Server"/>
-        <class value="org.protege.mcp.ui.McpServerView"/>
+        <class value="io.github.hakjuoh.ui.McpServerView"/>
     </extension>
 
     <!-- Preferences tab: port, autostart, bearer token, write-confirm, read-only. -->
-    <extension id="org.protege.mcp.preferences"
+    <extension id="io.github.hakjuoh.preferences"
                point="org.protege.editor.core.application.preferencespanel">
         <label value="MCP"/>
-        <class value="org.protege.mcp.ui.McpPreferencesPanel"/>
+        <class value="io.github.hakjuoh.ui.McpPreferencesPanel"/>
+    </extension>
+
+    <!-- In-Protégé chat assistant (Architecture Approach B): drives a local coding-agent CLI that
+         connects back to this plugin's MCP server to read/edit the live ontology.
+         The extension id 'ChatView' becomes the fully-qualified view id 'io.github.hakjuoh.ChatView'
+         referenced by viewconfig-ontologyassistanttab.xml. -->
+    <extension id="ChatView"
+               point="org.protege.editor.core.application.ViewComponent">
+        <label value="Ontology Assistant"/>
+        <class value="io.github.hakjuoh.ui.ChatView"/>
+    </extension>
+
+    <!-- Dedicated top-level tab hosting the Ontology Assistant view (reuses the generic OWL views tab + a
+         default layout). -->
+    <extension id="OntologyAssistantTab"
+               point="org.protege.editor.core.application.WorkspaceTab">
+        <label value="Ontology Assistant"/>
+        <class value="io.github.hakjuoh.ui.ChatTab"/>
+        <editorKitId value="OWLEditorKit"/>
+        <index value="Z"/>
+        <defaultViewConfigFileName value="viewconfig-ontologyassistanttab.xml"/>
+    </extension>
+
+    <!-- Preferences tab for the chat: CLI path overrides + egress consent reset. -->
+    <extension id="io.github.hakjuoh.chat.preferences"
+               point="org.protege.editor.core.application.preferencespanel">
+        <label value="Ontology Assistant"/>
+        <class value="io.github.hakjuoh.ui.ChatPreferencesPanel"/>
     </extension>
 
 </plugin>
