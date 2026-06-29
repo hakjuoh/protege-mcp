@@ -44,6 +44,23 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h3>Version information</h3>
 
+<h4>v0.3.0</h4>
+<ul>
+    <li><strong>In-Prot&#233;g&#233; chat assistant (Architecture Approach B).</strong> A new <strong>Ontology
+        Assistant</strong> tab and view let you converse with an assistant that reads and edits the live
+        ontology. Rather than calling a model API directly, it <strong>drives a locally-installed
+        coding-agent CLI</strong> &#8212; Claude Code (<code>claude</code>) or OpenAI Codex
+        (<code>codex</code>) &#8212; pointed back at this plugin&#8217;s own MCP server, so edits appear in
+        the GUI and join the undo stack, and the read-only / confirm-write gates still apply.</li>
+    <li>Pick a provider with <strong>Use Claude</strong> / <strong>Use Codex</strong> (only installed CLIs
+        are shown); the model picker is populated from the active provider. <strong>No API key is stored
+        by Prot&#233;g&#233;</strong> &#8212; each CLI uses your existing login; a one-time banner discloses
+        that prompts and ontology content are sent to your model provider via the CLI.</li>
+    <li>New <strong>Settings &#9656; Ontology Assistant</strong> tab: optional per-provider CLI path overrides (for
+        when a Dock/Finder-launched Prot&#233;g&#233; lacks your shell <code>PATH</code>) and an egress
+        consent reset.</li>
+</ul>
+
 <h4>v0.2.2</h4>
 <ul>
     <li>Full-fidelity SWRL rule editing (41 &#8594; 47 tools): <code>list_rules</code> /
