@@ -113,8 +113,12 @@ public final class CodexCliProvider implements ChatProvider {
             cmd.add("-m");
             cmd.add(req.model().trim());
         }
+        for (java.io.File image : req.imageFiles()) {
+            cmd.add("--image");
+            cmd.add(image.getAbsolutePath());
+        }
         cmd.add("--");
-        cmd.add(req.prompt());
+        cmd.add(req.providerPrompt());
         return cmd;
     }
 
