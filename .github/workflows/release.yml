@@ -65,13 +65,34 @@ jobs:
       - name: Build and test
         run: mvn -B clean package
 
+      - name: Build release notes from CHANGELOG.md
+        id: notes
+        env:
+          VERSION: ${{ steps.project.outputs.version }}
+        run: |
+          # Extract this version's "## [x.y.z]" section (up to the next "## [" header) as the release body.
+          awk -v hdr="## [$VERSION]" \
+            'index($0, hdr) == 1 { f = 1; next } f && index($0, "## [") == 1 { f = 0 } f { print }' \
+            CHANGELOG.md > RELEASE_NOTES.md
+          if grep -q '[^[:space:]]' RELEASE_NOTES.md; then
+            echo "have_notes=true" >> "$GITHUB_OUTPUT"
+            echo "Using CHANGELOG.md section for $VERSION:"
+            cat RELEASE_NOTES.md
+          else
+            echo "have_notes=false" >> "$GITHUB_OUTPUT"
+            echo "No CHANGELOG.md section for $VERSION; falling back to auto-generated notes."
+          fi
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release_tag.outputs.tag }}
           ASSET: ${{ steps.project.outputs.asset }}
+          HAVE_NOTES: ${{ steps.notes.outputs.have_notes }}
         run: |
           test -f "$ASSET"
-          gh release create "$TAG" "$ASSET" \
-            --title "$TAG" \
-            --generate-notes
+          if [ "$HAVE_NOTES" = "true" ]; then
+            gh release create "$TAG" "$ASSET" --title "$TAG" --notes-file RELEASE_NOTES.md
+          else
+            gh release create "$TAG" "$ASSET" --title "$TAG" --generate-notes
+          fi
