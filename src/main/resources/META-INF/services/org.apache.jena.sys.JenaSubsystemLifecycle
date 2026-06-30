@@ -1,0 +1,15 @@
+# Hand-merged Jena subsystem lifecycle list.
+#
+# jena-core and jena-arq each ship a META-INF/services/org.apache.jena.sys.JenaSubsystemLifecycle
+# file at the SAME path. When the maven-bundle-plugin inlines both jars into this single OSGi
+# bundle (Embed-Dependency inline=true), only one survives — so JenaSystem.init() would otherwise
+# miss either jena-core init (no RDF model) or RIOT/ARQ init (no Turtle parser / no SPARQL). This
+# project resource is processed first by bnd, so it wins the collision and lists the union from
+# both jars. Keep in sync if the Jena version bumps (check each jena jar's copy of this file).
+#
+#   jena-core: InitJenaCore
+#   jena-arq:  InitRIOT, InitARQ, InitRDFS
+org.apache.jena.sys.InitJenaCore
+org.apache.jena.riot.system.InitRIOT
+org.apache.jena.sparql.system.InitARQ
+org.apache.jena.rdfs.sys.InitRDFS

@@ -226,12 +226,12 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (47 tools + 5 prompts)
+## 5. MCP Tool Catalog (48 tools + 5 prompts)
 
-Forty-seven tools — 7 read, 2 context, 14 edit/history/persistence (incl. `preview_changes`,
+Forty-eight tools — 7 read, 2 context, 14 edit/history/persistence (incl. `preview_changes`,
 `apply_changes`, `set_label`), 6 ontology-header (incl. `set_prefix`), 5 document (incl.
 `set_active_ontology`, `create_ontology`, `write_catalog`), 3 rule (`list_rules`/`add_rule`/`remove_rule`),
-8 reasoner, and 2 validation (incl. `diff_ontologies`) — each defined by a `name`, a `description`, and a
+8 reasoner, 1 SPARQL (`sparql_query`), and 2 validation (incl. `diff_ontologies`) — each defined by a `name`, a `description`, and a
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
 **Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
 serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results
@@ -262,6 +262,17 @@ round-trip; `create_ontology` mints a new empty module in the workspace (paired 
 imports to their local files (a file outside the OWL axiom model, so no other tool can produce it);
 and `diff_ontologies` performs an axiom-level semantic diff / round-trip check between two loaded
 ontologies, or the active ontology against a freshly-loaded document.
+
+New in `0.3.2`: `sparql_query` — run a SPARQL 1.1 query (`SELECT`/`ASK`/`CONSTRUCT`/`DESCRIBE`; read-only,
+since `UPDATE` and `SERVICE` are rejected) over the active ontology and its imports closure, using an
+embedded Apache Jena ARQ engine. The closure is snapshotted into a private throwaway ontology on the EDT —
+preserving the real ontology IRI and ontology-level (header) annotations, not just entity axioms — then
+serialised to RDF and queried off the EDT; the active ontology's prefixes (plus rdf/rdfs/owl/xsd) are
+auto-prepended and `limit` caps the rows/triples returned. Set `include_inferred=true` to first materialise
+the active reasoner's inferences into the snapshot (a quadratic property-assertion generator is skipped, with
+a reported note, on a large ABox). Jena is inlined into the bundle; because jena-core and jena-arq ship the
+same `META-INF/services/org.apache.jena.sys.JenaSubsystemLifecycle` resource, a hand-merged copy is shipped so
+RIOT/ARQ init survives the single-classloader inlining, and `JenaSystem.init()` is warmed once at server start.
 
 | Tool | Mapping / notes |
 |---|---|

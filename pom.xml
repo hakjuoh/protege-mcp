@@ -46,6 +46,9 @@
         <!-- embedded Jakarta-Servlet-6 host -->
         <jetty.version>12.0.18</jetty.version>
         <jakarta.servlet.version>6.1.0</jakarta.servlet.version>
+
+        <!-- embedded SPARQL engine (Apache Jena ARQ) for the sparql_query tool -->
+        <jena.version>4.10.0</jena.version>
     </properties>
 
     <dependencies>
@@ -145,6 +148,18 @@
             <groupId>jakarta.servlet</groupId>
             <artifactId>jakarta.servlet-api</artifactId>
             <version>${jakarta.servlet.version}</version>
+        </dependency>
+
+        <!-- SPARQL engine: Apache Jena ARQ, embedded so sparql_query runs in-process over the
+             active ontology's RDF rendering. jena-core/iri/base/shaded-guava come in transitively
+             and are inlined. The jena packages are private (inlined), so they are not imported;
+             a hand-merged META-INF/services/org.apache.jena.sys.JenaSubsystemLifecycle (in
+             src/main/resources) restores RIOT/ARQ init that bnd would otherwise clobber when
+             several jena jars ship the same service file. -->
+        <dependency>
+            <groupId>org.apache.jena</groupId>
+            <artifactId>jena-arq</artifactId>
+            <version>${jena.version}</version>
         </dependency>
 
         <!-- ===================================================================== -->
