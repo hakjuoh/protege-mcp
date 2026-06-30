@@ -48,8 +48,12 @@ public final class McpServerManager {
                     + "switch or a confirmation dialog).\n"
                     + "4. Verify: call run_reasoner before reading inferred results, and validate_ontology "
                     + "for modelling-quality issues.\n"
+                    + "To query the ontology, sparql_schema lists the queryable vocabulary (prefixes, "
+                    + "classes, properties, example queries) and sparql_validate checks a draft query "
+                    + "before sparql_query runs it.\n"
                     + "The MCP prompts (audit_ontology, explain_class, add_subclass_safely, "
-                    + "find_and_fix_unsatisfiable, model_domain) package these workflows.";
+                    + "find_and_fix_unsatisfiable, author_sparql_query, model_domain) package these "
+                    + "workflows.";
 
     private McpSyncServer server;
     private HttpServletStreamableServerTransportProvider transport;
