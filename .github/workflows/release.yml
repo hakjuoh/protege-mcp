@@ -92,7 +92,7 @@ jobs:
         run: |
           test -f "$ASSET"
           if [ "$HAVE_NOTES" = "true" ]; then
-            gh release create "$TAG" "$ASSET" --title "$TAG" --notes-file RELEASE_NOTES.md
+            gh release create "$TAG" "$ASSET" --title "protege-mcp $TAG" --notes-file RELEASE_NOTES.md
           else
-            gh release create "$TAG" "$ASSET" --title "$TAG" --generate-notes
+            gh release create "$TAG" "$ASSET" --title "protege-mcp $TAG" --generate-notes
           fi
