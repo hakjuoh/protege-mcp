@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>47 tools</b> across explore / search, edit, documents, rules, history, and reasoning - every model
+    <li><b>50 tools</b> across explore / search, edit, documents, rules, history, reasoning, and SPARQL - every model
         edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
         the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>Loopback-only HTTP with <b>OAuth 2.1</b> (dynamic registration + browser consent, persisted
@@ -43,6 +43,30 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.3.2</h4>
+<ul>
+    <li>SPARQL support (47 &#8594; 50 tools): author, validate and run queries over the active ontology.</li>
+    <li>New <code>sparql_query</code> tool: run a <b>SPARQL 1.1</b> query
+        (<code>SELECT</code> / <code>ASK</code> / <code>CONSTRUCT</code> / <code>DESCRIBE</code>) over the
+        active ontology and its imports closure, using an embedded Apache Jena ARQ engine. It is read-only
+        &#8212; <code>UPDATE</code> and <code>SERVICE</code> are rejected, so a query never edits the model or
+        reaches the network. Prefixes declared in the ontology (plus rdf/rdfs/owl/xsd) are auto-prepended, so
+        queries need no <code>PREFIX</code> lines; <code>limit</code> caps the rows/triples returned. By
+        default the query sees the <b>asserted</b> triples (like Prot&#233;g&#233;'s SPARQL Query tab); set
+        <code>include_inferred=true</code> to first materialise the active reasoner's inferences (run
+        <code>run_reasoner</code> first).</li>
+    <li>New <code>sparql_schema</code> tool: the queryable vocabulary in one call &#8212; the prefix map (and a
+        ready-to-paste <code>PREFIX</code> block), classes, object/data properties (with their domains and
+        ranges), individuals and datatypes (each with a CURIE and full IRI), plus example queries built from
+        the ontology's own terms. Use <code>keyword</code> to focus on a sub-topic.</li>
+    <li>New <code>sparql_validate</code> tool: check a draft query <i>before</i> running it (parse-only, or
+        <code>dry_run</code> for a small sample). Reports whether it parses, the query form, the variables,
+        whether <code>sparql_query</code> would accept it, and <code>unknown_terms</code> &#8212; IRIs used in
+        the query that are not declared in the ontology (a typo / wrong-vocabulary detector).</li>
+    <li>New <code>author_sparql_query</code> MCP prompt that chains these: discover the vocabulary, draft,
+        validate, run, iterate.</li>
+</ul>
 
 <h4>v0.3.1</h4>
 <ul>
