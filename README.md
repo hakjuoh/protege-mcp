@@ -296,6 +296,8 @@ package these flows.
 | Tool | Description |
 | --- | --- |
 | `sparql_query` | Run a SPARQL 1.1 query (`SELECT` / `ASK` / `CONSTRUCT` / `DESCRIBE` — read-only; `UPDATE` and `SERVICE` are rejected) over the active ontology and its imports closure, using an embedded Apache Jena ARQ engine. Prefixes declared in the ontology (plus rdf/rdfs/owl/xsd) are auto-prepended, and `limit` caps the rows/triples returned. By default it queries the **asserted** triples (like Protégé's SPARQL Query tab); set `include_inferred=true` to first materialise the active reasoner's inferences (run `run_reasoner` first). |
+| `sparql_schema` | Discover the queryable vocabulary for *writing* a query: the prefix map (plus a ready-to-paste `PREFIX` block), and classes, object/data properties (with domains and ranges), individuals and datatypes — each with a CURIE and full IRI — plus example queries built from the ontology's own terms. Use `keyword` to focus on a sub-topic. |
+| `sparql_validate` | Check a draft query *before* running it (parse-only, or `dry_run` for a small sample): reports whether it parses, the query form and variables, whether `sparql_query` would accept it, and `unknown_terms` — IRIs used in the query that are not declared in the ontology (a typo / wrong-vocabulary detector). |
 
 ### Reasoning
 
@@ -368,6 +370,7 @@ preview before applying, confirm writes, verify with the reasoner).
 | `explain_class` | `class` | Entity context → axioms → reasoner-inferred relations → plain-language explanation. |
 | `add_subclass_safely` | `child`, `parent` | Resolve both terms → `preview_changes` → apply `add_subclass_of` → re-check satisfiability. |
 | `find_and_fix_unsatisfiable` | — | `run_reasoner` → `get_unsatisfiable_classes` → `get_explanations` → propose minimal fixes. |
+| `author_sparql_query` | `question` | `sparql_schema` (discover vocabulary) → draft → `sparql_validate` → `sparql_query` → iterate. |
 | `model_domain` | `description` | Survey existing terms → propose classes/properties → preview → apply in small batches → validate. |
 
 ## Building from Source

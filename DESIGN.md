@@ -148,12 +148,12 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    is still open. The election logic is factored into package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.3.1`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.3.2`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
    McpServer.sync(transport)
-            .serverInfo("protege-mcp", "0.3.1")
+            .serverInfo("protege-mcp", "0.3.2")
             .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())  // tools + prompts (both listChanged=false); no resources
             .immediateExecution(true)     // run handlers on the transport (HTTP) thread; the plugin marshals to the EDT itself
             .validateToolInputs(false)
@@ -226,16 +226,16 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (48 tools + 5 prompts)
+## 5. MCP Tool Catalog (50 tools + 6 prompts)
 
-Forty-eight tools — 7 read, 2 context, 14 edit/history/persistence (incl. `preview_changes`,
+Fifty tools — 7 read, 2 context, 14 edit/history/persistence (incl. `preview_changes`,
 `apply_changes`, `set_label`), 6 ontology-header (incl. `set_prefix`), 5 document (incl.
 `set_active_ontology`, `create_ontology`, `write_catalog`), 3 rule (`list_rules`/`add_rule`/`remove_rule`),
-8 reasoner, 1 SPARQL (`sparql_query`), and 2 validation (incl. `diff_ontologies`) — each defined by a `name`, a `description`, and a
+8 reasoner, 3 SPARQL (`sparql_query`/`sparql_schema`/`sparql_validate`), and 2 validation (incl. `diff_ontologies`) — each defined by a `name`, a `description`, and a
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
 **Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
 serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results
-programmatically and a human still sees readable JSON. The server also registers **5 MCP prompts**
+programmatically and a human still sees readable JSON. The server also registers **6 MCP prompts**
 (guided workflows) — see the end of this section.
 
 New in `0.2.0` (the natural-language layer): `get_ontology_context` / `get_entity_context`
@@ -273,6 +273,16 @@ the active reasoner's inferences into the snapshot (a quadratic property-asserti
 a reported note, on a large ABox). Jena is inlined into the bundle; because jena-core and jena-arq ship the
 same `META-INF/services/org.apache.jena.sys.JenaSubsystemLifecycle` resource, a hand-merged copy is shipped so
 RIOT/ARQ init survives the single-classloader inlining, and `JenaSystem.init()` is warmed once at server start.
+
+Also new in `0.3.2`, two tools that help *author* a query (since `sparql_query` only executes one): `sparql_schema`
+returns the queryable vocabulary in one call — the prefix map (and a ready-to-paste `PREFIX` block), classes,
+object/data properties with their domains and ranges, individuals and datatypes (each with a CURIE + IRI), plus
+example queries grounded in the ontology's own terms — and `sparql_validate` parses a draft (without running it,
+unless `dry_run`) with the ontology prefixes auto-prepended, reporting whether `sparql_query` would accept it
+(read form, no `SERVICE`) and listing `unknown_terms` (IRIs used in the query — graph patterns, property paths,
+`VALUES`, the `CONSTRUCT` template and `DESCRIBE` targets — that are not declared in the ontology, i.e. likely
+typos). Both reuse the `sparql_query` snapshot/prefix machinery so they describe and validate exactly what would
+run; the `author_sparql_query` prompt chains them (discover → draft → validate → run → iterate).
 
 | Tool | Mapping / notes |
 |---|---|
@@ -322,9 +332,9 @@ RIOT/ARQ init survives the single-classloader inlining, and `JenaSystem.init()` 
   non-interactive MCP call. A `load_ontology` is not an `applyChange`, so it is **not** on the undo stack.
 - **`Axioms`** (used by `add_axiom` / `remove_axiom` / `explain_entailment` / `get_explanations`) supports the
   full structured `axiom_type` surface (see the README catalog).
-- The server registers **tools and prompts** (no MCP `resources` capability). The five prompts
+- The server registers **tools and prompts** (no MCP `resources` capability). The six prompts
   (`audit_ontology`, `explain_class`, `add_subclass_safely`, `find_and_fix_unsatisfiable`,
-  `model_domain`) are pure templates (`tools/Prompts.java`): each expands to a single user message that
+  `author_sparql_query`, `model_domain`) are pure templates (`tools/Prompts.java`): each expands to a single user message that
   drives the tools in a safe order (orient → preview → confirm/apply → verify). They touch no model
   state and run on the transport thread.
 - **New context/validation/preview tools (`0.2.0`).** `get_ontology_context` (active-ontology
@@ -406,7 +416,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.3.1`**.
+  `artifactId protege-mcp`, version **`0.3.2`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing

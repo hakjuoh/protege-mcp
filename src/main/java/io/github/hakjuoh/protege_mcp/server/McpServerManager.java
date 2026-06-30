@@ -29,7 +29,7 @@ import io.modelcontextprotocol.spec.McpSchema.ServerCapabilities;
 public final class McpServerManager {
 
     public static final String SERVER_NAME = "protege-mcp";
-    public static final String SERVER_VERSION = "0.3.1";
+    public static final String SERVER_VERSION = "0.3.2";
 
     private static final String MCP_ENDPOINT = "/mcp";
 
