@@ -56,6 +56,12 @@ public final class McpServerController implements ManagedServer {
         ClassLoader previousTccl = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
         try {
+            // Warm the embedded Jena subsystem once, single-threaded, before Jetty accepts requests.
+            // start() is synchronized and runs before the port binds, so RIOT/ARQ are fully registered
+            // before any (multi-threaded) transport thread runs sparql_query — otherwise two concurrent
+            // first-time queries can race on Jena's lazy init and see an unpopulated parser registry.
+            org.apache.jena.sys.JenaSystem.init();
+
             McpConfig config = McpConfig.load();
             this.token = config.getToken();
             this.configuredPort = config.getPort();

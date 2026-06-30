@@ -24,6 +24,7 @@ public final class ToolCatalog {
         all.addAll(CatalogTools.specs(ctx));
         all.addAll(DiffTools.specs(ctx));
         all.addAll(ReasonerTools.specs(ctx));
+        all.addAll(SparqlTools.specs(ctx));
         all.addAll(ValidationTools.specs(ctx));
         return all;
     }

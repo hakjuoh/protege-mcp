@@ -291,6 +291,12 @@ package these flows.
 | `redo_change` | Redo the last undone change (also reports the net axiom-count change). |
 | `save_ontology` | Save the active ontology to its document on disk. |
 
+### SPARQL
+
+| Tool | Description |
+| --- | --- |
+| `sparql_query` | Run a SPARQL 1.1 query (`SELECT` / `ASK` / `CONSTRUCT` / `DESCRIBE` — read-only; `UPDATE` and `SERVICE` are rejected) over the active ontology and its imports closure, using an embedded Apache Jena ARQ engine. Prefixes declared in the ontology (plus rdf/rdfs/owl/xsd) are auto-prepended, and `limit` caps the rows/triples returned. By default it queries the **asserted** triples (like Protégé's SPARQL Query tab); set `include_inferred=true` to first materialise the active reasoner's inferences (run `run_reasoner` first). |
+
 ### Reasoning
 
 | Tool | Description |
