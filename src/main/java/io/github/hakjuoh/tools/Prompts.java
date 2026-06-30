@@ -96,6 +96,31 @@ public final class Prompts {
                         + "removed, and apply with remove_axiom only after I approve. Re-run the reasoner "
                         + "to confirm."));
 
+        prompts.add(prompt("author_sparql_query",
+                "Author a SPARQL query that answers a question: discover the vocabulary, draft, validate, "
+                        + "then run it.",
+                Collections.singletonList(
+                        arg("question", "The question to answer in plain words.", true)),
+                args -> {
+                    String question = str(args, "question", "the question");
+                    return ""
+                            + "Write and run a SPARQL query over the ontology open in Protégé to answer: "
+                            + question + "\n\n"
+                            + "1. Call sparql_schema (pass keyword= a key term from the question to focus "
+                            + "it) to get the prefixes and the exact classes, properties (with their "
+                            + "domains/ranges) and individuals you can use — note the CURIEs and the "
+                            + "example queries.\n"
+                            + "2. Draft a SELECT/ASK/CONSTRUCT/DESCRIBE query using ONLY those CURIEs/IRIs "
+                            + "(do not invent term names). The ontology's prefixes are auto-prepended, so "
+                            + "you can use the CURIEs without PREFIX lines.\n"
+                            + "3. Call sparql_validate on the draft. Fix anything in unknown_terms (a typo "
+                            + "or wrong vocabulary) and any parse_error until executable=true.\n"
+                            + "4. Run it with sparql_query. If you need triples the reasoner derives "
+                            + "(e.g. inferred types or subclasses), set include_inferred=true (run_reasoner "
+                            + "first). Refine the pattern and repeat if the results are empty or too broad.\n"
+                            + "5. Summarise the answer, and show the final query you used.";
+                }));
+
         prompts.add(prompt("model_domain",
                 "Model a described domain incrementally: propose terms, preview, apply with confirmation.",
                 Collections.singletonList(arg("description", "What to model (the domain in plain words).", true)),

@@ -156,7 +156,7 @@ public final class SparqlTools {
      * Runs on the EDT via {@link OntologyAccess}; the returned ontology lives in a private manager and
      * is safe to read off the EDT.
      */
-    private static Snapshot snapshot(OWLModelManager mm, boolean includeInferred) {
+    static Snapshot snapshot(OWLModelManager mm, boolean includeInferred) {
         OWLOntology active = mm.getActiveOntology();
         OWLOntologyManager priv = OWLManager.createOWLOntologyManager();
         OWLOntology iso = buildSnapshotOntology(priv, active.getOntologyID(), active.getImportsClosure());
@@ -243,7 +243,7 @@ public final class SparqlTools {
     }
 
     /** The prefixes to expose to queries: the active ontology's, plus the four standard ones. */
-    private static Map<String, String> prefixMap(OWLModelManager mm, OWLOntology active) {
+    static Map<String, String> prefixMap(OWLModelManager mm, OWLOntology active) {
         Map<String, String> out = new LinkedHashMap<>();
         OWLDocumentFormat fmt = mm.getOWLOntologyManager().getOntologyFormat(active);
         if (fmt != null && fmt.isPrefixOWLOntologyFormat()) {
