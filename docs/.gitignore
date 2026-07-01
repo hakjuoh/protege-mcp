@@ -1,0 +1,9 @@
+# Local Jekyll preview artifacts (see Gemfile). GitHub Pages builds the site
+# itself and does not use any of these — they should never be committed.
+_site/
+.jekyll-cache/
+.jekyll-metadata
+.sass-cache/
+.bundle/
+vendor/
+Gemfile.lock

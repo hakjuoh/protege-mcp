@@ -1,0 +1,29 @@
+// ShadCN/UI "zinc" — LIGHT scheme.
+//
+// Overrides Just the Docs' bundled light scheme (a local file at this path shadows
+// the theme's). Values are the shadcn/ui default (zinc) tokens, verified for WCAG AA
+// contrast. Emphasis is carried by weight/neutral-fill, never by a coloured accent
+// (pure-neutral accent policy) — links and active nav read as near-black zinc.
+//
+// Compiled into `just-the-docs-light.css` and, since `color_scheme: light`,
+// `just-the-docs-default.css`.
+
+$color-scheme: light;
+
+$body-background-color: #ffffff; // page background
+$body-heading-color: #09090b; // zinc-950 — headings
+$body-text-color: #18181b; // zinc-900 — body copy
+$link-color: #18181b; // NEUTRAL: links are zinc, not blue
+$nav-child-link-color: #52525b; // zinc-600 — nested sidebar links
+$sidebar-color: #fafafa; // zinc-50 — a hair off the page
+$base-button-color: #f4f4f5; // zinc-100 — secondary button
+$btn-primary-color: #18181b; // zinc-900 — primary button (near-black)
+$code-background-color: #f4f4f5; // zinc-100 — code (block + inline)
+$feedback-color: #f4f4f5; // zinc-100 — hover / active row fill
+$table-background-color: #ffffff;
+$search-background-color: #ffffff;
+$search-result-preview-color: #71717a; // zinc-500 — muted preview text
+$border-color: #e4e4e7; // zinc-200 — the signature hairline
+
+// Syntax highlighting: light-on-light-muted reads cleanly with the github-light palette.
+@import "./vendor/accessible-pygments/github-light";

@@ -1,3 +1,9 @@
+---
+title: Live smoke test
+parent: Contributing
+nav_order: 2
+---
+
 # Live smoke test (Protégé + MCP)
 
 The unit tests (`mvn test`) cover the tool cores in isolation, and `ToolPipelineTest` chains them

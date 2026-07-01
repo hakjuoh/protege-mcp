@@ -1,0 +1,29 @@
+// ShadCN/UI-inspired restyle — structural variable overrides.
+//
+// This file is imported by Just the Docs BEFORE its `modules` (base/layout/…),
+// so overriding the theme's SCSS variables here changes the whole build.
+// Colour variables live in the colour schemes (`_sass/color_schemes/{light,dark}.scss`);
+// this file only carries the non-colour, structural tokens.
+//
+// Keep everything here Ruby-Sass-3.x-safe: GitHub Pages "classic" builds this
+// site with jekyll-sass-converter 1.x. No @use / math.div / sass:color module.
+
+// IMPORTANT: this file is imported AFTER the theme's `support` (which already sets
+// these vars with `!default`), so overrides here must be PLAIN assignments — a
+// `!default` here would be a silent no-op and leave the theme defaults in place.
+
+// Typography — Geist is shadcn/ui's own type family (loaded in head_custom.html).
+// prettier-ignore
+$body-font-family: "Geist", "Geist Sans", ui-sans-serif, -apple-system,
+  BlinkMacSystemFont, "Segoe UI", roboto, "Helvetica Neue", arial, sans-serif,
+  "Apple Color Emoji", "Segoe UI Emoji";
+$mono-font-family: "Geist Mono", ui-monospace, "SFMono-Regular", "SF Mono",
+  menlo, consolas, "Liberation Mono", monospace;
+
+// Comfortable long-form reading; shadcn keeps generous line-height.
+$body-line-height: 1.5;
+$content-line-height: 1.65;
+
+// The shadcn base radius (cards/inputs/code blocks). Drives border-radius across
+// search box, tables, code blocks, buttons, callouts, inline code, …
+$border-radius: 0.5rem;

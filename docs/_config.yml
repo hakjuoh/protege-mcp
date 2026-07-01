@@ -1,0 +1,95 @@
+# Jekyll configuration for the Protégé MCP documentation site (GitHub Pages).
+#
+# Served from the `docs/` folder on `main`:
+#   Settings ▸ Pages ▸ Build and deployment ▸ Source: "Deploy from a branch"
+#   → Branch: main / docs
+#
+# Theme: Just the Docs (remote theme — GitHub Pages builds it, no local Ruby needed).
+# Pin a tag so a theme release can't change the build under you; bump deliberately.
+title: Protégé MCP
+description: >-
+  A Protégé Desktop plugin that runs a local MCP server, giving AI tools live,
+  gated access to the ontology you have open — plus an in-app Ontology Assistant.
+remote_theme: just-the-docs/just-the-docs@v0.12.0
+
+# Project site lives at https://hakjuoh.github.io/protege-mcp/
+url: https://hakjuoh.github.io
+baseurl: /protege-mcp
+
+# --- Just the Docs options ---
+search_enabled: true
+search:
+  heading_level: 3
+  previews: 3
+  tokenizer_separator: /[\s/]+/
+
+# Sidebar / navigation
+nav_external_links:
+  - title: Project on GitHub
+    url: https://github.com/hakjuoh/protege-mcp
+  - title: Releases
+    url: https://github.com/hakjuoh/protege-mcp/releases
+
+# "Edit this page on GitHub" links
+gh_edit_link: true
+gh_edit_link_text: Edit this page on GitHub
+gh_edit_repository: https://github.com/hakjuoh/protege-mcp
+gh_edit_branch: main
+gh_edit_source: docs
+gh_edit_view_mode: tree
+
+# Colour + code
+color_scheme: light
+aux_links:
+  "GitHub":
+    - https://github.com/hakjuoh/protege-mcp
+aux_links_new_tab: true
+
+# Give every page the Just the Docs layout by default (pages here declare no
+# `layout:` except index.md, which sets `layout: home` and still wins over this).
+# Without this, a local `bundle exec jekyll serve` renders sub-pages unstyled —
+# Jekyll does not merge the theme's own `defaults` rule into your site config.
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+# Callouts used across pages ({: .note }, {: .warning }, {: .tip })
+callouts:
+  note:
+    title: Note
+    color: blue
+  warning:
+    title: Warning
+    color: red
+  tip:
+    title: Tip
+    color: green
+
+footer_content: >-
+  Protégé MCP is licensed under the BSD 2-Clause License.
+  Protégé is a trademark of Stanford University.
+
+# Quiet the noisy Sass deprecation warnings during local `bundle exec jekyll serve`.
+# They ALL originate in the Just the Docs theme (@import chain, map-get, darken()) under
+# the local Dart Sass (jekyll-sass-converter 3.x) and are harmless — the build succeeds.
+# The production Pages build uses jekyll-sass-converter 1.x (Ruby Sass), which neither
+# emits these deprecations nor reads these keys, so this block is a no-op there.
+sass:
+  quiet_deps: true
+  silence_deprecations:
+    - import
+    - global-builtin
+    - color-functions
+
+# GitHub Pages builds these automatically; listed for local `bundle exec jekyll serve`.
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+
+# Keep internal recon logs and the plugin-registry readme out of the built nav/search.
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
