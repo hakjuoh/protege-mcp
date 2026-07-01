@@ -36,7 +36,9 @@ public final class PreviewTools {
                         + "item takes the same operands as add_axiom/remove_axiom (axiom_type + operands) "
                         + "plus 'op' = add (default) or remove. Reports, per operation, the rendered "
                         + "axiom, whether it is already present, and the new entities an add would "
-                        + "introduce. Apply with add_axiom/remove_axiom once the diff looks right.",
+                        + "introduce. Apply the whole batch in one undoable call with apply_changes (same "
+                        + "'operations' array), or a single change with add_axiom/remove_axiom, once the "
+                        + "diff looks right.",
                 operationsSchema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);

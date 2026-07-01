@@ -151,19 +151,27 @@ public final class ReasonerTools {
 
         tools.add(ToolSpecs.of("get_explanations",
                 "Explain WHY a structured axiom is entailed: return one or more justifications "
-                        + "(minimal sets of asserted axioms that together entail it). Supported "
-                        + "axiom_type values: " + String.join(", ", EXPLAINABLE_AXIOM_TYPES) + ". To "
-                        + "explain why a class C is unsatisfiable, use axiom_type=class_assertion with "
-                        + "class=C and any individual, or subclass_of with sub=C, super=\"owl:Nothing\". "
-                        + "Requires a reasoner to be selected (see list_reasoners / set_reasoner).",
+                        + "(minimal sets of asserted axioms that together entail it). Minimal "
+                        + "justifications are computed for these axiom_type values: "
+                        + String.join(", ", EXPLAINABLE_AXIOM_TYPES) + ". For any OTHER axiom_type "
+                        + "(e.g. a property-hierarchy or property-characteristic entailment) it falls "
+                        + "back to confirming whether the axiom is entailed and returning the asserted "
+                        + "axioms that mention the same entities as structural context (not a minimal "
+                        + "justification). To explain why a class C is unsatisfiable, use "
+                        + "axiom_type=class_assertion with class=C and any individual, or subclass_of "
+                        + "with sub=C, super=\"owl:Nothing\". Requires a reasoner (see list_reasoners / "
+                        + "set_reasoner).",
                 explanationsSchema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String axiomType = Tools.reqString(a, "axiom_type").toLowerCase();
                     if (!EXPLAINABLE_AXIOM_TYPES.contains(axiomType)) {
-                        return Tools.error("get_explanations supports these axiom types only: "
-                                + String.join(", ", EXPLAINABLE_AXIOM_TYPES)
-                                + ". For other entailments use explain_entailment (true/false).");
+                        int fallbackTimeout = Tools.optInt(a, "timeout_ms", 60_000);
+                        return ctx.access().compute(mm -> {
+                            OWLReasoner r = requireReasoner(mm);
+                            OWLAxiom ax = Axioms.build(mm, a);
+                            return Tools.ok(structuralExplanation(mm, ax, axiomType, r.isEntailed(ax)));
+                        }, fallbackTimeout);
                     }
                     int max = Tools.optInt(a, "max", 3);
                     int timeout = Tools.optInt(a, "timeout_ms", 60_000);
@@ -356,6 +364,64 @@ public final class ReasonerTools {
                 .put("justification_count", explanations.size())
                 .put("justifications", justifications)
                 .map();
+    }
+
+    /**
+     * The fallback for an axiom_type the justification generator cannot handle: report whether the
+     * reasoner entails the axiom and, when it does, the asserted logical axioms in the imports closure
+     * that mention the same entities — a structural neighbourhood to inspect, explicitly NOT a minimal
+     * justification. (The clarkparsia SatisfiabilityConverter only converts the {@link
+     * #EXPLAINABLE_AXIOM_TYPES}; other entailments would otherwise get no answer at all.)
+     */
+    private static Map<String, Object> structuralExplanation(OWLModelManager mm, OWLAxiom ax,
+            String axiomType, boolean entailed) {
+        Tools.Json json = Tools.json()
+                .put("axiom", Tools.axiomJson(mm, ax))
+                .put("entailed", entailed)
+                .put("justification_available", false)
+                .put("note", "No minimal justification is available for axiom_type '" + axiomType
+                        + "' (the explanation generator supports only: "
+                        + String.join(", ", EXPLAINABLE_AXIOM_TYPES) + "). "
+                        + (entailed
+                                ? "The axiom is entailed; 'related_axioms' lists the asserted axioms "
+                                        + "that mention the same entities — a structural neighbourhood to "
+                                        + "inspect, not a minimal justification."
+                                : "The axiom is NOT entailed, so there is nothing to justify."));
+        if (entailed) {
+            Set<OWLAxiom> related = relatedAssertedAxioms(mm.getActiveOntology(), ax);
+            json.put("related_axioms", Tools.axiomList(mm, related, RELATED_AXIOM_SAMPLE));
+        }
+        return json.map();
+    }
+
+    /** Structural-context sample sizes: how many referencing axioms to collect / to render. */
+    private static final int RELATED_AXIOM_SAMPLE = 50;
+    private static final int RELATED_AXIOM_CAP = 500;
+
+    /**
+     * Asserted logical axioms across the imports closure that reference any entity in {@code ax}, capped
+     * at {@link #RELATED_AXIOM_CAP}. The cap is on the COLLECTION (not just the rendered sample) so a
+     * heavily-referenced entity in a large closure cannot make the on-EDT rendering cost proportional to
+     * its full referencing set — this is a best-effort neighbourhood, not an exhaustive listing.
+     */
+    private static Set<OWLAxiom> relatedAssertedAxioms(OWLOntology active, OWLAxiom ax) {
+        Set<OWLAxiom> out = new LinkedHashSet<>();
+        for (OWLEntity e : ax.getSignature()) {
+            if (e.isBuiltIn()) {
+                continue;
+            }
+            for (OWLOntology o : active.getImportsClosure()) {
+                for (OWLAxiom ref : o.getReferencingAxioms(e)) {
+                    if (ref.isLogicalAxiom()) {
+                        out.add(ref);
+                        if (out.size() >= RELATED_AXIOM_CAP) {
+                            return out;
+                        }
+                    }
+                }
+            }
+        }
+        return out;
     }
 
     private static OWLReasoner requireReasoner(OWLModelManager mm) {

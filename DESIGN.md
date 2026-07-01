@@ -148,12 +148,12 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    is still open. The election logic is factored into package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.3.2`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.3.3`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
    McpServer.sync(transport)
-            .serverInfo("protege-mcp", "0.3.2")
+            .serverInfo("protege-mcp", "0.3.3")
             .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())  // tools + prompts (both listChanged=false); no resources
             .immediateExecution(true)     // run handlers on the transport (HTTP) thread; the plugin marshals to the EDT itself
             .validateToolInputs(false)
@@ -226,12 +226,14 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (50 tools + 6 prompts)
+## 5. MCP Tool Catalog (55 tools + 6 prompts)
 
-Fifty tools — 7 read, 2 context, 14 edit/history/persistence (incl. `preview_changes`,
-`apply_changes`, `set_label`), 6 ontology-header (incl. `set_prefix`), 5 document (incl.
-`set_active_ontology`, `create_ontology`, `write_catalog`), 3 rule (`list_rules`/`add_rule`/`remove_rule`),
-8 reasoner, 3 SPARQL (`sparql_query`/`sparql_schema`/`sparql_validate`), and 2 validation (incl. `diff_ontologies`) — each defined by a `name`, a `description`, and a
+Fifty-five tools — 7 read, 2 context, 18 edit/curation/history/persistence (incl. `preview_changes`,
+`apply_changes`, `set_label`, `create_term`, `create_property`, `deprecate_entity`, `move_class`), 6
+ontology-header (incl. `set_prefix`), 5 document (incl. `set_active_ontology`, `create_ontology`,
+`write_catalog`), 3 rule (`list_rules`/`add_rule`/`remove_rule`), 8 reasoner, 3 SPARQL
+(`sparql_query`/`sparql_schema`/`sparql_validate`), and 3 validation (incl. `diff_ontologies`,
+`validate_governance`) — each defined by a `name`, a `description`, and a
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
 **Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
 serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results
@@ -317,7 +319,7 @@ run; the `author_sparql_query` prompt chains them (discover → draft → valida
 | `get_inferred_superclasses` | superclasses / subclasses / equivalent / types / instances |
 | `execute_dl_query` | resolve a Manchester class expression, then `reasoner.getEquivalentClasses/getSubClasses/getSuperClasses/getInstances` (DL Query workbench) |
 | `explain_entailment` | `reasoner.isEntailed(axiom)` for a structured axiom |
-| `get_explanations` | `com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator.getExplanations(axiom, max)` — minimal justifications, using the selected reasoner's factory |
+| `get_explanations` | `com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator.getExplanations(axiom, max)` — minimal justifications, using the selected reasoner's factory; for an axiom type the generator can't convert, falls back to an `isEntailed` check plus the related asserted axioms as structural context (capped) |
 | `diff_ontologies` | pure set difference over `getAxioms()` / `getLogicalAxioms()` (optionally imports closures) of two loaded ontologies, or the active ontology vs. a document loaded into a throwaway manager; `identical=true` ⇔ both sides empty (a faithful round-trip) |
 
 - **Ontology edits go through `OWLModelManager.applyChange` (singular, the majority) and `applyChanges`
@@ -416,7 +418,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.3.2`**.
+  `artifactId protege-mcp`, version **`0.3.3`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing
