@@ -144,8 +144,19 @@ public final class ValidationTools {
             m.put("note", "No current reasoner results — run run_reasoner first for a logical verdict.");
             return m;
         }
+        m.putAll(reasonerVerdict(mm, rm.getCurrentReasoner(), limit));
+        return m;
+    }
+
+    /**
+     * The reasoner's consistency / unsatisfiable-class verdict, split out with the reasoner injected so
+     * it can be exercised headless against an OWL API StructuralReasoner. Returns the {@code consistent
+     * / unsatisfiable_* / note / error} portion; {@link #reasonerVerdict(OWLModelManager, int)} prepends
+     * the status/results-availability keys and merges this in.
+     */
+    static Map<String, Object> reasonerVerdict(OWLModelManager mm, OWLReasoner reasoner, int limit) {
+        Map<String, Object> m = new LinkedHashMap<>();
         try {
-            OWLReasoner reasoner = rm.getCurrentReasoner();
             boolean consistent = reasoner.isConsistent();
             m.put("consistent", consistent);
             if (consistent) {

@@ -5,9 +5,6 @@ import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.Toolkit;
 import java.awt.datatransfer.StringSelection;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 import javax.swing.BorderFactory;
@@ -45,8 +42,6 @@ public class McpServerView extends AbstractOWLViewComponent {
     private static final String[] CLIENT_COLUMNS =
             {"Client", "Client ID", "Registered", "Last seen", "Active tokens", "Expires"};
     private static final int COL_CLIENT_ID = 1;
-    private static final DateTimeFormatter TS_FORMAT =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private JLabel statusLabel;
     private JTextField urlField;
@@ -295,7 +290,7 @@ public class McpServerView extends AbstractOWLViewComponent {
         }
         // OAuth: no header needed — Claude opens a browser to authorize on first connect. The
         // static token below remains a manual fallback for clients without OAuth support.
-        return "claude mcp add --transport http protege " + c.getEndpointUrl();
+        return ServerViewText.connectCommand(c.getEndpointUrl());
     }
 
     private static JPanel labelled(String label, JTextField field) {
@@ -306,16 +301,11 @@ public class McpServerView extends AbstractOWLViewComponent {
     }
 
     private static String mask(String token) {
-        if (token == null || token.length() <= 6) {
-            return "••••••";
-        }
-        return token.substring(0, 3) + "••••••"
-                + token.substring(token.length() - 3);
+        return ServerViewText.mask(token);
     }
 
     private static String fmtDateTime(long millis) {
-        return Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault())
-                .toLocalDateTime().format(TS_FORMAT);
+        return ServerViewText.fmtDateTime(millis);
     }
 
     private static void copy(String text) {

@@ -478,7 +478,7 @@ public final class Tools {
     }
 
     /** Parse {@code ref} with the OWL API Manchester parser (full-IRI aware); null if it cannot. */
-    private static OWLClassExpression tryManchesterClassExpression(OWLModelManager mm, String ref) {
+    static OWLClassExpression tryManchesterClassExpression(OWLModelManager mm, String ref) {
         try {
             ManchesterOWLSyntaxParser parser = OWLManager.createManchesterParser();
             parser.setOWLEntityChecker(new ProtegeOWLEntityChecker(mm.getOWLEntityFinder()));

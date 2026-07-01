@@ -26,14 +26,20 @@ public final class OntologyAccess {
 
     private final OWLEditorKit editorKit;
     private final long timeoutMillis;
+    private final EdtGateway edt;
 
     public OntologyAccess(OWLEditorKit editorKit) {
         this(editorKit, 30_000L);
     }
 
     public OntologyAccess(OWLEditorKit editorKit, long timeoutMillis) {
+        this(editorKit, timeoutMillis, SwingEdtGateway.INSTANCE);
+    }
+
+    OntologyAccess(OWLEditorKit editorKit, long timeoutMillis, EdtGateway edt) {
         this.editorKit = editorKit;
         this.timeoutMillis = timeoutMillis;
+        this.edt = edt;
     }
 
     public OWLEditorKit getEditorKit() {
@@ -56,14 +62,14 @@ public final class OntologyAccess {
      */
     public <T> T compute(Function<OWLModelManager, T> fn, long boundMillis) {
         OWLModelManager mm = editorKit.getModelManager();
-        if (SwingUtilities.isEventDispatchThread()) {
+        if (edt.isDispatchThread()) {
             return fn.apply(mm);
         }
         AtomicReference<T> result = new AtomicReference<>();
         AtomicReference<RuntimeException> failure = new AtomicReference<>();
         AtomicBoolean cancelled = new AtomicBoolean(false);
         CountDownLatch latch = new CountDownLatch(1);
-        SwingUtilities.invokeLater(() -> {
+        edt.invokeLater(() -> {
             // If the caller already gave up (timeout below), do NOT run the body — this prevents a
             // queued task from mutating the model after the client was told the call failed.
             if (cancelled.get()) {
@@ -102,5 +108,30 @@ public final class OntologyAccess {
             fn.accept(mm);
             return null;
         });
+    }
+
+    /**
+     * Seam over the Swing event-dispatch thread so {@link #compute}'s marshalling, timeout and
+     * cancellation logic can be driven deterministically in a headless test. The production instance
+     * delegates straight to {@link SwingUtilities}.
+     */
+    interface EdtGateway {
+        boolean isDispatchThread();
+
+        void invokeLater(Runnable task);
+    }
+
+    private enum SwingEdtGateway implements EdtGateway {
+        INSTANCE;
+
+        @Override
+        public boolean isDispatchThread() {
+            return SwingUtilities.isEventDispatchThread();
+        }
+
+        @Override
+        public void invokeLater(Runnable task) {
+            SwingUtilities.invokeLater(task);
+        }
     }
 }

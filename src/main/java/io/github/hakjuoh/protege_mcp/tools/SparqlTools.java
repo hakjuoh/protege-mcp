@@ -157,12 +157,20 @@ public final class SparqlTools {
      * is safe to read off the EDT.
      */
     static Snapshot snapshot(OWLModelManager mm, boolean includeInferred) {
+        // requireReasoner touches Protégé's reasoner manager, so it stays on this Protégé-facing path;
+        // the actual snapshot/inference work is delegated to the reasoner-injected overload below so it
+        // can be exercised headless with an OWL API StructuralReasoner.
+        OWLReasoner reasoner = includeInferred ? requireReasoner(mm) : null;
+        return snapshot(mm, reasoner, includeInferred);
+    }
+
+    /** Reasoner-injected core of {@link #snapshot(OWLModelManager, boolean)} (headless-testable). */
+    static Snapshot snapshot(OWLModelManager mm, OWLReasoner reasoner, boolean includeInferred) {
         OWLOntology active = mm.getActiveOntology();
         OWLOntologyManager priv = OWLManager.createOWLOntologyManager();
         OWLOntology iso = buildSnapshotOntology(priv, active.getOntologyID(), active.getImportsClosure());
         String note = null;
         if (includeInferred) {
-            OWLReasoner reasoner = requireReasoner(mm);
             long individuals = iso.getIndividualsInSignature().size();
             long properties = iso.getObjectPropertiesInSignature().size()
                     + iso.getDataPropertiesInSignature().size();
