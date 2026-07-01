@@ -1,3 +1,9 @@
+---
+title: "Case study: IOF Biopharma reconstruction (0.2.1)"
+nav_exclude: true
+search_exclude: true
+---
+
 # protege-mcp 0.2.1 — Evaluation via IOF Biopharma reconstruction
 
 Tool-driven reconstruction of the IOF **Biopharma / Agent** module
