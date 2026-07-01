@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>50 tools</b> across explore / search, edit, documents, rules, history, reasoning, and SPARQL - every model
+    <li><b>55 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, and SPARQL - every model
         edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
         the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>Loopback-only HTTP with <b>OAuth 2.1</b> (dynamic registration + browser consent, persisted
@@ -43,6 +43,26 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.3.3</h4>
+<ul>
+    <li>Ontology-development hardening (50 &#8594; 55 tools): project-governance validation, high-level
+        curation macros, broader reasoner explanations, and a headless end-to-end smoke test.</li>
+    <li>New <code>validate_governance</code> tool: audit the active ontology against <b>project policy</b>
+        &#8212; OWL 2 profile conformance (DL/EL/QL/RL, checked off the UI thread), an IRI policy
+        (required namespaces / pattern), a required annotation suite (incl. <code>label</code> /
+        <code>definition</code>), and module ownership / import layering (the module must not
+        re-axiomatise imported terms).</li>
+    <li>New curation macros that each apply as one undoable step: <code>create_term</code> (class + label
+        + definition + annotation suite + parents/restrictions + equivalents), <code>create_property</code>
+        (property + domain/range/super-properties/characteristics/inverse), <code>deprecate_entity</code>
+        (<code>owl:deprecated</code> + &#8220;term replaced by&#8221; pointer), and <code>move_class</code>
+        (reparent a class, its subtree following).</li>
+    <li><code>get_explanations</code> now handles any axiom type: for a kind it cannot minimally justify it
+        falls back to confirming entailment and returning the asserted axioms that mention the same
+        entities as structural context. <code>validate_ontology</code> gains a <code>timeout_ms</code>
+        budget, and the <code>preview_changes</code> description now points at <code>apply_changes</code>.</li>
+</ul>
 
 <h4>v0.3.2</h4>
 <ul>
@@ -169,7 +189,8 @@ host are Java 17 bytecode, and the OSGi manifest declares
     <li>Reasoning &amp; query tools: <code>list_reasoners</code> / <code>set_reasoner</code> to
         choose the reasoner; <code>execute_dl_query</code> (Manchester class expression &#8594;
         equivalent / sub / super / instances, the DL Query workbench); and
-        <code>get_explanations</code> for minimal justifications behind an entailment.</li>
+        <code>get_explanations</code> for minimal justifications behind an entailment (v0.3.3 adds a
+        structural-context fallback for axiom types the generator cannot minimally justify).</li>
 </ul>
 
 <h4>v0.1.1</h4>
