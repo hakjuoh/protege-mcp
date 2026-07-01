@@ -597,24 +597,8 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     private boolean shouldAttachPastedText(String text) {
-        if (text == null) {
-            return false;
-        }
-        if (text.length() >= PASTED_TEXT_ATTACHMENT_THRESHOLD) {
-            return true;
-        }
-        // A many-line paste is only compacted when it is also reasonably large; otherwise a short multi-line
-        // snippet the user expects to see (a 60-line list, a brief stack trace) would needlessly vanish.
-        if (text.length() < PASTED_TEXT_LINE_MIN_CHARS) {
-            return false;
-        }
-        int lines = 1;
-        for (int i = 0; i < text.length(); i++) {
-            if (text.charAt(i) == '\n' && ++lines >= PASTED_TEXT_LINE_THRESHOLD) {
-                return true;
-            }
-        }
-        return false;
+        return io.github.hakjuoh.chat.ChatText.shouldAttachPastedText(text,
+                PASTED_TEXT_ATTACHMENT_THRESHOLD, PASTED_TEXT_LINE_THRESHOLD, PASTED_TEXT_LINE_MIN_CHARS);
     }
 
     private void attachPastedText(String text) {
@@ -843,33 +827,11 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     private static boolean isImageFile(File file) {
-        String name = file.getName().toLowerCase(java.util.Locale.ROOT);
-        return name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")
-                || name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".bmp")
-                || name.endsWith(".tif") || name.endsWith(".tiff");
+        return io.github.hakjuoh.chat.ChatText.isImageFileName(file.getName());
     }
 
     private static String imageMediaType(File file) {
-        String name = file.getName().toLowerCase(java.util.Locale.ROOT);
-        if (name.endsWith(".png")) {
-            return "image/png";
-        }
-        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) {
-            return "image/jpeg";
-        }
-        if (name.endsWith(".gif")) {
-            return "image/gif";
-        }
-        if (name.endsWith(".webp")) {
-            return "image/webp";
-        }
-        if (name.endsWith(".bmp")) {
-            return "image/bmp";
-        }
-        if (name.endsWith(".tif") || name.endsWith(".tiff")) {
-            return "image/tiff";
-        }
-        return "image/*";
+        return io.github.hakjuoh.chat.ChatText.imageMediaType(file.getName());
     }
 
     private List<ChatAttachment> activeAttachments(String displayPrompt) {
@@ -1219,16 +1181,7 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     private static String formatUsage(ChatUsage u) {
-        StringBuilder sb = new StringBuilder("tokens: ");
-        sb.append(u.inputTokens() < 0 ? "?" : u.inputTokens()).append(" in");
-        if (u.cachedInputTokens() > 0) {
-            sb.append(" (").append(u.cachedInputTokens()).append(" cached)");
-        }
-        sb.append(" / ").append(u.outputTokens() < 0 ? "?" : u.outputTokens()).append(" out");
-        if (u.costUsd() != null) {
-            sb.append(String.format("  ·  $%.4f", u.costUsd()));
-        }
-        return sb.toString() + "   ";
+        return io.github.hakjuoh.chat.ChatText.formatUsage(u);
     }
 
     // ------------------------------------------------------------------ transcript rendering (EDT)

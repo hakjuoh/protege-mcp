@@ -170,22 +170,39 @@ public final class CliSupport {
      * prompt cannot break the command line. On Windows (no POSIX login shell) the command runs directly.
      */
     static List<String> loginShellWrap(List<String> command) {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        if (os.contains("win")) {
+        return loginShellWrap(command, System.getProperty("os.name", ""), System.getenv("SHELL"));
+    }
+
+    /**
+     * OS/env-parametrized core of {@link #loginShellWrap(List)}, split out so the platform branch,
+     * shell resolution and argv quoting can be exercised headless without touching the real
+     * {@code os.name} / {@code $SHELL}. On Windows the command is returned unwrapped.
+     */
+    static List<String> loginShellWrap(List<String> command, String osName, String shellEnv) {
+        if (osName != null && osName.toLowerCase().contains("win")) {
             return command;
         }
-        String shell = System.getenv("SHELL");
+        String shell = resolveLoginShell(shellEnv);
+        StringBuilder script = new StringBuilder("exec");
+        for (String arg : command) {
+            script.append(' ').append(shellQuote(arg));
+        }
+        return List.of(shell, "-lc", script.toString());
+    }
+
+    /**
+     * Resolve the POSIX login shell to wrap with: {@code shellEnv} (the caller's {@code $SHELL}) if it
+     * points at an executable, else {@code /bin/bash}, else {@code /bin/sh}.
+     */
+    static String resolveLoginShell(String shellEnv) {
+        String shell = shellEnv;
         if (shell == null || shell.isBlank() || !new File(shell).canExecute()) {
             shell = "/bin/bash";
         }
         if (!new File(shell).canExecute()) {
             shell = "/bin/sh";
         }
-        StringBuilder script = new StringBuilder("exec");
-        for (String arg : command) {
-            script.append(' ').append(shellQuote(arg));
-        }
-        return List.of(shell, "-lc", script.toString());
+        return shell;
     }
 
     /** POSIX single-quote escaping: wrap in {@code '…'}, turning each embedded quote into {@code '\''}. */

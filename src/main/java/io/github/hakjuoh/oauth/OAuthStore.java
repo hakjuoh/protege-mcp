@@ -90,6 +90,9 @@ public final class OAuthStore {
     }
 
     public Client client(String clientId) {
+        if (clientId == null) {
+            return null;
+        }
         return clients.get(clientId);
     }
 
@@ -104,8 +107,11 @@ public final class OAuthStore {
         return code;
     }
 
-    /** Single-use: returns and removes the code, or null if unknown/expired. */
+    /** Single-use: returns and removes the code, or null if unknown/expired (or null input). */
     public AuthCode consumeAuthCode(String code) {
+        if (code == null) {
+            return null;
+        }
         AuthCode a = codes.remove(code);
         if (a == null || a.expiresAt < System.currentTimeMillis()) {
             return null;
@@ -137,6 +143,9 @@ public final class OAuthStore {
     }
 
     public Tokens refresh(String refreshToken) {
+        if (refreshToken == null) {
+            return null;
+        }
         // issueTokens() drops the client's prior grant pair, so this rotates the refresh token too.
         Grant g = refreshTokens.get(refreshToken);
         if (g == null) {
@@ -160,12 +169,16 @@ public final class OAuthStore {
         if (g != null && g.expiresAt > System.currentTimeMillis()) {
             Client c = clients.get(g.clientId);
             if (c != null) {
+                // A token is only honoured while its owning client still exists: revokeClient() and
+                // eviction both drop a client together with its tokens, so an orphaned-but-live grant
+                // only arises from corrupted persisted state — fail closed there rather than accept a
+                // bearer token whose client is gone.
                 // Best-effort, in-memory: not persisted on the hot auth path (that would write prefs
                 // on every request), so the displayed "last seen" only reaches disk via a later
                 // register/issue/revoke and may read stale right after a restart.
                 c.lastSeenAt.set(System.currentTimeMillis());
+                return true;
             }
-            return true;
         }
         return false;
     }

@@ -76,7 +76,15 @@ public final class McpConfig {
      * the stored token is blank).
      */
     public static McpConfig load() {
-        Preferences p = prefs();
+        return load(prefs());
+    }
+
+    /**
+     * Testable core of {@link #load()}: reads a snapshot from the given preferences node, minting and
+     * persisting a bearer token when the stored one is blank. Split out so the read/default/token-mint
+     * logic can be exercised headless against a fake {@link Preferences} without the Protégé singleton.
+     */
+    static McpConfig load(Preferences p) {
         int port = p.getInt(KEY_PORT, DEFAULT_PORT);
         boolean autoStart = p.getBoolean(KEY_AUTOSTART, true);
         boolean readOnly = p.getBoolean(KEY_READ_ONLY, false);
@@ -91,8 +99,13 @@ public final class McpConfig {
 
     /** Generate a fresh URL-safe 256-bit bearer token and persist it. */
     public static String regenerateToken() {
+        return regenerateToken(prefs());
+    }
+
+    /** Testable core of {@link #regenerateToken()} writing to the given preferences node. */
+    static String regenerateToken(Preferences p) {
         String token = generateToken();
-        prefs().putString(KEY_TOKEN, token);
+        p.putString(KEY_TOKEN, token);
         return token;
     }
 

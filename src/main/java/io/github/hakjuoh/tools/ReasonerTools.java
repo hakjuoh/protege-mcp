@@ -79,11 +79,7 @@ public final class ReasonerTools {
                 "List unsatisfiable (equivalent to owl:Nothing) classes from the active reasoner.",
                 Tools.emptySchema(),
                 (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
-                    OWLReasoner r = requireReasoner(mm);
-                    Set<OWLClass> unsat = r.getUnsatisfiableClasses().getEntitiesMinusBottom();
-                    Map<String, Object> result = Tools.entityList(mm, unsat, Integer.MAX_VALUE);
-                    result.put("coherent", unsat.isEmpty());
-                    return Tools.ok(result);
+                    return Tools.ok(unsatisfiableClasses(mm, requireReasoner(mm)));
                 }))));
 
         tools.add(ToolSpecs.of("get_inferred_superclasses",
@@ -101,34 +97,8 @@ public final class ReasonerTools {
                     String relation = Tools.optString(a, "relation");
                     boolean direct = Tools.optBool(a, "direct", true);
                     String rel = relation == null ? "superclasses" : relation.toLowerCase();
-                    return ctx.access().compute(mm -> {
-                        OWLReasoner r = requireReasoner(mm);
-                        Set<? extends OWLEntity> result;
-                        switch (rel) {
-                            case "subclasses":
-                                result = r.getSubClasses(Tools.resolveClass(mm, entity), direct).getFlattened();
-                                break;
-                            case "equivalent":
-                                result = r.getEquivalentClasses(Tools.resolveClass(mm, entity)).getEntities();
-                                break;
-                            case "types":
-                                OWLNamedIndividual ind = Tools.resolveIndividual(mm, entity);
-                                result = r.getTypes(ind, direct).getFlattened();
-                                break;
-                            case "instances":
-                                result = r.getInstances(Tools.resolveClass(mm, entity), direct).getFlattened();
-                                break;
-                            case "superclasses":
-                            default:
-                                result = r.getSuperClasses(Tools.resolveClass(mm, entity), direct).getFlattened();
-                                break;
-                        }
-                        Map<String, Object> out = Tools.entityList(mm, result, Integer.MAX_VALUE);
-                        out.put("relation", rel);
-                        out.put("entity", entity);
-                        out.put("direct", direct);
-                        return Tools.ok(out);
-                    });
+                    return ctx.access().compute(mm ->
+                            Tools.ok(inferredRelation(mm, requireReasoner(mm), entity, rel, direct)));
                 })));
 
         tools.add(ToolSpecs.of("explain_entailment",
@@ -138,15 +108,8 @@ public final class ReasonerTools {
                 Axioms.schema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
-                    return ctx.access().compute(mm -> {
-                        OWLReasoner r = requireReasoner(mm);
-                        OWLAxiom ax = Axioms.build(mm, a);
-                        boolean entailed = r.isEntailed(ax);
-                        return Tools.json()
-                                .put("entailed", entailed)
-                                .put("axiom", Tools.axiomJson(mm, ax))
-                                .result();
-                    });
+                    return ctx.access().compute(mm ->
+                            Tools.ok(explainEntailment(mm, requireReasoner(mm), Axioms.build(mm, a))));
                 })));
 
         tools.add(ToolSpecs.of("get_explanations",
@@ -224,25 +187,7 @@ public final class ReasonerTools {
                     return ctx.access().compute(mm -> {
                         OWLReasoner r = requireReasoner(mm);
                         OWLClassExpression ce = Tools.resolveClassExpression(mm, query);
-                        boolean all = "all".equals(rel);
-                        Tools.Json json = Tools.json().put("query", query).put("direct", direct);
-                        if (all || "equivalent".equals(rel)) {
-                            json.put("equivalent",
-                                    Tools.entityList(mm, r.getEquivalentClasses(ce).getEntities(), Integer.MAX_VALUE));
-                        }
-                        if (all || "superclasses".equals(rel)) {
-                            json.put("superclasses",
-                                    Tools.entityList(mm, r.getSuperClasses(ce, direct).getFlattened(), Integer.MAX_VALUE));
-                        }
-                        if (all || "subclasses".equals(rel)) {
-                            json.put("subclasses",
-                                    Tools.entityList(mm, r.getSubClasses(ce, direct).getFlattened(), Integer.MAX_VALUE));
-                        }
-                        if (all || "instances".equals(rel)) {
-                            json.put("instances",
-                                    Tools.entityList(mm, r.getInstances(ce, direct).getFlattened(), Integer.MAX_VALUE));
-                        }
-                        return json.result();
+                        return Tools.ok(dlQuery(mm, r, query, ce, rel, direct));
                     }, timeout);
                 })));
 
@@ -373,7 +318,7 @@ public final class ReasonerTools {
      * justification. (The clarkparsia SatisfiabilityConverter only converts the {@link
      * #EXPLAINABLE_AXIOM_TYPES}; other entailments would otherwise get no answer at all.)
      */
-    private static Map<String, Object> structuralExplanation(OWLModelManager mm, OWLAxiom ax,
+    static Map<String, Object> structuralExplanation(OWLModelManager mm, OWLAxiom ax,
             String axiomType, boolean entailed) {
         Tools.Json json = Tools.json()
                 .put("axiom", Tools.axiomJson(mm, ax))
@@ -404,7 +349,7 @@ public final class ReasonerTools {
      * heavily-referenced entity in a large closure cannot make the on-EDT rendering cost proportional to
      * its full referencing set — this is a best-effort neighbourhood, not an exhaustive listing.
      */
-    private static Set<OWLAxiom> relatedAssertedAxioms(OWLOntology active, OWLAxiom ax) {
+    static Set<OWLAxiom> relatedAssertedAxioms(OWLOntology active, OWLAxiom ax) {
         Set<OWLAxiom> out = new LinkedHashSet<>();
         for (OWLEntity e : ax.getSignature()) {
             if (e.isBuiltIn()) {
@@ -422,6 +367,80 @@ public final class ReasonerTools {
             }
         }
         return out;
+    }
+
+    // ---- Reasoner-backed cores, split out with the reasoner injected so they can be exercised
+    // ---- headless against an OWL API StructuralReasoner (see the *_internal tests). Each returns the
+    // ---- raw result map; the tool bodies wrap it with Tools.ok(...) exactly as Json.result() would.
+
+    /** Unsatisfiable (≡ owl:Nothing) classes as {@code {count, items, coherent}}. */
+    static Map<String, Object> unsatisfiableClasses(OWLModelManager mm, OWLReasoner r) {
+        Set<OWLClass> unsat = r.getUnsatisfiableClasses().getEntitiesMinusBottom();
+        Map<String, Object> result = Tools.entityList(mm, unsat, Integer.MAX_VALUE);
+        result.put("coherent", unsat.isEmpty());
+        return result;
+    }
+
+    /** Inferred {@code superclasses|subclasses|equivalent|types|instances} for {@code entity}. */
+    static Map<String, Object> inferredRelation(OWLModelManager mm, OWLReasoner r, String entity,
+            String rel, boolean direct) {
+        Set<? extends OWLEntity> result;
+        switch (rel) {
+            case "subclasses":
+                result = r.getSubClasses(Tools.resolveClass(mm, entity), direct).getFlattened();
+                break;
+            case "equivalent":
+                result = r.getEquivalentClasses(Tools.resolveClass(mm, entity)).getEntities();
+                break;
+            case "types":
+                OWLNamedIndividual ind = Tools.resolveIndividual(mm, entity);
+                result = r.getTypes(ind, direct).getFlattened();
+                break;
+            case "instances":
+                result = r.getInstances(Tools.resolveClass(mm, entity), direct).getFlattened();
+                break;
+            case "superclasses":
+            default:
+                result = r.getSuperClasses(Tools.resolveClass(mm, entity), direct).getFlattened();
+                break;
+        }
+        Map<String, Object> out = Tools.entityList(mm, result, Integer.MAX_VALUE);
+        out.put("relation", rel);
+        out.put("entity", entity);
+        out.put("direct", direct);
+        return out;
+    }
+
+    /** Whether the reasoner entails {@code ax}, as {@code {entailed, axiom}}. */
+    static Map<String, Object> explainEntailment(OWLModelManager mm, OWLReasoner r, OWLAxiom ax) {
+        return Tools.json()
+                .put("entailed", r.isEntailed(ax))
+                .put("axiom", Tools.axiomJson(mm, ax))
+                .map();
+    }
+
+    /** DL-query results (equivalent/super/sub/instances) for the resolved class expression {@code ce}. */
+    static Map<String, Object> dlQuery(OWLModelManager mm, OWLReasoner r, String query,
+            OWLClassExpression ce, String rel, boolean direct) {
+        boolean all = "all".equals(rel);
+        Tools.Json json = Tools.json().put("query", query).put("direct", direct);
+        if (all || "equivalent".equals(rel)) {
+            json.put("equivalent",
+                    Tools.entityList(mm, r.getEquivalentClasses(ce).getEntities(), Integer.MAX_VALUE));
+        }
+        if (all || "superclasses".equals(rel)) {
+            json.put("superclasses",
+                    Tools.entityList(mm, r.getSuperClasses(ce, direct).getFlattened(), Integer.MAX_VALUE));
+        }
+        if (all || "subclasses".equals(rel)) {
+            json.put("subclasses",
+                    Tools.entityList(mm, r.getSubClasses(ce, direct).getFlattened(), Integer.MAX_VALUE));
+        }
+        if (all || "instances".equals(rel)) {
+            json.put("instances",
+                    Tools.entityList(mm, r.getInstances(ce, direct).getFlattened(), Integer.MAX_VALUE));
+        }
+        return json.map();
     }
 
     private static OWLReasoner requireReasoner(OWLModelManager mm) {
