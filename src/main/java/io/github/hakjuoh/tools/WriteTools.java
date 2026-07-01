@@ -39,7 +39,6 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 import org.semanticweb.owlapi.model.RemoveAxiom;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -54,10 +53,8 @@ public final class WriteTools {
     private WriteTools() {
     }
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("create_class",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("create_class",
                 "Create a named class. Give a full 'iri', or a 'namespace' to mint the IRI in (IRI = "
                         + "namespace + name — useful when terms live in a shared namespace distinct from "
                         + "the ontology IRI), else the IRI is minted from 'name' using Protégé's "
@@ -95,9 +92,9 @@ public final class WriteTools {
                                 .put("present", present)
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("create_entity",
+        tools.tool("create_entity",
                 "Create a named entity of a given type: class, object_property, data_property, "
                         + "annotation_property, individual or datatype. Give a full 'iri', or a "
                         + "'namespace' to mint it in (IRI = namespace + name), else the IRI is minted "
@@ -125,9 +122,9 @@ public final class WriteTools {
                         mm.applyChanges(changes);
                         return Tools.json().put("created", Tools.entityJson(mm, e)).result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("add_subclass_of",
+        tools.tool("add_subclass_of",
                 "Assert that 'child' is a subclass of 'parent'. Each may be a class name, a full IRI, "
                         + "or a Manchester-syntax class expression (e.g. 'hasOwner some Person'). Any "
                         + "entities introduced as a side effect are reported as 'new_entities'.",
@@ -149,9 +146,9 @@ public final class WriteTools {
                                 Tools.resolveClassExpression(mm, parent));
                         return applyAxiom(mm, ont, ax, strict);
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("add_annotation",
+        tools.tool("add_annotation",
                 "Add an annotation assertion to an entity (default property rdfs:label). The value is a "
                         + "literal (optionally typed with 'datatype' or tagged with 'lang') or, with "
                         + "'value_iri', an IRI; pass 'annotations' to attach axiom annotations (reified "
@@ -183,9 +180,9 @@ public final class WriteTools {
                                 Tools.annotationValue(mm, a), Tools.annotationSet(mm, a, "annotations"));
                         return applyAxiom(mm, ont, ax, strict);
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("add_axiom",
+        tools.tool("add_axiom",
                 "Add a structured axiom. axiom_type is one of: " + Axioms.SUPPORTED + ". Provide the "
                         + "operands the chosen type needs (sub/super, classes[], class/individual, "
                         + "property/subject/object, property/subject/value[+lang|datatype], "
@@ -203,9 +200,9 @@ public final class WriteTools {
                         OWLAxiom ax = Axioms.build(mm, a);
                         return applyAxiom(mm, ont, ax, strict);
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("remove_axiom",
+        tools.tool("remove_axiom",
                 "Remove a structured axiom (same arguments as add_axiom). axiom_type is one of: "
                         + Axioms.SUPPORTED + ".",
                 Axioms.schema(),
@@ -225,9 +222,9 @@ public final class WriteTools {
                                 .put("axiom", Tools.axiomJson(mm, ax))
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("apply_changes",
+        tools.tool("apply_changes",
                 "Apply a batch of axiom add/remove operations in ONE call — the same 'operations' array "
                         + "as preview_changes (each item: axiom_type + operands, optional op=add|remove, "
                         + "default add). Closes the gap where preview batches but the write tools apply "
@@ -250,9 +247,9 @@ public final class WriteTools {
                     boolean strict = Tools.optBool(a, "strict", false);
                     return write(ctx, "apply " + operations.size() + " change(s)",
                             mm -> applyBatch(mm, operations, strict));
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("set_label",
+        tools.tool("set_label",
                 "Set (upsert) an entity's rdfs:label: removes any existing rdfs:label on the entity in "
                         + "the SAME language and adds the new one. Use this to fix a label without "
                         + "hand-removing the old axiom — rename_entity changes the IRI, not the label.",
@@ -295,9 +292,9 @@ public final class WriteTools {
                                 .put("removed_previous", removed)
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("undo_change",
+        tools.tool("undo_change",
                 "Undo the last change on the shared Protégé undo stack.",
                 Tools.emptySchema(),
                 (ex, req) -> Tools.guard(() -> write(ctx, "undo last change", mm -> {
@@ -314,9 +311,9 @@ public final class WriteTools {
                             .put("axioms_after", after)
                             .put("net_axiom_change", after - before)
                             .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
-                }))));
+                })));
 
-        tools.add(ToolSpecs.of("redo_change",
+        tools.tool("redo_change",
                 "Redo the last undone change on the shared Protégé undo stack.",
                 Tools.emptySchema(),
                 (ex, req) -> Tools.guard(() -> write(ctx, "redo last change", mm -> {
@@ -333,9 +330,9 @@ public final class WriteTools {
                             .put("axioms_after", after)
                             .put("net_axiom_change", after - before)
                             .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
-                }))));
+                })));
 
-        tools.add(ToolSpecs.of("save_ontology",
+        tools.tool("save_ontology",
                 "Save the active ontology to disk. With no arguments it writes to the ontology's "
                         + "existing document; a never-saved (untitled) ontology has no file yet, so "
                         + "pass 'path' to choose one (save-as). The serialization format is inferred "
@@ -352,9 +349,7 @@ public final class WriteTools {
                             ? "save the active ontology to " + path
                             : "save the active ontology to disk";
                     return write(ctx, summary, mm -> saveOntology(mm, path));
-                })));
-
-        return tools;
+                }));
     }
 
     // ------------------------------------------------------------------ shared helpers

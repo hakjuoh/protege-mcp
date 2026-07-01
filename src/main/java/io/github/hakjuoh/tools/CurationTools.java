@@ -28,7 +28,6 @@ import org.semanticweb.owlapi.model.OWLSubClassOfAxiom;
 import org.semanticweb.owlapi.model.RemoveAxiom;
 import org.semanticweb.owlapi.vocab.OWLRDFVocabulary;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -61,10 +60,8 @@ public final class CurationTools {
     /** Default annotation property for a definition when the caller does not name one. */
     static final IRI TERM_REPLACED_BY = IRI.create("http://purl.obolibrary.org/obo/IAO_0100001");
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("create_term",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("create_term",
                 "Create a class WITH its curation suite in one undoable step (vs. create_class + several "
                         + "add_axiom calls): mints the class (same 'iri'/'namespace'/'label'/'label_lang'/"
                         + "'no_label' options as create_class), adds a definition ('definition', default "
@@ -113,9 +110,9 @@ public final class CurationTools {
                         return applyCuration(mm, ont, changes, strict, cls,
                                 Tools.json().put("created", Tools.entityJson(mm, cls)));
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("create_property",
+        tools.tool("create_property",
                 "Create an object or data property WITH its axioms in one undoable step: mints the "
                         + "property ('property_type' object|data, default object; same "
                         + "'iri'/'namespace'/'label'/'label_lang'/'no_label' options), and optionally "
@@ -163,9 +160,9 @@ public final class CurationTools {
                         return applyCuration(mm, ont, changes, strict, prop,
                                 Tools.json().put("created", Tools.entityJson(mm, prop)));
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("deprecate_entity",
+        tools.tool("deprecate_entity",
                 "Deprecate a term (the standard obsolescence pattern) in one undoable step: asserts "
                         + "owl:deprecated true, and — when 'replaced_by' is given — a 'term replaced by' "
                         + "pointer (IAO_0100001 by default; override with 'replaced_by_property') to the "
@@ -217,9 +214,9 @@ public final class CurationTools {
                                 .put("applied", changes.size())
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("move_class",
+        tools.tool("move_class",
                 "Reparent a class (its subtree follows automatically, since subclasses point at it): "
                         + "removes the class's asserted NAMED superclass axioms and asserts "
                         + "SubClassOf(class, new_parent). Anonymous restriction superclasses are left "
@@ -270,9 +267,7 @@ public final class CurationTools {
                                 .put("applied", changes.size())
                                 .result();
                     });
-                })));
-
-        return tools;
+                }));
     }
 
     // ================================================================== change builders (Protégé-free)

@@ -49,6 +49,13 @@ class ToolCatalogTest {
         return out;
     }
 
+    /** Build one provider's specs the way {@code buildAll} does: register into a fresh registry, then build. */
+    private static List<SyncToolSpecification> specsOf(ToolProvider provider, ToolContext ctx) {
+        ToolRegistry registry = new ToolRegistry();
+        provider.register(registry, ctx);
+        return registry.build();
+    }
+
     // ---- buildAll: basic result contract ------------------------------------------------------
 
     @Test
@@ -88,22 +95,12 @@ class ToolCatalogTest {
     @Test
     void buildAllSizeEqualsSumOfAllProviderSpecs() {
         ToolContext ctx = nullCtx();
-        int expected = ReadTools.specs(ctx).size()
-                + ContextTools.specs(ctx).size()
-                + WriteTools.specs(ctx).size()
-                + PreviewTools.specs(ctx).size()
-                + CurationTools.specs(ctx).size()
-                + EntityRefactorTools.specs(ctx).size()
-                + OntologyMetadataTools.specs(ctx).size()
-                + OntologyDocumentTools.specs(ctx).size()
-                + RuleTools.specs(ctx).size()
-                + CatalogTools.specs(ctx).size()
-                + DiffTools.specs(ctx).size()
-                + ReasonerTools.specs(ctx).size()
-                + SparqlTools.specs(ctx).size()
-                + SparqlAuthoringTools.specs(ctx).size()
-                + ValidationTools.specs(ctx).size()
-                + GovernanceTools.specs(ctx).size();
+        // Sum over the single provider list buildAll itself uses: this verifies buildAll faithfully
+        // concatenates every provider with no drop/dupe (the provider list is now declared once).
+        int expected = 0;
+        for (var provider : ToolCatalog.PROVIDERS) {
+            expected += specsOf(provider, ctx).size();
+        }
 
         assertEquals(expected, ToolCatalog.buildAll(ctx).size(),
                 "the catalog size must be the exact sum of every provider's specs — no drop, no dupe");
@@ -112,28 +109,15 @@ class ToolCatalogTest {
     @Test
     void buildAllIsTheUnionOfEveryProvidersSpecs() {
         ToolContext ctx = nullCtx();
-        // Build the expected concatenation manually, in the same declaration order as buildAll.
+        // Build the expected concatenation from the single source of truth, in declaration order.
         List<SyncToolSpecification> manual = new ArrayList<>();
-        manual.addAll(ReadTools.specs(ctx));
-        manual.addAll(ContextTools.specs(ctx));
-        manual.addAll(WriteTools.specs(ctx));
-        manual.addAll(PreviewTools.specs(ctx));
-        manual.addAll(CurationTools.specs(ctx));
-        manual.addAll(EntityRefactorTools.specs(ctx));
-        manual.addAll(OntologyMetadataTools.specs(ctx));
-        manual.addAll(OntologyDocumentTools.specs(ctx));
-        manual.addAll(RuleTools.specs(ctx));
-        manual.addAll(CatalogTools.specs(ctx));
-        manual.addAll(DiffTools.specs(ctx));
-        manual.addAll(ReasonerTools.specs(ctx));
-        manual.addAll(SparqlTools.specs(ctx));
-        manual.addAll(SparqlAuthoringTools.specs(ctx));
-        manual.addAll(ValidationTools.specs(ctx));
-        manual.addAll(GovernanceTools.specs(ctx));
+        for (var provider : ToolCatalog.PROVIDERS) {
+            manual.addAll(specsOf(provider, ctx));
+        }
 
         List<SyncToolSpecification> all = ToolCatalog.buildAll(ctx);
         assertEquals(names(manual), names(all),
-                "buildAll's tool-name set must equal the union of all 16 providers' tool names");
+                "buildAll's tool-name set must equal the union of every provider's tool names");
     }
 
     @Test
@@ -146,13 +130,13 @@ class ToolCatalogTest {
 
         // The first providers are ReadTools then ContextTools; the last is GovernanceTools.
         // Anchor a few boundary providers to prove order is preserved (not merely membership).
-        assertProviderBlockContiguousAndOrdered(all, ReadTools.specs(ctx), "ReadTools");
-        assertProviderBlockContiguousAndOrdered(all, ContextTools.specs(ctx), "ContextTools");
-        assertProviderBlockContiguousAndOrdered(all, GovernanceTools.specs(ctx), "GovernanceTools");
+        assertProviderBlockContiguousAndOrdered(all, specsOf(ReadTools::register, ctx), "ReadTools");
+        assertProviderBlockContiguousAndOrdered(all, specsOf(ContextTools::register, ctx), "ContextTools");
+        assertProviderBlockContiguousAndOrdered(all, specsOf(GovernanceTools::register, ctx), "GovernanceTools");
 
         // ReadTools (first) must precede GovernanceTools (last) in the aggregate.
-        List<SyncToolSpecification> read = ReadTools.specs(ctx);
-        List<SyncToolSpecification> gov = GovernanceTools.specs(ctx);
+        List<SyncToolSpecification> read = specsOf(ReadTools::register, ctx);
+        List<SyncToolSpecification> gov = specsOf(GovernanceTools::register, ctx);
         if (!read.isEmpty() && !gov.isEmpty()) {
             int firstRead = all.indexOf(read.get(0).tool().name());
             int firstGov = all.indexOf(gov.get(0).tool().name());

@@ -1,6 +1,5 @@
 package io.github.hakjuoh.tools;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
@@ -11,24 +10,35 @@ public final class ToolCatalog {
     private ToolCatalog() {
     }
 
+    /**
+     * Every tool provider, in registration order — the single source of truth. A provider is declared
+     * exactly once here; {@link #buildAll} lets each contribute into one shared {@link ToolRegistry}.
+     * Package-private so the aggregation test iterates this same list rather than re-listing the
+     * providers (which previously duplicated this order in two places and could silently drift).
+     */
+    static final List<ToolProvider> PROVIDERS = List.of(
+            ReadTools::register,
+            ContextTools::register,
+            WriteTools::register,
+            PreviewTools::register,
+            CurationTools::register,
+            EntityRefactorTools::register,
+            OntologyMetadataTools::register,
+            OntologyDocumentTools::register,
+            RuleTools::register,
+            CatalogTools::register,
+            DiffTools::register,
+            ReasonerTools::register,
+            SparqlTools::register,
+            SparqlAuthoringTools::register,
+            ValidationTools::register,
+            GovernanceTools::register);
+
     public static List<SyncToolSpecification> buildAll(ToolContext ctx) {
-        List<SyncToolSpecification> all = new ArrayList<>();
-        all.addAll(ReadTools.specs(ctx));
-        all.addAll(ContextTools.specs(ctx));
-        all.addAll(WriteTools.specs(ctx));
-        all.addAll(PreviewTools.specs(ctx));
-        all.addAll(CurationTools.specs(ctx));
-        all.addAll(EntityRefactorTools.specs(ctx));
-        all.addAll(OntologyMetadataTools.specs(ctx));
-        all.addAll(OntologyDocumentTools.specs(ctx));
-        all.addAll(RuleTools.specs(ctx));
-        all.addAll(CatalogTools.specs(ctx));
-        all.addAll(DiffTools.specs(ctx));
-        all.addAll(ReasonerTools.specs(ctx));
-        all.addAll(SparqlTools.specs(ctx));
-        all.addAll(SparqlAuthoringTools.specs(ctx));
-        all.addAll(ValidationTools.specs(ctx));
-        all.addAll(GovernanceTools.specs(ctx));
-        return all;
+        ToolRegistry registry = new ToolRegistry();
+        for (ToolProvider provider : PROVIDERS) {
+            provider.register(registry, ctx);
+        }
+        return registry.build();
     }
 }

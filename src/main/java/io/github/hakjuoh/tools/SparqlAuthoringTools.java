@@ -52,7 +52,6 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.search.EntitySearcher;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -78,10 +77,8 @@ public final class SparqlAuthoringTools {
     /** Max domain/range/type refs listed per property/individual (kept short for readability). */
     private static final int MEMBER_CAP = 10;
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("sparql_schema",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("sparql_schema",
                 "Discover the queryable vocabulary for AUTHORING a SPARQL query over the active ontology "
                         + "(its imports closure by default — the same graph sparql_query sees). Returns the "
                         + "prefix map (plus a ready-to-paste PREFIX block), and capped, sorted lists of "
@@ -121,9 +118,9 @@ public final class SparqlAuthoringTools {
                     return ctx.access().compute(mm ->
                             schema(mm, keyword, cap, includeImports, includeIndividuals, includeExamples),
                             timeout);
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("sparql_validate",
+        tools.tool("sparql_validate",
                 "Check a SPARQL query BEFORE running it (it is parsed, not executed, unless dry_run=true). "
                         + "Reports whether it parses, the query form, the projected variables, and whether "
                         + "sparql_query would accept it ('executable' — a read query with no SERVICE). The "
@@ -154,9 +151,7 @@ public final class SparqlAuthoringTools {
                         timeout = 120_000;
                     }
                     return validate(ctx, query, dryRun, sampleLimit, timeout);
-                })));
-
-        return tools;
+                }));
     }
 
     // ================================================================ sparql_schema

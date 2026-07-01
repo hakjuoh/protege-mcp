@@ -1,7 +1,5 @@
 package io.github.hakjuoh.tools;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 
 import org.protege.editor.owl.model.OWLModelManager;
@@ -19,7 +17,6 @@ import org.semanticweb.owlapi.model.RemoveImport;
 import org.semanticweb.owlapi.model.RemoveOntologyAnnotation;
 import org.semanticweb.owlapi.model.SetOntologyID;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -35,10 +32,8 @@ public final class OntologyMetadataTools {
     private OntologyMetadataTools() {
     }
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("set_ontology_id",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("set_ontology_id",
                 "Set the active ontology's IRI and (optionally) version IRI.",
                 Tools.schema()
                         .strReq("ontology_iri", "New ontology IRI.")
@@ -66,9 +61,9 @@ public final class OntologyMetadataTools {
                                 .put("message", "Set ontology id to " + label(newId) + ".")
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("add_import",
+        tools.tool("add_import",
                 "Add an owl:imports declaration to the active ontology. The result's 'resolved' flag "
                         + "reports whether the document actually loaded into the workspace — an "
                         + "unresolved import is a dangling declaration whose terms stay invisible to "
@@ -125,9 +120,9 @@ public final class OntologyMetadataTools {
                                 + "keep_active=true, or add a catalog mapping for the IRI.");
                     }
                     return json.result();
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("set_prefix",
+        tools.tool("set_prefix",
                 "Register or update a prefix in the active ontology's prefix map (e.g. prefix 'iof-av' "
                         + "→ 'https://spec.industrialontologies.org/ontology/annotation/'), so CURIEs "
                         + "like 'iof-av:maturity' render and parse and the document serializes with the "
@@ -162,9 +157,9 @@ public final class OntologyMetadataTools {
                                 .put("prefixes", fmt.asPrefixOWLOntologyFormat().getPrefixName2PrefixMap())
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("remove_import",
+        tools.tool("remove_import",
                 "Remove an owl:imports declaration from the active ontology.",
                 Tools.schema().strReq("iri", "Imported ontology IRI to remove.").build(),
                 (ex, req) -> Tools.guard(() -> {
@@ -180,9 +175,9 @@ public final class OntologyMetadataTools {
                         mm.applyChange(new RemoveImport(ont, decl));
                         return Tools.json().put("removed", true).put("iri", iri).result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("add_ontology_annotation",
+        tools.tool("add_ontology_annotation",
                 "Add an ontology-level annotation (e.g. dcterms:title, owl:versionInfo). The value is a "
                         + "literal (optionally typed with 'datatype' or tagged with 'lang') or, with "
                         + "'value_iri', an IRI.",
@@ -212,9 +207,9 @@ public final class OntologyMetadataTools {
                                 .put("already_present", alreadyPresent)
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("remove_ontology_annotation",
+        tools.tool("remove_ontology_annotation",
                 "Remove an ontology-level annotation (same arguments as add_ontology_annotation).",
                 Tools.schema()
                         .str("property", "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name "
@@ -243,9 +238,7 @@ public final class OntologyMetadataTools {
                                 .put("annotation", Tools.annotationJson(mm, annotation))
                                 .result();
                     });
-                })));
-
-        return tools;
+                }));
     }
 
     /**

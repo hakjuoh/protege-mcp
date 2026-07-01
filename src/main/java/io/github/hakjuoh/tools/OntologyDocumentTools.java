@@ -38,7 +38,6 @@ import org.semanticweb.owlapi.model.SetOntologyID;
 import org.semanticweb.owlapi.model.parameters.OntologyCopy;
 import org.semanticweb.owlapi.util.SimpleIRIMapper;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -51,10 +50,8 @@ public final class OntologyDocumentTools {
     private OntologyDocumentTools() {
     }
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("load_ontology",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("load_ontology",
                 "Load an OWL ontology document from a local path or document IRI/URL into the "
                         + "current Protégé workspace and make the loaded ontology active. Unlike "
                         + "merge_ontology_document, this keeps the document as its own loaded "
@@ -81,9 +78,9 @@ public final class OntologyDocumentTools {
                     boolean keepActive = Tools.optBool(a, "keep_active", false);
                     int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);
                     return doLoad(ctx, source, timeoutMs, keepActive);
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("merge_ontology_document",
+        tools.tool("merge_ontology_document",
                 "Load an OWL ontology document from a local path or document IRI/URL and copy its "
                         + "axioms, direct import declarations, and ontology annotations into the "
                         + "active ontology. This preserves axiom annotations and axiom types that "
@@ -117,9 +114,9 @@ public final class OntologyDocumentTools {
                     // as a timeout while the model keeps mutating.
                     return ctx.access().compute(mm -> apply(mm, loaded, replaceActive, copyOntologyId),
                             MERGE_TIMEOUT_MS);
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("set_active_ontology",
+        tools.tool("set_active_ontology",
                 "Select which already-loaded ontology is the ACTIVE edit target (every edit tool writes "
                         + "to the active ontology). Resolve by ontology IRI or version IRI (see "
                         + "list_ontologies). Unlike load_ontology this loads/fetches nothing — it just "
@@ -151,9 +148,9 @@ public final class OntologyDocumentTools {
                                 .put("direct_imports", target.getImportsDeclarations().size())
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("create_ontology",
+        tools.tool("create_ontology",
                 "Create a brand-new empty ontology in the workspace and make it the active edit target "
                         + "(so add_axiom/create_* write into it). Give its 'ontology_iri' and optionally a "
                         + "'version_iri'. Pass 'path' to bind it to a file now (so an argument-less "
@@ -182,9 +179,7 @@ public final class OntologyDocumentTools {
                     }
                     return ctx.access().compute(mm -> createOntology(mm, ontologyIri, versionIri, path,
                             keepActive));
-                })));
-
-        return tools;
+                }));
     }
 
     /**

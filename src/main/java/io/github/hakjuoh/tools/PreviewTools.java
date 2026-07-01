@@ -13,8 +13,6 @@ import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLEntity;
 import org.semanticweb.owlapi.model.OWLOntology;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
-
 /**
  * A non-mutating dry-run. Given a batch of axiom add/remove operations (the same operands as
  * add_axiom / remove_axiom), {@code preview_changes} reports, per operation, the rendered axiom,
@@ -28,10 +26,8 @@ public final class PreviewTools {
     private PreviewTools() {
     }
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("preview_changes",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("preview_changes",
                 "Dry-run a batch of axiom changes WITHOUT applying them. 'operations' is an array; each "
                         + "item takes the same operands as add_axiom/remove_axiom (axiom_type + operands) "
                         + "plus 'op' = add (default) or remove. Reports, per operation, the rendered "
@@ -48,9 +44,7 @@ public final class PreviewTools {
                                 + "(each: axiom_type + operands, optional op=add|remove).");
                     }
                     return ctx.access().compute(mm -> preview(mm, operations));
-                })));
-
-        return tools;
+                }));
     }
 
     private static io.modelcontextprotocol.spec.McpSchema.CallToolResult preview(OWLModelManager mm,

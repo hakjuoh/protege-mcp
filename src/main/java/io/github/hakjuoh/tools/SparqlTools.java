@@ -57,8 +57,6 @@ import org.semanticweb.owlapi.util.InferredSubClassAxiomGenerator;
 import org.semanticweb.owlapi.util.InferredSubDataPropertyAxiomGenerator;
 import org.semanticweb.owlapi.util.InferredSubObjectPropertyAxiomGenerator;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
-
 /**
  * SPARQL querying over the active ontology, using an embedded Apache Jena ARQ engine.
  *
@@ -96,10 +94,8 @@ public final class SparqlTools {
      */
     private static final long MAX_INFERRED_PROPERTY_PRODUCT = 250_000L;
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("sparql_query",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("sparql_query",
                 "Run a SPARQL 1.1 query over the active ontology and its imports closure, using an "
                         + "embedded Jena ARQ engine. Supports the read query forms SELECT, ASK, CONSTRUCT "
                         + "and DESCRIBE; SPARQL UPDATE and SERVICE are rejected (edits go through the "
@@ -141,9 +137,7 @@ public final class SparqlTools {
                         result.put("note", snap.note());
                     }
                     return Tools.ok(result);
-                })));
-
-        return tools;
+                }));
     }
 
     /** The imports-closure RDF snapshot, the prefixes to expose to queries, and an optional note. */

@@ -1,10 +1,8 @@
 package io.github.hakjuoh.tools;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -18,7 +16,6 @@ import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -38,10 +35,8 @@ public final class DiffTools {
     /** Default cap on how many only-on-one-side axioms are listed per side. */
     private static final int DEFAULT_LIMIT = 50;
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("diff_ontologies",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("diff_ontologies",
                 "Diff two ontologies at the axiom level. 'left' (default the active ontology) and "
                         + "'right' name loaded ontologies by ontology IRI or version IRI (see "
                         + "list_ontologies); alternatively 'right_document' loads a document (path/URL/IRI) "
@@ -80,9 +75,7 @@ public final class DiffTools {
                     String rightLabel = rightDoc != null ? rightDoc : rightRef;
                     return ctx.access().compute(mm -> diff(mm, leftRef, rightRef, rightAxioms, rightLabel,
                             includeImports, logicalOnly, limit));
-                })));
-
-        return tools;
+                }));
     }
 
     private static CallToolResult diff(OWLModelManager mm, String leftRef, String rightRef,

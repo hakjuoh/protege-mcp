@@ -488,40 +488,17 @@ class PromptsTest {
         assertEquals("", a.description());
     }
 
-    // ------------------------------------------------------------------ private prompt() via reflection
+    // ------------------------------------------------------------------ PromptRegistry.prompt() wiring
 
     @Test
-    void promptBuildsSpecWithNameDescriptionAndArguments() throws Exception {
-        Class<?> tmpl = Class.forName("io.github.hakjuoh.tools.Prompts$Template");
-        Method promptMethod = Prompts.class.getDeclaredMethod(
-                "prompt", String.class, String.class, List.class, tmpl);
-        promptMethod.setAccessible(true);
-
-        Object template = java.lang.reflect.Proxy.newProxyInstance(
-                tmpl.getClassLoader(),
-                new Class<?>[] { tmpl },
-                (proxy, method, methodArgs) -> {
-                    if ("render".equals(method.getName())) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> a = (Map<String, Object>) methodArgs[0];
-                        return "rendered:" + (a == null ? "null" : a.get("x"));
-                    }
-                    if ("toString".equals(method.getName())) {
-                        return "template";
-                    }
-                    if ("hashCode".equals(method.getName())) {
-                        return System.identityHashCode(proxy);
-                    }
-                    if ("equals".equals(method.getName())) {
-                        return proxy == methodArgs[0];
-                    }
-                    throw new UnsupportedOperationException(method.getName());
-                });
+    void promptBuildsSpecWithNameDescriptionAndArguments() {
+        PromptRegistry registry = new PromptRegistry();
+        PromptRegistry.Template template = a -> "rendered:" + (a == null ? "null" : a.get("x"));
 
         List<PromptArgument> argList = Collections.singletonList(
                 new PromptArgument("x", "an x", Boolean.TRUE));
-        SyncPromptSpecification spec = (SyncPromptSpecification) promptMethod.invoke(
-                null, "custom", "a custom prompt", argList, template);
+        registry.prompt("custom", "a custom prompt", argList, template);
+        SyncPromptSpecification spec = registry.build().get(0);
 
         Prompt p = spec.prompt();
         assertAll(
@@ -545,32 +522,10 @@ class PromptsTest {
     }
 
     @Test
-    void promptWithEmptyArgumentListProducesNoArguments() throws Exception {
-        Class<?> tmpl = Class.forName("io.github.hakjuoh.tools.Prompts$Template");
-        Method promptMethod = Prompts.class.getDeclaredMethod(
-                "prompt", String.class, String.class, List.class, tmpl);
-        promptMethod.setAccessible(true);
-
-        Object template = java.lang.reflect.Proxy.newProxyInstance(
-                tmpl.getClassLoader(),
-                new Class<?>[] { tmpl },
-                (proxy, method, methodArgs) -> {
-                    switch (method.getName()) {
-                        case "render":
-                            return "x";
-                        case "toString":
-                            return "t";
-                        case "hashCode":
-                            return System.identityHashCode(proxy);
-                        case "equals":
-                            return proxy == methodArgs[0];
-                        default:
-                            throw new UnsupportedOperationException(method.getName());
-                    }
-                });
-
-        SyncPromptSpecification spec = (SyncPromptSpecification) promptMethod.invoke(
-                null, "empty", "no-arg prompt", Collections.emptyList(), template);
+    void promptWithEmptyArgumentListProducesNoArguments() {
+        PromptRegistry registry = new PromptRegistry();
+        registry.prompt("empty", "no-arg prompt", Collections.emptyList(), a -> "x");
+        SyncPromptSpecification spec = registry.build().get(0);
         assertTrue(spec.prompt().arguments().isEmpty(), "no arguments expected");
     }
 

@@ -21,7 +21,6 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -40,10 +39,8 @@ public final class CatalogTools {
     /** Protégé's catalog file name (matches OntologyCatalogManager.CATALOG_NAME). */
     private static final String CATALOG_NAME = "catalog-v001.xml";
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("write_catalog",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("write_catalog",
                 "Write an OASIS catalog-v001.xml next to the active ontology that maps each imported "
                         + "ontology IRI (and version IRI) to the local file it loaded from, so the module "
                         + "re-opens in Protégé with imports resolved offline. By default the catalog is "
@@ -68,9 +65,7 @@ public final class CatalogTools {
                         return denied;
                     }
                     return ctx.access().compute(mm -> writeCatalog(mm, path, directOnly));
-                })));
-
-        return tools;
+                }));
     }
 
     private static CallToolResult writeCatalog(OWLModelManager mm, String path, boolean directOnly) {

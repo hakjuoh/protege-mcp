@@ -19,18 +19,14 @@ import org.semanticweb.owlapi.model.OWLOntologyID;
 
 import com.google.common.base.Optional;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
-
 /** Read-only tools: list/inspect ontologies, classes, entities and their axioms. All return JSON. */
 public final class ReadTools {
 
     private ReadTools() {
     }
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("list_ontologies",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("list_ontologies",
                 "List all loaded ontologies (the active ontology and its imports closure). "
                         + "Marks which one is active.",
                 Tools.emptySchema(),
@@ -53,9 +49,9 @@ public final class ReadTools {
                             .put("ontologies", list)
                             .put("note", "The active ontology is the target of edits.")
                             .result();
-                }))));
+                })));
 
-        tools.add(ToolSpecs.of("get_active_ontology",
+        tools.tool("get_active_ontology",
                 "Details of the active ontology: IRI, axiom counts and direct imports.",
                 Tools.emptySchema(),
                 (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
@@ -77,9 +73,9 @@ public final class ReadTools {
                             .put("write_protection", ctx.controller().isReadOnly()
                                     ? "read-only (plugin setting)" : "writable")
                             .result();
-                }))));
+                })));
 
-        tools.add(ToolSpecs.of("summarize_ontology",
+        tools.tool("summarize_ontology",
                 "Summarize the active ontology: signature counts, ontology annotations, imports and "
                         + "axiom-type counts. Set include_imports=true to summarize the imports closure.",
                 Tools.schema()
@@ -91,9 +87,9 @@ public final class ReadTools {
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
                     int limit = Tools.optInt(a, "limit", 80);
                     return ctx.access().compute(mm -> summarize(mm.getActiveOntology(), includeImports, limit));
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("list_classes",
+        tools.tool("list_classes",
                 "List named classes in the active ontology's signature (rendering + IRI).",
                 Tools.schema().integer("limit", "Max classes to return (default 200).").build(),
                 (ex, req) -> Tools.guard(() -> {
@@ -102,9 +98,9 @@ public final class ReadTools {
                         Set<OWLClass> classes = mm.getActiveOntology().getClassesInSignature();
                         return Tools.ok(Tools.entityList(mm, classes, limit));
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("search_entities",
+        tools.tool("search_entities",
                 "Search entities by name/IRI fragment across the loaded ontologies. 'type' is one of "
                         + "class, object_property, data_property, annotation_property, individual, "
                         + "datatype, all (default all). A plain fragment matches as a substring and '*' "
@@ -127,9 +123,9 @@ public final class ReadTools {
                         result.put("type", type == null ? "all" : type);
                         return Tools.ok(result);
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("get_entity",
+        tools.tool("get_entity",
                 "Look up an entity by IRI or display name; returns its type(s), IRI and rendering. An "
                         + "IRI may be 'punned' across several entity types, so 'matches' can hold more "
                         + "than one entity.",
@@ -153,9 +149,9 @@ public final class ReadTools {
                                         ? "The IRI is punned across several entity types." : null)
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("get_axioms_for_entity",
+        tools.tool("get_axioms_for_entity",
                 "Axioms that reference the given entity. By default only the active ontology; set "
                         + "include_imports=true to also include axioms from the imports closure (e.g. an "
                         + "imported term's domain/range and class restrictions).",
@@ -188,9 +184,7 @@ public final class ReadTools {
                                 .put("axioms", Tools.axiomList(mm, axioms, limit))
                                 .result();
                     });
-                })));
-
-        return tools;
+                }));
     }
 
     private static Set<? extends OWLEntity> search(OWLModelManager mm, String query, String type) {
