@@ -1,5 +1,8 @@
 # Protégé × MCP Integration — Design
 
+> 📖 **Looking for user documentation?** See the manual at <https://hakjuoh.github.io/protege-mcp/>.
+> This document is the architecture/design rationale.
+
 > Design for adding **MCP (Model Context Protocol) support** to Protégé Desktop as a plugin.
 > **Adopted: Architecture Approach A — in-Protégé MCP server.** External LLM clients (Claude Code/Desktop,
 > Codex CLI, VS Code MCP, other IDE extensions) read and edit the user's **live, open ontology** directly;
@@ -246,7 +249,7 @@ New in `0.2.0` (the natural-language layer): `get_ontology_context` / `get_entit
 migration, and the MCP prompts.
 
 New in `0.2.1` (tool-driven-construction ergonomics, found by reconstructing IOF Biopharma through the
-tools — see [`docs/biopharma-recon-0.2.1.md`](docs/biopharma-recon-0.2.1.md)): `set_active_ontology`
+tools): `set_active_ontology`
 (switch the active edit target) and `load_ontology`/`add_import` options that resolve imports without
 stealing it; `apply_changes` (apply a previewed batch in one call); write tools now report minted
 `new_entities` and take `strict` (refuse to mint from a typo'd IRI); `create_*` gain `namespace` +

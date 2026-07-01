@@ -1,0 +1,125 @@
+{%- comment -%}
+  ShadCN restyle: load the Geist type family and initialise the colour theme.
+
+  Theme model:
+    - Preference is stored in localStorage as 'light' | 'dark' | 'system'.
+    - Default is 'system' → follows the OS `prefers-color-scheme`, live.
+    - The toggle button (_includes/header_custom.html) flips between light/dark and
+      persists the explicit choice.
+  The theme is applied during <head> parsing (before <body> paints) to avoid a flash,
+  by swapping the first Just the Docs stylesheet — the same mechanism as jtd.setTheme.
+{%- endcomment -%}
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
+
+{%- comment -%}
+  Paint the blank canvas in the resolved theme's colour before the (separately
+  fetched) dark stylesheet arrives, so a dark-preferring user never sees a white
+  flash on a cold load. data-theme is set synchronously by the script below.
+{%- endcomment -%}
+<meta name="color-scheme" content="light dark">
+<style>
+  html[data-theme="dark"] { background-color: #09090b; color-scheme: dark; }
+  html[data-theme="light"] { color-scheme: light; }
+</style>
+
+<script>
+  (function () {
+    // Mark the document JS-capable (before <body> paints) so CSS can hide the
+    // toggle when JS is off — its click handler only attaches on load.
+    document.documentElement.classList.add("js");
+
+    var PREF_KEY = "jtd-theme"; // 'light' | 'dark' | 'system'
+    var CSS_BASE = "{{ '/assets/css/just-the-docs-' | relative_url }}";
+
+    function osDark() {
+      return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    }
+    function pref() {
+      try { return localStorage.getItem(PREF_KEY) || "system"; } catch (e) { return "system"; }
+    }
+    function resolve(p) {
+      return p === "dark" || (p !== "light" && osDark()) ? "dark" : "light";
+    }
+    // The first Just the Docs stylesheet (excluding the head-nav helper) is the one
+    // jtd.setTheme swaps; target it the same way for consistency.
+    function themeLink() {
+      var links = document.querySelectorAll('link[rel="stylesheet"]');
+      for (var i = 0; i < links.length; i++) {
+        var h = links[i].getAttribute("href") || "";
+        if (h.indexOf("just-the-docs-") !== -1 && h.indexOf("head-nav") === -1) return links[i];
+      }
+      return null;
+    }
+    function apply(scheme) {
+      var link = themeLink();
+      // Only swap the file when we actually need dark (default.css already == light),
+      // avoiding an extra fetch for the common light case.
+      if (link && scheme === "dark") link.setAttribute("href", CSS_BASE + "dark.css");
+      else if (link && scheme === "light" && (link.getAttribute("href") || "").indexOf("-dark.css") !== -1) {
+        link.setAttribute("href", CSS_BASE + "light.css");
+      }
+      document.documentElement.setAttribute("data-theme", scheme);
+    }
+    function current() {
+      return document.documentElement.getAttribute("data-theme") || resolve(pref());
+    }
+    // Keep the accessible NAME stable ("Toggle color theme"); only the tooltip
+    // (title) + aria-pressed track state, so there is no name/paint mismatch in
+    // the brief window before this runs. Updates every .theme-toggle (desktop +
+    // the cloned mobile one). Icon swap is CSS-driven off html[data-theme].
+    function syncButtons() {
+      var dark = current() === "dark";
+      var title = dark ? "Switch to light theme" : "Switch to dark theme";
+      var list = document.querySelectorAll(".theme-toggle");
+      for (var i = 0; i < list.length; i++) {
+        list[i].setAttribute("aria-pressed", String(dark));
+        list[i].setAttribute("title", title);
+      }
+    }
+    function toggle() {
+      var next = current() === "dark" ? "light" : "dark";
+      try { localStorage.setItem(PREF_KEY, next); } catch (e) {}
+      apply(next);
+      syncButtons();
+    }
+    // Surface a toggle in the always-visible mobile bar (.site-header): the
+    // original lives in .main-header, which the theme hides below the md
+    // breakpoint. CSS hides this clone at md+ so exactly one shows per width.
+    function mountMobileToggle() {
+      var bar = document.querySelector(".site-header");
+      var original = document.getElementById("theme-toggle");
+      if (!bar || !original || bar.querySelector(".theme-toggle")) return;
+      var clone = original.cloneNode(true);
+      clone.removeAttribute("id");
+      var anchor = bar.querySelector("#menu-button, .site-button");
+      if (anchor) bar.insertBefore(clone, anchor);
+      else bar.appendChild(clone);
+    }
+
+    // No-FOUC: apply the resolved theme immediately, still inside <head>.
+    apply(resolve(pref()));
+
+    // Follow the OS while the user hasn't made an explicit choice.
+    if (window.matchMedia) {
+      var mq = window.matchMedia("(prefers-color-scheme: dark)");
+      var onOS = function () {
+        if (pref() === "system") { apply(resolve("system")); syncButtons(); }
+      };
+      if (mq.addEventListener) mq.addEventListener("change", onOS);
+      else if (mq.addListener) mq.addListener(onOS);
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+      mountMobileToggle();
+      var list = document.querySelectorAll(".theme-toggle");
+      for (var i = 0; i < list.length; i++) list[i].addEventListener("click", toggle);
+      syncButtons();
+    });
+
+    // Expose for anything else that wants to flip the theme.
+    window.jtdToggleTheme = toggle;
+  })();
+</script>

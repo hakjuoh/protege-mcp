@@ -1,3 +1,9 @@
+---
+title: Install via Check for plugins
+parent: Installation
+nav_order: 1
+---
+
 # Distributing via Protégé's "Check for plugins"
 
 Protégé can discover and install this plugin from **File ▸ Check for plugins** — no manual jar

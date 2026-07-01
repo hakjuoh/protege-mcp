@@ -1,0 +1,27 @@
+// ShadCN/UI "zinc" — DARK scheme.
+//
+// Overrides Just the Docs' bundled dark scheme. Mirror of the light scheme, inverted
+// on the zinc ramp. Compiled into `just-the-docs-dark.css`; the theme toggle
+// (head_custom.html) swaps to it, and the OS `prefers-color-scheme` default selects it.
+
+$color-scheme: dark;
+
+$body-background-color: #09090b; // zinc-950 — page background
+$body-heading-color: #fafafa; // zinc-50 — headings
+$body-text-color: #e4e4e7; // zinc-200 — body copy
+$link-color: #fafafa; // NEUTRAL: links are zinc-50, not blue
+$nav-child-link-color: #a1a1aa; // zinc-400 — nested sidebar links
+$sidebar-color: #0c0c0e; // a hair off the page
+$base-button-color: #18181b; // zinc-900 — secondary button
+$btn-primary-color: #fafafa; // primary button (near-white)
+$code-background-color: #18181b; // zinc-900 — code (block + inline)
+// In JtD, $code-linenumber-color also sets the base (un-tokenised) code text colour,
+// so it must be a light value in dark mode. The muted gutter tint is handled in custom.scss.
+$code-linenumber-color: #e4e4e7;
+$feedback-color: #27272a; // zinc-800 — hover / active row fill
+$table-background-color: #09090b;
+$search-background-color: #18181b;
+$search-result-preview-color: #a1a1aa; // zinc-400 — muted preview text
+$border-color: #27272a; // zinc-800 — hairline
+
+@import "./vendor/accessible-pygments/github-dark";

@@ -1,0 +1,574 @@
+// =============================================================================
+// ShadCN/UI restyle — component layer.
+//
+// Imported LAST by Just the Docs (after the theme's `modules` and callouts), so
+// plain CSS here overrides theme rules at equal specificity. Compiled into BOTH
+// `just-the-docs-light.css` and `just-the-docs-dark.css`; SCSS colour variables
+// resolve per build, and the `--sh-*` custom properties below are branched once on
+// `$color-scheme` so every mode gets the right tokens.
+//
+// Ruby-Sass-3.x safe (GitHub Pages classic build): no @use / math.div / color module.
+// =============================================================================
+
+// ---- Design tokens (shadcn zinc), exposed as CSS custom properties -----------
+:root {
+  --sh-bg: #{$body-background-color};
+  --sh-heading: #{$body-heading-color};
+  --sh-text: #{$body-text-color};
+  --sh-border: #{$border-color};
+  --sh-feedback: #{$feedback-color};
+  --sh-sidebar: #{$sidebar-color};
+  --sh-code-bg: #{$code-background-color};
+  --sh-base-btn: #{$base-button-color};
+  --sh-primary: #{$btn-primary-color};
+  --sh-radius: 0.5rem;
+  --sh-radius-sm: 0.375rem;
+
+  @if $color-scheme == dark {
+    --sh-muted: #a1a1aa; // zinc-400
+    --sh-ring: #d4d4d8; // zinc-300
+    --sh-primary-fg: #18181b; // text on the near-white primary
+    --sh-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --sh-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.45), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+    --sh-warn: #f87171; // desaturated red
+    --sh-tip: #4ade80; // desaturated green
+    --sh-selection: rgba(250, 250, 250, 0.16);
+    --sh-focus-ring: rgba(212, 212, 216, 0.3); // soft ring glow (zinc-300)
+  } @else {
+    --sh-muted: #71717a; // zinc-500
+    --sh-ring: #18181b; // zinc-900
+    --sh-primary-fg: #fafafa; // text on the near-black primary
+    --sh-shadow-sm: 0 1px 2px 0 rgba(9, 9, 11, 0.05);
+    --sh-shadow-md: 0 4px 6px -1px rgba(9, 9, 11, 0.08), 0 2px 4px -2px rgba(9, 9, 11, 0.06);
+    --sh-warn: #b91c1c;
+    --sh-tip: #15803d;
+    --sh-selection: rgba(9, 9, 11, 0.1);
+    --sh-focus-ring: rgba(24, 24, 27, 0.12); // soft ring glow (zinc-900)
+  }
+}
+
+// ---- Base typography ---------------------------------------------------------
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--sh-selection);
+}
+
+// Tighter tracking on headings for the crisp shadcn "new-york" character.
+.main-content h1,
+.main-content h2,
+.main-content h3,
+.main-content h4,
+.main-content h5,
+.main-content h6,
+.site-title {
+  letter-spacing: -0.011em;
+}
+
+.main-content h1,
+.main-content h2,
+.main-content h3 {
+  font-weight: 600;
+}
+
+// Prose links: neutral zinc with a hairline underline that firms up on hover.
+.main-content a:not([class]) {
+  text-decoration: underline;
+  text-decoration-color: var(--sh-border);
+  text-underline-offset: 2px;
+
+  &:hover {
+    text-decoration-color: currentColor;
+  }
+}
+
+// Blockquotes and rules ride the hairline token.
+blockquote:not([class]) {
+  border-left: 3px solid var(--sh-border);
+  color: var(--sh-muted);
+}
+
+// =============================================================================
+// Sidebar + navigation
+// =============================================================================
+.side-bar {
+  border-right: 1px solid var(--sh-border);
+}
+
+// Inset the nav tree so hover/active rows read as shadcn's rounded pills. The
+// expander button is position:absolute right:0 of the (relative) list item, so
+// padding the scroll container keeps it aligned to the padded edge.
+.site-nav {
+  padding-left: $sp-3;
+  padding-right: $sp-3;
+}
+
+// Section labels: muted, upper, tracked — no divider rule.
+.nav-category {
+  padding-left: $sp-2;
+  padding-right: $sp-2;
+  color: var(--sh-muted);
+  text-align: left;
+  letter-spacing: 0.06em;
+  border-bottom: 0;
+}
+
+.nav-list .nav-list-item .nav-list-link {
+  padding-top: $sp-2;
+  padding-bottom: $sp-2;
+  padding-left: $sp-3;
+  border-radius: var(--sh-radius-sm);
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+
+  &:hover {
+    background-color: var(--sh-feedback);
+    background-image: none;
+  }
+
+  &.active {
+    color: var(--sh-heading);
+    background-color: var(--sh-feedback);
+    background-image: none;
+
+    &:hover {
+      background-color: var(--sh-feedback);
+      background-image: none;
+    }
+  }
+}
+
+// The expander chevron: clean icon button — muted at rest, subtle rounded hover.
+.nav-list .nav-list-item .nav-list-expander {
+  color: var(--sh-muted);
+  background-color: transparent;
+  border: 0;
+  border-radius: var(--sh-radius-sm);
+
+  &:hover {
+    color: var(--sh-heading);
+    background-image: none;
+    background-color: var(--sh-feedback);
+  }
+}
+
+// Foldable-collection top-level links stay neutral (theme paints them $link-color).
+.nav-list.nav-category-list > .nav-list-item > .nav-list > .nav-list-item > .nav-list-link {
+  color: var(--sh-text);
+}
+
+// =============================================================================
+// Header + aux nav + theme toggle
+// =============================================================================
+.main-header {
+  border-bottom: 1px solid var(--sh-border);
+}
+
+.site-header {
+  border-bottom: 1px solid var(--sh-border);
+}
+
+// GitHub / external aux links as quiet ghost buttons.
+.aux-nav .aux-nav-list-item {
+  a.site-button {
+    padding: $sp-1 $sp-2;
+    color: var(--sh-muted);
+    border-radius: var(--sh-radius-sm);
+
+    &:hover {
+      color: var(--sh-heading);
+      background-color: var(--sh-feedback);
+    }
+  }
+}
+
+// Icon-only theme toggle (markup in _includes/header_custom.html).
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  // #main-header has no align-items (defaults to stretch); with a fixed height
+  // the button would pin to the top of the header, so centre it explicitly.
+  align-self: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  margin: 0 $sp-2;
+  color: var(--sh-muted);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--sh-radius-sm);
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+
+  &:hover {
+    color: var(--sh-heading);
+    background-color: var(--sh-feedback);
+    border-color: var(--sh-border);
+  }
+
+  .theme-toggle-icon {
+    width: 1.05rem;
+    height: 1.05rem;
+    display: block;
+  }
+
+  // Show the moon in light mode (click → dark), the sun in dark mode (click → light).
+  .theme-toggle-sun {
+    display: none;
+  }
+}
+
+html[data-theme="dark"] .theme-toggle {
+  .theme-toggle-sun {
+    display: block;
+  }
+
+  .theme-toggle-moon {
+    display: none;
+  }
+}
+
+// The always-visible mobile bar (.site-header) gets its own toggle (JS-cloned in
+// head_custom.html), because .main-header — and the toggle it holds — is hidden
+// below the md breakpoint. Show that copy only below md; the main-header toggle
+// takes over at md+.
+@include mq(md) {
+  .site-header .theme-toggle {
+    display: none;
+  }
+}
+
+// The toggle only works with JS (its click handler attaches on load); hide it
+// entirely when JS is off so it isn't a dead control. head_custom.html adds the
+// `js` class to <html> during head parsing, before the button paints.
+html:not(.js) .theme-toggle {
+  display: none;
+}
+
+// =============================================================================
+// Search
+// =============================================================================
+.search-input {
+  background-color: var(--sh-bg);
+
+  &::placeholder {
+    color: var(--sh-muted);
+  }
+}
+
+// Below md the search field is a normal, statically-sized box: give it the flat
+// shadcn hairline and drop the theme's floating-card drop-shadow.
+.search-input-wrap {
+  background-color: var(--sh-bg);
+  border: 1px solid var(--sh-border);
+  border-radius: var(--sh-radius);
+  box-shadow: none;
+}
+
+// At md+ the theme turns .search-input-wrap into a full-height, absolutely-positioned
+// field that expands into an overlay on focus. Do NOT fight that model — a fixed-height
+// bordered pill mis-centres the input (it stays pinned to the top) and can break the
+// expand-on-focus results. Keep the theme's clean inline field; just drop the border so
+// it isn't a tall box, and tint the icon on focus.
+@include mq(md) {
+  .search-input-wrap {
+    border: 0;
+    border-radius: 0;
+  }
+
+  .search-input:focus + .search-label .search-icon {
+    color: var(--sh-heading);
+  }
+}
+
+.search-results {
+  background-color: var(--sh-bg);
+  border: 1px solid var(--sh-border);
+  border-radius: var(--sh-radius);
+  box-shadow: var(--sh-shadow-md);
+}
+
+.search-result {
+  border-radius: var(--sh-radius-sm);
+
+  &.active {
+    background-color: var(--sh-feedback);
+  }
+}
+
+.search-result-icon {
+  color: var(--sh-muted);
+}
+
+// =============================================================================
+// Code
+// =============================================================================
+// Inline code: hairline chip.
+:not(pre, figure) > code {
+  padding: 0.15em 0.35em;
+  border-radius: var(--sh-radius-sm);
+  border-color: var(--sh-border);
+}
+
+// Fenced blocks: retarget JtD's heavy $body-text-color border to the hairline,
+// drop drop-shadows. (JtD sets `border: 1px solid $body-text-color` in a mixin.)
+div.highlighter-rouge,
+figure.highlight,
+div.listingblock > div.content {
+  box-shadow: none;
+}
+
+div.highlighter-rouge div.highlight,
+div.listingblock > div.content,
+figure.highlight pre,
+figure.highlight :not(pre) > code {
+  border: 1px solid var(--sh-border);
+  border-radius: var(--sh-radius);
+}
+
+.code-example,
+.listingblock > .title {
+  border-color: var(--sh-border);
+}
+
+// Muted line-number gutter (kramdown line_numbers = true / linenos).
+.highlight .table-wrapper td.gl,
+.highlight .table-wrapper td.gl pre.lineno,
+.highlight .table-wrapper .rouge-gutter {
+  color: var(--sh-muted);
+}
+
+// =============================================================================
+// Tables — hairline box, subtle header, no gridlines, no zebra, no shadow.
+// =============================================================================
+.table-wrapper {
+  border: 1px solid var(--sh-border);
+  border-radius: var(--sh-radius);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+// The theme uses border-collapse: separate; its default border-spacing left a
+// gap between the (now-coloured) header fill / hairline border and the wrapper.
+table {
+  border-spacing: 0;
+}
+
+th,
+td {
+  border-left: 0;
+  border-bottom: 1px solid var(--sh-border);
+}
+
+thead th {
+  color: var(--sh-heading);
+  font-weight: 600;
+  background-color: var(--sh-feedback);
+  border-bottom: 1px solid var(--sh-border);
+}
+
+// =============================================================================
+// Callouts (.note / .warning / .tip) — shadcn alert: hairline box, subtle fill,
+// thin left accent. Mostly monochrome; a whisper of status colour on warn/tip.
+// =============================================================================
+p.note,
+blockquote.note,
+p.note-title,
+blockquote.note-title,
+p.warning,
+blockquote.warning,
+p.warning-title,
+blockquote.warning-title,
+p.tip,
+blockquote.tip,
+p.tip-title,
+blockquote.tip-title {
+  background-color: var(--sh-feedback);
+  border: 1px solid var(--sh-border);
+  border-left: 3px solid var(--sh-heading);
+  border-radius: var(--sh-radius);
+  box-shadow: none;
+}
+
+p.note::before,
+blockquote.note::before,
+p.note > .note-title,
+blockquote.note > .note-title {
+  color: var(--sh-heading);
+}
+
+p.warning,
+blockquote.warning,
+p.warning-title,
+blockquote.warning-title {
+  border-left-color: var(--sh-warn);
+}
+
+p.warning::before,
+blockquote.warning::before,
+p.warning > .warning-title,
+blockquote.warning > .warning-title {
+  color: var(--sh-warn);
+}
+
+p.tip,
+blockquote.tip,
+p.tip-title,
+blockquote.tip-title {
+  border-left-color: var(--sh-tip);
+}
+
+p.tip::before,
+blockquote.tip::before,
+p.tip > .tip-title,
+blockquote.tip > .tip-title {
+  color: var(--sh-tip);
+}
+
+// =============================================================================
+// Buttons + labels
+// =============================================================================
+.btn {
+  font-weight: 500;
+  color: var(--sh-heading);
+  background-color: var(--sh-base-btn);
+  background-image: none; // theme paints a gradient via the btn-color mixin
+  border: 1px solid var(--sh-border);
+  border-radius: var(--sh-radius);
+  box-shadow: none;
+
+  &:hover,
+  &.zeroclipboard-is-hover {
+    color: var(--sh-heading);
+    background-color: var(--sh-feedback);
+    background-image: none;
+  }
+
+  &:active,
+  &.selected,
+  &.zeroclipboard-is-active {
+    background-color: var(--sh-feedback);
+    background-image: none;
+    box-shadow: none;
+  }
+
+  // Neutralise the theme's saturated-blue focus glow (rgba(blue,.25));
+  // keyboard focus still shows the neutral zinc ring via :focus-visible below.
+  &:focus,
+  &:focus:hover,
+  &.selected:focus {
+    box-shadow: none;
+  }
+}
+
+.btn-primary {
+  color: var(--sh-primary-fg);
+  background-color: var(--sh-primary);
+  background-image: none; // reset the theme's btn-color gradient
+  border-color: transparent;
+  box-shadow: var(--sh-shadow-sm);
+
+  &:hover {
+    color: var(--sh-primary-fg);
+    background-color: var(--sh-primary);
+    background-image: none;
+    opacity: 0.9;
+  }
+
+  &:focus,
+  &:focus:hover,
+  &.selected:focus {
+    box-shadow: var(--sh-shadow-sm);
+  }
+}
+
+.btn-outline {
+  color: var(--sh-heading);
+  background-image: none;
+  border: 1px solid var(--sh-border);
+  box-shadow: none;
+
+  &:hover {
+    color: var(--sh-heading);
+    background-color: var(--sh-feedback);
+    background-image: none;
+    box-shadow: none;
+  }
+
+  &:focus,
+  &:focus:hover,
+  &.selected:focus {
+    box-shadow: none;
+  }
+}
+
+// Labels/badges: shadcn "secondary" badge — quiet, rounded, not a loud pill.
+.label:not(g),
+.label-blue:not(g),
+.label-green:not(g),
+.label-purple:not(g),
+.label-red:not(g),
+.label-yellow:not(g) {
+  color: var(--sh-heading);
+  background-color: var(--sh-feedback);
+  border: 1px solid var(--sh-border);
+  border-radius: var(--sh-radius-sm);
+  text-transform: none;
+  font-weight: 500;
+}
+
+// =============================================================================
+// Breadcrumbs
+// =============================================================================
+.breadcrumb-nav-list-item {
+  color: var(--sh-muted);
+
+  &::after {
+    color: var(--sh-border);
+  }
+
+  &:last-child {
+    color: var(--sh-text);
+    font-weight: 500;
+  }
+}
+
+// =============================================================================
+// Focus ring (accessibility) — one calm shadcn-style ring everywhere.
+// =============================================================================
+a:focus-visible,
+.btn:focus-visible,
+.nav-list-link:focus-visible,
+.nav-list-expander:focus-visible,
+.site-button:focus-visible,
+.theme-toggle:focus-visible,
+.search-input:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--sh-ring);
+  outline-offset: 2px;
+  border-radius: var(--sh-radius-sm);
+}
+
+// =============================================================================
+// Respect prefers-reduced-motion — neutralise the added colour transitions
+// (and the theme's own animated search + smooth scroll) for users who ask.
+// =============================================================================
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
