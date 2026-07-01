@@ -31,8 +31,6 @@ import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
 import com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator;
 import com.clarkparsia.owlapi.explanation.util.SilentExplanationProgressMonitor;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
-
 /**
  * Reasoning tools: select the reasoner, run classification, list unsatisfiable classes, read
  * inferred relations, run DL queries, check entailment, and generate justifications (explanations).
@@ -57,10 +55,8 @@ public final class ReasonerTools {
             "object_property_domain", "object_property_range",
             "data_property_domain", "data_property_range"));
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("run_reasoner",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("run_reasoner",
                 "Run the reasoner selected in Protégé (classify) and wait for completion. Reports the "
                         + "resulting status and unsatisfiable-class count.",
                 Tools.schema().integer("timeout_ms", "Max wait in ms (default 60000).").build(),
@@ -73,16 +69,16 @@ public final class ReasonerTools {
                                 + "Reasoner menu, then retry.");
                     }
                     return Tools.ok(EmbeddedClassificationWaiter.runAndWait(ctx.access(), timeout));
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("get_unsatisfiable_classes",
+        tools.tool("get_unsatisfiable_classes",
                 "List unsatisfiable (equivalent to owl:Nothing) classes from the active reasoner.",
                 Tools.emptySchema(),
                 (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
                     return Tools.ok(unsatisfiableClasses(mm, requireReasoner(mm)));
-                }))));
+                })));
 
-        tools.add(ToolSpecs.of("get_inferred_superclasses",
+        tools.tool("get_inferred_superclasses",
                 "Read inferred relations from the reasoner. 'relation' is one of superclasses "
                         + "(default), subclasses, equivalent, types (for an individual), instances "
                         + "(of a class). 'direct' limits to direct relations (default true).",
@@ -99,9 +95,9 @@ public final class ReasonerTools {
                     String rel = relation == null ? "superclasses" : relation.toLowerCase();
                     return ctx.access().compute(mm ->
                             Tools.ok(inferredRelation(mm, requireReasoner(mm), entity, rel, direct)));
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("explain_entailment",
+        tools.tool("explain_entailment",
                 "Check whether a structured axiom is entailed by the active reasoner (true/false). "
                         + "axiom_type is one of: " + Axioms.SUPPORTED + ". Use get_explanations for "
                         + "the justifications behind an entailment.",
@@ -110,9 +106,9 @@ public final class ReasonerTools {
                     Map<String, Object> a = Tools.args(req);
                     return ctx.access().compute(mm ->
                             Tools.ok(explainEntailment(mm, requireReasoner(mm), Axioms.build(mm, a))));
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("get_explanations",
+        tools.tool("get_explanations",
                 "Explain WHY a structured axiom is entailed: return one or more justifications "
                         + "(minimal sets of asserted axioms that together entail it). Minimal "
                         + "justifications are computed for these axiom_type values: "
@@ -161,9 +157,9 @@ public final class ReasonerTools {
                                 : gen.getExplanations(ax);
                         return Tools.ok(explanationsJson(mm, ax, explanations));
                     }, timeout);
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("execute_dl_query",
+        tools.tool("execute_dl_query",
                 "Run a Protégé DL Query: given a Manchester-syntax class expression, return the "
                         + "reasoner's equivalent classes, subclasses, superclasses, and instances. "
                         + "'relation' limits the result (equivalent | subclasses | superclasses | "
@@ -189,9 +185,9 @@ public final class ReasonerTools {
                         OWLClassExpression ce = Tools.resolveClassExpression(mm, query);
                         return Tools.ok(dlQuery(mm, r, query, ce, rel, direct));
                     }, timeout);
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("list_reasoners",
+        tools.tool("list_reasoners",
                 "List the reasoner plugins installed in Protégé and mark the one currently selected. "
                         + "Use set_reasoner to change it, then run_reasoner to classify.",
                 Tools.emptySchema(),
@@ -214,9 +210,9 @@ public final class ReasonerTools {
                             .put("reasoners", new ArrayList<>(byName.values()))
                             .putIfNotNull("current_id", currentId)
                             .result();
-                }))));
+                })));
 
-        tools.add(ToolSpecs.of("set_reasoner",
+        tools.tool("set_reasoner",
                 "Select the reasoner Protégé will use, by id or name (see list_reasoners). This does "
                         + "not classify — call run_reasoner afterwards.",
                 Tools.schema().strReq("reasoner", "Reasoner id or name (see list_reasoners).").build(),
@@ -247,9 +243,7 @@ public final class ReasonerTools {
                                 .put("message", "Selected reasoner. Call run_reasoner to classify.")
                                 .result();
                     });
-                })));
-
-        return tools;
+                }));
     }
 
     /** Axiom schema (same operands as add_axiom) plus the explanation-search knobs. */

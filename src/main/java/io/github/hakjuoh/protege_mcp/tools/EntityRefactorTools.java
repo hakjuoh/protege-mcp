@@ -16,8 +16,6 @@ import org.semanticweb.owlapi.model.RemoveAxiom;
 import org.semanticweb.owlapi.util.OWLEntityRemover;
 import org.semanticweb.owlapi.util.OWLEntityRenamer;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
-
 /**
  * High-level entity edits that span many axioms: renaming an entity's IRI and deleting an entity.
  * Both compute their {@link OWLOntologyChange}s with the OWL API utilities and apply them via
@@ -30,10 +28,8 @@ public final class EntityRefactorTools {
     private EntityRefactorTools() {
     }
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("rename_entity",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("rename_entity",
                 "Change an entity's IRI throughout the active ontology (every axiom and annotation "
                         + "that references the old IRI is rewritten to the new one). If the IRI is "
                         + "punned across several entity types, all of them are renamed. The new IRI "
@@ -75,9 +71,9 @@ public final class EntityRefactorTools {
                                 .put("changes", changes.size())
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("delete_entity",
+        tools.tool("delete_entity",
                 "Delete an entity from the active ontology: removes its declaration and every axiom "
                         + "that references it. If the IRI is punned across several entity types, all "
                         + "are removed unless 'entity_type' narrows it to one.",
@@ -117,9 +113,7 @@ public final class EntityRefactorTools {
                                 .put("removed_axioms", changes.size())
                                 .result();
                     });
-                })));
-
-        return tools;
+                }));
     }
 
     /** Resolve the entities to delete: all puns at the IRI, or just the one matching {@code entityType}. */

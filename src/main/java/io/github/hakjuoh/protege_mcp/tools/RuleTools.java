@@ -33,7 +33,6 @@ import org.semanticweb.owlapi.model.SWRLRule;
 import org.semanticweb.owlapi.model.SWRLSameIndividualAtom;
 import org.semanticweb.owlapi.model.SWRLVariable;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -60,10 +59,8 @@ public final class RuleTools {
     /** Default namespace for a {@code ?name} rule variable when {@code variable_namespace} is omitted. */
     static final String DEFAULT_VARIABLE_NS = "urn:swrl#";
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("list_rules",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("list_rules",
                 "List the SWRL rules (swrl:Imp axioms) in the active ontology as structured "
                         + "body/head atoms plus any rule annotations and a text rendering. Variable "
                         + "arguments are emitted as ?<absolute IRI> so a listed rule round-trips through "
@@ -76,9 +73,9 @@ public final class RuleTools {
                     Map<String, Object> a = Tools.args(req);
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
                     return ctx.access().compute(mm -> listRules(mm, includeImports));
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("add_rule",
+        tools.tool("add_rule",
                 "Add a SWRL rule (swrl:Imp) to the active ontology from structured body and head atoms. "
                         + "Each atom is {type, ...}: type=class {predicate, arg1}; object_property "
                         + "{predicate, arg1, arg2}; data_property {predicate, arg1, arg2|value[+lang|"
@@ -114,9 +111,9 @@ public final class RuleTools {
                                 .put("rule", ruleJson(mm, rule, -1))
                                 .result();
                     });
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("remove_rule",
+        tools.tool("remove_rule",
                 "Remove a SWRL rule from the active ontology. Identify it by 'index' (into the same "
                         + "rendering-sorted order list_rules returns) and/or 'label' (its rdfs:label), or "
                         + "by passing the same structured 'body'/'head'/'annotations' as add_rule to "
@@ -179,9 +176,7 @@ public final class RuleTools {
                         return Tools.json().put("removed", removed.size())
                                 .put("rules", removed).result();
                     });
-                })));
-
-        return tools;
+                }));
     }
 
     // ------------------------------------------------------------------ list

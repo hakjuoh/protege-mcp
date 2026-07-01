@@ -44,8 +44,6 @@ import org.semanticweb.owlapi.profiles.OWLProfileViolation;
 import org.semanticweb.owlapi.profiles.Profiles;
 import org.semanticweb.owlapi.search.EntitySearcher;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
-
 /**
  * Project-governance validation: the layer above {@code validate_ontology}'s generic modelling-quality
  * checks. Where {@code validate_ontology} asks "is this well-formed?", {@code validate_governance} asks
@@ -80,10 +78,8 @@ public final class GovernanceTools {
     /** Default OWL 2 profile checked when the caller does not name one. */
     static final String DEFAULT_PROFILE = "DL";
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("validate_governance",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("validate_governance",
                 "Audit the active ontology against PROJECT GOVERNANCE rules (complements "
                         + "validate_ontology's generic quality checks and run_reasoner's logic checks). "
                         + "Checks: (1) owl_profile — OWL 2 profile conformance (default DL; or EL/QL/RL; "
@@ -182,9 +178,7 @@ public final class GovernanceTools {
                                     + "run run_reasoner for satisfiability and validate_ontology for "
                                     + "generic modelling quality.")
                             .result();
-                })));
-
-        return tools;
+                }));
     }
 
     // ================================================================== phase 1 (model thread)

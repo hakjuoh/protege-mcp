@@ -24,15 +24,12 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Deque;
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Set;
 
 import javax.imageio.ImageIO;
 import javax.swing.Action;
@@ -63,7 +60,10 @@ import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
 
 import org.protege.editor.owl.ui.view.AbstractOWLViewComponent;
+import io.github.hakjuoh.protege_mcp.chat.AttachmentFileManager;
 import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
+import io.github.hakjuoh.protege_mcp.chat.ChatComposer;
+import io.github.hakjuoh.protege_mcp.chat.ChatModels;
 import io.github.hakjuoh.protege_mcp.chat.CliSupport;
 import io.github.hakjuoh.protege_mcp.chat.ChatListener;
 import io.github.hakjuoh.protege_mcp.chat.ChatProcess;
@@ -154,14 +154,14 @@ public class ChatView extends AbstractOWLViewComponent {
 
     private final List<ChatAttachment> pendingAttachments = new ArrayList<>();
     // Each file-backed attachment lives alone in its own scratch subdir (so Claude's --add-dir grants access
-    // to exactly that one file, never the user's real folder). Tracked here for prompt-time / turn-end cleanup.
-    private final List<File> sessionTempDirs = new ArrayList<>();
+    // to exactly that one file, never the user's real folder). Lifecycle owned by AttachmentFileManager
+    // (headless-testable); this view delegates create/delete/reset to it.
+    private final AttachmentFileManager attachments = new AttachmentFileManager();
     private List<ChatAttachment> inFlightAttachments = List.of();
     // Bumped whenever the conversation is reset/closed, so an in-flight clipboard-image worker can tell its
     // result belongs to a conversation that no longer exists and discard it instead of injecting a stale
     // attachment (whose scratch file was already reclaimed).
     private int attachGeneration;
-    private int nextScratchSeq = 1;
     private int nextPastedTextIndex = 1;
     private int nextImageIndex = 1;
     private int nextFileIndex = 1;
@@ -496,34 +496,20 @@ public class ChatView extends AbstractOWLViewComponent {
         if (input.getSelectionStart() != input.getSelectionEnd()) {
             return false;
         }
-        int caret = input.getCaretPosition();
-        String text = input.getText();
-        if (caret <= 0 || caret > text.length() || text.charAt(caret - 1) != ']') {
-            return false;
-        }
-        int open = text.lastIndexOf('[', caret - 1);
-        if (open < 0) {
-            return false;
-        }
-        String token = text.substring(open, caret);
-        ChatAttachment match = null;
-        for (ChatAttachment a : pendingAttachments) {
-            if (a.placeholder().equals(token)) {
-                match = a;
-                break;
-            }
-        }
+        ChatComposer.PlaceholderMatch match = ChatComposer.matchPlaceholderBefore(
+                input.getText(), input.getCaretPosition(), pendingAttachments);
         if (match == null) {
-            return false;   // a literal "[…]" the user typed, not an attachment — ordinary backspace
+            return false;   // no attachment token just before the caret — ordinary backspace
         }
         try {
-            input.getDocument().remove(open, caret - open);
+            input.getDocument().remove(match.start(), match.end() - match.start());
         } catch (BadLocationException ex) {
             return false;
         }
-        pendingAttachments.remove(match);
-        if (match.file() != null) {
-            deleteScratchDir(match.file().getParentFile());
+        ChatAttachment attachment = match.attachment();
+        pendingAttachments.remove(attachment);
+        if (attachment.file() != null) {
+            deleteScratchDir(attachment.file().getParentFile());
         }
         return true;
     }
@@ -754,70 +740,31 @@ public class ChatView extends AbstractOWLViewComponent {
 
     /** A fresh, owner-only scratch subdir holding exactly one attachment file; tracked for later cleanup. */
     private File newScratchDir() throws IOException {
-        File root = new File(CliSupport.neutralWorkingDir(), "attachments");
-        if (!root.isDirectory() && !root.mkdirs()) {
-            throw new IOException("could not create attachment directory: " + root);
-        }
-        restrict(root.toPath(), true);
-        File dir = new File(root, "att-" + System.currentTimeMillis() + "-" + (nextScratchSeq++));
-        if (!dir.isDirectory() && !dir.mkdirs()) {
-            throw new IOException("could not create attachment directory: " + dir);
-        }
-        restrict(dir.toPath(), true);
-        dir.deleteOnExit();
-        sessionTempDirs.add(dir);
-        return dir;
+        return attachments.newScratchDir();
     }
 
     /** Best-effort owner-only permissions on POSIX filesystems (no-op on Windows / non-POSIX). */
     private static void restrict(java.nio.file.Path path, boolean directory) {
-        Set<PosixFilePermission> perms = directory
-                ? EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
-                        PosixFilePermission.OWNER_EXECUTE)
-                : EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
-        try {
-            Files.setPosixFilePermissions(path, perms);
-        } catch (UnsupportedOperationException | IOException ignored) {
-            // non-POSIX filesystem or transient failure — fall back to the platform's default ACLs
-        }
+        AttachmentFileManager.restrict(path, directory);
     }
 
     /** Delete one of our scratch dirs (and its single file). Guarded so only tracked dirs are removed. */
     private void deleteScratchDir(File dir) {
-        if (dir != null && sessionTempDirs.remove(dir)) {
-            deleteRecursively(dir);
-        }
+        attachments.deleteScratchDir(dir);
     }
 
     /** Delete the scratch dirs backing the given attachments (no-op for inline pasted text). */
-    private void deleteScratchFor(Collection<ChatAttachment> attachments) {
-        for (ChatAttachment a : attachments) {
-            File f = a.file();
-            if (f != null) {
-                deleteScratchDir(f.getParentFile());
-            }
-        }
+    private void deleteScratchFor(Collection<ChatAttachment> atts) {
+        attachments.deleteScratchFor(atts);
     }
 
     /** Remove every scratch dir created this conversation (New Chat / view close). */
     private void deleteAllScratch() {
-        for (File dir : new ArrayList<>(sessionTempDirs)) {
-            deleteRecursively(dir);
-        }
-        sessionTempDirs.clear();
+        attachments.deleteAllScratch();
     }
 
     private static void deleteRecursively(File f) {
-        if (f == null) {
-            return;
-        }
-        File[] kids = f.listFiles();
-        if (kids != null) {
-            for (File k : kids) {
-                deleteRecursively(k);
-            }
-        }
-        f.delete();
+        AttachmentFileManager.deleteRecursively(f);
     }
 
     private static String causeMessage(Exception ex) {
@@ -835,16 +782,7 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     private List<ChatAttachment> activeAttachments(String displayPrompt) {
-        if (pendingAttachments.isEmpty()) {
-            return List.of();
-        }
-        List<ChatAttachment> active = new ArrayList<>();
-        for (ChatAttachment attachment : pendingAttachments) {
-            if (displayPrompt.contains(attachment.placeholder())) {
-                active.add(attachment);
-            }
-        }
-        return List.copyOf(active);
+        return ChatComposer.activeAttachments(pendingAttachments, displayPrompt);
     }
 
     /** The opening transcript line: the usage hint, or the install hint when no CLI is present. */
@@ -881,14 +819,13 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     private static String modelPrefKey(ChatProvider p) {
-        return "codex".equals(p.id()) ? McpConfig.KEY_CHAT_MODEL_CODEX : McpConfig.KEY_CHAT_MODEL_CLAUDE;
+        return ChatModels.modelPrefKey(p.id());
     }
 
     /** The model id to pass to the provider ("" = the CLI's own default). */
     private String selectedModel() {
         Object sel = modelCombo.getSelectedItem();
-        String s = sel == null ? "" : sel.toString().trim();
-        return (s.isEmpty() || MODEL_DEFAULT_LABEL.equals(s)) ? "" : s;
+        return ChatModels.normalizeModel(sel == null ? null : sel.toString(), MODEL_DEFAULT_LABEL);
     }
 
     private void startNewConversation(boolean clearTranscript) {
@@ -904,8 +841,7 @@ public class ChatView extends AbstractOWLViewComponent {
             usageLabel.setText(" ");
             pendingAttachments.clear();
             attachGeneration++;   // invalidate any in-flight clipboard-image worker for the old conversation
-            deleteAllScratch();
-            nextScratchSeq = 1;
+            attachments.reset();
             nextPastedTextIndex = 1;
             nextImageIndex = 1;
             nextFileIndex = 1;

@@ -27,8 +27,6 @@ import org.semanticweb.owlapi.model.parameters.Imports;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.search.EntitySearcher;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
-
 /**
  * A modelling-quality audit (the layer that the reasoner-centric tools don't cover): missing/duplicate
  * labels, missing definitions, deprecated-but-still-used terms, undeclared entities, properties with no
@@ -57,10 +55,8 @@ public final class ValidationTools {
             "deprecated_in_use", "undeclared_entity", "property_missing_domain",
             "property_missing_range", "self_subclass", "subclass_cycle", "isolated_class"));
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("validate_ontology",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("validate_ontology",
                 "Audit the active ontology for modelling-quality issues (not logical consistency — use "
                         + "run_reasoner for that). Runs structural checks and reports, per check, a "
                         + "count, sample offenders, and a fix suggestion. Checks: "
@@ -122,9 +118,7 @@ public final class ValidationTools {
                                         + "get_unsatisfiable_classes (or pass with_reasoner=true).")
                                 .result();
                     }, timeoutMs);
-                })));
-
-        return tools;
+                }));
     }
 
     /**

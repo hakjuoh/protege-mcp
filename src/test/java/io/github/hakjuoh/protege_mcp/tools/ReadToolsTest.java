@@ -41,7 +41,7 @@ import io.modelcontextprotocol.spec.McpSchema.Tool;
 /**
  * Method-level tests for {@link ReadTools}.
  *
- * <p>The seven tool handlers returned by {@link ReadTools#specs} route through
+ * <p>The seven tool handlers registered by {@link ReadTools#register} route through
  * {@code ToolContext.access().compute(...)}, whose concrete {@code OntologyAccess} needs a live
  * {@code OWLEditorKit}/EDT — so the handlers cannot be driven headless. They are therefore covered
  * <em>structurally</em> (name / description / input-schema shape), which is all {@code specs()}
@@ -117,13 +117,13 @@ class ReadToolsTest {
 
     @Test
     void specsReturnsNonNullList() {
-        List<SyncToolSpecification> specs = ReadTools.specs(new ToolContext(null, null));
+        List<SyncToolSpecification> specs = readToolSpecs();
         assertNotNull(specs, "specs() must never return null");
     }
 
     @Test
     void specsReturnsExactlySevenNamedTools() {
-        List<SyncToolSpecification> specs = ReadTools.specs(new ToolContext(null, null));
+        List<SyncToolSpecification> specs = readToolSpecs();
         assertEquals(7, specs.size(), "ReadTools exposes seven read tools");
         List<String> names = new ArrayList<>();
         for (SyncToolSpecification s : specs) {
@@ -136,7 +136,7 @@ class ReadToolsTest {
 
     @Test
     void everySpecHasNonNullDescriptionSchemaAndHandler() {
-        for (SyncToolSpecification s : ReadTools.specs(new ToolContext(null, null))) {
+        for (SyncToolSpecification s : readToolSpecs()) {
             Tool t = s.tool();
             assertNotNull(t.description(), t.name() + " has a description");
             assertFalse(t.description().isEmpty(), t.name() + " description is non-empty");
@@ -561,8 +561,15 @@ class ReadToolsTest {
         return o;
     }
 
+    /** Build ReadTools' specs via the registry the catalog uses (ReadTools now registers, not returns). */
+    private static List<SyncToolSpecification> readToolSpecs() {
+        ToolRegistry registry = new ToolRegistry();
+        ReadTools.register(registry, new ToolContext(null, null));
+        return registry.build();
+    }
+
     private SyncToolSpecification specByName(String name) {
-        for (SyncToolSpecification s : ReadTools.specs(new ToolContext(null, null))) {
+        for (SyncToolSpecification s : readToolSpecs()) {
             if (s.tool().name().equals(name)) {
                 return s;
             }

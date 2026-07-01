@@ -34,8 +34,6 @@ import org.semanticweb.owlapi.search.EntitySearcher;
 
 import com.google.common.collect.Multimap;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
-
 /**
  * Model-friendly context tools. {@code get_ontology_context} orients an assistant ("what am I
  * looking at, what should I look at first"); {@code get_entity_context} returns a single "entity
@@ -48,10 +46,8 @@ public final class ContextTools {
     private ContextTools() {
     }
 
-    public static List<SyncToolSpecification> specs(ToolContext ctx) {
-        List<SyncToolSpecification> tools = new ArrayList<>();
-
-        tools.add(ToolSpecs.of("get_ontology_context",
+    public static void register(ToolRegistry tools, ToolContext ctx) {
+        tools.tool("get_ontology_context",
                 "Orientation overview of the active ontology in one call: id, signature counts, "
                         + "imports, ontology annotations, the asserted root classes (direct children "
                         + "of owl:Thing), sampled object/data properties, the reasoner state, and the "
@@ -62,9 +58,9 @@ public final class ContextTools {
                 (ex, req) -> Tools.guard(() -> {
                     int limit = Tools.optInt(Tools.args(req), "limit", 50);
                     return ctx.access().compute(mm -> ontologyContext(mm, ctx, limit));
-                })));
+                }));
 
-        tools.add(ToolSpecs.of("get_entity_context",
+        tools.tool("get_entity_context",
                 "An 'entity card' for one term in a single call: its type(s), labels/annotations, "
                         + "whether it is deprecated, and its asserted neighbourhood — for a class: "
                         + "super/sub/equivalent/disjoint classes and asserted instances; for a "
@@ -105,9 +101,7 @@ public final class ContextTools {
                                         ? "The IRI is punned across several entity types." : null)
                                 .result();
                     });
-                })));
-
-        return tools;
+                }));
     }
 
     // ------------------------------------------------------------------ get_ontology_context

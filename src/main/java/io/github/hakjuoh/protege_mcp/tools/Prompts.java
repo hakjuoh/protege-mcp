@@ -1,19 +1,12 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
 import io.modelcontextprotocol.server.McpServerFeatures.SyncPromptSpecification;
-import io.modelcontextprotocol.spec.McpSchema.GetPromptRequest;
-import io.modelcontextprotocol.spec.McpSchema.GetPromptResult;
-import io.modelcontextprotocol.spec.McpSchema.Prompt;
 import io.modelcontextprotocol.spec.McpSchema.PromptArgument;
-import io.modelcontextprotocol.spec.McpSchema.PromptMessage;
-import io.modelcontextprotocol.spec.McpSchema.Role;
-import io.modelcontextprotocol.spec.McpSchema.TextContent;
 
 /**
  * MCP <em>prompts</em>: reusable, guided ontology workflows a user can pick in their MCP client. Each
@@ -28,9 +21,9 @@ public final class Prompts {
     }
 
     public static List<SyncPromptSpecification> all() {
-        List<SyncPromptSpecification> prompts = new ArrayList<>();
+        PromptRegistry prompts = new PromptRegistry();
 
-        prompts.add(prompt("audit_ontology",
+        prompts.prompt("audit_ontology",
                 "Audit the active ontology for modelling-quality issues and propose fixes.",
                 Collections.emptyList(),
                 args -> ""
@@ -42,9 +35,9 @@ public final class Prompts {
                         + "terms to understand them before suggesting changes.\n"
                         + "5. Summarise the issues by severity and propose concrete fixes. Use "
                         + "preview_changes to show the exact axioms before applying anything, and DO NOT "
-                        + "modify the ontology until I approve."));
+                        + "modify the ontology until I approve.");
 
-        prompts.add(prompt("explain_class",
+        prompts.prompt("explain_class",
                 "Explain a class: its definition, neighbourhood, and what the reasoner infers about it.",
                 Collections.singletonList(arg("class", "Class IRI or display name.", true)),
                 args -> {
@@ -59,9 +52,9 @@ public final class Prompts {
                             + "\" to see what is inferred beyond what is asserted.\n"
                             + "4. Summarise: what the class means, where it sits in the hierarchy, its "
                             + "key restrictions, and anything surprising the reasoner derived.";
-                }));
+                });
 
-        prompts.add(prompt("add_subclass_safely",
+        prompts.prompt("add_subclass_safely",
                 "Add a subclass relationship safely: check the terms exist, preview, then apply and verify.",
                 Arrays.asList(
                         arg("child", "Subclass — IRI, name, or Manchester class expression.", true),
@@ -80,9 +73,9 @@ public final class Prompts {
                             + "3. After I approve, apply it with add_subclass_of.\n"
                             + "4. Call run_reasoner and get_unsatisfiable_classes to confirm the edit did "
                             + "not make any class unsatisfiable.";
-                }));
+                });
 
-        prompts.add(prompt("find_and_fix_unsatisfiable",
+        prompts.prompt("find_and_fix_unsatisfiable",
                 "Find unsatisfiable classes, explain why, and propose minimal fixes.",
                 Collections.emptyList(),
                 args -> ""
@@ -94,9 +87,9 @@ public final class Prompts {
                         + "4. Propose the smallest set of axiom removals/changes that restores "
                         + "satisfiability. Use preview_changes (op:remove) to show exactly what would be "
                         + "removed, and apply with remove_axiom only after I approve. Re-run the reasoner "
-                        + "to confirm."));
+                        + "to confirm.");
 
-        prompts.add(prompt("author_sparql_query",
+        prompts.prompt("author_sparql_query",
                 "Author a SPARQL query that answers a question: discover the vocabulary, draft, validate, "
                         + "then run it.",
                 Collections.singletonList(
@@ -119,9 +112,9 @@ public final class Prompts {
                             + "(e.g. inferred types or subclasses), set include_inferred=true (run_reasoner "
                             + "first). Refine the pattern and repeat if the results are empty or too broad.\n"
                             + "5. Summarise the answer, and show the final query you used.";
-                }));
+                });
 
-        prompts.add(prompt("model_domain",
+        prompts.prompt("model_domain",
                 "Model a described domain incrementally: propose terms, preview, apply with confirmation.",
                 Collections.singletonList(arg("description", "What to model (the domain in plain words).", true)),
                 args -> {
@@ -137,27 +130,12 @@ public final class Prompts {
                             + "4. After I approve, apply with create_class / create_entity / add_axiom / "
                             + "add_subclass_of, then call validate_ontology and run_reasoner to check the "
                             + "result. Work in small, reviewable batches.";
-                }));
+                });
 
-        return prompts;
+        return prompts.build();
     }
 
     // ------------------------------------------------------------------ helpers
-
-    private interface Template {
-        String render(Map<String, Object> args);
-    }
-
-    private static SyncPromptSpecification prompt(String name, String description,
-            List<PromptArgument> arguments, Template template) {
-        Prompt prompt = new Prompt(name, description, arguments);
-        return new SyncPromptSpecification(prompt, (exchange, request) -> {
-            Map<String, Object> args = request.arguments();
-            String text = template.render(args);
-            PromptMessage message = new PromptMessage(Role.USER, new TextContent(text));
-            return new GetPromptResult(description, Collections.singletonList(message));
-        });
-    }
 
     private static PromptArgument arg(String name, String description, boolean required) {
         return new PromptArgument(name, description, required);
