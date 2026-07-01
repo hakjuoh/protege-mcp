@@ -78,6 +78,10 @@ public final class ValidationTools {
                                 + "classes (uses the already-classified reasoner; run_reasoner first for "
                                 + "a current verdict). Default false.")
                         .integer("limit", "Max sample offenders/details per check (default 25).")
+                        .integer("timeout_ms", "Time budget in ms before the call returns a timeout "
+                                + "error (default 60000). The structural checks run on the model thread "
+                                + "and are not interrupted mid-run, so this bounds the caller's wait, "
+                                + "not the on-thread work itself.")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
@@ -85,6 +89,11 @@ public final class ValidationTools {
                     boolean withReasoner = Tools.optBool(a, "with_reasoner", false);
                     List<String> requested = Tools.stringList(a, "checks");
                     int limit = Tools.optInt(a, "limit", 25);
+                    int timeout = Tools.optInt(a, "timeout_ms", 60_000);
+                    if (timeout <= 0) {
+                        timeout = 60_000;
+                    }
+                    final int timeoutMs = timeout;
                     return ctx.access().compute(mm -> {
                         OWLOntology active = mm.getActiveOntology();
                         Set<OWLOntology> scope = includeImports
@@ -112,7 +121,7 @@ public final class ValidationTools {
                                         + "consistency/satisfiability run run_reasoner then "
                                         + "get_unsatisfiable_classes (or pass with_reasoner=true).")
                                 .result();
-                    });
+                    }, timeoutMs);
                 })));
 
         return tools;

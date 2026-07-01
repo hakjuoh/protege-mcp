@@ -690,7 +690,7 @@ public final class WriteTools {
      * {@code name}. Unless {@code no_label}, an rdfs:label ('label' or 'name', tagged with
      * {@code label_lang}) is added. Accumulates the resulting changes into {@code changes}.
      */
-    private static OWLEntity createEntity(OWLModelManager mm, String type, Map<String, Object> a,
+    static OWLEntity createEntity(OWLModelManager mm, String type, Map<String, Object> a,
             List<OWLOntologyChange> changes) {
         OWLDataFactory df = mm.getOWLDataFactory();
         OWLOntology ont = mm.getActiveOntology();

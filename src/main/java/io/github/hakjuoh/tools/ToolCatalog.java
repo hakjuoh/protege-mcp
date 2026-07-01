@@ -17,6 +17,7 @@ public final class ToolCatalog {
         all.addAll(ContextTools.specs(ctx));
         all.addAll(WriteTools.specs(ctx));
         all.addAll(PreviewTools.specs(ctx));
+        all.addAll(CurationTools.specs(ctx));
         all.addAll(EntityRefactorTools.specs(ctx));
         all.addAll(OntologyMetadataTools.specs(ctx));
         all.addAll(OntologyDocumentTools.specs(ctx));
@@ -27,6 +28,7 @@ public final class ToolCatalog {
         all.addAll(SparqlTools.specs(ctx));
         all.addAll(SparqlAuthoringTools.specs(ctx));
         all.addAll(ValidationTools.specs(ctx));
+        all.addAll(GovernanceTools.specs(ctx));
         return all;
     }
 }

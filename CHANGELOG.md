@@ -5,6 +5,29 @@ All notable changes to **Protégé MCP** are documented here. The format is base
 [Semantic Versioning](https://semver.org/). Each release's section is published verbatim as the body of
 its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the release workflow.
 
+## [0.3.3] - 2026-06-30
+
+Ontology-**development** hardening: project-governance validation, high-level curation macros, broader
+reasoner explanations, and a headless end-to-end smoke test. **50 → 55 tools.**
+
+### New tools
+- **`validate_governance`** — audit the active ontology against **project policy** (complements `validate_ontology`'s generic quality checks and `run_reasoner`'s logic checks). Each rule is opt-in: **OWL 2 profile conformance** (`owl_profile` = DL (default) / EL / QL / RL — reports the axioms that leave the profile), an **IRI policy** (`required_namespaces` / `iri_pattern` — every owned entity's IRI must conform), a **required annotation suite** (`required_annotations`, incl. the specials `label` and `definition` — every owned class/property must carry each), and **module ownership / import layering** (`check_ownership`, default on — the active module must not assert logical axioms about *imported* terms — including via a property chain that re-axiomatises an imported super-property). The expensive profile computation runs **off the UI thread** (on a snapshot taken on it), so conformance-checking a large ontology does not block Protégé for the analysis.
+- **`create_term`** — create a class **with its curation suite in one undoable step**: label, a definition (`definition`, default `rdfs:comment`), an arbitrary annotation suite, parent(s) (named or a Manchester restriction such as `hasPart some Cell`), and optional `equivalent_to` class expressions for a defined class.
+- **`create_property`** — create an object/data property **with its axioms in one step**: label, definition, `domain`, `range` (a class expression for object; a datatype / Manchester data range for data), `super_properties`, `characteristics` (functional, transitive, symmetric, …), and an `inverse_of`.
+- **`deprecate_entity`** — the standard obsolescence pattern in one step: `owl:deprecated true` plus an optional **"term replaced by"** pointer (`IAO_0100001` by default) and any extra curation annotations. Idempotent (re-deprecating is a no-op).
+- **`move_class`** — reparent a class (its subtree follows): replace the class's asserted **named** superclasses with a new parent, preserving anonymous restriction superclasses; `keep_other_parents` adds without removing, and omitting `new_parent` detaches the class to a root.
+
+### Improved
+- **`get_explanations`** now handles **any** `axiom_type`: for a kind the justification generator cannot minimally explain (e.g. a property-hierarchy or property-characteristic entailment), it falls back to confirming whether the axiom is entailed and returning the asserted axioms that mention the same entities as **structural context** (clearly labelled *not* a minimal justification) instead of rejecting the request.
+- **`validate_ontology`** gains a **`timeout_ms`** budget — the structural checks run on the model thread and are not interrupted mid-run, so this bounds how long the *call* waits before returning a timeout error, not the on-thread work itself.
+- **`preview_changes`** description now points at **`apply_changes`** (apply the whole batch in one undoable call) alongside the single-axiom edit tools, matching the README workflow.
+
+### Notes
+- New: a headless, CI-runnable pipeline smoke test (`ToolPipelineTest`) that drives the tool cores end-to-end — load → edit → validate → govern → diff → SPARQL — plus a manual live-Protégé checklist in [`docs/smoke-test.md`](docs/smoke-test.md) for the GUI/reasoner/transport legs the unit tests cannot reach. Test count **84 → 97**.
+- Requires a **Java 17+** JVM (unchanged). The OWL 2 profile checker is the OWL API's own (`org.semanticweb.owlapi.profiles`), already on the Protégé platform.
+
+Install: download `protege-mcp-0.3.3.jar` below, or use Protégé ▸ File ▸ Check for plugins.
+
 ## [0.3.2] - 2026-06-30
 
 SPARQL support for the active ontology — author, validate, and run queries. **47 → 50 tools.**
