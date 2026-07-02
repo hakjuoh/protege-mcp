@@ -1,22 +1,40 @@
 version: 2
 updates:
-  # Maven dependencies (the embedded MCP/Jetty/Jackson/Jena stack + test-scoped reasoner). Dependabot
-  # opens PRs for version bumps AND surfaces known-CVE advisories against this tree — the supply-chain
-  # visibility a plugin that ships an embedded HTTP server + OAuth should have.
+  # Most Maven dependencies here are deliberately PINNED and must not be auto-bumped:
+  #   - owlapi + HermiT track the Protégé 5.6 runtime (OWLAPI 4.5.x, guava 18, slf4j 1.7);
+  #   - jackson / reactor / json-schema-validator / snakeyaml are pinned to the MCP 2.0.0 resolved tree;
+  #   - jetty 12 / jakarta.servlet 6.1 are the embedded Jakarta-EE10 servlet host;
+  #   - jena is embedded at 4.x (the SPARQL tools + the merged JenaSubsystemLifecycle target 4.x ARQ);
+  #   - maven-bundle-plugin generates the load-bearing OSGi manifest.
+  # A version bump for any of these breaks compilation, the bundle, or the Protégé runtime, so they are
+  # ignored here. GitHub's Dependabot ALERTS still surface CVEs for them (visibility is unaffected); bump
+  # them by hand, with a full build + live-Protégé check, when the runtime they track moves. Only the free
+  # test/build tooling (junit, jacoco, surefire, compiler) is left to Dependabot.
   - package-ecosystem: maven
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    groups:
-      # Keep the jackson-* modules moving together so they stay on one release train (jackson-bom aligned).
-      jackson:
-        patterns:
-          - "com.fasterxml.jackson*"
+    ignore:
+      - dependency-name: "net.sourceforge.owlapi:*"
+      - dependency-name: "com.google.guava:guava"
+      - dependency-name: "org.slf4j:*"
+      - dependency-name: "io.modelcontextprotocol.sdk:*"
+      - dependency-name: "com.fasterxml.jackson*"
+      - dependency-name: "io.projectreactor:*"
+      - dependency-name: "com.networknt:json-schema-validator"
+      - dependency-name: "org.eclipse.jetty*"
+      - dependency-name: "jakarta.servlet:*"
+      - dependency-name: "org.apache.jena:*"
+      - dependency-name: "org.apache.felix:maven-bundle-plugin"
 
-  # Keep the GitHub Actions used by ci.yml / release.yml current (checkout, setup-java, upload-artifact).
+  # GitHub Actions are safe to keep current; group them into a single PR to keep the noise down.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
