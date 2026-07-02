@@ -38,7 +38,7 @@
              release train instead of lagging a couple of minors behind — per Jackson's same-minor
              guidance. -->
         <mcp.version>2.0.0</mcp.version>
-        <jackson.version>2.20.1</jackson.version>
+        <jackson.version>2.22.0</jackson.version>
         <snakeyaml.version>2.4</snakeyaml.version>
         <reactor.version>3.7.0</reactor.version>
         <reactivestreams.version>1.0.4</reactivestreams.version>
