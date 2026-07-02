@@ -99,6 +99,60 @@ class ToolPipelineTest {
                 "SPARQL returns Dog as a subclass of Animal");
     }
 
+    /**
+     * The 0.4.0 safe/testable-authoring leg: over one edited ontology, add a competency question, run the
+     * suite, run a forbidden-pattern invariant, and roll it all up through a QC stage — proving the F3/F4/F5
+     * cores compose across tool boundaries the way a live run_qc_suite would.
+     */
+    @Test
+    void competencyVerifyAndQcGateRoundTrip(@org.junit.jupiter.api.io.TempDir java.io.File dir)
+            throws OWLOntologyCreationException {
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = m.createOntology(IRI.create("http://example.org/pipe-qc"));
+        m.setOntologyDocumentIRI(o, IRI.create(new java.io.File(dir, "pipe.owl").toURI()));
+        OWLClass animal = cls(df, "Animal");
+        OWLClass dog = cls(df, "Dog");
+        declareLabeled(m, df, o, animal, "Animal");
+        declareLabeled(m, df, o, dog, "Dog");
+        m.addAxiom(o, df.getOWLSubClassOfAxiom(dog, animal));
+        org.protege.editor.owl.model.OWLModelManager mm = FakeModelManager.over(o);
+        CqContext ctx = CqContext.of(mm);
+
+        // add → list → run: a CQ that must hold (Dog ⊑ Animal exists).
+        CompetencyQuestion cq = new CompetencyQuestion();
+        cq.id = "has-subclass";
+        cq.query = "SELECT ?s WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#subClassOf> "
+                + "<" + animal.getIRI() + "> }";
+        cq.expected = Expectation.nonEmpty();
+        cq.includeInferred = false;
+        new RobotSparqlDirStore().upsert(ctx, cq);
+        List<CompetencyQuestion> loaded = new RobotSparqlDirStore().load(ctx).ok;
+        assertEquals(1, loaded.size(), "the CQ round-trips through the store");
+
+        SuiteSnapshot snap = SuiteSnapshot.capture(mm, false);
+        Map<String, Object> cqRun = CqRunner.run(snap, loaded, 1000, 30_000, CqRunner.FAIL_ON_ANY);
+        assertEquals("pass", cqRun.get("gate"), "the requirement still holds after the edit");
+
+        // verify_ontology: an invariant that finds nothing → no violation, gate passes.
+        List<Invariants.Invariant> invs = java.util.Collections.singletonList(new Invariants.Invariant(
+                "no-individual", "no individuals allowed", "error",
+                "SELECT ?i WHERE { ?i a owl:NamedIndividual }", false));
+        Map<String, Object> verify = Invariants.run(snap, invs, 1000, 30_000, "error");
+        assertEquals("pass", verify.get("gate"), "no forbidden pattern present");
+
+        // run_qc_suite structural stage + aggregate: labelled, in-hierarchy → pass.
+        QcSuiteTools.StageResult structural = QcSuiteTools.structuralStage(mm);
+        QcSuiteTools.StageResult cqs = QcSuiteTools.cqsStage(snap, loaded, 1000, 30_000);
+        io.modelcontextprotocol.spec.McpSchema.CallToolResult gate = QcSuiteTools.aggregate(
+                java.util.Arrays.asList(structural, cqs), "error");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> gateJson = (Map<String, Object>) gate.structuredContent();
+        assertEquals("pass", gateJson.get("gate"), "a clean, requirement-satisfying edit passes the QC gate");
+
+        assertTrue(new RobotSparqlDirStore().remove(ctx, "has-subclass"), "the CQ removes cleanly");
+    }
+
     private ValidationTools.Finding finding(List<ValidationTools.Finding> findings, String id) {
         return findings.stream().filter(f -> f.id.equals(id)).findFirst()
                 .orElseThrow(() -> new AssertionError("no finding for " + id));

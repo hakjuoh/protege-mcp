@@ -235,7 +235,11 @@ public final class WriteTools {
                         + "strict=true to skip any add that would mint a brand-new entity from an "
                         + "unrecognized IRI/name. Note: because nothing is applied until the batch "
                         + "completes, an operation that references an entity introduced by an EARLIER "
-                        + "operation in the same batch must refer to it by full IRI.",
+                        + "operation in the same batch must refer to it by full IRI. Optionally set "
+                        + "verify=report|rollback to classify the reasoner after applying and detect a "
+                        + "regression (a NEWLY unsatisfiable class or a NEWLY inconsistent ontology): "
+                        + "report keeps the batch and returns the verdict; rollback additionally undoes "
+                        + "the whole batch when a regression is found (default none = no reasoner pass).",
                 applyChangesSchema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
@@ -245,8 +249,17 @@ public final class WriteTools {
                                 + "(each: axiom_type + operands, optional op=add|remove).");
                     }
                     boolean strict = Tools.optBool(a, "strict", false);
-                    return write(ctx, "apply " + operations.size() + " change(s)",
-                            mm -> applyBatch(mm, operations, strict));
+                    String verify = ApplyVerify.normalizeMode(Tools.optString(a, "verify"));
+                    String summary = "apply " + operations.size() + " change(s)"
+                            + (ApplyVerify.MODE_NONE.equals(verify) ? "" : " (verify=" + verify + ")");
+                    if (ApplyVerify.MODE_NONE.equals(verify)) {
+                        return write(ctx, summary, mm -> applyBatch(mm, operations, strict));
+                    }
+                    int timeout = Tools.optInt(a, "timeout_ms", 60_000);
+                    if (timeout <= 0) {
+                        timeout = 60_000;
+                    }
+                    return ApplyVerify.verifiedApply(ctx, operations, strict, verify, timeout, summary);
                 }));
 
         tools.tool("set_label",
@@ -471,12 +484,21 @@ public final class WriteTools {
         return schema;
     }
 
-    /** apply_changes' schema is preview_changes' operations[] plus the optional 'strict' flag. */
+    /**
+     * apply_changes' schema is preview_changes' operations[] plus the optional 'strict' flag and the
+     * 0.4.0 reasoner-verification knobs ('verify' enum + 'timeout_ms').
+     */
     private static Map<String, Object> applyChangesSchema() {
         Map<String, Object> schema = PreviewTools.operationsSchema();
         @SuppressWarnings("unchecked")
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");
         props.put("strict", Tools.boolProperty(STRICT_DESC));
+        props.put("verify", Tools.stringProperty("none (default) | report | rollback. With report or "
+                + "rollback, classify the reasoner after applying and flag a regression (newly "
+                + "unsatisfiable class, or newly inconsistent ontology); rollback undoes the whole batch "
+                + "on a regression. Requires a reasoner selected in Protégé."));
+        props.put("timeout_ms", Tools.intProperty("Max wait in ms for EACH classification the verify "
+                + "pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000."));
         return schema;
     }
 
@@ -489,6 +511,18 @@ public final class WriteTools {
      * entity introduced by an earlier operation in the same batch must refer to it by full IRI.
      */
     private static CallToolResult applyBatch(OWLModelManager mm, List<Map<String, Object>> operations,
+            boolean strict) {
+        return Tools.ok(applyBatchData(mm, operations, strict));
+    }
+
+    /**
+     * The batch-apply core, returning the raw result map ({@code {operations, summary}}) rather than a
+     * wrapped {@link CallToolResult}, so the reasoner-verify path ({@link ApplyVerify}) can apply the
+     * batch inside its own EDT hop and read {@code summary.single_undo} to know whether anything was
+     * committed (and thus whether there is a history entry to undo). See {@link #applyBatch} for the
+     * behaviour contract.
+     */
+    static Map<String, Object> applyBatchData(OWLModelManager mm, List<Map<String, Object>> operations,
             boolean strict) {
         OWLOntology ont = mm.getActiveOntology();
         Set<OWLOntology> closure = ont.getImportsClosure();
@@ -576,7 +610,7 @@ public final class WriteTools {
         summary.put("single_undo", !toApply.isEmpty());
         summary.put("new_entities", Tools.entityList(mm,
                 newEntitiesIntroducedByAxioms(closure, simAdded), Integer.MAX_VALUE));
-        return Tools.json().put("operations", rows).put("summary", summary).result();
+        return Tools.json().put("operations", rows).put("summary", summary).map();
     }
 
     /** Entities in {@code ax} that are not already known now or by earlier net additions in the batch. */

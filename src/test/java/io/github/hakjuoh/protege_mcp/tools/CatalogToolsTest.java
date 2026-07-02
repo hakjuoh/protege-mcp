@@ -59,18 +59,14 @@ class CatalogToolsTest {
         }
     }
 
-    private static File resolveCatalogFile(OWLOntologyManager om, OWLOntology active, String path)
-            throws Throwable {
-        try {
-            return (File) priv("resolveCatalogFile", OWLOntologyManager.class, OWLOntology.class,
-                    String.class).invoke(null, om, active, path);
-        } catch (InvocationTargetException e) {
-            throw e.getCause();
-        }
+    // resolveCatalogFile / toFile moved to the shared SidecarPaths helper (0.4.0); the catalog logic is
+    // unchanged, so these tests now drive it there (catalog file name pinned to match CatalogTools).
+    private static File resolveCatalogFile(OWLOntologyManager om, OWLOntology active, String path) {
+        return SidecarPaths.resolveSidecarFile(om, active, path, "catalog-v001.xml");
     }
 
-    private static File toFile(IRI iri) throws Exception {
-        return (File) priv("toFile", IRI.class).invoke(null, iri);
+    private static File toFile(IRI iri) {
+        return SidecarPaths.toFile(iri);
     }
 
     @SuppressWarnings("unchecked")

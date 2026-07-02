@@ -21,6 +21,28 @@ each section is also published as the body of its
 
 ---
 
+## [0.4.0] - 2026-07-01
+
+**Safe, testable LLM-assisted authoring.** Move the assistant from a "confident editor" to a "safe,
+testable editor" by closing the **propose → ground → verify → confirm** loop and adding a re-runnable
+**requirements (competency-question) suite** — all built by reusing shipping primitives (the single-undo
+transactional apply, the embedded reasoner, Jena ARQ, `OWLEntityFinder`, the catalog sidecar pattern).
+**55 → 61 tools.**
+
+### New tools
+- **`add_competency_question` / `list_competency_questions` / `remove_competency_question` / `run_competency_questions`** — a re-runnable **requirements suite**. A competency question pairs an executable SPARQL query with an expected result — `nonEmpty` (default) / `empty` / `count OP N` / `exactRows` — and `run` re-checks them all against **one shared point-in-time snapshot**, so a curation edit that quietly breaks a requirement is caught like a failing unit test. CQs are stored via a small storage SPI with three conventions: **`robot-sparql-dir`** (default — a `cqs/` folder of `*.rq` files, for ROBOT/CI interop), **`sidecar-manifest`** (a full-fidelity `<basename>-cqs.json`, `version: 1`), and **`ontology-annotations`** (inside the artifact — the fallback when unsaved). Malformed input is isolated, never fatal; caveats (open-world `empty`, truncated results/inferences) are surfaced.
+- **`verify_ontology`** — run project-defined SPARQL **invariants** (like ROBOT `verify`): each `queries[]` item is a SELECT/ASK whose **results are violations**, at the item's `error`/`warn`/`info` severity. Violations are reported as raw SPARQL bindings (never rendered through the UI thread); the `gate` fails at `fail_on`, and a check that cannot run fails **fail-closed**.
+- **`run_qc_suite`** — one aggregate quality-control gate composing `reasoner` + `profile` + `structural` (default), plus opt-in `invariants`, `cqs`, and a reserved `shacl`, over one shared snapshot. Absent backends are **skipped with a reason, never an error**; the gate is the worst *ran* stage versus `fail_on`.
+
+### Improved
+- **`apply_changes` gains `verify=none | report | rollback`** — reasoner-verified apply. The batch is applied as one undoable transaction, the reasoner is classified **off the UI thread**, and a **regression** caused *by this batch* (a newly unsatisfiable class, or a newly inconsistent ontology) is detected. `report` keeps the batch; `rollback` reverts it in one undo. Runs under a server-level write mutex; an intervening GUI edit degrades to `report`.
+- **`search_entities` is now grounding-aware**. Each hit carries `score` and `match_kind` (`exact` | `prefix` | `substring` | `fuzzy`), and the result adds `best_match` and `would_mint` so an assistant can decide whether to reuse a term or mint one.
+
+### Behavior change
+- **`search_entities` results are now RANKED** (by `score`, then display, then IRI), not just alphabetical. Clients that relied on the old order should sort explicitly. Every other tool's `entityList` ordering is unchanged.
+
+Install: download `protege-mcp-0.4.0.jar` below, or use Protégé ▸ File ▸ Check for plugins.
+
 ## [0.3.3] - 2026-06-30
 
 Ontology-**development** hardening: project-governance validation, high-level curation macros, broader

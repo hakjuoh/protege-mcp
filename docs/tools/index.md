@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **55 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **61 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -45,9 +45,11 @@ These hold for every tool:
 
 A safe natural-language editing loop:
 
-**Orient** (`get_ontology_context` / `get_entity_context`) → **resolve** names to IRIs
-(`search_entities` / `get_entity`) → **preview** an edit (`preview_changes`) → **apply** (an edit tool
-or `apply_changes`) → **verify** (`run_reasoner`, `validate_ontology`).
+**Orient** (`get_ontology_context` / `get_entity_context`) → **ground** a name to an IRI, or confirm it
+would mint a new one (`search_entities` — `would_mint` / `best_match`) → **preview** an edit
+(`preview_changes`) → **apply & verify in one call** (`apply_changes` with `verify=rollback` reverts an
+edit that breaks the reasoner) → **gate** with the requirements suite and invariants
+(`run_competency_questions`, `verify_ontology`, or the umbrella `run_qc_suite`).
 
 The [guided prompts](prompts.html) package these flows for one-click use in an MCP client.
 
@@ -60,6 +62,11 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 ### [Context & validation](context-validation.html)
 `get_ontology_context` · `get_entity_context` · `validate_ontology` · `validate_governance` ·
 `diff_ontologies`
+
+### [Safe authoring & QC](quality.html)
+`verify_ontology` · `run_qc_suite` · `add_competency_question` · `list_competency_questions` ·
+`remove_competency_question` · `run_competency_questions` *(plus `apply_changes verify=` and
+`search_entities` grounding — see their category pages)*
 
 ### [Editing — entities & axioms](editing.html)
 `preview_changes` · `apply_changes` · `create_class` · `create_entity` · `create_term` ·

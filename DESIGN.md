@@ -151,12 +151,12 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    is still open. The election logic is factored into package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.3.3`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.4.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
    McpServer.sync(transport)
-            .serverInfo("protege-mcp", "0.3.3")
+            .serverInfo("protege-mcp", "0.4.0")
             .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())  // tools + prompts (both listChanged=false); no resources
             .immediateExecution(true)     // run handlers on the transport (HTTP) thread; the plugin marshals to the EDT itself
             .validateToolInputs(false)
@@ -229,14 +229,16 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (55 tools + 6 prompts)
+## 5. MCP Tool Catalog (61 tools + 6 prompts)
 
-Fifty-five tools — 7 read, 2 context, 18 edit/curation/history/persistence (incl. `preview_changes`,
+Sixty-one tools — 7 read, 2 context, 18 edit/curation/history/persistence (incl. `preview_changes`,
 `apply_changes`, `set_label`, `create_term`, `create_property`, `deprecate_entity`, `move_class`), 6
 ontology-header (incl. `set_prefix`), 5 document (incl. `set_active_ontology`, `create_ontology`,
 `write_catalog`), 3 rule (`list_rules`/`add_rule`/`remove_rule`), 8 reasoner, 3 SPARQL
-(`sparql_query`/`sparql_schema`/`sparql_validate`), and 3 validation (incl. `diff_ontologies`,
-`validate_governance`) — each defined by a `name`, a `description`, and a
+(`sparql_query`/`sparql_schema`/`sparql_validate`), 3 validation (incl. `diff_ontologies`,
+`validate_governance`), and — new in `0.4.0` — 6 safe/testable-authoring tools (`add_competency_question`
+/ `list_competency_questions` / `remove_competency_question` / `run_competency_questions`,
+`verify_ontology`, `run_qc_suite`) — each defined by a `name`, a `description`, and a
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
 **Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
 serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results
@@ -289,13 +291,65 @@ unless `dry_run`) with the ontology prefixes auto-prepended, reporting whether `
 typos). Both reuse the `sparql_query` snapshot/prefix machinery so they describe and validate exactly what would
 run; the `author_sparql_query` prompt chains them (discover → draft → validate → run → iterate).
 
+New in `0.4.0` (*safe, testable LLM-assisted authoring* — closing the **propose → ground → verify →
+confirm** loop), all built by reusing shipping primitives (the single-undo transactional apply, the
+embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern):
+
+- **`apply_changes` gains `verify=none|report|rollback`** (F1). With `report` or `rollback` the batch is
+  applied as one undoable transaction, then the reasoner is classified off the EDT and the result is
+  checked for a **regression** — a class that became unsatisfiable, or an ontology that became
+  inconsistent, *because of this batch* (`postUnsat \ preUnsat`, or newly-inconsistent). `report` keeps the
+  batch and returns the verdict; `rollback` additionally reverts the whole batch in one `undo` when a
+  regression is attributable. The whole pre-read → apply → classify → post-read → undo sequence runs under
+  a **server-level write mutex** (MCP handlers are multi-threaded; `OntologyAccess.compute` serialises each
+  *individual* EDT hop but holds no lock across a sequence), and — because an interactive GUI edit cannot
+  take the mutex — an intervening change between apply and re-classification (detected via
+  `HistoryManager.getLoggedChanges().size()`) degrades to `report` semantics rather than blind-undoing. The
+  post-apply unsatisfiable read uses the manager's current reasoner *after* a completed classification (the
+  status-gated verdict stubs out while `OUT_OF_SYNC`). Warm reasoner = 1 classification, cold = 2.
+- **`search_entities` is grounding-aware** (F2, additive fields only). Each hit carries a `score` and a
+  `match_kind` (exact | prefix | substring | fuzzy — the exact tier considers every `rdfs:label` language
+  variant and the IRI local name, case/whitespace/diacritic-folded), and the result adds `best_match` (the
+  IRI the query grounds to, or null) and `would_mint` (true when a single-term query grounds to nothing, so
+  using it as a `create_*` name would introduce a NEW entity). Ranking is a **separate** builder (it does
+  not touch the shared `entityList` shape) with an IRI-string final tiebreak so the finder's `Set` order
+  can't leak; `would_mint` keys on the real resolution (`EntityResolver.findEntity` + exact label/local
+  name), not the substring finder, and carves out full-IRI / Manchester / multi-word inputs.
+- **A re-runnable competency-question suite** (F3): `add_competency_question` / `list_competency_questions`
+  / `remove_competency_question` / `run_competency_questions`. A CQ pairs an executable SPARQL query with an
+  `Expectation` (the pass condition — `nonEmpty` (default) | `empty` | `count OP N` | `exactRows`); `run`
+  re-checks them all against one shared point-in-time snapshot, so an edit that quietly breaks a requirement
+  is caught like a failing unit test. CQs are stored via a small **in-package storage SPI** (`CqStore`, not
+  a `ServiceLoader` — the same OSGi/TCCL fragility that makes SPARQL reject SERVICE) with three conventions:
+  `robot-sparql-dir` (the default writer — a `cqs/` folder of `*.rq` files with header-comment metadata,
+  for ROBOT/CI interop), `sidecar-manifest` (a full-fidelity `<basename>-cqs.json` with a `version:1`
+  contract, unknown-key preserving, atomic temp→rename), and `ontology-annotations` (CQs stored inside the
+  artifact, the fallback when the ontology is unsaved). `list` detects the convention(s), `add`/`remove`
+  operate in a chosen one (explicit `convention` wins > single detected > default), and `run` is
+  convention-agnostic. Malformed input is isolated (a bad `.rq`/manifest entry is skipped-with-reason, never
+  fatal); file/annotation writes go through `checkWriteAllowed`; ids are sanitised so a `.rq` filename can
+  never traverse.
+- **`verify_ontology`** (F4): run project-defined SPARQL **invariants** (ROBOT `verify` — patterns that must
+  never appear; a returned row / ASK true is a *violation*, the inverse of a CQ) over the shared off-EDT
+  snapshot, with a `fail_on` severity gate. Invariants must be `SELECT`/`ASK` (a graph-producing
+  `CONSTRUCT`/`DESCRIBE` is not a detector and is rejected); a check that **cannot run** — a query error, or
+  an `include_inferred` invariant with no classified reasoner — fails **fail-closed** rather than silently
+  degrading to the asserted triples and reporting a false pass. Violation rows are reported in the
+  `nodeJson` binding shape `sparql_query` already produces — **never** rendered through the EDT-only
+  `mm.getRendering`.
+- **`run_qc_suite`** (F5): one umbrella gate composing the shipping plain-data cores — `reasoner`,
+  `profile`, `structural` (the `validate_ontology` checks), `invariants`, `cqs`, `shacl` (reserved) — over
+  one shared snapshot, collapsed to a single verdict. A stage whose backing data is absent (no classified
+  reasoner, no invariants, no CQs, no SHACL) is **skipped with a reason, never an error**; the gate is the
+  worst *ran* stage versus `fail_on`.
+
 | Tool | Mapping / notes |
 |---|---|
 | `list_ontologies` | `OWLModelManager.getOntologies()` / `getActiveOntologies()` + `getActiveOntology()`; marks the active one |
 | `get_active_ontology` | `getActiveOntology().getOntologyID()`, axiom/logical-axiom counts, imports. ⚠️ `isActiveOntologyMutable()` is **always true**, so write protection is a plugin-side setting |
 | `summarize_ontology` | signature, annotation/import, and axiom-type counts over the active ontology, optionally including imports |
 | `list_classes` | `getActiveOntology().getClassesInSignature()` + `OWLModelManager.getRendering(obj)` |
-| `search_entities` | `getOWLEntityFinder().getMatchingOWLClasses(...)` and property/individual/datatype variants. A plain fragment is wrapped `*frag*` (the finder otherwise misses substrings); a blank/wildcard-only query falls back to `getActiveOntology().get…InSignature()` (the finder returns nothing for a bare `*`) |
+| `search_entities` | `getOWLEntityFinder().getMatchingOWLClasses(...)` and property/individual/datatype variants. A plain fragment is wrapped `*frag*` (the finder otherwise misses substrings); a blank/wildcard-only query falls back to `getActiveOntology().get…InSignature()` (the finder returns nothing for a bare `*`). `0.4.0`: a separate ranked builder (`EntitySearch`) adds `score`/`match_kind` per hit and top-level `would_mint`/`best_match` (grounding-aware; keyed on `EntityResolver.findEntity` + label/local-name, not the substring finder) |
 | `get_entity` | `OWLEntityFinder.getEntities(IRI)` / `getOWLEntity(...)`; returns type(s), IRI, rendering |
 | `get_axioms_for_entity` | `getReferencingAxioms(entity)` over the active ontology, or the whole `getImportsClosure()` when `include_imports=true` (reads imported terms' domain/range/restrictions) + rendering |
 | `create_class` | `getOWLEntityFactory().createOWLClass(short, baseIRI)` → `OWLEntityCreationSet` → `applyChanges(set.getOntologyChanges())` |
@@ -324,6 +378,10 @@ run; the `author_sparql_query` prompt chains them (discover → draft → valida
 | `explain_entailment` | `reasoner.isEntailed(axiom)` for a structured axiom |
 | `get_explanations` | `com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator.getExplanations(axiom, max)` — minimal justifications, using the selected reasoner's factory; for an axiom type the generator can't convert, falls back to an `isEntailed` check plus the related asserted axioms as structural context (capped) |
 | `diff_ontologies` | pure set difference over `getAxioms()` / `getLogicalAxioms()` (optionally imports closures) of two loaded ontologies, or the active ontology vs. a document loaded into a throwaway manager; `identical=true` ⇔ both sides empty (a faithful round-trip) |
+| `add_competency_question` / `list_competency_questions` / `remove_competency_question` (`0.4.0`) | upsert / detect+union / remove CQs across the `CqStore` conventions (`robot-sparql-dir` `*.rq`, `sidecar-manifest` JSON, `ontology-annotations`); writes gated by `checkWriteAllowed`, ids sanitised, malformed entries skipped-with-reason |
+| `run_competency_questions` (`0.4.0`) | load the matching CQs, build ONE `SuiteSnapshot` (asserted + at most one inferred materialisation), then judge each query off the EDT via `SparqlTools.execute` against its `Expectation` (`nonEmpty`/`empty`/`count`/`exactRows`); per-CQ pass + overall `{passed, failed, gate}`, open-world / truncation caveats surfaced |
+| `verify_ontology` (`0.4.0`) | run project SPARQL invariants over the shared off-EDT snapshot — a returned row / ASK true is a violation at the item's severity; violations reported as `nodeJson` bindings (no EDT render); `fail_on` gate |
+| `run_qc_suite` (`0.4.0`) | compose the shipping cores (`reasonerVerdict`, `GovernanceTools.profileCheck`, `ValidationTools.analyze`, `Invariants.run`, `CqRunner.run`) over one snapshot; each stage `{ran, verdict, findings_summary}`, absent backends skipped-with-reason, overall `gate` = worst ran stage vs `fail_on` |
 
 - **Ontology edits go through `OWLModelManager.applyChange` (singular, the majority) and `applyChanges`
   (plural, for `create_class` / `create_entity` / `rename_entity` / `delete_entity` / document merge).** Both
@@ -421,7 +479,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.3.3`**.
+  `artifactId protege-mcp`, version **`0.4.0`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing

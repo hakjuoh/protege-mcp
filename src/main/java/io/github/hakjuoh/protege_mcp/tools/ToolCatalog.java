@@ -32,7 +32,10 @@ public final class ToolCatalog {
             SparqlTools::register,
             SparqlAuthoringTools::register,
             ValidationTools::register,
-            GovernanceTools::register);
+            GovernanceTools::register,
+            CompetencyQuestionTools::register,
+            VerifyOntologyTools::register,
+            QcSuiteTools::register);
 
     public static List<SyncToolSpecification> buildAll(ToolContext ctx) {
         ToolRegistry registry = new ToolRegistry();

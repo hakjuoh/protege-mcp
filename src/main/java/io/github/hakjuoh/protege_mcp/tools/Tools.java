@@ -149,6 +149,11 @@ public final class Tools {
         return ToolSchemas.boolProperty(desc);
     }
 
+    /** A bare {@code {type:integer, description}} property map (for hand-assembled schemas). */
+    public static Map<String, Object> intProperty(String desc) {
+        return ToolSchemas.integerProperty(desc);
+    }
+
     /** Builds a JSON-schema {@code object} as a plain {@code Map} (no Jackson needed). */
     public static final class SchemaBuilder {
         private final Map<String, Object> properties = new LinkedHashMap<>();

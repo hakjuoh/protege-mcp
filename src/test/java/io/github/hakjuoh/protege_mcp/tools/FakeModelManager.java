@@ -94,6 +94,17 @@ final class FakeModelManager {
                     return finder;
                 case "getRendering":
                     return render(args[0]);
+                case "applyChange":
+                    // Route straight to the backing OWL API manager (no HistoryManager/undo in the
+                    // fake) so store cores that mutate the ontology (e.g. CQ annotations) are testable.
+                    ontology.getOWLOntologyManager()
+                            .applyChange((org.semanticweb.owlapi.model.OWLOntologyChange) args[0]);
+                    return null;
+                case "applyChanges":
+                    ontology.getOWLOntologyManager().applyChanges(
+                            (java.util.List<? extends org.semanticweb.owlapi.model.OWLOntologyChange>)
+                                    args[0]);
+                    return null;
                 case "toString":
                     return "FakeModelManager[" + ontology.getOntologyID() + "]";
                 case "hashCode":

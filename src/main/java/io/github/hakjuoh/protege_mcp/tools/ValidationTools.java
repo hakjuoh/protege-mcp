@@ -126,8 +126,11 @@ public final class ValidationTools {
      * current, consistency, and (when consistent) the unsatisfiable named classes. Uses the
      * already-selected/classified reasoner — it does not run a classification itself (run_reasoner
      * does), so when results are stale/absent it says so rather than blocking.
+     *
+     * <p>Package-private (0.4.0): {@code run_qc_suite}'s reasoner stage composes this so a suite over an
+     * unclassified ontology degrades to {@code ran:false} instead of throwing.
      */
-    private static Map<String, Object> reasonerVerdict(OWLModelManager mm, int limit) {
+    static Map<String, Object> reasonerVerdict(OWLModelManager mm, int limit) {
         OWLReasonerManager rm = mm.getOWLReasonerManager();
         ReasonerStatus status = rm.getReasonerStatus();
         Map<String, Object> m = new LinkedHashMap<>();
