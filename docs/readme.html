@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>55 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, and SPARQL - every model
+    <li><b>61 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, and SPARQL - every model
         edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
         the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>Loopback-only HTTP with <b>OAuth 2.1</b> (dynamic registration + browser consent, persisted
@@ -46,6 +46,31 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.4.0</h4>
+<ul>
+    <li>Safe, testable LLM-assisted authoring (55 &#8594; 61 tools): close the <b>propose &#8594; ground
+        &#8594; verify &#8594; confirm</b> loop and add a re-runnable requirements suite &#8212; all built by
+        reusing shipping primitives (single-undo apply, the embedded reasoner, Jena ARQ,
+        <code>OWLEntityFinder</code>, the catalog sidecar pattern).</li>
+    <li><code>apply_changes</code> gains <code>verify=report|rollback</code>: classify the reasoner after
+        applying and detect a <b>regression</b> caused by the batch (a newly unsatisfiable class, or a newly
+        inconsistent ontology); <code>rollback</code> reverts the whole batch in one undo. Runs under a
+        server-level write mutex; an intervening GUI edit degrades to <code>report</code>.</li>
+    <li><code>search_entities</code> is now <b>grounding-aware</b>: each hit carries a <code>score</code> and
+        <code>match_kind</code> (exact / prefix / substring / fuzzy), and the result adds
+        <code>best_match</code> and <code>would_mint</code> so an assistant grounds a term before minting a
+        new one. Results are now ranked (a behaviour change from the old alphabetical order).</li>
+    <li>A re-runnable <b>competency-question suite</b> (<code>add_competency_question</code> /
+        <code>list_competency_questions</code> / <code>remove_competency_question</code> /
+        <code>run_competency_questions</code>): pair a SPARQL query with an expected result and re-check them
+        all against one shared snapshot, across three storage conventions (a ROBOT-style <code>cqs/</code>
+        <code>*.rq</code> folder, a full-fidelity JSON manifest, or ontology annotations).</li>
+    <li><code>verify_ontology</code>: run project SPARQL <b>invariants</b> (forbidden patterns) with a
+        <code>fail_on</code> severity gate. <code>run_qc_suite</code>: one umbrella gate composing reasoner +
+        profile + structural + invariants + competency-question checks over one snapshot; absent backends are
+        skipped with a reason, never an error.</li>
+</ul>
 
 <h4>v0.3.3</h4>
 <ul>
