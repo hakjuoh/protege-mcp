@@ -9,6 +9,7 @@ import io.github.hakjuoh.protege_mcp.oauth.OAuthServlet;
 import io.github.hakjuoh.protege_mcp.oauth.OAuthStore;
 import io.github.hakjuoh.protege_mcp.tools.ToolCatalog;
 import io.github.hakjuoh.protege_mcp.tools.ToolContext;
+import io.github.hakjuoh.protege_mcp.tools.WriteConfirmer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,7 +22,7 @@ import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
  *
  * <p>Read/write helpers ({@link #isReadOnly()}, {@link #isConfirmWrites()}) read live from the
  * preferences so toggling them takes effect without a restart; the bearer token is held in memory
- * and exposed to the {@link BearerTokenFilter} via a supplier so it can be regenerated live.
+ * and exposed to the {@link AccessTokenFilter} via a supplier so it can be regenerated live.
  * {@link #start()}/{@link #stop()} touch no Swing state and must be invoked off the EDT by callers.
  */
 public final class McpServerController implements ManagedServer {
@@ -29,6 +30,7 @@ public final class McpServerController implements ManagedServer {
     private static final Logger log = LoggerFactory.getLogger(McpServerController.class);
 
     private final OntologyAccess access;
+    private final WriteConfirmer confirmer;
 
     private volatile String token;
     private volatile boolean running;
@@ -41,7 +43,17 @@ public final class McpServerController implements ManagedServer {
     private volatile OAuthStore oauthStore;
 
     public McpServerController(OntologyAccess access) {
+        this(access, null);
+    }
+
+    /**
+     * @param confirmer the write-confirmation gate injected into the {@link ToolContext} (the Swing
+     *     dialog at runtime), or {@code null} when none is wired (writes then fail closed if the
+     *     confirm-writes preference is on).
+     */
+    public McpServerController(OntologyAccess access, WriteConfirmer confirmer) {
         this.access = access;
+        this.confirmer = confirmer;
         this.token = McpConfig.load().getToken();
     }
 
@@ -66,7 +78,7 @@ public final class McpServerController implements ManagedServer {
             this.token = config.getToken();
             this.configuredPort = config.getPort();
 
-            ToolContext context = new ToolContext(access, this);
+            ToolContext context = new ToolContext(access, this, confirmer);
             List<SyncToolSpecification> tools = ToolCatalog.buildAll(context);
 
             serverManager = new McpServerManager();

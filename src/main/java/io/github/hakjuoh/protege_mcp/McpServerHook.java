@@ -7,6 +7,7 @@ import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.McpServerRegistry;
 import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
+import io.github.hakjuoh.protege_mcp.ui.SwingWriteConfirmer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,7 +29,9 @@ public class McpServerHook extends EditorKitHook {
     public void initialise() throws Exception {
         OWLEditorKit editorKit = (OWLEditorKit) getEditorKit();
         OntologyAccess access = new OntologyAccess(editorKit);
-        controller = new McpServerController(access);
+        // Inject the Swing write-confirmation dialog from here (the composition root) so the tools and
+        // server layers stay free of Swing/AWT.
+        controller = new McpServerController(access, new SwingWriteConfirmer());
         McpServerRegistry.register(editorKit, controller);
 
         if (McpConfig.load().isAutoStart()) {

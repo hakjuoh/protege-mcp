@@ -62,8 +62,8 @@ jobs:
           echo "version=${project_version}" >> "$GITHUB_OUTPUT"
           echo "asset=${asset}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and test
-        run: mvn -B clean package
+      - name: Build, test, and enforce coverage
+        run: mvn -B clean verify
 
       - name: Build release notes from CHANGELOG.md
         id: notes

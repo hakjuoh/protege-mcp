@@ -59,7 +59,8 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
  * {@code applyChange(s)} / {@code getOntologies()} / {@code save()} on the manager, which the shared
  * {@link FakeModelManager} does not implement — so this test carries a small {@link #mutatingManager}
  * proxy that delegates those to a real in-memory {@link OWLOntologyManager} while mirroring the rest.
- * The GUI/entity-factory paths ({@code confirmOnEdt}, {@code createViaFactory}) stay out of scope.
+ * The GUI/entity-factory paths (the injected {@code WriteConfirmer} dialog, {@code createViaFactory})
+ * stay out of scope.
  */
 class WriteToolsTest {
 
@@ -330,8 +331,8 @@ class WriteToolsTest {
     void renderMintedEmptySetIsEmptyString() throws Throwable {
         OWLOntology o = emptyOntology();
         OWLModelManager mm = mutatingManager(o);
-        String s = (String) invoke(priv("renderMinted", OWLModelManager.class, Set.class),
-                mm, Collections.emptySet());
+        // renderMinted moved to the shared EntityRendering helper (deduped across write/curation tools).
+        String s = EntityRendering.renderMinted(mm, Collections.emptySet());
         assertEquals("", s, "no entities → empty rendering");
     }
 
@@ -341,7 +342,7 @@ class WriteToolsTest {
         OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
         OWLModelManager mm = mutatingManager(o);
         Set<OWLEntity> one = Collections.singleton(cls(df, "Dog"));
-        String s = (String) invoke(priv("renderMinted", OWLModelManager.class, Set.class), mm, one);
+        String s = EntityRendering.renderMinted(mm, one);
         assertEquals("Dog <" + NS + "Dog>", s, "single entity: 'name <iri>'");
     }
 
@@ -353,7 +354,7 @@ class WriteToolsTest {
         Set<OWLEntity> two = new LinkedHashSet<>();
         two.add(cls(df, "Dog"));
         two.add(cls(df, "Cat"));
-        String s = (String) invoke(priv("renderMinted", OWLModelManager.class, Set.class), mm, two);
+        String s = EntityRendering.renderMinted(mm, two);
         assertEquals("Dog <" + NS + "Dog>, Cat <" + NS + "Cat>", s, "comma-space separated list");
     }
 

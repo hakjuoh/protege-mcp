@@ -1,8 +1,10 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
@@ -41,6 +43,24 @@ class ToolContextTest {
         ToolContext ctx = new ToolContext(newAccess(), controller);
         assertSame(controller, ctx.controller(),
                 "controller() must return the exact reference given to the constructor");
+    }
+
+    @Test
+    void confirmerDefaultsToNullOnTheTwoArgConstructor() {
+        ToolContext ctx = new ToolContext(newAccess(), null);
+        assertNull(ctx.confirmer(),
+                "the two-arg constructor must leave the confirmer null (headless: writes fail closed)");
+    }
+
+    @Test
+    void confirmerReturnsTheInjectedInstance() {
+        WriteConfirmer allow = summary -> true;
+        ToolContext ctx = new ToolContext(newAccess(), null, allow);
+        assertSame(allow, ctx.confirmer(), "confirmer() must return the exact injected instance");
+        assertTrue(ctx.confirmer().confirm("anything"));
+
+        WriteConfirmer deny = summary -> false;
+        assertFalse(new ToolContext(newAccess(), null, deny).confirmer().confirm("anything"));
     }
 
     @Test

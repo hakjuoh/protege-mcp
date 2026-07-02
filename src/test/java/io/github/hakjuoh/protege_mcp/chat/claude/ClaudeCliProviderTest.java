@@ -23,15 +23,20 @@ class ClaudeCliProviderTest {
 
     private static final McpEndpoint ENDPOINT = new McpEndpoint("http://127.0.0.1:8123/mcp", "TOK123");
 
+    /** A stand-in for the owner-only MCP-config file path startTurn writes; passed by path, not inline. */
+    private static final String CONFIG_PATH = "/tmp/protege-mcp-abc123.json";
+
     @Test
     void buildsStreamingArgvWithMcpAndSessionResume() {
         List<String> cmd = ClaudeCliProvider.buildCommand("claude",
-                new ChatRequest("opus", "hello world", "sess-9", ENDPOINT));
+                new ChatRequest("opus", "hello world", "sess-9", ENDPOINT), CONFIG_PATH);
 
         assertEquals("claude", cmd.get(0));
         assertTrue(cmd.contains("-p"));
         assertAdjacent(cmd, "--output-format", "stream-json");
         assertTrue(cmd.contains("--strict-mcp-config"));
+        // --mcp-config carries the FILE PATH, never the token JSON.
+        assertAdjacent(cmd, "--mcp-config", CONFIG_PATH);
         assertAdjacent(cmd, "--allowedTools", "mcp__protege");
         assertAdjacent(cmd, "--model", "opus");
         assertAdjacent(cmd, "--resume", "sess-9");
@@ -41,9 +46,19 @@ class ClaudeCliProviderTest {
     }
 
     @Test
+    void bearerTokenNeverAppearsOnTheCommandLine() {
+        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+                new ChatRequest("opus", "hello", "sess-9", ENDPOINT), CONFIG_PATH);
+        // The token is written to the 0600 config file, so it must not leak onto any argv element
+        // (where `ps` / other local users could read it). Guards the security fix.
+        assertTrue(cmd.stream().noneMatch(arg -> arg.contains("TOK123")),
+                "bearer token must not appear on the command line: " + cmd);
+    }
+
+    @Test
     void omitsModelAndResumeWhenBlank() {
         List<String> cmd = ClaudeCliProvider.buildCommand("claude",
-                new ChatRequest("", "hi", null, ENDPOINT));
+                new ChatRequest("", "hi", null, ENDPOINT), CONFIG_PATH);
         assertFalse(cmd.contains("--model"));
         assertFalse(cmd.contains("--resume"));
     }
@@ -54,7 +69,7 @@ class ClaudeCliProviderTest {
         ChatRequest req = new ChatRequest("", "look at [Image #1]", null, ENDPOINT,
                 List.of(ChatAttachment.image("Image #1", image.toFile(), "image/png")));
 
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req);
+        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req, CONFIG_PATH);
 
         assertAdjacent(cmd, "--add-dir", dir.toFile().getAbsolutePath());
         assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));
@@ -66,7 +81,7 @@ class ClaudeCliProviderTest {
         ChatRequest req = new ChatRequest("", "see [File #1: notes.txt]", null, ENDPOINT,
                 List.of(ChatAttachment.file("File #1: notes.txt", doc.toFile(), null)));
 
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req);
+        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req, CONFIG_PATH);
 
         assertAdjacent(cmd, "--add-dir", dir.toFile().getAbsolutePath());
         assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));

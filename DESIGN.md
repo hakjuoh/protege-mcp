@@ -498,8 +498,10 @@ provides none of it).
   inlined transitive surface does not block OSGi resolution.
 
 **Embedded versions:** MCP SDK `mcp-core` + `mcp-json-jackson2` 2.0.0 (the convenience `mcp` artifact is
-avoided because it pulls Jackson 3); **Jackson 2.20.1** (annotations 2.20); `reactor-core` 3.7.0; networknt
-`json-schema-validator` 2.0.0 (pulls `jackson-dataformat-yaml` + `snakeyaml` 2.3 + `itu` transitively);
+avoided because it pulls Jackson 3); **Jackson 2.20.1** — every `jackson-*` module is aligned to one release
+train by importing **`jackson-bom`** in `<dependencyManagement>` (annotations 2.20), so the transitive
+`jackson-dataformat-yaml` tracks it (2.20.1) instead of lagging; `reactor-core` 3.7.0; networknt
+`json-schema-validator` 2.0.0 (pulls `jackson-dataformat-yaml` 2.20.1 + `snakeyaml` 2.4 + `itu` transitively);
 `jetty-ee10-servlet` 12.0.18; `jakarta.servlet-api` 6.1.0.
 
 **Jackson skew — resolved by embedding.** The platform inlines Jackson **2.9.8** into `protege-editor-owl`
@@ -669,11 +671,15 @@ keychain/OAuth):
 ```
 claude -p --output-format stream-json --include-partial-messages --verbose \
   --strict-mcp-config \
-  --mcp-config '{"mcpServers":{"protege":{"type":"http","url":"<endpointUrl>","headers":{"Authorization":"Bearer <token>"}}}}' \
+  --mcp-config <path-to-owner-only-config-file> \
   --allowedTools mcp__protege  [--add-dir <attachment-dir>...]  [--model <alias>]  [--resume <session-id>]  -- "<prompt>"
 ```
 `--strict-mcp-config` means the run sees *exactly* Protégé's server; `--allowedTools mcp__protege` pre-approves
 the whole server so the non-interactive run never blocks on a permission prompt (server-side gates still apply).
+The `--mcp-config` value is the **path** to a `0600` temp file holding the
+`{"mcpServers":{"protege":{"type":"http","url":"<endpointUrl>","headers":{"Authorization":"Bearer <token>"}}}}`
+JSON — written per turn and deleted when the process exits — so the bearer token is **not** placed on the argv
+(where `ps` could read it); Codex passes its token by env var for the same reason.
 
 **Codex** (reuses `codex login`; the bearer token travels via env var, never argv):
 ```
@@ -734,8 +740,9 @@ Send, render usage) only **after** the queue empties, so the transcript tail is 
   scratch dir and only that dir is exposed (Claude `--add-dir`) or the copy passed (Codex `--image`), so the
   provider never receives the user's surrounding folder. Files over a size cap are refused; scratch dirs are
   deleted when the turn ends and on New Chat / view close.
-- **The MCP bearer token never lands on a command line.** Claude receives it inside the `--mcp-config` JSON;
-  Codex receives only the env-var *name* on argv and the value via the `PROTEGE_MCP_TOKEN` environment variable.
+- **The MCP bearer token never lands on a command line.** Claude receives it via a `0600` `--mcp-config`
+  **file** (passed by path, deleted when the turn ends); Codex receives only the env-var *name* on argv and the
+  value via the `PROTEGE_MCP_TOKEN` environment variable. Neither exposes the token to `ps` / other local users.
 - **Gates inherited, not re-implemented.** Edits go through the MCP server → `WriteTools` gates, so the read-only
   switch and the confirm-each-write modal apply unchanged and the chat **cannot** escalate past them. The panel's
   "Confirm each edit" checkbox toggles the server's `confirmWrites` live.

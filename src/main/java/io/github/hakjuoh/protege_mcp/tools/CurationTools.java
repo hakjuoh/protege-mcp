@@ -442,23 +442,15 @@ public final class CurationTools {
         minted.remove(created);
         if (strict && !minted.isEmpty()) {
             return Tools.error("Refusing to apply (strict): the operand(s) "
-                    + renderMinted(mm, minted) + " are not declared anywhere in the imports closure and "
-                    + "would be created as new, empty entities — likely a typo. Fix the reference, create "
-                    + "it first, or set strict=false.");
+                    + EntityRendering.renderMinted(mm, minted) + " are not declared anywhere in the "
+                    + "imports closure and would be created as new, empty entities — likely a typo. Fix "
+                    + "the reference, create it first, or set strict=false.");
         }
         mm.applyChanges(changes);
         if (!minted.isEmpty()) {
             result.put("new_entities", Tools.entityList(mm, minted, Integer.MAX_VALUE));
         }
         return result.put("applied", changes.size()).result();
-    }
-
-    private static String renderMinted(OWLModelManager mm, Set<OWLEntity> minted) {
-        List<String> parts = new ArrayList<>();
-        for (OWLEntity e : minted) {
-            parts.add(mm.getRendering(e) + " <" + e.getIRI() + ">");
-        }
-        return String.join(", ", parts);
     }
 
     /** Resolve the class expressions named by {@code key} (and an optional singular {@code singularKey}). */

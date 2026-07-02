@@ -22,11 +22,17 @@ public final class ToolContext {
 
     private final OntologyAccess access;
     private final McpServerController controller;
+    private final WriteConfirmer confirmer;
     private final ReentrantLock writeLock = new ReentrantLock();
 
     public ToolContext(OntologyAccess access, McpServerController controller) {
+        this(access, controller, null);
+    }
+
+    public ToolContext(OntologyAccess access, McpServerController controller, WriteConfirmer confirmer) {
         this.access = access;
         this.controller = controller;
+        this.confirmer = confirmer;
     }
 
     public OntologyAccess access() {
@@ -35,6 +41,14 @@ public final class ToolContext {
 
     public McpServerController controller() {
         return controller;
+    }
+
+    /**
+     * The injected write-confirmation gate (the Swing dialog at runtime), or {@code null} when none is
+     * wired — e.g. in headless tests. With confirmation enabled and no confirmer, writes fail closed.
+     */
+    public WriteConfirmer confirmer() {
+        return confirmer;
     }
 
     /** The server-level write mutex (see the class doc). */
