@@ -50,7 +50,7 @@
         <jakarta.servlet.version>6.1.0</jakarta.servlet.version>
 
         <!-- embedded SPARQL engine (Apache Jena ARQ) for the sparql_query tool -->
-        <jena.version>4.10.0</jena.version>
+        <jena.version>6.1.0</jena.version>
     </properties>
 
     <dependencyManagement>
