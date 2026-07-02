@@ -72,7 +72,7 @@ public final class CatalogTools {
         OWLOntology active = mm.getActiveOntology();
         OWLOntologyManager om = mm.getOWLOntologyManager();
 
-        File catalogFile = resolveCatalogFile(om, active, path);
+        File catalogFile = SidecarPaths.resolveSidecarFile(om, active, path, CATALOG_NAME);
         File folder = catalogFile.getParentFile();
         if (folder == null) {
             return Tools.error("Cannot determine a catalog folder from path '" + path + "'.");
@@ -110,7 +110,7 @@ public final class CatalogTools {
                 continue;
             }
             IRI docIri = om.getOntologyDocumentIRI(imported);
-            File docFile = toFile(docIri);
+            File docFile = SidecarPaths.toFile(docIri);
             if (docFile == null || !docFile.isFile()) {
                 skipped.add(skip(declIri, "no local file document (document IRI: " + docIri + ")"));
                 continue;
@@ -157,42 +157,5 @@ public final class CatalogTools {
         s.put("import", importIri);
         s.put("reason", reason);
         return s;
-    }
-
-    /** Resolve the catalog file: an explicit folder/file path, else next to the active document. */
-    private static File resolveCatalogFile(OWLOntologyManager om, OWLOntology active, String path) {
-        if (path != null) {
-            File f = new File(path).getAbsoluteFile();
-            if (f.isDirectory() || path.endsWith("/") || path.endsWith(File.separator)) {
-                return new File(f, CATALOG_NAME);
-            }
-            // A path naming the catalog file itself, or a file in the target folder.
-            if (f.getName().equalsIgnoreCase(CATALOG_NAME)) {
-                return f;
-            }
-            return new File(f, CATALOG_NAME);
-        }
-        File docFile = toFile(om.getOntologyDocumentIRI(active));
-        if (docFile == null) {
-            throw new ToolArgException("The active ontology has no saved file document, so there is no "
-                    + "folder to write the catalog in. Save it first (save_ontology) or pass 'path'.");
-        }
-        File folder = docFile.getParentFile();
-        return new File(folder, CATALOG_NAME);
-    }
-
-    private static File toFile(IRI iri) {
-        if (iri == null) {
-            return null;
-        }
-        try {
-            URI uri = iri.toURI();
-            if ("file".equalsIgnoreCase(uri.getScheme())) {
-                return new File(uri);
-            }
-        } catch (RuntimeException ignored) {
-            // not a file URI
-        }
-        return null;
     }
 }

@@ -128,6 +128,13 @@ A capped, display-sorted entity list:
 
 Searches entities by name or IRI fragment across the loaded ontologies. Filter by `type` (`class`, `object_property`, `data_property`, `annotation_property`, `individual`, `datatype`, or `all`). A plain fragment matches as a substring and `*` acts as a wildcard; an empty or wildcard-only `query` lists the active ontology's whole signature (narrowed to `type`). This is the general-purpose lookup when you know part of a name but not its exact rendering or IRI.
 
+**Grounding-aware (0.4.0).** Results are **ranked**: each hit carries a `score` and a `match_kind`
+(`exact` \| `prefix` \| `substring` \| `fuzzy` — the *exact* tier considers every `rdfs:label` language
+variant and the IRI local name, case/whitespace/diacritic-folded). Two top-level fields help decide
+whether to reuse a term or mint a new one: `best_match` is the IRI the query grounds to (or `null`), and
+`would_mint` is true when a **single-term** query grounds to nothing — so using it as a `create_*` name
+would introduce a NEW entity. A full-IRI, Manchester-expression, or multi-word query is never flagged.
+
 *Read-only.*
 
 **Arguments**
@@ -140,11 +147,14 @@ Searches entities by name or IRI fragment across the loaded ontologies. Filter b
 
 **Returns**
 
-A capped, display-sorted entity list plus the echoed query:
+A capped, **ranked** entity list (by `score`, then display, then IRI — a stable tiebreak) plus the grounding
+fields and echoed query:
 
 - `count`: integer — full number of matches.
-- `items`: array — each entry `{iri, display, type}`.
+- `items`: array — each entry `{iri, display, type, score, match_kind}`.
 - `truncated`: integer — present only when the list was capped; how many matches were omitted.
+- `would_mint`: boolean — true when a single-term query resolves to no existing entity.
+- `best_match`: string or null — the IRI the query grounds to.
 - `query`: string — the query as submitted.
 - `type`: string — the effective type filter (`"all"` when none was given).
 

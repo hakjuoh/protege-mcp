@@ -105,7 +105,12 @@ public final class ReadTools {
                         + "class, object_property, data_property, annotation_property, individual, "
                         + "datatype, all (default all). A plain fragment matches as a substring and '*' "
                         + "is a wildcard; an empty or wildcard-only query lists the active ontology's "
-                        + "whole signature.",
+                        + "whole signature. Results are RANKED: each carries a 'score' and 'match_kind' "
+                        + "(exact | prefix | substring | fuzzy — exact considers every rdfs:label language "
+                        + "variant and the IRI local name). Two grounding fields help decide whether to "
+                        + "reuse a term or mint a new one: 'best_match' is the IRI the query resolves to "
+                        + "(or null), and 'would_mint' is true when a single-term query resolves to no "
+                        + "existing entity, so using it as a create_* name would introduce a NEW one.",
                 Tools.schema()
                         .strReq("query", "Search text (use '*' as a wildcard).")
                         .str("type", "Entity type filter (default 'all').")
@@ -118,7 +123,7 @@ public final class ReadTools {
                     int limit = Tools.optInt(a, "limit", 50);
                     return ctx.access().compute(mm -> {
                         Set<? extends OWLEntity> matches = search(mm, query, type);
-                        Map<String, Object> result = Tools.entityList(mm, matches, limit);
+                        Map<String, Object> result = EntitySearch.enrichedSearch(mm, query, matches, limit);
                         result.put("query", query);
                         result.put("type", type == null ? "all" : type);
                         return Tools.ok(result);

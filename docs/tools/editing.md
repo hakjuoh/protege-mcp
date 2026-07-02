@@ -54,17 +54,28 @@ Applies a batch of axiom add/remove operations in ONE call — the same `operati
 
 *Mutating (undoable)* — honours `strict` (skips any add that would mint a brand-new entity from an unrecognized IRI/name) and reports `new_entities`. Edits the active ontology; new-entity detection is against the imports closure.
 
+**Reasoner-verified apply (0.4.0).** Set `verify=report` or `verify=rollback` to classify the reasoner
+after applying and detect a **regression** — a class that became unsatisfiable, or an ontology that
+became inconsistent, *because of this batch*. `report` keeps the batch and returns the verdict; `rollback`
+additionally reverts the whole batch in one undo when a regression is attributable. The pre-read → apply →
+classify → post-read → undo sequence runs under a server-level write mutex, and an intervening GUI edit
+between apply and re-classification degrades to `report` semantics rather than blind-undoing. Requires a
+reasoner selected in Protégé (warm = 1 classification, cold = 2).
+
 **Arguments**
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `operations` | array | yes | — | Axiom changes to apply; each item is an `add_axiom`/`remove_axiom` operand set (`axiom_type` + operands) plus optional `op` = `add`/`remove`. |
 | `strict` | boolean | no | `false` | If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name. |
+| `verify` | string | no | `none` | `none` \| `report` \| `rollback` — reasoner-verify the batch (see above). |
+| `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs. |
 
 **Returns**
 
 - `operations`: array of per-op rows, each `{index, op, axiom}` plus, for adds, `applied` (bool), optional `note` (e.g. `"already present"`) and `new_entities` (array); for removes, `removed` (bool) and optional `note` (`"not present"`). A failed op carries `error` (including a strict-mint refusal).
 - `summary`: `{operations, added, removed, no_ops, errors, single_undo, new_entities}` — `single_undo` is true when at least one change was applied; `new_entities` is the aggregated introduced-entity list.
+- `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}`.
 
 **Example**
 
@@ -74,7 +85,8 @@ Applies a batch of axiom add/remove operations in ONE call — the same `operati
     { "axiom_type": "subclass_of", "sub": "Terrier", "super": "Dog" },
     { "axiom_type": "class_assertion", "class": "Dog", "individual": "Rex" }
   ],
-  "strict": true
+  "strict": true,
+  "verify": "rollback"
 }
 ```
 

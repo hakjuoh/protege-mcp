@@ -413,6 +413,12 @@ class WriteToolsTest {
         Map<String, Object> strict = (Map<String, Object>) props.get("strict");
         assertEquals("boolean", strict.get("type"), "strict is boolean");
         assertEquals(WriteTools.STRICT_DESC, strict.get("description"), "strict uses STRICT_DESC");
+        // 0.4.0: the reasoner-verification knobs.
+        assertTrue(props.containsKey("verify"), "the verify enum is added");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> verify = (Map<String, Object>) props.get("verify");
+        assertEquals("string", verify.get("type"), "verify is a string enum arg");
+        assertTrue(props.containsKey("timeout_ms"), "the verify timeout is added");
     }
 
     // ================================================================== applyBatch

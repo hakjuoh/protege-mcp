@@ -16,14 +16,20 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Installation](https://hakjuoh.github.io/protege-mcp/installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](https://hakjuoh.github.io/protege-mcp/connect/) | The server model (ports, OAuth vs. token) + Claude Code, Codex CLI, VS Code, Claude Desktop recipes. |
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
-| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 55 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
+| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 61 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
 | [Contributing](https://hakjuoh.github.io/protege-mcp/contributing.html) | Build from source, run the tests, and add a tool. |
 | [Versioning & releases](https://hakjuoh.github.io/protege-mcp/versioning.html) · [Changelog](https://hakjuoh.github.io/protege-mcp/changelog.html) | The release scheme and notes for every version. |
 
 ## Highlights
 
-- **55 structured tools + 6 guided prompts** over the live, active ontology — explore, edit, curate,
+- **61 structured tools + 6 guided prompts** over the live, active ontology — explore, edit, curate,
   govern, run SWRL rules and SPARQL, and reason.
+- **Safe, testable authoring** (`0.4.0`) — `apply_changes verify=report|rollback` classifies the reasoner
+  and reverts an edit that makes a class unsatisfiable or the ontology inconsistent; a re-runnable
+  **competency-question suite** and SPARQL **invariants** (`verify_ontology`) catch regressions; a single
+  **`run_qc_suite`** gate rolls up reasoner + profile + structural + invariants + CQ checks; and
+  `search_entities` now returns `score`/`match_kind` + `would_mint` so an assistant grounds a term before
+  minting a new one.
 - **Edits are GUI-visible and undoable** — every edit goes through Protégé's shared `OWLModelManager`,
   so it appears in the editor immediately and joins the **Edit ▸ Undo** stack.
 - **Safe by default** — a local, loopback-only server that requires **OAuth** or a **bearer token** on

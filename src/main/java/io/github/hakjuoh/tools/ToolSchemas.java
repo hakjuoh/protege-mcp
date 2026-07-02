@@ -39,4 +39,14 @@ public final class ToolSchemas {
         }
         return p;
     }
+
+    /** A bare {@code {type:integer, description}} property map (for hand-assembled schemas). */
+    public static Map<String, Object> integerProperty(String desc) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("type", "integer");
+        if (desc != null) {
+            p.put("description", desc);
+        }
+        return p;
+    }
 }
