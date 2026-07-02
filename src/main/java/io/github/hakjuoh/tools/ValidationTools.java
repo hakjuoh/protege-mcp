@@ -566,7 +566,7 @@ public final class ValidationTools {
             }
             for (OWLOntology o : scope) {
                 for (OWLClass c : o.getClassesInSignature()) {
-                    if (!reserved(c)) {
+                    if (!isReserved(c)) {
                         s.classes.add(c);
                     }
                 }
@@ -592,7 +592,7 @@ public final class ValidationTools {
             // sets drop purely-imported terms so their upstream label/definition/domain/range are not
             // reported as locally missing.
             for (OWLEntity e : s.all) {
-                if (reserved(e)) {
+                if (isReserved(e)) {
                     continue;
                 }
                 if (e.isOWLClass() || e.isOWLObjectProperty() || e.isOWLDataProperty()
@@ -631,19 +631,6 @@ public final class ValidationTools {
         private static boolean ownedByScope(OWLEntity e, Set<OWLEntity> declaredInScope,
                 Set<OWLEntity> declaredInClosure) {
             return declaredInScope.contains(e) || !declaredInClosure.contains(e);
-        }
-
-        private static boolean reserved(OWLEntity e) {
-            if (e.isBuiltIn()) {
-                return true;
-            }
-            String iri = e.getIRI().toString();
-            for (String ns : RESERVED) {
-                if (iri.startsWith(ns)) {
-                    return true;
-                }
-            }
-            return false;
         }
     }
 

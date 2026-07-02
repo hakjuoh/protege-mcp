@@ -32,6 +32,13 @@ class ClaudeCliProviderCoverageTest {
 
     private static final McpEndpoint ENDPOINT = new McpEndpoint("http://127.0.0.1:8123/mcp", "TOK123");
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** Stand-in for the owner-only MCP-config file path startTurn writes and passes by path. */
+    private static final String CONFIG_PATH = "/tmp/protege-mcp-cov.json";
+
+    /** buildCommand with the config-file path fixed, so the argv-shape tests stay focused. */
+    private static List<String> bc(String exe, ChatRequest req) {
+        return ClaudeCliProvider.buildCommand(exe, req, CONFIG_PATH);
+    }
 
     private final ClaudeCliProvider provider = new ClaudeCliProvider();
 
@@ -84,7 +91,7 @@ class ClaudeCliProviderCoverageTest {
 
     @Test
     void buildCommandEmitsFixedHeadlessStreamingFlagsInOrder() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+        List<String> cmd = bc("claude",
                 new ChatRequest("", "hi", null, ENDPOINT));
         // The leading fixed prefix must be exactly this argv, in order.
         assertEquals(List.of(
@@ -93,7 +100,7 @@ class ClaudeCliProviderCoverageTest {
                 "--include-partial-messages",
                 "--verbose",
                 "--strict-mcp-config",
-                "--mcp-config", ClaudeCliProvider.mcpConfigJson(ENDPOINT),
+                "--mcp-config", CONFIG_PATH,
                 "--allowedTools", "mcp__protege"),
                 cmd.subList(0, 11),
                 "leading fixed argv must match the headless streaming invocation");
@@ -101,40 +108,42 @@ class ClaudeCliProviderCoverageTest {
 
     @Test
     void buildCommandUsesGivenExecutableAsArgvZero() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("/opt/bin/claude",
+        List<String> cmd = bc("/opt/bin/claude",
                 new ChatRequest("", "hi", null, ENDPOINT));
         assertEquals("/opt/bin/claude", cmd.get(0), "argv[0] must be the resolved executable path");
     }
 
     @Test
-    void buildCommandMcpConfigValueEqualsMcpConfigJson() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+    void buildCommandMcpConfigValueIsTheConfigFilePathNotTheTokenJson() {
+        List<String> cmd = bc("claude",
                 new ChatRequest("", "hi", null, ENDPOINT));
         int i = cmd.indexOf("--mcp-config");
         assertTrue(i >= 0 && i + 1 < cmd.size(), "--mcp-config flag must be present");
-        assertEquals(ClaudeCliProvider.mcpConfigJson(ENDPOINT), cmd.get(i + 1),
-                "--mcp-config value must be the same inline JSON as mcpConfigJson()");
+        // The value is the PATH to the owner-only config file, not the inline token JSON.
+        assertEquals(CONFIG_PATH, cmd.get(i + 1), "--mcp-config value must be the config file path");
+        assertTrue(cmd.stream().noneMatch(arg -> arg.contains("TOK123")),
+                "the bearer token must not appear anywhere on the command line");
     }
 
     // ---- buildCommand: model handling ----
 
     @Test
     void buildCommandTrimsModelWhitespace() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+        List<String> cmd = bc("claude",
                 new ChatRequest("  sonnet  ", "hi", null, ENDPOINT));
         assertAdjacent(cmd, "--model", "sonnet");
     }
 
     @Test
     void buildCommandOmitsModelWhenWhitespaceOnly() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+        List<String> cmd = bc("claude",
                 new ChatRequest("   ", "hi", null, ENDPOINT));
         assertFalse(cmd.contains("--model"), "whitespace-only model must be treated as blank");
     }
 
     @Test
     void buildCommandOmitsModelWhenNull() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+        List<String> cmd = bc("claude",
                 new ChatRequest(null, "hi", null, ENDPOINT));
         assertFalse(cmd.contains("--model"), "null model must omit the --model flag");
     }
@@ -143,21 +152,21 @@ class ClaudeCliProviderCoverageTest {
 
     @Test
     void buildCommandTrimsSessionIdWhitespace() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+        List<String> cmd = bc("claude",
                 new ChatRequest("", "hi", "  sess-42  ", ENDPOINT));
         assertAdjacent(cmd, "--resume", "sess-42");
     }
 
     @Test
     void buildCommandOmitsResumeWhenSessionWhitespaceOnly() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+        List<String> cmd = bc("claude",
                 new ChatRequest("", "hi", "   ", ENDPOINT));
         assertFalse(cmd.contains("--resume"), "whitespace-only sessionId must be treated as blank");
     }
 
     @Test
     void buildCommandIncludesModelButOmitsResumeIndependently() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+        List<String> cmd = bc("claude",
                 new ChatRequest("opus", "hi", null, ENDPOINT));
         assertAdjacent(cmd, "--model", "opus");
         assertFalse(cmd.contains("--resume"), "model set with null session must still omit --resume");
@@ -168,7 +177,7 @@ class ClaudeCliProviderCoverageTest {
     @Test
     void buildCommandTerminatesWithSeparatorThenProviderPrompt() {
         ChatRequest req = new ChatRequest("", "explain BFO", null, ENDPOINT);
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req);
+        List<String> cmd = bc("claude", req);
         assertEquals("--", cmd.get(cmd.size() - 2), "prompt must be guarded by a '--' separator");
         assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1),
                 "final positional must be the provider prompt");
@@ -182,7 +191,7 @@ class ClaudeCliProviderCoverageTest {
         Path doc = Files.writeString(dir.resolve("notes.txt"), "content");
         ChatRequest req = new ChatRequest("", "see [File #1]", null, ENDPOINT,
                 List.of(ChatAttachment.file("File #1", doc.toFile(), null)));
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req);
+        List<String> cmd = bc("claude", req);
         String finalArg = cmd.get(cmd.size() - 1);
         assertEquals(req.providerPrompt(), finalArg, "final positional must be the expanded providerPrompt");
         assertTrue(finalArg.contains(doc.toFile().getAbsolutePath()),
@@ -193,7 +202,7 @@ class ClaudeCliProviderCoverageTest {
 
     @Test
     void buildCommandOmitsAddDirWhenNoAttachments() {
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+        List<String> cmd = bc("claude",
                 new ChatRequest("", "hi", null, ENDPOINT));
         assertFalse(cmd.contains("--add-dir"), "no attachments must omit --add-dir");
     }
@@ -209,7 +218,7 @@ class ClaudeCliProviderCoverageTest {
                 ChatAttachment.file("File #1", fileA.toFile(), null),
                 ChatAttachment.file("File #2", fileB.toFile(), null)));
 
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req);
+        List<String> cmd = bc("claude", req);
 
         int i = cmd.indexOf("--add-dir");
         assertTrue(i >= 0, "--add-dir flag must be present");
@@ -230,7 +239,7 @@ class ClaudeCliProviderCoverageTest {
                 ChatAttachment.file("File #1", a.toFile(), null),
                 ChatAttachment.file("File #2", b.toFile(), null)));
 
-        List<String> cmd = ClaudeCliProvider.buildCommand("claude", req);
+        List<String> cmd = bc("claude", req);
 
         int i = cmd.indexOf("--add-dir");
         assertTrue(i >= 0, "--add-dir must be present");

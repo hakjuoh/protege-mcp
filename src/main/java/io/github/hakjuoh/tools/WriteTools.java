@@ -9,9 +9,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 
-import javax.swing.JOptionPane;
-import javax.swing.SwingUtilities;
-
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.entity.OWLEntityCreationException;
 import org.protege.editor.owl.model.entity.OWLEntityCreationSet;
@@ -382,39 +379,18 @@ public final class WriteTools {
             return Tools.error("Server is in read-only mode; writes are disabled "
                     + "(toggle in Protégé ▸ Preferences ▸ MCP).");
         }
-        // The confirmation is an unbounded human interaction, so it runs OUTSIDE the bounded
-        // OntologyAccess.compute below. Doing it inside would let a slow click trip the 30s EDT
-        // timeout — telling the client the write failed while the dialog stays open and then
-        // applies the edit anyway. We confirm first, then marshal the mutation only if approved.
-        if (ctx.controller().isConfirmWrites() && !confirmOnEdt(summary)) {
-            return Tools.error("Write declined by the user.");
-        }
-        return null;
-    }
-
-    /** Show the modal confirmation on the EDT with no timeout; returns true if the user approves. */
-    private static boolean confirmOnEdt(String summary) {
-        final boolean[] approved = {false};
-        Runnable prompt = () -> {
-            int choice = JOptionPane.showConfirmDialog(null,
-                    "An MCP client requests this action:\n\n" + summary,
-                    "protege-mcp — confirm write", JOptionPane.OK_CANCEL_OPTION,
-                    JOptionPane.WARNING_MESSAGE);
-            approved[0] = choice == JOptionPane.OK_OPTION;
-        };
-        if (SwingUtilities.isEventDispatchThread()) {
-            prompt.run();
-        } else {
-            try {
-                SwingUtilities.invokeAndWait(prompt);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return false;
-            } catch (java.lang.reflect.InvocationTargetException e) {
-                return false;
+        // The confirmation is an unbounded human interaction, so it runs via the injected WriteConfirmer
+        // (the Swing dialog at runtime) OUTSIDE the bounded OntologyAccess.compute below. Doing it inside
+        // would let a slow click trip the 30s EDT timeout — telling the client the write failed while the
+        // dialog stays open and then applies the edit anyway. We confirm first, then marshal the mutation
+        // only if approved. Fail closed: if confirmation is required but no confirmer is wired, decline.
+        if (ctx.controller().isConfirmWrites()) {
+            WriteConfirmer confirmer = ctx.confirmer();
+            if (confirmer == null || !confirmer.confirm(summary)) {
+                return Tools.error("Write declined by the user.");
             }
         }
-        return approved[0];
+        return null;
     }
 
     static final String STRICT_DESC = "If true, fail instead of minting a brand-new entity from an "
@@ -453,18 +429,11 @@ public final class WriteTools {
     }
 
     private static CallToolResult mintError(OWLModelManager mm, Set<OWLEntity> minted) {
-        return Tools.error("Refusing to apply (strict): the reference(s) " + renderMinted(mm, minted)
+        return Tools.error("Refusing to apply (strict): the reference(s) "
+                + EntityRendering.renderMinted(mm, minted)
                 + " are not declared anywhere in the imports closure and would be created as new, empty "
                 + "entities — likely a typo'd IRI/name. Fix the reference, create the entity first, or "
                 + "set strict=false to allow minting.");
-    }
-
-    private static String renderMinted(OWLModelManager mm, Set<OWLEntity> minted) {
-        List<String> parts = new ArrayList<>();
-        for (OWLEntity e : minted) {
-            parts.add(mm.getRendering(e) + " <" + e.getIRI() + ">");
-        }
-        return String.join(", ", parts);
     }
 
     /** Total asserted axioms across all loaded ontologies — a simple "what changed" delta for undo/redo. */
@@ -570,7 +539,7 @@ public final class WriteTools {
                 } else {
                     Set<OWLEntity> minted = newEntitiesAfterSimulatedAdds(closure, simAdded, ax);
                     if (strict && !minted.isEmpty()) {
-                        row.put("error", "strict: would mint " + renderMinted(mm, minted));
+                        row.put("error", "strict: would mint " + EntityRendering.renderMinted(mm, minted));
                         errors++;
                     } else if (present) {
                         row.put("applied", true);

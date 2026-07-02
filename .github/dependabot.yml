@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Maven dependencies (the embedded MCP/Jetty/Jackson/Jena stack + test-scoped reasoner). Dependabot
+  # opens PRs for version bumps AND surfaces known-CVE advisories against this tree — the supply-chain
+  # visibility a plugin that ships an embedded HTTP server + OAuth should have.
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Keep the jackson-* modules moving together so they stay on one release train (jackson-bom aligned).
+      jackson:
+        patterns:
+          - "com.fasterxml.jackson*"
+
+  # Keep the GitHub Actions used by ci.yml / release.yml current (checkout, setup-java, upload-artifact).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

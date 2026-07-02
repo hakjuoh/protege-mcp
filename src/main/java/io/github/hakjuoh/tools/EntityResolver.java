@@ -1,6 +1,7 @@
 package io.github.hakjuoh.tools;
 
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Collections;
 import java.util.Set;
 import java.util.function.Function;
@@ -43,8 +44,8 @@ public final class EntityResolver {
             if (u.isAbsolute()) {
                 return IRI.create(ref);
             }
-        } catch (Exception ignored) {
-            // not an IRI
+        } catch (URISyntaxException ignored) {
+            // not a syntactically valid absolute IRI (e.g. a display name)
         }
         return null;
     }

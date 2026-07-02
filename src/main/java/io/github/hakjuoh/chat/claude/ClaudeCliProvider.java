@@ -7,7 +7,9 @@ import io.github.hakjuoh.chat.ChatRequest;
 import io.github.hakjuoh.chat.CliSupport;
 import io.github.hakjuoh.chat.McpEndpoint;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -63,10 +65,26 @@ public final class ClaudeCliProvider implements ChatProvider {
             throw new IOException("The 'claude' CLI was not found. Install Claude Code, or set its path "
                     + "in Preferences ▸ Ontology Assistant.");
         }
-        List<String> command = buildCommand(exe, request);
+        // Write the MCP config (which carries the bearer token) to an owner-only temp FILE and pass its
+        // PATH on the command line, rather than embedding the token JSON as an argv value where any local
+        // user could read it via `ps`. Deleted once the process exits.
+        final File mcpConfig;
+        try {
+            mcpConfig = CliSupport.writeOwnerOnlyTempFile("protege-mcp-", ".json",
+                    mcpConfigJson(request.endpoint()));
+        } catch (IOException e) {
+            throw new IOException("Could not write the MCP config for the claude CLI: " + e.getMessage(), e);
+        }
+        mcpConfig.deleteOnExit();
+        List<String> command = buildCommand(exe, request, mcpConfig.getAbsolutePath());
         return CliSupport.spawn(command, Collections.emptyMap(), CliSupport.neutralWorkingDir(),
                 new ClaudeEventParser(listener),
                 (exit, stderr) -> {
+                    try {
+                        Files.deleteIfExists(mcpConfig.toPath());
+                    } catch (IOException ignored) {
+                        // best-effort cleanup; deleteOnExit is the backstop
+                    }
                     if (exit != 0) {
                         listener.onError(CliSupport.describeFailure("claude", exit, stderr));
                     }
@@ -80,13 +98,15 @@ public final class ClaudeCliProvider implements ChatProvider {
     }
 
     /**
-     * Build the headless streaming invocation. {@code --strict-mcp-config} + an inline {@code --mcp-config}
+     * Build the headless streaming invocation. {@code --strict-mcp-config} + a {@code --mcp-config} file
      * means the run sees exactly Protégé's server and nothing else; {@code --allowedTools mcp__protege}
      * pre-approves the whole server so the non-interactive run never blocks on a permission prompt
      * (server-side read-only / confirm-write gates still apply). A non-blank session id resumes the
-     * conversation. Package-private for unit testing.
+     * conversation. {@code mcpConfigPath} is the path to the owner-only MCP-config file written by
+     * {@link #startTurn}, passed by PATH so the bearer token it carries never reaches the argv.
+     * Package-private for unit testing.
      */
-    static List<String> buildCommand(String exe, ChatRequest req) {
+    static List<String> buildCommand(String exe, ChatRequest req, String mcpConfigPath) {
         List<String> cmd = new ArrayList<>();
         cmd.add(exe);
         cmd.add("-p");
@@ -96,7 +116,7 @@ public final class ClaudeCliProvider implements ChatProvider {
         cmd.add("--verbose");
         cmd.add("--strict-mcp-config");
         cmd.add("--mcp-config");
-        cmd.add(mcpConfigJson(req.endpoint()));
+        cmd.add(mcpConfigPath);
         cmd.add("--allowedTools");
         cmd.add("mcp__" + McpEndpoint.SERVER_NAME);
         List<java.io.File> attachmentDirs = req.attachmentDirectories();

@@ -446,4 +446,25 @@ class CliSupportCoverageTest {
         assertSame(ChatProcess.class, cp.getClass(), "spawn returns a ChatProcess handle");
         assertTrue(done.await(15, TimeUnit.SECONDS));
     }
+
+    // ---------------------------------------------------------------- writeOwnerOnlyTempFile
+
+    @Test
+    void writeOwnerOnlyTempFileWritesContentAndRestrictsToOwner() throws Exception {
+        String content = "{\"secret\":\"do-not-leak\"}";
+        File f = CliSupport.writeOwnerOnlyTempFile("protege-mcp-test-", ".json", content);
+        try {
+            assertTrue(f.isFile());
+            assertEquals(content, Files.readString(f.toPath()));
+            if (posix()) {
+                // Owner-only: no group/other read or write — this is why passing the PATH keeps the
+                // secret from other local users, unlike putting it on the argv.
+                assertEquals("rw-------",
+                        java.nio.file.attribute.PosixFilePermissions.toString(
+                                Files.getPosixFilePermissions(f.toPath())));
+            }
+        } finally {
+            Files.deleteIfExists(f.toPath());
+        }
+    }
 }

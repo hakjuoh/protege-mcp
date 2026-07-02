@@ -6,6 +6,9 @@ import java.util.function.Supplier;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import io.github.hakjuoh.server.McpAccessException;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
@@ -16,6 +19,8 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
  * {@link Tools} (they are referenced as a type across the codebase). {@code Tools} keeps thin delegators.
  */
 public final class ToolResults {
+
+    private static final Logger log = LoggerFactory.getLogger(ToolResults.class);
 
     private ToolResults() {
     }
@@ -73,6 +78,10 @@ public final class ToolResults {
         } catch (McpAccessException e) {
             return error(e.getMessage());
         } catch (RuntimeException e) {
+            // Unexpected (not a typed ToolArg/McpAccess) failure — a handler bug. Leave a server-side
+            // stack trace so it can be diagnosed from a field report, while still returning the terse
+            // client message (the tools/ layer otherwise logs nothing).
+            log.warn("protege-mcp: unexpected error in tool handler", e);
             String msg = e.getMessage();
             return error(e.getClass().getSimpleName() + (msg == null ? "" : ": " + msg));
         }

@@ -41,6 +41,17 @@ transactional apply, the embedded reasoner, Jena ARQ, `OWLEntityFinder`, the cat
 ### Behavior change
 - **`search_entities` results are now RANKED** (by `score`, then display, then IRI), not just alphabetical. Clients that relied on the old order should sort explicitly. Every other tool's `entityList` ordering is unchanged.
 
+### Notes
+- New method-level tests for every core and tool wrapper, driven end-to-end over a headless `OntologyAccess`; three adversarial review rounds were folded in before release (hardening `verify_ontology`'s fail-closed behaviour and `run_qc_suite`'s aggregation). Test count **1,720 → 2,036**.
+- The default `robot-sparql-dir` needs **no new serialization dependency** (plain `.rq` + header comments); `sidecar-manifest` uses the already-present `jackson-databind`. Requires a **Java 17+** JVM (unchanged).
+
+### Hardening (folded into the 0.4.0 re-cut)
+Post-authoring remediation from a codebase self-assessment — no user-facing tool changes (still **61 tools**). Test count **2,036 → 2,044**.
+- **Security:** the **Claude MCP bearer token no longer lands on the process command line** — the `--mcp-config` JSON is written to an **owner-only `0600` temp file** and passed by **path**, then deleted when the turn ends (Codex already used an env var).
+- **Testing:** the **reasoner-verified rollback path is now CI-gated** — a test-scoped DL reasoner (HermiT) classifies a genuinely unsatisfiable / inconsistent ontology whose verdict drives `apply_changes(verify)` to **rollback** vs **report**; previously only the manual smoke checklist covered this leg.
+- **Build & CI:** **JaCoCo** coverage report + a `check` floor on `tools`/`server`/`oauth`; CI and release run `mvn clean verify`. Added **Dependabot** (Maven + Actions). Aligned all `jackson-*` modules via **`jackson-bom`** (removed the `jackson-dataformat-yaml` skew).
+- **Internal / quality:** write-confirmation moved behind an injected `WriteConfirmer` seam (the `tools` layer no longer imports Swing; fails closed); unexpected tool-handler exceptions are now logged server-side; deduplicated helpers; added `SECURITY.md`, a vulnerability-reporting policy, and issue/PR templates.
+
 Install: download `protege-mcp-0.4.0.jar` below, or use Protégé ▸ File ▸ Check for plugins.
 
 ## [0.3.3] - 2026-06-30

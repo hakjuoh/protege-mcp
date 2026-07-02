@@ -6,6 +6,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -223,6 +226,33 @@ public final class CliSupport {
         } catch (IOException ignored) {
             // stream closed
         }
+    }
+
+    /**
+     * Write {@code content} to a fresh temp file created owner-only (POSIX {@code rw-------} where the
+     * filesystem supports it, best-effort owner-restricted elsewhere), and return it. Used to keep a
+     * secret — e.g. an MCP bearer token — OFF the process command line: the caller passes the file PATH
+     * as an argument instead of the secret itself, so it is not exposed to {@code ps} / other local
+     * users. The file is created with the restricted permissions <em>before</em> any content is written.
+     * The caller owns its lifecycle (delete it when the child process exits).
+     */
+    public static File writeOwnerOnlyTempFile(String prefix, String suffix, String content)
+            throws IOException {
+        Path path;
+        try {
+            path = Files.createTempFile(prefix, suffix,
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        } catch (UnsupportedOperationException notPosix) {
+            // Non-POSIX filesystem (e.g. Windows): create, then best-effort restrict to the owner.
+            File f = File.createTempFile(prefix, suffix);
+            f.setReadable(false, false);
+            f.setReadable(true, true);
+            f.setWritable(false, false);
+            f.setWritable(true, true);
+            path = f.toPath();
+        }
+        Files.write(path, content.getBytes(StandardCharsets.UTF_8));
+        return path.toFile();
     }
 
     /** A neutral working directory so a CLI does not auto-discover a project's config (CLAUDE.md, etc.). */

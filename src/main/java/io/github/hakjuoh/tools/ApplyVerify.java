@@ -298,9 +298,19 @@ final class ApplyVerify {
 
     /** Unsatisfiable named classes (minus owl:Nothing), as IRI strings, from the current reasoner. */
     private static Set<String> unsatIris(OWLModelManager mm) {
+        return unsatIris(mm.getReasoner());
+    }
+
+    /**
+     * Unsatisfiable named classes (minus owl:Nothing) reported by {@code reasoner}, as IRI strings. Split
+     * out to take the {@link OWLReasoner} directly so this exact iteration — the leg that turns a real DL
+     * reasoner's verdict into the {@code postUnsat} set that {@link #decide} attributes — is unit-testable
+     * headless against a real reasoner (the enclosing {@code unsatIris(OWLModelManager)} only supplies
+     * {@code mm.getReasoner()}).
+     */
+    static Set<String> unsatIris(OWLReasoner reasoner) {
         Set<String> out = new LinkedHashSet<>();
-        OWLReasoner r = mm.getReasoner();
-        for (OWLClass c : r.getUnsatisfiableClasses().getEntitiesMinusBottom()) {
+        for (OWLClass c : reasoner.getUnsatisfiableClasses().getEntitiesMinusBottom()) {
             out.add(c.getIRI().toString());
         }
         return out;
