@@ -1,7 +1,7 @@
 ---
 title: "Safe authoring & QC"
 parent: "Tools"
-nav_order: 9
+nav_order: 3
 ---
 
 # Safe authoring & QC
@@ -11,7 +11,6 @@ The *safe, testable authoring* tools added in **0.4.0**: run project-defined SPA
 re-runnable **competency-question** requirements suite, and one aggregate **quality-control gate**. They
 close the **propose → ground → verify → confirm** loop — pair them with `apply_changes verify=`
 ([Editing](editing.html)) and `search_entities` grounding ([Explore & search](explore-search.html)).
-{: .fs-6 .fw-300 }
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -43,7 +42,7 @@ triples and reports a false pass.
 | `queries` | array | yes | — | The invariants. Each: `{ sparql (required), id?, message?, severity?, include_inferred? }`. |
 | `queries[].sparql` | string | yes | — | A SPARQL `SELECT`/`ASK` whose results are violations (`CONSTRUCT`/`DESCRIBE` are rejected). |
 | `queries[].id` | string | no | `invariant-N` | Stable id. |
-| `queries[].message` | string | no | — | Human message describing the violation. |
+| `queries[].message` | string | no | `Invariant '<id>' violated.` | Human message describing the violation. |
 | `queries[].severity` | string | no | `error` | `error` \| `warn` \| `info`. |
 | `queries[].include_inferred` | boolean | no | false | Run over the reasoner's inferred triples. |
 | `fail_on` | string | no | `error` | Gate severity: `none` \| `info` \| `warn` \| `error`. |
@@ -52,16 +51,17 @@ triples and reports a false pass.
 
 **Returns**
 
-- `checked`: integer, number of invariants run.
+- `checked`: integer, total number of invariants supplied (= those that ran + `errors`).
 - `violations`: integer, number of invariants that matched (a forbidden pattern present).
 - `errors`: integer, number of invariants that could not run (each also fails the gate fail-closed).
 - `fail_on`: string, the effective gate severity.
 - `gate`: string, `"pass"` or `"fail"` (fails when the worst violation/error reaches `fail_on`).
-- `invariants`: array, per-invariant `{id, severity, message, violated}`; for a violation also
-  `violation_count` and `violations` (the raw `{type,value,lang?,datatype?}` bindings), or `error` when
-  it could not run (a query error, an `include_inferred` invariant with no classified reasoner, or a
-  rejected non-`SELECT`/`ASK` form). A `caveats` entry flags a *soft* qualifier such as truncated
-  inferences.
+- `invariants`: array, per-invariant `{id, severity, message, violated}`; for a **`SELECT`** violation
+  also `violation_count`, `violations` (the raw `{type,value,lang?,datatype?}` bindings), and
+  `truncated: true` when those rows were capped at `limit`; an **`ASK`**-true violation reports just
+  `violation_count: 1` (no `violations`); or `error` when it could not run (a query error, an
+  `include_inferred` invariant with no classified reasoner, or a rejected non-`SELECT`/`ASK` form).
+  A `caveats` entry flags a *soft* qualifier such as truncated inferences.
 
 **Example**
 
@@ -95,7 +95,7 @@ worst *ran* stage versus `fail_on`.
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `stages` | array | no | `["reasoner","profile","structural"]` | Subset of `reasoner`, `profile`, `structural`, `invariants`, `cqs`, `shacl`. |
-| `owl_profile` | string | no | `DL` | OWL 2 profile for the `profile` stage: `DL` \| `EL` \| `QL` \| `RL`. |
+| `owl_profile` | string | no | `DL` | OWL 2 profile for the `profile` stage: `DL` \| `EL` \| `QL` \| `RL`. Pass `none` or `Full` to skip the `profile` stage (reported as a skipped stage, not an error). |
 | `invariants` | array | no | — | Invariants for the `invariants` stage (same shape as `verify_ontology`'s `queries[]`). |
 | `fail_on` | string | no | `error` | Gate severity: `none` \| `warn` \| `error`. |
 | `limit` | integer | no | 25 | Max samples per check. |

@@ -10,7 +10,6 @@ nav_order: 10
 Move along Protégé's shared undo/redo stack and save the active ontology to disk. Because every model
 edit made by the other tools goes through `OWLModelManager.applyChanges`, `undo_change` / `redo_change`
 step the **same** history as the GUI's **Edit ▸ Undo / Redo**.
-{: .fs-6 .fw-300 }
 
 ## Table of contents
 {: .no_toc .text-delta }

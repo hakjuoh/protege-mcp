@@ -1,7 +1,7 @@
 ---
 title: "Rules (SWRL)"
 parent: "Tools"
-nav_order: 6
+nav_order: 7
 ---
 
 # Rules (SWRL)
