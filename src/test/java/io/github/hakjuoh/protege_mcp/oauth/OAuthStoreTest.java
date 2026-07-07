@@ -727,6 +727,29 @@ class OAuthStoreTest {
         assertTrue(root.path("clients").size() < 40, "eviction dropped some clients");
     }
 
+    @Test
+    void evictedClientAccessTokenIsRejected() {
+        // The persist() size guard evicts the least-recently-seen client TOGETHER with its tokens, so an
+        // evicted client's access token must stop validating — the runtime counterpart to the
+        // corrupted-state orphan rejection in isValidAccessTokenFalseWhenClientMissing. Deterministic:
+        // 'victim' is registered first and never validated (lastSeenAt stays 0), so among the never-seen
+        // clients it has the oldest registeredAt and is the first evicted; the sleep guarantees the flood
+        // registers strictly later. (Validating the victim's token here would bump its lastSeenAt and make
+        // a never-seen flood client the eviction target instead, so the pre-eviction validity of a freshly
+        // issued token is left to issueTokensAccessTokenIsImmediatelyValid.)
+        OAuthStore s = store("tok");
+        OAuthStore.Client victim = s.registerClient(List.of("http://a/cb"), "victim");
+        OAuthStore.Tokens t = s.issueTokens(victim.clientId, "read", "res");
+        sleepAtLeastAMilli();
+        String longUri = "http://localhost/callback/" + "x".repeat(400);
+        for (int i = 0; i < 40; i++) {
+            s.registerClient(List.of(longUri + i), "client-" + i);
+        }
+        assertNull(s.client(victim.clientId), "oldest never-seen client evicted by the size guard");
+        assertFalse(s.isValidAccessToken(t.accessToken),
+                "an evicted client's access token no longer validates (dropped with its client)");
+    }
+
     // ------------------------------------------------------------- purgeExpired (via newAuthCode)
 
     @Test

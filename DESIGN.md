@@ -89,10 +89,11 @@ loopback), so B ships as a thin UI + subprocess driver with no API-key custody (
   contains `"plugin"`** (`protege-editor-core/.../ProtegeApplication.java:211-241`).
 - **`Bundle-SymbolicName ...;singleton:=true` is mandatory** — otherwise the Equinox registry **silently ignores
   `plugin.xml`** (`pluginSanityCheck` only warns) (`ProtegeApplication.java:211-241`).
-- **`plugin.xml` lives at the JAR root.** As built, it declares the three server extensions with bare ids:
-  `EditorKitHook` (`McpServerHook`, `editorKitId=OWLEditorKit`), `ViewComponent` (`McpServerView`, label
-  `"MCP Server"`), and `preferencespanel` (`io.github.hakjuoh.protege_mcp.preferences` → `McpPreferencesPanel`, label `"MCP"`).
-  The framework prepends the bundle namespace at runtime to form fully-qualified ids
+- **`plugin.xml` lives at the JAR root.** As built, it declares the three server extensions: the
+  `EditorKitHook` (`McpServerHook`, `editorKitId=OWLEditorKit`) and `ViewComponent` (`McpServerView`, label
+  `"MCP Server"`) carry **bare ids**, while the `preferencespanel` carries an **already-fully-qualified id**
+  (`io.github.hakjuoh.protege_mcp.preferences` → `McpPreferencesPanel`, label `"MCP"`). For the bare ids the
+  framework prepends the bundle namespace at runtime to form the fully-qualified id
   (`protege-editor-core/src/main/resources/plugin.xml:4-34`).
 - Extension points used: `EditorKitHook` (per-EditorKit lifecycle: `initialise`/`dispose`),
   `ViewComponent` (Swing view), `preferencespanel` (settings panel).
@@ -650,10 +651,11 @@ The original design remains a viable direct-API alternative behind the `ChatProv
 `io.github.hakjuoh.protege_mcp.ui`:
 - **`ChatView extends AbstractOWLViewComponent`** (sibling of `McpServerView`) — a streaming transcript
   `JTextPane`, an input box, Send/Attach/Stop, paste/drop attachment handling (long pasted text becomes
-  `[Pasted content #N: … chars]`; files/images become placeholders such as `[Image #1]`), **provider toggle
-  buttons** ("Use Claude" / "Use Codex"; only installed providers appear), a **model picker** repopulated from
+  `[Pasted content #N: … chars]`; files/images become placeholders such as `[Image #1]`), a **provider
+  drop-down** (`JComboBox`; only installed providers appear), a **model picker** repopulated from
   the active provider, a **"Confirm each edit"** box bound live to the server's `confirmWrites`, a **"Show
-  reasoning"** toggle, a per-turn token/cost readout, and a server/egress status line. Borrows the window's
+  reasoning"** toggle, a per-turn token readout (dollar cost is intentionally not surfaced), and a
+  server/egress status line. Borrows the window's
   `McpServerController` via
   `McpServerRegistry.get(getOWLEditorKit())` and starts it off-EDT on the first turn.
 - **`ChatPreferencesPanel`** — per-provider CLI path overrides + a reset for the one-time egress consent. No
@@ -688,12 +690,17 @@ PROTEGE_MCP_TOKEN=<token>  codex \
   -c approval_policy="never" -c sandbox_mode="read-only" \
   -c mcp_servers.protege.url="<endpointUrl>" \
   -c mcp_servers.protege.bearer_token_env_var="PROTEGE_MCP_TOKEN" \
+  -c mcp_servers.protege.default_tools_approval_mode="approve" \
   exec [resume <session-id>] --json --skip-git-repo-check  [-m <model>]  [--image <image-path>]...  -- "<prompt>"
 ```
 `codex mcp add --help` confirms `--url` + `--bearer-token-env-var` for streamable-HTTP servers. `-s/--sandbox`
 is unavailable on `exec resume`, so sandbox/approval are set via global `-c` overrides (valid for both a fresh
 `exec` and `exec resume`); `read-only` keeps the local filesystem read-only while MCP tool calls still run (all
-editing is via the MCP server).
+editing is via the MCP server). MCP tool approval is a **separate** gate from `approval_policy` (which governs
+only shell/exec): the per-server default is `required`, so a headless run with no one to approve would
+auto-cancel every tool call ("user cancelled MCP tool call") — hence the required
+`-c mcp_servers.protege.default_tools_approval_mode="approve"` override (server-side read-only / confirm-write
+gates still apply to actual edits).
 
 The prompt is passed as a single argv element after `--` (no shell), so its content cannot break the command
 line. When attachments are present, the transcript keeps compact placeholders while `ChatRequest.providerPrompt()`
@@ -703,7 +710,9 @@ exposes the user's real folder: Codex image attachments are passed through its n
 receives each attachment's isolated scratch dir via `--add-dir` (one file per dir). A **large pasted body** is
 written to a scratch `.txt` and referenced by path rather than inlined, so no paste can overflow the single-argv
 command line. Scratch dirs are reclaimed when the turn completes (and on New Chat / view close). The model picker
-offers Claude aliases (opus/sonnet/haiku/fable) and common Codex ids and is editable; `""` means "the CLI's own
+offers Claude aliases (opus/sonnet/haiku/fable) and common Codex ids and is **non-editable** (users pick from
+the provider's fixed list — a macOS Aqua editable combo rendered taller and misaligned against the
+non-editable provider picker); `""` (shown as `(default)`) means "the CLI's own
 default model". A non-blank session id resumes the conversation (Claude `--resume`; Codex `exec resume <thread-id>`).
 
 ### 9.4 Event parsing (captured schemas)
@@ -715,10 +724,12 @@ event/item types so a newer CLI degrades gracefully.
   activity (the `mcp__protege__<tool>` prefix is stripped); `result` → session id + `usage` + `total_cost_usd`.
   Text is taken **only** from the streamed deltas (the roll-up `assistant` event is ignored), so it is never
   double-counted.
-- **Codex** (`--json`): `thread.started` → session id (the thread id used to resume); `item.completed` items of
-  type `agent_message` (text — emitted incrementally by tracking the per-item already-emitted length, so it works
-  whether updates stream or arrive only on completion), `reasoning`, `mcp_tool_call`, `error`; `turn.completed` →
-  `usage` (Codex reports no dollar cost).
+- **Codex** (`--json`): `thread.started` → session id (the thread id used to resume); `item.started` /
+  `item.updated` / `item.completed` items of type `agent_message` (text — emitted incrementally by tracking the
+  per-item already-emitted length, so it works whether updates stream or arrive only on completion), `reasoning`,
+  `mcp_tool_call`, `command_execution`, `file_change`, `web_search`, `error` (each non-text item reported as tool
+  activity); `turn.completed` → `usage` (Codex reports no dollar cost); `turn.failed` → error. Unknown event/item
+  types are ignored.
 
 ### 9.5 Threading and EDT safety
 
@@ -756,10 +767,10 @@ Send, render usage) only **after** the queue empties, so the transcript tail is 
 
 A droppable **Ontology Assistant** `ViewComponent` *and* a dedicated **Ontology Assistant** `WorkspaceTab` (reusing
 `org.protege.editor.owl.ui.OWLWorkspaceViewsTab` + `viewconfig-ontologyassistanttab.xml`, which references the view by its
-fully-qualified id `io.github.hakjuoh.protege-mcp.ChatView`). Provider selection is "Use Claude"/"Use Codex" toggle buttons;
+fully-qualified id `io.github.hakjuoh.protege-mcp.ChatView`). Provider selection is a drop-down (`JComboBox`) in the composer;
 the model picker repopulates from the chosen provider; the input box supports long-paste compaction plus
-file/image paste, drag/drop, and Attach; a per-turn token/cost readout and the server/egress status line keep
-state visible.
+file/image paste, drag/drop, and Attach; a per-turn token readout (dollar cost is intentionally not surfaced)
+and the server/egress status line keep state visible.
 
 ### 9.8 Packaging (Architecture Approach B)
 
@@ -773,9 +784,17 @@ SDK-embedding alternative.
 ### 9.9 Deferred (behind the `ChatProvider` SPI)
 
 A **direct-API** provider (`api.anthropic.com` with an in-process tool-bridge, a hand-written `/v1/messages` SSE
-loop, API-key custody, and prompt caching) — the original design, now superseded by the CLI-driven approach but
-kept viable behind the SPI for anyone who wants it; user-configured **external** MCP servers exposed to the chat;
-`claude-fable-5` + server-side fallbacks; and long-context compaction.
+loop, API-key custody, and prompt caching) — the original design, now superseded by the CLI-driven approach and
+kept only as a viable **fallback** behind the SPI: building it would re-introduce the API-key custody and
+provider lock-in that the CLI-driven approach deliberately removed, so it is a fallback, not a roadmap goal. And
+user-configured **external** MCP servers exposed to the chat — a config + egress-consent feature (the single
+loopback `protege` server is currently baked into each provider's per-turn config, and today's one-time consent
+banner covers only that server), not a one-line config change.
+
+*Not deferred (resolved):* the `fable` model alias already ships in the picker (`ClaudeCliProvider.listModels`
+returns `opus`/`sonnet`/`haiku`/`fable`); and long-context compaction is **owned by the CLI's own agent loop** —
+the plugin forwards only a prompt + session id and the CLI reconstitutes and auto-compacts the conversation — so
+it is out of scope for the plugin rather than a deferred plugin task.
 
 ---
 
@@ -829,8 +848,9 @@ offers an update.
 **Ontology Assistant** tab, the `io.github.hakjuoh.protege_mcp.chat` provider/driver layer (Claude Code and Codex CLIs), and the
 event-stream parsers — built atop A's tool layer with no new embedded jars and no API-key custody.
 
-**Next tracks:** the §9.9 deferred items behind the `ChatProvider` SPI (direct-API provider, external MCP servers,
-`claude-fable-5`, long-context compaction) and Architecture Approach C (§10).
+**Next tracks:** the §9.9 items behind the `ChatProvider` SPI (a direct-API provider — kept only as a fallback,
+not a roadmap goal — and user-configured external MCP servers) and Architecture Approach C (§10). (The `fable`
+model alias already ships, and long-context compaction is owned by the CLI's agent loop — see §9.9.)
 
 ---
 
