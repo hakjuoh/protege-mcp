@@ -112,6 +112,44 @@ class EntitySearchTest {
         assertEquals(1, r.get("truncated"), "truncated reports how many were omitted");
     }
 
+    @Test
+    void pagedVariantWindowsRankedResultsAndReportsNextOffset() throws Exception {
+        OWLModelManager mm = fixture();
+        OWLClass a = labelled("Alpha", "Alpha", null);
+        OWLClass b = labelled("Alpine", "Alpine", null);
+        OWLClass c = labelled("Altimeter", "Altimeter", null);
+        // offset=1, limit=1 over three fuzzy-tied "Al" matches ranked by display: Alpha, Alpine, Altimeter.
+        Map<String, Object> r = EntitySearch.enrichedSearch(mm, "Al", set(a, b, c), 1, 1);
+        assertEquals(3, r.get("count"), "count is the full ranked size");
+        assertEquals(1, r.get("offset"));
+        assertEquals(1, r.get("returned"));
+        assertEquals(2, r.get("next_offset"), "1 shown from offset 1 of 3 → more remain");
+        assertFalse(r.containsKey("truncated"), "the paged variant uses next_offset, not truncated");
+        assertEquals(b.getIRI().toString(), items(r).get(0).get("iri"), "offset 1 is the second-ranked hit");
+    }
+
+    @Test
+    void pagedVariantZeroLimitDoesNotEmitASelfReferentialCursor() throws Exception {
+        OWLModelManager mm = fixture();
+        OWLClass a = labelled("Alpha", "Alpha", null);
+        OWLClass b = labelled("Alpine", "Alpine", null);
+        Map<String, Object> r = EntitySearch.enrichedSearch(mm, "Al", set(a, b), 0, 0);
+        assertEquals(2, r.get("count"));
+        assertEquals(0, r.get("returned"));
+        assertFalse(r.containsKey("next_offset"),
+                "a zero-limit page must not advertise next_offset == offset (an infinite-loop cursor)");
+    }
+
+    @Test
+    void pagedVariantLastPageHasNoNextOffset() throws Exception {
+        OWLModelManager mm = fixture();
+        OWLClass a = labelled("Alpha", "Alpha", null);
+        OWLClass b = labelled("Alpine", "Alpine", null);
+        Map<String, Object> r = EntitySearch.enrichedSearch(mm, "Al", set(a, b), 1, 50);
+        assertFalse(r.containsKey("next_offset"), "the final page omits next_offset");
+        assertEquals(1, r.get("returned"), "one hit remains from offset 1 of 2");
+    }
+
     // ------------------------------------------------------------------ would_mint
 
     @Test

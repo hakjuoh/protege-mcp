@@ -116,28 +116,66 @@ public final class SparqlTools {
                         .integer("timeout_ms", "Overall time budget in ms, covering both the snapshot/"
                                 + "inference step and the query evaluation (default 120000).")
                         .build(),
-                (ex, req) -> Tools.guard(() -> {
-                    Map<String, Object> a = Tools.args(req);
-                    String query = Tools.reqString(a, "query");
-                    boolean includeInferred = Tools.optBool(a, "include_inferred", false);
-                    int limit = Tools.optInt(a, "limit", 1000);
-                    int timeout = Tools.optInt(a, "timeout_ms", 120_000);
-                    if (limit <= 0) {
-                        limit = 1000;
-                    }
-                    if (timeout <= 0) {
-                        timeout = 120_000;
-                    }
-                    final int snapshotTimeout = timeout;
-                    Snapshot snap = ctx.access().compute(
-                            mm -> snapshot(mm, includeInferred), snapshotTimeout);
-                    Map<String, Object> result =
-                            execute(snap.ontology(), snap.prefixes(), query, limit, timeout);
-                    if (snap.note() != null) {
-                        result.put("note", snap.note());
-                    }
-                    return Tools.ok(result);
-                }));
+                (ex, req) -> Tools.guard(() -> query(ctx, Tools.args(req))));
+    }
+
+    /**
+     * Run the {@code sparql_query} tool over the active ontology's cached RDF snapshot. Extracted from the
+     * handler lambda so the whole cache-aware path (miss build, hit reuse, prefix-staleness revalidation)
+     * is driven end-to-end in a headless test. Reads only {@link ToolContext#access()} /
+     * {@link ToolContext#sparqlCache()} — never the controller — so it runs without a live server.
+     */
+    static Map<String, Object> queryResult(ToolContext ctx, Map<String, Object> a) {
+        String queryText = Tools.reqString(a, "query");
+        boolean inferred = Tools.optBool(a, "include_inferred", false);
+        int limit = Tools.optInt(a, "limit", 1000);
+        int timeout = Tools.optInt(a, "timeout_ms", 120_000);
+        if (limit <= 0) {
+            limit = 1000;
+        }
+        if (timeout <= 0) {
+            timeout = 120_000;
+        }
+        final int snapshotTimeout = timeout;
+        SparqlSnapshotCache cache = ctx.sparqlCache();
+        // Fast path: reuse the cached Turtle snapshot when the model is unchanged (its stamp still equals
+        // the live version). A GUI-side prefix edit (Active ontology ▸ Prefixes) mutates the document
+        // format directly and fires NO listener, so on a hit re-read the live prefix map — a cheap EDT
+        // read, far cheaper than the closure copy + serialisation a rebuild does — and drop the entry if
+        // the prefixes changed, so a query using a just-added/redefined prefix is never served the stale
+        // map. (An MCP set_prefix already invalidates the cache directly; this covers the GUI path.)
+        SparqlSnapshotCache.Entry entry = cache.get(inferred);
+        if (entry != null) {
+            final SparqlSnapshotCache.Entry hit = entry;
+            boolean prefixesChanged = ctx.access().compute(
+                    mm -> !prefixMap(mm, mm.getActiveOntology()).equals(hit.prefixes), snapshotTimeout);
+            if (prefixesChanged) {
+                cache.invalidate();
+                entry = null;
+            }
+        }
+        if (entry == null) {
+            // Miss: build + stamp the snapshot inside ONE EDT task, so no change can interleave between
+            // reading the version and taking the snapshot (listeners fire on the EDT).
+            entry = ctx.access().compute(mm -> {
+                cache.installIfNeeded(mm);
+                long v = cache.version();
+                Snapshot snap = snapshot(mm, inferred);
+                byte[] turtle = toTurtleBytes(snap.ontology());
+                return cache.store(inferred, v, turtle, snap.prefixes(), snap.note());
+            }, snapshotTimeout);
+        }
+        Map<String, Object> result =
+                executeTurtle(entry.turtle, entry.prefixes, queryText, limit, timeout);
+        if (entry.note != null) {
+            result.put("note", entry.note);
+        }
+        return result;
+    }
+
+    private static io.modelcontextprotocol.spec.McpSchema.CallToolResult query(ToolContext ctx,
+            Map<String, Object> a) {
+        return Tools.ok(queryResult(ctx, a));
     }
 
     /** The imports-closure RDF snapshot, the prefixes to expose to queries, and an optional note. */
@@ -271,11 +309,22 @@ public final class SparqlTools {
      */
     static Map<String, Object> execute(OWLOntology ontology, Map<String, String> prefixes,
             String query, int limit, long timeoutMs) {
+        return executeTurtle(toTurtleBytes(ontology), prefixes, query, limit, timeoutMs);
+    }
+
+    /**
+     * Like {@link #execute} but over a pre-serialised Turtle snapshot (the {@link SparqlSnapshotCache}
+     * fast path): each call parses the immutable bytes into a FRESH in-memory Jena model, so the cached
+     * snapshot is never a mutable graph shared across the multi-threaded transport threads.
+     */
+    static Map<String, Object> executeTurtle(byte[] turtle, Map<String, String> prefixes,
+            String query, int limit, long timeoutMs) {
         ClassLoader previousTccl = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(SparqlTools.class.getClassLoader());
         try {
             JenaSystem.init();
-            Model model = toJenaModel(ontology);
+            Model model = ModelFactory.createDefaultModel();
+            RDFDataMgr.read(model, new ByteArrayInputStream(turtle), SNAPSHOT_IRI, Lang.TURTLE);
             Query q = parse(withPrefixes(query, prefixes));
             rejectService(q);
             try (QueryExecution qe = QueryExecutionFactory.create(q, model)) {
@@ -343,8 +392,11 @@ public final class SparqlTools {
         }
     }
 
-    /** Serialise the snapshot ontology to Turtle and load it into a fresh in-memory Jena model. */
-    private static Model toJenaModel(OWLOntology ontology) {
+    /**
+     * Serialise the snapshot ontology to Turtle bytes (OWL API only — no Jena). The bytes are cached by
+     * {@link SparqlSnapshotCache} and re-parsed into a fresh Jena model per query in {@link #executeTurtle}.
+     */
+    static byte[] toTurtleBytes(OWLOntology ontology) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
             ontology.getOWLOntologyManager().saveOntology(ontology, new TurtleDocumentFormat(), out);
@@ -352,9 +404,7 @@ public final class SparqlTools {
             throw new ToolArgException("Could not render the ontology to RDF for SPARQL: "
                     + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         }
-        Model model = ModelFactory.createDefaultModel();
-        RDFDataMgr.read(model, new ByteArrayInputStream(out.toByteArray()), SNAPSHOT_IRI, Lang.TURTLE);
-        return model;
+        return out.toByteArray();
     }
 
     /**

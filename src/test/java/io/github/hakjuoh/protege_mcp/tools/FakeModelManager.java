@@ -105,6 +105,13 @@ final class FakeModelManager {
                             (java.util.List<? extends org.semanticweb.owlapi.model.OWLOntologyChange>)
                                     args[0]);
                     return null;
+                case "addListener":
+                case "removeListener":
+                    // OWLModelManagerListener (de)registration is a no-op in the fake — model events
+                    // (active-ontology switch, classification, …) are not fired headless. The ontology
+                    // CHANGE listener the SPARQL cache also installs goes to the real ontology manager
+                    // (via getOWLOntologyManager above), so a real addAxiom still exercises invalidation.
+                    return null;
                 case "toString":
                     return "FakeModelManager[" + ontology.getOntologyID() + "]";
                 case "hashCode":

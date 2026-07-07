@@ -102,26 +102,34 @@ Produces a signature-and-axiom overview of the active ontology: counts of entiti
 
 Lists the named classes in the active ontology's signature, each with its display rendering and IRI. Use it for a quick enumeration of the classes actually declared in the active ontology.
 
+**Paginated (0.4.1).** Pass `offset` (0-based) alongside `limit` to page through a signature larger than one
+page. The result carries `count` (the total), `offset`, `returned`, `items`, and — when more remain —
+`next_offset`; pass a returned `next_offset` straight back as `offset` to page forward. The sort is
+**totally ordered** (display, then IRI), so paging never drops or repeats a class across a page boundary.
+
 *Read-only.*
 
 **Arguments**
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `limit` | integer | no | `200` | Max classes to return. |
+| `limit` | integer | no | `200` | Max classes to return in this page. |
+| `offset` | integer | no | `0` | 0-based index of the first class to return (for paging). |
 
 **Returns**
 
-A capped, display-sorted entity list:
+A totally-ordered (display, then IRI) page of the class list:
 
 - `count`: integer — full number of classes found.
+- `offset`: integer — the 0-based offset this page started at.
+- `returned`: integer — number of classes in `items` for this page.
 - `items`: array — each entry `{iri, display, type}`.
-- `truncated`: integer — present only when the list was capped; how many entries were omitted.
+- `next_offset`: integer — present only when more classes remain; pass it back as `offset` to fetch the next page.
 
 **Example**
 
 ```json
-{ "limit": 100 }
+{ "limit": 100, "offset": 100 }
 ```
 
 ## `search_entities`
@@ -135,6 +143,12 @@ whether to reuse a term or mint a new one: `best_match` is the IRI the query gro
 `would_mint` is true when a **single-term** query grounds to nothing — so using it as a `create_*` name
 would introduce a NEW entity. A full-IRI, Manchester-expression, or multi-word query is never flagged.
 
+**Paginated (0.4.1).** Pass `offset` (0-based) alongside `limit` to page through a large result set. The
+result carries `count` (the total), `offset`, `returned`, `items`, and — when more remain — `next_offset`;
+pass a returned `next_offset` straight back as `offset` to page forward. The ranking (score, then display,
+then IRI — a stable tiebreak) is a **total order**, so paging never drops or repeats a hit across a page
+boundary. The grounding fields (`best_match` / `would_mint`) reflect the whole result set, not just the page.
+
 *Read-only.*
 
 **Arguments**
@@ -143,16 +157,19 @@ would introduce a NEW entity. A full-IRI, Manchester-expression, or multi-word q
 | --- | --- | --- | --- | --- |
 | `query` | string | yes | — | Search text (use `*` as a wildcard). |
 | `type` | string | no | `all` | Entity type filter. |
-| `limit` | integer | no | `50` | Max results. |
+| `limit` | integer | no | `50` | Max results in this page. |
+| `offset` | integer | no | `0` | 0-based index of the first match to return (for paging). |
 
 **Returns**
 
-A capped, **ranked** entity list (by `score`, then display, then IRI — a stable tiebreak) plus the grounding
+A totally-ordered, **ranked** page (by `score`, then display, then IRI — a stable tiebreak) plus the grounding
 fields and echoed query:
 
 - `count`: integer — full number of matches.
+- `offset`: integer — the 0-based offset this page started at.
+- `returned`: integer — number of matches in `items` for this page.
 - `items`: array — each entry `{iri, display, type, score, match_kind}`.
-- `truncated`: integer — present only when the list was capped; how many matches were omitted.
+- `next_offset`: integer — present only when more matches remain; pass it back as `offset` to fetch the next page.
 - `would_mint`: boolean — true when a single-term query resolves to no existing entity.
 - `best_match`: string or null — the IRI the query grounds to.
 - `query`: string — the query as submitted.
@@ -161,7 +178,7 @@ fields and echoed query:
 **Example**
 
 ```json
-{ "query": "neuron", "type": "class", "limit": 25 }
+{ "query": "neuron", "type": "class", "limit": 25, "offset": 0 }
 ```
 
 ## `get_entity`
@@ -195,6 +212,12 @@ If nothing matches, the tool returns an error object of the form `{ "error": "No
 
 Returns the axioms that reference a given entity. By default it searches only the active ontology; set `include_imports=true` to also pull in axioms from the imports closure — useful for seeing an imported term's declared domain/range and class restrictions. Reach for it to understand how an entity is actually used.
 
+**Paginated (0.4.1).** Pass `offset` (0-based) alongside `limit` to page through an entity's referencing
+axioms rather than getting a single truncated blob. The `axioms` block carries `count` (the total),
+`offset`, `returned`, `items`, and — when more remain — `next_offset`; pass a returned `next_offset` back as
+`offset` to page forward. The sort is **totally ordered** (by rendering, then the axiom's own natural order),
+so paging never drops or repeats an axiom across a page boundary.
+
 *Read-only.* Acts over the imports closure when `include_imports` is set. Returns an error object if no entity matches.
 
 **Arguments**
@@ -203,18 +226,19 @@ Returns the axioms that reference a given entity. By default it searches only th
 | --- | --- | --- | --- | --- |
 | `entity` | string | yes | — | Entity IRI or display name. |
 | `include_imports` | boolean | no | `false` | Also search the imports closure. |
-| `limit` | integer | no | `100` | Max axioms to return. |
+| `limit` | integer | no | `100` | Max axioms to return in this page. |
+| `offset` | integer | no | `0` | 0-based index of the first axiom to return (for paging). |
 
 **Returns**
 
 - `entity`: object — the resolved entity as `{iri, display, type}`.
 - `include_imports`: boolean — the effective scope flag.
-- `axioms`: object — a capped, sorted axiom list `{count, items, truncated?}`, where each `items` entry is `{axiom_type, rendering}` and `truncated` (when present) is how many axioms were omitted.
+- `axioms`: object — a totally-ordered (by rendering, then the axiom's natural order) page `{count, offset, returned, items, next_offset?}`, where each `items` entry is `{axiom_type, rendering}`, `returned` is the page size, and `next_offset` (present only when more remain) is passed back as `offset` to fetch the next page.
 
 If the entity cannot be resolved, the tool returns an error object of the form `{ "error": "No entity found for '<ref>'." }`.
 
 **Example**
 
 ```json
-{ "entity": "hasOwner", "include_imports": true, "limit": 50 }
+{ "entity": "hasOwner", "include_imports": true, "limit": 50, "offset": 0 }
 ```

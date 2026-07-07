@@ -198,6 +198,43 @@ Creates a class WITH its curation suite in one undoable step (versus `create_cla
 
 ---
 
+## `create_terms`
+
+The batch form of `create_term`: creates many classes, each with its full curation suite, in ONE undoable transaction (one `undo_change` reverts every term). Each item in `terms` takes the same fields as `create_term` (`name` required, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`); the top-level `namespace` and `definition_property` act as **defaults** applied to any term that omits its own. Reach for it to intake a set of related terms in a single move. Because nothing lands in the ontology until the whole batch commits, a term that references another term from the same batch must refer to it **by full IRI**.
+
+*Mutating (undoable)* — the whole batch applies as one undoable transaction; honours `strict` (refuses to mint an unrecognised operand) and reports `new_entities`. New-entity detection is against the imports closure. **Atomic**: a malformed term (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `terms` | array | yes | — | Terms to create; each item mirrors `create_term`'s fields (`name` required, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`). |
+| `namespace` | string | no | — | Default namespace to mint IRIs in, applied to any term that omits its own `namespace`. |
+| `definition_property` | string | no | `rdfs:comment` | Default definition annotation property, applied to any term that omits its own `definition_property`. |
+| `strict` | boolean | no | `false` | If true, fail instead of minting an unrecognised operand (aborts the whole batch). |
+
+**Returns**
+
+- `created`: array of the created classes as JSON objects, in batch order.
+- `count`: number of terms created.
+- `applied`: number of changes committed.
+- `new_entities`: array of entities the operands introduced (present only when non-empty).
+
+**Example**
+
+```json
+{
+  "namespace": "http://ex.org/pets#",
+  "definition_property": "skos:definition",
+  "terms": [
+    { "name": "WorkingDog", "label": "working dog", "definition": "A dog trained to perform tasks.", "parents": ["Dog"] },
+    { "name": "GuideDog", "label": "guide dog", "parents": ["http://ex.org/pets#WorkingDog"] }
+  ]
+}
+```
+
+---
+
 ## `create_property`
 
 Creates an object or data property WITH its axioms in one undoable step. It mints the property (`property_type` `object`|`data`, default `object`; same `iri`/`namespace`/`label`/`label_lang`/`no_label` options), and optionally adds a `definition`, extra `annotations`, a `domain` (class expression), a `range` (a class expression for object; a datatype / Manchester data range such as `xsd:integer[>= 0]` for data), `super_properties`, `characteristics` (object: `functional`, `inverse_functional`, `transitive`, `symmetric`, `asymmetric`, `reflexive`, `irreflexive`; data: `functional`) and an `inverse_of` (object only). Reach for it to declare a fully-specified property in one call.

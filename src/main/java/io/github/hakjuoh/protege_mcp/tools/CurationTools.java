@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -40,6 +41,9 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
  *   <li>{@code create_term} — a class with a label, a definition, an arbitrary annotation suite,
  *       parent(s) (named or a Manchester restriction), and optional equivalent-class (defined-class)
  *       expressions, in one step.</li>
+ *   <li>{@code create_terms} — a batch of {@code create_term}s applied as ONE undoable transaction
+ *       (term-request intake), with optional shared {@code namespace}/{@code definition_property}
+ *       defaults; the whole batch is atomic (all terms or none).</li>
  *   <li>{@code create_property} — an object/data property with a label, definition, domain, range,
  *       super-properties, characteristics (functional, transitive, …) and an inverse, in one step.</li>
  *   <li>{@code deprecate_entity} — the standard obsolescence pattern: {@code owl:deprecated true} plus
@@ -109,6 +113,69 @@ public final class CurationTools {
                                 defProp, defText, defLang, extra));
                         return applyCuration(mm, ont, changes, strict, cls,
                                 Tools.json().put("created", Tools.entityJson(mm, cls)));
+                    });
+                }));
+
+        tools.tool("create_terms",
+                "Create MANY classes in one undoable transaction (batch term-request intake) — the array "
+                        + "form of create_term. 'terms' is an array; each item takes the same fields as "
+                        + "create_term ('name' required, plus 'iri'/'namespace'/'label'/'label_lang'/"
+                        + "'no_label'/'definition'/'definition_property'/'definition_lang'/'parents'/"
+                        + "'equivalent_to'/'annotations'). Top-level 'namespace' and 'definition_property' "
+                        + "are DEFAULTS applied to any term that omits its own (mint IRIs in a shared "
+                        + "namespace, set one definition property for all). The whole batch is applied as a "
+                        + "SINGLE undoable change (one undo_change reverts every term) and is ATOMIC: if any "
+                        + "term is malformed, nothing is applied. strict=true refuses the whole batch if any "
+                        + "operand would be minted as a new, empty entity (a typo guard). Note: to make one "
+                        + "term reference ANOTHER term in the SAME batch (e.g. as a parent), give that other "
+                        + "term an explicit 'iri'/'namespace' and reference it by its full IRI — nothing is "
+                        + "in the ontology until the batch commits, so a bare name for a same-batch term "
+                        + "won't resolve.",
+                createTermsSchema(),
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> a = Tools.args(req);
+                    List<Map<String, Object>> termSpecs = Tools.objList(a, "terms");
+                    if (termSpecs.isEmpty()) {
+                        return Tools.error("Provide at least one term in 'terms' (each: 'name' plus "
+                                + "optional iri/namespace/label/definition/parents/equivalent_to/...).");
+                    }
+                    boolean strict = Tools.optBool(a, "strict", false);
+                    String defaultNamespace = Tools.optString(a, "namespace");
+                    String defaultDefProp = Tools.optString(a, "definition_property");
+                    return WriteTools.write(ctx, "create_terms (" + termSpecs.size() + ")", mm -> {
+                        OWLDataFactory df = mm.getOWLDataFactory();
+                        OWLOntology ont = mm.getActiveOntology();
+                        List<OWLOntologyChange> changes = new ArrayList<>();
+                        List<OWLClass> created = new ArrayList<>();
+                        Set<OWLEntity> createdSet = new LinkedHashSet<>();
+                        for (int i = 0; i < termSpecs.size(); i++) {
+                            Map<String, Object> spec =
+                                    withDefaults(termSpecs.get(i), defaultNamespace, defaultDefProp);
+                            try {
+                                OWLClass cls = (OWLClass) WriteTools.createEntity(mm, "class", spec, changes);
+                                List<OWLClassExpression> parents = classExprs(mm, spec, "parents", "parent");
+                                List<OWLClassExpression> equivalents =
+                                        classExprs(mm, spec, "equivalent_to", null);
+                                OWLAnnotationProperty defProp = definitionProperty(mm, spec);
+                                if (!createdSet.add(cls)) {
+                                    // Two specs resolving to the same IRI would otherwise silently merge
+                                    // into one class (accumulating both labels/definitions) yet be
+                                    // reported as two created terms. Reject the collision instead.
+                                    throw new ToolArgException("duplicates an earlier term in this batch "
+                                            + "(IRI <" + cls.getIRI() + ">) — each term must mint a "
+                                            + "distinct IRI.");
+                                }
+                                changes.addAll(termAxioms(df, ont, cls, parents, equivalents, defProp,
+                                        Tools.optString(spec, "definition"),
+                                        Tools.optString(spec, "definition_lang"),
+                                        Tools.annotationSet(mm, spec, "annotations")));
+                                created.add(cls);
+                            } catch (ToolArgException e) {
+                                throw new ToolArgException("terms[" + i + "]" + termLabel(spec) + ": "
+                                        + e.getMessage() + " Nothing was applied.");
+                            }
+                        }
+                        return applyBatchCuration(mm, ont, changes, strict, createdSet, created);
                     });
                 }));
 
@@ -451,6 +518,119 @@ public final class CurationTools {
             result.put("new_entities", Tools.entityList(mm, minted, Integer.MAX_VALUE));
         }
         return result.put("applied", changes.size()).result();
+    }
+
+    // ================================================================== create_terms (batch)
+
+    /**
+     * Schema for {@code create_terms}: a required {@code terms} array whose items mirror {@code
+     * create_term}'s fields, plus top-level {@code namespace} / {@code definition_property} defaults and a
+     * {@code strict} flag. Hand-assembled (rather than via {@link Tools.SchemaBuilder}) because the item is
+     * itself an object schema — the same shape {@code create_term} builds.
+     */
+    private static Map<String, Object> createTermsSchema() {
+        Map<String, Object> item = Tools.schema()
+                .strReq("name", "Short name — the IRI local part when minting, and the default label.")
+                .str("iri", "Full IRI to use (optional; overrides 'namespace').")
+                .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional; "
+                        + "falls back to the top-level 'namespace' default).")
+                .str("label", "rdfs:label text (default: 'name').")
+                .str("label_lang", "Language tag for the rdfs:label, e.g. 'en' (default: none).")
+                .bool("no_label", "Do not add any rdfs:label (default false).")
+                .str("definition", "Definition text (optional).")
+                .str("definition_property", "Annotation property for the definition (optional; falls back "
+                        + "to the top-level 'definition_property' default, else rdfs:comment).")
+                .str("definition_lang", "Language tag for the definition literal (optional).")
+                .strArray("parents", "Superclasses: each a class name, IRI or Manchester class expression. "
+                        + "To reference another term in THIS batch, use its full IRI.")
+                .strArray("equivalent_to", "Equivalent class expressions for a defined class (optional).")
+                .annotationArray("annotations", "Extra annotations (array of {property, value | value_iri, "
+                        + "lang, datatype}).")
+                .build();
+
+        Map<String, Object> terms = new LinkedHashMap<>();
+        terms.put("type", "array");
+        terms.put("items", item);
+        terms.put("description", "The classes to create; each item is a create_term field set (only "
+                + "'name' is required).");
+
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("terms", terms);
+        properties.put("namespace", Tools.stringProperty("Default namespace for any term that gives "
+                + "neither its own 'iri' nor 'namespace' (IRI = namespace + name)."));
+        properties.put("definition_property", Tools.stringProperty("Default definition annotation "
+                + "property for any term that omits its own 'definition_property' (e.g. skos:definition)."));
+        properties.put("strict", Tools.boolProperty(WriteTools.STRICT_DESC));
+
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", properties);
+        schema.put("required", java.util.Collections.singletonList("terms"));
+        schema.put("additionalProperties", false);
+        return schema;
+    }
+
+    /**
+     * A copy of {@code spec} with the batch-level defaults filled in: {@code namespace} only when the term
+     * gives neither its own {@code namespace} nor an explicit {@code iri} (so an explicit IRI is never
+     * overridden), and {@code definition_property} only when absent. Never mutates the caller's map.
+     */
+    static Map<String, Object> withDefaults(Map<String, Object> spec, String defaultNamespace,
+            String defaultDefProp) {
+        Map<String, Object> merged = new LinkedHashMap<>(spec);
+        if (defaultNamespace != null && Tools.optString(merged, "namespace") == null
+                && Tools.optString(merged, "iri") == null) {
+            merged.put("namespace", defaultNamespace);
+        }
+        if (defaultDefProp != null && Tools.optString(merged, "definition_property") == null) {
+            merged.put("definition_property", defaultDefProp);
+        }
+        return merged;
+    }
+
+    /** " ('name')" for error context, or "" when the term has no name to report. */
+    private static String termLabel(Map<String, Object> spec) {
+        String name = Tools.optString(spec, "name");
+        return name == null ? "" : " ('" + name + "')";
+    }
+
+    /**
+     * Apply a whole batch of curated terms as ONE transaction. Mirrors {@link #applyCuration} but for many
+     * created entities: the minted-operand set is every entity the batch's adds introduce minus the terms
+     * the batch itself creates (so a term referencing an earlier same-batch term BY FULL IRI is not a
+     * false strict violation). With {@code strict} and a non-empty remainder, nothing is applied.
+     */
+    static CallToolResult applyBatchCuration(OWLModelManager mm, OWLOntology ont,
+            List<OWLOntologyChange> changes, boolean strict, Set<OWLEntity> createdSet,
+            List<OWLClass> created) {
+        Set<OWLOntology> closure = ont.getImportsClosure();
+        Set<OWLEntity> minted = new LinkedHashSet<>();
+        for (OWLOntologyChange ch : changes) {
+            if (ch instanceof AddAxiom) {
+                minted.addAll(PreviewTools.newEntities(closure, ((AddAxiom) ch).getAxiom()));
+            }
+        }
+        minted.removeAll(createdSet);
+        if (strict && !minted.isEmpty()) {
+            return Tools.error("Refusing to apply (strict): the operand(s) "
+                    + EntityRendering.renderMinted(mm, minted) + " are not declared anywhere in the "
+                    + "imports closure and would be created as new, empty entities — likely a typo. Fix "
+                    + "the reference, create it first (or reference a same-batch term by its full IRI), or "
+                    + "set strict=false. Nothing was applied.");
+        }
+        mm.applyChanges(changes);   // one broadcast → one Protégé undo entry for the whole batch
+        List<Map<String, Object>> createdJson = new ArrayList<>();
+        for (OWLClass c : created) {
+            createdJson.add(Tools.entityJson(mm, c));
+        }
+        Tools.Json result = Tools.json()
+                .put("created", createdJson)
+                .put("count", created.size())
+                .put("applied", changes.size());
+        if (!minted.isEmpty()) {
+            result.put("new_entities", Tools.entityList(mm, minted, Integer.MAX_VALUE));
+        }
+        return result.result();
     }
 
     /** Resolve the class expressions named by {@code key} (and an optional singular {@code singularKey}). */

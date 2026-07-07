@@ -7,7 +7,7 @@ nav_order: 6
 # Documents
 {: .no_toc }
 
-Tools for loading whole OWL documents into the Protégé workspace, choosing the active edit target, minting new ontologies, and writing an OASIS import catalog so a reconstructed module re-opens with its imports resolved offline.
+Tools for loading whole OWL documents into the Protégé workspace, choosing the active edit target, minting new ontologies, writing an OASIS import catalog so a reconstructed module re-opens with its imports resolved offline, and extracting a signature-based locality module from the loaded ontologies.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -190,5 +190,46 @@ If no catalog folder can be determined (the active ontology has no saved file do
 {
   "path": "/tmp/mymodule/",
   "direct_imports_only": false
+}
+```
+
+## `extract_module`
+
+Extracts a signature-based **locality module** from the loaded ontologies — the interactive analogue of `robot extract`, using the OWL API's `SyntacticLocalityModuleExtractor`. Give a seed `signature` (entity names or full IRIs; a punned IRI brings every sense) and a `module_type`: **STAR** (default — the smallest, "nested" module, both directions), **BOT** (⊥ — what the seeds *use*: their superclasses and definitions), or **TOP** (⊤ — what *uses* the seeds: their subtree). It runs over `source` = `imports_closure` (default) or `active`. By default the extracted module is loaded as a NEW ontology in the workspace (name it with `iri`); pass `path` to instead save it to a file (the serialisation format is chosen from the extension). The STAR fixpoint runs off the UI thread — only seed resolution and the closure snapshot happen on the model thread, bounded by `timeout_ms`.
+
+*Mutating (not undoable)* — extraction is not an `applyChange` edit, so it does NOT join the shared undo stack. Both delivery modes are gated as writes: the read-only and confirm-each-write preferences apply to loading the module into the workspace AND to exporting it to a file.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `signature` | array of string | yes | — | Seed entity names or full IRIs (a punned IRI brings every sense). |
+| `module_type` | string | no | `STAR` | `STAR` (smallest, both directions) \| `BOT` (⊥ — what the seeds use) \| `TOP` (⊤ — what uses the seeds). |
+| `source` | string | no | `imports_closure` | `imports_closure` \| `active` — which graph to extract from. |
+| `iri` | string | no | — | IRI to name the extracted module ontology. |
+| `path` | string | no | — | File to save the module to (format from the extension). Omit to load it as a new workspace ontology instead. |
+| `timeout_ms` | integer | no | `60000` | Time budget in ms bounding the on-model-thread phases (seed resolution + closure snapshot). |
+
+**Returns**
+
+- `module`: object — `{iri, anonymous}` describing the extracted module ontology.
+- `module_type`: string — the module type used (`STAR` / `BOT` / `TOP`).
+- `source`: string — the graph extracted from (`imports_closure` / `active`).
+- `seeds`: object — `{requested, resolved, unresolved}`: the counts of signature entries requested, resolved to entities, and left unresolved.
+- `axioms`: integer — number of axioms in the extracted module.
+- `entities`: integer — number of entities in the module's signature.
+- When loaded into the workspace: `loaded`: `"workspace"` and `note` — a reminder that the load is not on the undo stack.
+- When saved to a file: `saved`: `true`, `path`: string — the absolute file written, and `format`: string — the serialisation format used.
+
+On an unreadable signature (no seed resolves), a save failure, or a timeout, the call fails with an error object `{error: "..."}`.
+
+**Example**
+
+```json
+{
+  "signature": ["Centrifuge", "https://spec.industrialontologies.org/ontology/core/Core/MaterialArtifact"],
+  "module_type": "STAR",
+  "source": "imports_closure",
+  "iri": "https://example.org/modules/equipment-module"
 }
 ```

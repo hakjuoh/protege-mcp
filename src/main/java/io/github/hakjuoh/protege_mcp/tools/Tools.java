@@ -398,4 +398,16 @@ public final class Tools {
             Collection<? extends OWLAxiom> axioms, int limit) {
         return EntityJson.axiomList(mm, axioms, limit);
     }
+
+    /** A paginated entity window {@code {count, offset, returned, items, next_offset?}}. See {@link EntityJson#entityPage}. */
+    public static Map<String, Object> entityPage(OWLModelManager mm,
+            Collection<? extends OWLEntity> entities, int offset, int limit) {
+        return EntityJson.entityPage(mm, entities, offset, limit);
+    }
+
+    /** A paginated axiom window {@code {count, offset, returned, items, next_offset?}}. See {@link EntityJson#axiomPage}. */
+    public static Map<String, Object> axiomPage(OWLModelManager mm,
+            Collection<? extends OWLAxiom> axioms, int offset, int limit) {
+        return EntityJson.axiomPage(mm, axioms, offset, limit);
+    }
 }

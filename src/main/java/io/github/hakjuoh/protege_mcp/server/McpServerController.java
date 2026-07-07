@@ -41,6 +41,7 @@ public final class McpServerController implements ManagedServer {
     private McpServerManager serverManager;
     private EmbeddedHttpServer httpServer;
     private volatile OAuthStore oauthStore;
+    private volatile ToolContext toolContext;
 
     public McpServerController(OntologyAccess access) {
         this(access, null);
@@ -79,6 +80,7 @@ public final class McpServerController implements ManagedServer {
             this.configuredPort = config.getPort();
 
             ToolContext context = new ToolContext(access, this, confirmer);
+            this.toolContext = context;
             List<SyncToolSpecification> tools = ToolCatalog.buildAll(context);
 
             serverManager = new McpServerManager();
@@ -142,6 +144,17 @@ public final class McpServerController implements ManagedServer {
                 httpServer.stop();
             } finally {
                 httpServer = null;
+            }
+        }
+        // Release tool-scoped resources (notably the SPARQL cache's model listeners) so a restart does
+        // not leak a listener + its cached snapshots. Best-effort; must not block stop.
+        if (toolContext != null) {
+            try {
+                toolContext.dispose();
+            } catch (RuntimeException e) {
+                log.warn("protege-mcp: error disposing tool context", e);
+            } finally {
+                toolContext = null;
             }
         }
         // Drop the in-memory store so the view shows no clients while stopped; the next start()

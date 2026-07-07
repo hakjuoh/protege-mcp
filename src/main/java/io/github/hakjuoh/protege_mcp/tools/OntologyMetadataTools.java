@@ -151,6 +151,10 @@ public final class OntologyMetadataTools {
                         }
                         String name = prefix.endsWith(":") ? prefix : prefix + ":";
                         fmt.asPrefixOWLOntologyFormat().setPrefix(name, namespace);
+                        // A prefix edit mutates the document format directly — no OWLOntologyChange, no
+                        // model event — so the SPARQL snapshot cache (which caches the prefix map) would
+                        // otherwise keep serving the pre-edit prefixes. Invalidate it explicitly.
+                        ctx.sparqlCache().invalidate();
                         return Tools.json()
                                 .put("prefix", name)
                                 .put("namespace", namespace)

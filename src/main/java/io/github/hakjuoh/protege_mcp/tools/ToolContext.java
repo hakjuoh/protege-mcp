@@ -24,6 +24,7 @@ public final class ToolContext {
     private final McpServerController controller;
     private final WriteConfirmer confirmer;
     private final ReentrantLock writeLock = new ReentrantLock();
+    private final SparqlSnapshotCache sparqlCache = new SparqlSnapshotCache();
 
     public ToolContext(OntologyAccess access, McpServerController controller) {
         this(access, controller, null);
@@ -54,5 +55,36 @@ public final class ToolContext {
     /** The server-level write mutex (see the class doc). */
     public ReentrantLock writeLock() {
         return writeLock;
+    }
+
+    /** The edit-versioned SPARQL snapshot cache (one per server), shared by {@code sparql_query}. */
+    SparqlSnapshotCache sparqlCache() {
+        return sparqlCache;
+    }
+
+    /**
+     * Release server-scoped resources when the owning server stops: removes the SPARQL cache's model
+     * listeners (on the EDT) and drops its cached snapshots. Best-effort — a shutting-down or unresponsive
+     * EDT never blocks server stop. Idempotent.
+     *
+     * <p>The bounded {@link OntologyAccess#compute} cancels its queued body on timeout, so a busy EDT
+     * would leave the listeners attached (they only die with the model manager on a FULL window close,
+     * not on a Stop/restart where the same manager survives). To avoid that leak, on timeout we re-post
+     * the (idempotent, EDT-safe) listener removal via a plain, un-cancelled {@code invokeLater} so it
+     * still runs once the EDT frees up.
+     */
+    public void dispose() {
+        try {
+            access.compute(mm -> {
+                sparqlCache.dispose();
+                return null;
+            }, 5_000L);
+        } catch (RuntimeException timedOutOrFailed) {
+            try {
+                javax.swing.SwingUtilities.invokeLater(sparqlCache::dispose);
+            } catch (RuntimeException ignored) {
+                // Headless / no EDT (e.g. a full shutdown): the listeners die with the model manager.
+            }
+        }
     }
 }

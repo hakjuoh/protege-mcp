@@ -170,10 +170,11 @@ class ReadToolsTest {
     }
 
     @Test
-    void listClassesSchemaDeclaresLimitOnly() {
+    void listClassesSchemaDeclaresLimitAndOffset() {
         Map<String, Object> props = properties(specByName("list_classes"));
         assertEquals("integer", type(props, "limit"), "limit is an integer");
-        assertEquals(1, props.size(), "list_classes only declares limit");
+        assertEquals("integer", type(props, "offset"), "offset is an integer");
+        assertEquals(2, props.size(), "list_classes declares limit and offset");
     }
 
     @Test

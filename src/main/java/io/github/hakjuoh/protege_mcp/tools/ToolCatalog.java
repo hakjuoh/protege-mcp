@@ -25,6 +25,7 @@ public final class ToolCatalog {
             EntityRefactorTools::register,
             OntologyMetadataTools::register,
             OntologyDocumentTools::register,
+            ModuleTools::register,
             RuleTools::register,
             CatalogTools::register,
             DiffTools::register,

@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **61 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **63 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -70,8 +70,8 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 
 ### [Editing — entities & axioms](editing.html)
 `preview_changes` · `apply_changes` · `create_class` · `create_entity` · `create_term` ·
-`create_property` · `add_subclass_of` · `add_annotation` · `set_label` · `add_axiom` · `remove_axiom` ·
-`rename_entity` · `delete_entity` · `deprecate_entity` · `move_class`
+`create_terms` · `create_property` · `add_subclass_of` · `add_annotation` · `set_label` · `add_axiom` ·
+`remove_axiom` · `rename_entity` · `delete_entity` · `deprecate_entity` · `move_class`
 
 ### [Ontology metadata & imports](metadata-imports.html)
 `set_ontology_id` · `set_prefix` · `add_import` · `remove_import` · `add_ontology_annotation` ·
@@ -79,7 +79,7 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 
 ### [Documents](documents.html)
 `load_ontology` · `set_active_ontology` · `merge_ontology_document` · `create_ontology` ·
-`write_catalog`
+`write_catalog` · `extract_module`
 
 ### [Rules (SWRL)](rules.html)
 `list_rules` · `add_rule` · `remove_rule`

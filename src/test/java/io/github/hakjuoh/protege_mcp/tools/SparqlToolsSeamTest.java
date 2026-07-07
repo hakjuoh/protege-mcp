@@ -1,15 +1,19 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.protege.editor.owl.model.OWLModelManager;
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLClass;
@@ -178,6 +182,37 @@ class SparqlToolsSeamTest {
         // individuals * properties (0) is well under MAX_INFERRED_PROPERTY_PRODUCT, so nothing is skipped.
         assertNull(snap.note(),
                 "a small ABox does not trip the quadratic-property-assertion skip note");
+    }
+
+    // ---------------------------------------------------------------- prefix-cache revalidation (end-to-end)
+
+    @Test
+    void guiSidePrefixEditIsPickedUpOnTheNextQueryDespiteTheSnapshotCache() throws Exception {
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = m.createOntology(IRI.create("http://example.org/sparql-seam"));
+        m.setOntologyFormat(o, new TurtleDocumentFormat());   // a prefix format, no custom prefixes yet
+        m.addAxiom(o, df.getOWLDeclarationAxiom(cls(df, "Thing")));
+        OWLModelManager mm = FakeModelManager.over(o);
+        ToolContext ctx = new ToolContext(
+                io.github.hakjuoh.protege_mcp.server.HeadlessAccess.over(mm), null);
+
+        // Prime the cache: a first query (standard prefixes only) caches the snapshot + its prefix map.
+        Map<String, Object> q1 = new LinkedHashMap<>();
+        q1.put("query", "SELECT ?s WHERE { ?s a owl:Class }");
+        SparqlTools.queryResult(ctx, q1);
+
+        // Simulate a GUI-side prefix edit: mutate the format's prefix map directly — this fires NO
+        // listener, so without revalidation the cache would keep serving the pre-edit prefixes.
+        m.getOntologyFormat(o).asPrefixOWLOntologyFormat().setPrefix("ex:", NS);
+
+        // A query using the just-added prefix must resolve (revalidation drops the stale entry), not
+        // fail to parse on a missing 'ex:' prefix.
+        Map<String, Object> q2 = new LinkedHashMap<>();
+        q2.put("query", "SELECT ?s WHERE { ?s a ex:Thing }");
+        Map<String, Object> r2 = SparqlTools.queryResult(ctx, q2);
+        assertEquals("SELECT", r2.get("query_type"),
+                "a GUI-side prefix edit is picked up on the next query despite the snapshot cache");
     }
 
     // ---------------------------------------------------------------- buildSnapshotOntology (Protégé-free)

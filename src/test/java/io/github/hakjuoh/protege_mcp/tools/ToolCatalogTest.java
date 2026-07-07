@@ -23,7 +23,7 @@ import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
  * Method-level tests for {@link ToolCatalog}, the thin aggregator that concatenates every tool
  * provider's {@code specs(ctx)} into the single list the MCP server registers at startup.
  *
- * <p>{@code ToolCatalog.buildAll} only walks the 19 provider {@code specs(ctx)} methods and
+ * <p>{@code ToolCatalog.buildAll} only walks the 20 provider {@code specs(ctx)} methods and
  * {@code addAll}s their results; each provider references {@code ctx} exclusively from within its
  * handler lambdas (which run at tool-invocation time), never eagerly at build time. That lets these
  * tests drive the real aggregation with a {@code ToolContext(null, null)} test double — no Protégé
@@ -189,7 +189,7 @@ class ToolCatalogTest {
 
     @Test
     void buildAllAcceptsSameContextInstanceForEveryProvider() {
-        // buildAll passes the exact same ctx to all 19 providers; a shared ctx must not corrupt
+        // buildAll passes the exact same ctx to all 20 providers; a shared ctx must not corrupt
         // the aggregate. Building over one instance must equal building over another with the same
         // (empty) collaborators.
         ToolContext ctxA = nullCtx();
@@ -252,7 +252,7 @@ class ToolCatalogTest {
                     "tool name '" + name + "' must be unique across the aggregated catalog");
         }
         assertEquals(all.size(), seen.size(),
-                "no duplicate tool names may survive aggregation of the 19 providers");
+                "no duplicate tool names may survive aggregation of the 20 providers");
     }
 
     @Test

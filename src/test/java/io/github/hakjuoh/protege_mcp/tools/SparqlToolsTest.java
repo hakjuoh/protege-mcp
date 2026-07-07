@@ -204,6 +204,24 @@ class SparqlToolsTest {
     }
 
     @Test
+    void executeTurtleOverCachedBytesMatchesExecuteOverTheOntology()
+            throws OWLOntologyCreationException {
+        // The cache fast path serialises once (toTurtleBytes) then re-parses per query (executeTurtle);
+        // it must return exactly what execute(ontology, ...) does from a fresh snapshot.
+        OWLOntology o = ontology();
+        byte[] turtle = SparqlTools.toTurtleBytes(o);
+        Map<String, Object> viaBytes = SparqlTools.executeTurtle(turtle, prefixes(),
+                "SELECT ?s WHERE { ?s rdfs:subClassOf ex:Animal }", 1000, TIMEOUT);
+        Map<String, Object> viaOntology = SparqlTools.execute(o, prefixes(),
+                "SELECT ?s WHERE { ?s rdfs:subClassOf ex:Animal }", 1000, TIMEOUT);
+        assertEquals(viaOntology.get("count"), viaBytes.get("count"),
+                "the cached-bytes path returns the same rows as a fresh snapshot");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> s = (Map<String, Object>) bindings(viaBytes).get(0).get("s");
+        assertEquals(EX + "Dog", s.get("value"));
+    }
+
+    @Test
     void withPrefixesIsAdditiveForEverySuppliedNamespace() {
         Map<String, String> p = new LinkedHashMap<>();
         p.put("ex:", EX);

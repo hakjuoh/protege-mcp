@@ -65,10 +65,27 @@ final class EntitySearch {
      * Build the enriched {@code search_entities} result over the finder's {@code matches}: {@code count},
      * a ranked capped {@code items} list (each {@code {iri, display, type, score, match_kind}}), an optional
      * {@code truncated}, plus {@code would_mint} and {@code best_match}. The caller adds {@code query}/{@code
-     * type}.
+     * type}. This front-of-list overload is retained for callers that don't page.
      */
     static Map<String, Object> enrichedSearch(OWLModelManager mm, String query,
             Set<? extends OWLEntity> matches, int limit) {
+        return build(mm, query, matches, 0, limit, false);
+    }
+
+    /**
+     * Paginated variant of {@link #enrichedSearch(OWLModelManager, String, Set, int)}: returns
+     * {@code count} (total ranked matches), {@code offset}, {@code returned}, a windowed {@code items} list
+     * and, when more remain, {@code next_offset} — plus {@code would_mint}/{@code best_match} (computed over
+     * the whole match set, independent of the page). The ranking is total (score, display, IRI), so paging
+     * never drops or repeats a hit across page boundaries.
+     */
+    static Map<String, Object> enrichedSearch(OWLModelManager mm, String query,
+            Set<? extends OWLEntity> matches, int offset, int limit) {
+        return build(mm, query, matches, offset, limit, true);
+    }
+
+    private static Map<String, Object> build(OWLModelManager mm, String query,
+            Set<? extends OWLEntity> matches, int offset, int limit, boolean paged) {
         boolean textual = isTextualQuery(query);
         Map<IRI, List<String>> labels = textual ? labelIndex(mm) : Collections.emptyMap();
         String nq = normalize(query);
@@ -84,9 +101,13 @@ final class EntitySearch {
                 .thenComparing(s -> s.display.toLowerCase(Locale.ROOT))
                 .thenComparing(s -> s.entity.getIRI().toString()));
 
+        int total = scored.size();
+        int off = Math.min(Math.max(0, offset), total);
         int max = Math.max(0, limit);
+        // long arithmetic so a near-Integer.MAX_VALUE limit cannot overflow off+max into a negative end.
+        int end = (int) Math.min((long) total, (long) off + max);
         List<Map<String, Object>> items = new ArrayList<>();
-        for (int i = 0; i < scored.size() && i < max; i++) {
+        for (int i = off; i < end; i++) {
             Scored s = scored.get(i);
             Map<String, Object> item = new LinkedHashMap<>(Tools.entityJson(mm, s.entity));
             item.put("score", s.kind.score);
@@ -95,10 +116,19 @@ final class EntitySearch {
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("count", matches.size());
+        result.put("count", total);
+        if (paged) {
+            result.put("offset", off);
+            result.put("returned", items.size());
+        }
         result.put("items", items);
-        if (matches.size() > items.size()) {
-            result.put("truncated", matches.size() - items.size());
+        if (paged) {
+            // Only advertise a next page when this page made forward progress (guards limit<=0 / overflow).
+            if (!items.isEmpty() && off + items.size() < total) {
+                result.put("next_offset", off + items.size());
+            }
+        } else if (total > items.size()) {
+            result.put("truncated", total - items.size());
         }
         OWLEntity best = bestMatch(mm, query, matches, labels, textual);
         result.put("would_mint", best == null && EntityResolver.asIri(query) == null

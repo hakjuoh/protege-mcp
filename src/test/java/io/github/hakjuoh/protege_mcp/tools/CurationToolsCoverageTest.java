@@ -11,9 +11,11 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
+import org.protege.editor.owl.model.OWLModelManager;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.AddAxiom;
 import org.semanticweb.owlapi.model.IRI;
@@ -26,6 +28,7 @@ import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLDataProperty;
+import org.semanticweb.owlapi.model.OWLEntity;
 import org.semanticweb.owlapi.model.OWLFunctionalDataPropertyAxiom;
 import org.semanticweb.owlapi.model.OWLFunctionalObjectPropertyAxiom;
 import org.semanticweb.owlapi.model.OWLInverseFunctionalObjectPropertyAxiom;
@@ -54,6 +57,105 @@ class CurationToolsCoverageTest {
 
     private OWLClass cls(OWLDataFactory df, String name) {
         return df.getOWLClass(IRI.create(NS + name));
+    }
+
+    // ================================================================== create_terms (batch)
+
+    @Test
+    void withDefaultsFillsNamespaceOnlyWhenNeitherIriNorNamespaceGiven() {
+        java.util.Map<String, Object> plain = new java.util.LinkedHashMap<>();
+        plain.put("name", "Dog");
+        java.util.Map<String, Object> filled = CurationTools.withDefaults(plain, NS, "skos:definition");
+        assertEquals(NS, filled.get("namespace"), "default namespace filled when absent");
+        assertEquals("skos:definition", filled.get("definition_property"), "default def property filled");
+        // the original map is not mutated
+        assertFalse(plain.containsKey("namespace"), "withDefaults copies rather than mutating the input");
+
+        java.util.Map<String, Object> hasIri = new java.util.LinkedHashMap<>();
+        hasIri.put("name", "Cat");
+        hasIri.put("iri", NS + "Cat");
+        assertFalse(CurationTools.withDefaults(hasIri, NS, null).containsKey("namespace"),
+                "an explicit iri suppresses the namespace default (never overrides the IRI)");
+
+        java.util.Map<String, Object> hasNs = new java.util.LinkedHashMap<>();
+        hasNs.put("name", "Fish");
+        hasNs.put("namespace", "http://other/");
+        assertEquals("http://other/", CurationTools.withDefaults(hasNs, NS, null).get("namespace"),
+                "an explicit namespace is not overridden by the default");
+    }
+
+    @Test
+    void applyBatchCurationAppliesEveryTermAsOneTransaction() throws OWLOntologyCreationException {
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = ont(m);
+        OWLClass animal = cls(df, "Animal");
+        m.addAxiom(o, df.getOWLDeclarationAxiom(animal));
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        OWLClass dog = cls(df, "Dog");
+        OWLClass cat = cls(df, "Cat");
+        List<OWLOntologyChange> changes = new java.util.ArrayList<>();
+        changes.add(new AddAxiom(o, df.getOWLDeclarationAxiom(dog)));
+        changes.add(new AddAxiom(o, df.getOWLSubClassOfAxiom(dog, animal)));
+        changes.add(new AddAxiom(o, df.getOWLDeclarationAxiom(cat)));
+        Set<OWLEntity> createdSet = new LinkedHashSet<>(Arrays.asList(dog, cat));
+
+        io.modelcontextprotocol.spec.McpSchema.CallToolResult r = CurationTools.applyBatchCuration(
+                mm, o, changes, false, createdSet, Arrays.asList(dog, cat));
+        assertEquals(Boolean.FALSE, r.isError(), "a well-formed batch succeeds");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) r.structuredContent();
+        assertEquals(2, body.get("count"), "both terms reported as created");
+        assertTrue(o.containsAxiom(df.getOWLSubClassOfAxiom(dog, animal)), "the batch was applied");
+        assertTrue(o.isDeclared(cat), "the second term's declaration applied in the same batch");
+    }
+
+    @Test
+    void applyBatchCurationStrictRefusesATypoOperandAndAppliesNothing()
+            throws OWLOntologyCreationException {
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = ont(m);
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        OWLClass dog = cls(df, "Dog");
+        OWLClass typo = df.getOWLClass(IRI.create("http://example.org/typo#Aminal")); // not declared anywhere
+        List<OWLOntologyChange> changes = new java.util.ArrayList<>();
+        changes.add(new AddAxiom(o, df.getOWLDeclarationAxiom(dog)));
+        changes.add(new AddAxiom(o, df.getOWLSubClassOfAxiom(dog, typo)));
+        Set<OWLEntity> createdSet = new LinkedHashSet<>(Collections.singletonList(dog));
+        long before = o.getAxiomCount();
+
+        io.modelcontextprotocol.spec.McpSchema.CallToolResult r = CurationTools.applyBatchCuration(
+                mm, o, changes, true, createdSet, Collections.singletonList(dog));
+        assertEquals(Boolean.TRUE, r.isError(), "strict + a would-be-minted operand is an error");
+        assertEquals(before, o.getAxiomCount(), "nothing is applied when the batch is refused");
+    }
+
+    @Test
+    void applyBatchCurationNonStrictAppliesAndReportsMintedOperands()
+            throws OWLOntologyCreationException {
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = ont(m);
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        OWLClass dog = cls(df, "Dog");
+        OWLClass unknownParent = df.getOWLClass(IRI.create("http://example.org/ext#Creature"));
+        List<OWLOntologyChange> changes = new java.util.ArrayList<>();
+        changes.add(new AddAxiom(o, df.getOWLDeclarationAxiom(dog)));
+        changes.add(new AddAxiom(o, df.getOWLSubClassOfAxiom(dog, unknownParent)));
+        Set<OWLEntity> createdSet = new LinkedHashSet<>(Collections.singletonList(dog));
+
+        io.modelcontextprotocol.spec.McpSchema.CallToolResult r = CurationTools.applyBatchCuration(
+                mm, o, changes, false, createdSet, Collections.singletonList(dog));
+        assertEquals(Boolean.FALSE, r.isError());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) r.structuredContent();
+        assertTrue(body.containsKey("new_entities"),
+                "a minted operand outside the batch is reported as a new entity");
+        assertTrue(o.containsAxiom(df.getOWLSubClassOfAxiom(dog, unknownParent)), "and the batch applied");
     }
 
     private OWLOntology ont(OWLOntologyManager m) throws OWLOntologyCreationException {

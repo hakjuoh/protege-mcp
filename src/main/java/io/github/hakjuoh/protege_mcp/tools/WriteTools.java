@@ -661,7 +661,7 @@ public final class WriteTools {
     }
 
     /** Pick a serialization format from the file extension, falling back to the current format. */
-    private static OWLDocumentFormat formatForPath(String path, OWLDocumentFormat current) {
+    static OWLDocumentFormat formatForPath(String path, OWLDocumentFormat current) {
         String p = path.toLowerCase();
         if (p.endsWith(".ttl") || p.endsWith(".turtle")) {
             return new TurtleDocumentFormat();

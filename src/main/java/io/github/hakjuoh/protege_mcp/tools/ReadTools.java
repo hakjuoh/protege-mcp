@@ -90,13 +90,22 @@ public final class ReadTools {
                 }));
 
         tools.tool("list_classes",
-                "List named classes in the active ontology's signature (rendering + IRI).",
-                Tools.schema().integer("limit", "Max classes to return (default 200).").build(),
+                "List named classes in the active ontology's signature (rendering + IRI), display-sorted. "
+                        + "Paginated: 'limit' caps the page and 'offset' skips that many classes — when the "
+                        + "result carries 'next_offset', pass it back as 'offset' to fetch the next page and "
+                        + "enumerate the whole signature past 'limit'.",
+                Tools.schema()
+                        .integer("limit", "Max classes to return per page (default 200).")
+                        .integer("offset", "0-based index to start from (default 0); pass a prior "
+                                + "'next_offset' to page forward.")
+                        .build(),
                 (ex, req) -> Tools.guard(() -> {
-                    int limit = Tools.optInt(Tools.args(req), "limit", 200);
+                    Map<String, Object> a = Tools.args(req);
+                    int limit = Tools.optInt(a, "limit", 200);
+                    int offset = Tools.optInt(a, "offset", 0);
                     return ctx.access().compute(mm -> {
                         Set<OWLClass> classes = mm.getActiveOntology().getClassesInSignature();
-                        return Tools.ok(Tools.entityList(mm, classes, limit));
+                        return Tools.ok(Tools.entityPage(mm, classes, offset, limit));
                     });
                 }));
 
@@ -107,23 +116,29 @@ public final class ReadTools {
                         + "is a wildcard; an empty or wildcard-only query lists the active ontology's "
                         + "whole signature. Results are RANKED: each carries a 'score' and 'match_kind' "
                         + "(exact | prefix | substring | fuzzy — exact considers every rdfs:label language "
-                        + "variant and the IRI local name). Two grounding fields help decide whether to "
+                        + "variant and the IRI local name). Paginated: 'limit' caps the page and 'offset' "
+                        + "skips that many ranked hits — when the result carries 'next_offset', pass it "
+                        + "back as 'offset' for the next page. Two grounding fields help decide whether to "
                         + "reuse a term or mint a new one: 'best_match' is the IRI the query resolves to "
                         + "(or null), and 'would_mint' is true when a single-term query resolves to no "
                         + "existing entity, so using it as a create_* name would introduce a NEW one.",
                 Tools.schema()
                         .strReq("query", "Search text (use '*' as a wildcard).")
                         .str("type", "Entity type filter (default 'all').")
-                        .integer("limit", "Max results (default 50).")
+                        .integer("limit", "Max results per page (default 50).")
+                        .integer("offset", "0-based index into the ranked results to start from (default "
+                                + "0); pass a prior 'next_offset' to page forward.")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String query = Tools.reqString(a, "query");
                     String type = Tools.optString(a, "type");
                     int limit = Tools.optInt(a, "limit", 50);
+                    int offset = Tools.optInt(a, "offset", 0);
                     return ctx.access().compute(mm -> {
                         Set<? extends OWLEntity> matches = search(mm, query, type);
-                        Map<String, Object> result = EntitySearch.enrichedSearch(mm, query, matches, limit);
+                        Map<String, Object> result =
+                                EntitySearch.enrichedSearch(mm, query, matches, offset, limit);
                         result.put("query", query);
                         result.put("type", type == null ? "all" : type);
                         return Tools.ok(result);
@@ -159,17 +174,22 @@ public final class ReadTools {
         tools.tool("get_axioms_for_entity",
                 "Axioms that reference the given entity. By default only the active ontology; set "
                         + "include_imports=true to also include axioms from the imports closure (e.g. an "
-                        + "imported term's domain/range and class restrictions).",
+                        + "imported term's domain/range and class restrictions). The 'axioms' block is "
+                        + "paginated ('limit' + 'offset'): when it carries 'next_offset', pass it back as "
+                        + "'offset' to page through an entity with more referencing axioms than 'limit'.",
                 Tools.schema()
                         .strReq("entity", "Entity IRI or display name.")
                         .bool("include_imports", "Also search the imports closure (default false).")
-                        .integer("limit", "Max axioms to return (default 100).")
+                        .integer("limit", "Max axioms to return per page (default 100).")
+                        .integer("offset", "0-based index to start from (default 0); pass a prior "
+                                + "'next_offset' to page forward.")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String ref = Tools.reqString(a, "entity");
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
                     int limit = Tools.optInt(a, "limit", 100);
+                    int offset = Tools.optInt(a, "offset", 0);
                     return ctx.access().compute(mm -> {
                         OWLEntity e = Tools.findEntity(mm, ref);
                         if (e == null) {
@@ -186,7 +206,7 @@ public final class ReadTools {
                         return Tools.json()
                                 .put("entity", Tools.entityJson(mm, e))
                                 .put("include_imports", includeImports)
-                                .put("axioms", Tools.axiomList(mm, axioms, limit))
+                                .put("axioms", Tools.axiomPage(mm, axioms, offset, limit))
                                 .result();
                     });
                 }));

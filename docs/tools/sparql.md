@@ -21,6 +21,14 @@ Query the live ontology with SPARQL 1.1 through an embedded Apache Jena ARQ engi
 
 Runs a SPARQL 1.1 read query over the active ontology and its imports closure using the embedded Jena ARQ engine. It supports SELECT, ASK, CONSTRUCT, and DESCRIBE (SPARQL UPDATE and SERVICE are rejected). Prefixes declared in the ontology — plus the standard `rdf`/`rdfs`/`owl`/`xsd` — are auto-prepended, so queries can use those CURIEs without their own PREFIX lines. By default the query sees the ASSERTED triples (like Protégé's SPARQL Query tab); set `include_inferred=true` to first materialise the active reasoner's inferences. Reach for it whenever you want ad-hoc, pattern-based analysis of the ontology graph that goes beyond the entity-oriented read tools.
 
+**Snapshot cache (0.4.1).** Building the queryable graph — copying the whole imports closure, serialising it,
+and re-parsing it into Jena — is now cached and keyed by an edit-versioned model-state counter. A repeated
+query at the **same** model state reuses the cached snapshot and skips that rebuild; any edit (or reload,
+reasoner classification, active-ontology switch, or a `set_prefix` change) transparently invalidates it, so a
+query after any change rebuilds. The asserted and `include_inferred` snapshots are cached separately, and each
+query still re-parses the cached immutable bytes into a fresh Jena model — nothing mutable is shared. There
+are no new arguments and the results are unchanged; this only makes repeated queries faster.
+
 *Read-only* — works even in read-only mode. Always acts over the imports closure of the active ontology. Does not honour `strict` or report `new_entities`.
 
 **Arguments**
