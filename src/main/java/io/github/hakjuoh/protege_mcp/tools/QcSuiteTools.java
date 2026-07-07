@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.protege.editor.owl.model.OWLModelManager;
+import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.profiles.Profiles;
 
@@ -55,9 +56,11 @@ public final class QcSuiteTools {
                         + "(consistency + no unsatisfiable classes), 'profile' (OWL 2 profile conformance, "
                         + "owl_profile default DL), 'structural' (validate_ontology's modelling-quality "
                         + "checks), 'invariants' (verify_ontology-style SPARQL invariants — pass them in "
-                        + "'invariants'), 'cqs' (the competency-question suite), and 'shacl' (reserved). "
+                        + "'invariants'), 'cqs' (the competency-question suite), and 'shacl' (validate "
+                        + "against the SHACL shapes supplied in 'shacl_shapes'/'shacl_shapes_path'). "
                         + "Every stage runs against one shared snapshot; a stage whose backing data is "
-                        + "absent (no classified reasoner, no invariants, no CQs, no SHACL) is skipped with "
+                        + "absent (no classified reasoner, no invariants, no CQs, no SHACL shapes) is "
+                        + "skipped with "
                         + "a reason, never an error. The overall 'gate' fails when the worst stage reaches "
                         + "'fail_on' (none | warn | error, default error).",
                 suiteSchema(),
@@ -79,10 +82,14 @@ public final class QcSuiteTools {
         // Invariants are validated up front (a structurally bad invariant is an argument error).
         List<Invariants.Invariant> invariants = stages.contains(INVARIANTS)
                 ? Invariants.parse(Tools.objList(a, "invariants")) : Collections.emptyList();
+        String shaclShapes = Tools.optString(a, "shacl_shapes");
+        String shaclShapesPath = Tools.optString(a, "shacl_shapes_path");
+        boolean wantShacl = stages.contains(SHACL) && hasText(shaclShapes, shaclShapesPath);
 
         // Phase 1 (EDT): everything that needs the live model — reasoner/structural verdicts, the profile
-        // flatten snapshot, the CQ load, and the one shared SPARQL snapshot.
-        Phase1 p1 = ctx.access().compute(mm -> phase1(mm, stages, profileName, limit, invariants));
+        // flatten snapshot, the CQ load, the one shared SPARQL snapshot, and (when shapes were supplied) the
+        // SHACL data snapshot.
+        Phase1 p1 = ctx.access().compute(mm -> phase1(mm, stages, profileName, limit, invariants, wantShacl));
 
         // Phase 2 (off the EDT): the SPARQL / profile stages over the pre-built snapshots.
         List<StageResult> results = new ArrayList<>();
@@ -102,8 +109,7 @@ public final class QcSuiteTools {
             results.add(cqsStage(p1.snapshot, p1.cqs, rowLimit, timeout));
         }
         if (stages.contains(SHACL)) {
-            results.add(StageResult.skipped(SHACL, "SHACL validation is not available in this build "
-                    + "(deferred to a later release)."));
+            results.add(shaclStage(p1, shaclShapes, shaclShapesPath, rowLimit, timeout));
         }
         return aggregate(results, failOn);
     }
@@ -114,12 +120,14 @@ public final class QcSuiteTools {
         StageResult structural;
         String profileName;
         OWLOntology profileSnapshot;
+        Set<OWLAxiom> profileOwned;   // active ontology's own axioms, for owned/imported violation split
         List<CompetencyQuestion> cqs;
         SuiteSnapshot snapshot;
+        byte[] shaclDataTurtle;       // asserted imports-closure RDF for the SHACL stage (when shapes given)
     }
 
     private static Phase1 phase1(OWLModelManager mm, Set<String> stages, String profileName, int limit,
-            List<Invariants.Invariant> invariants) {
+            List<Invariants.Invariant> invariants, boolean wantShacl) {
         Phase1 p1 = new Phase1();
         if (stages.contains(REASONER)) {
             p1.reasoner = reasonerStage(mm, limit);
@@ -132,6 +140,8 @@ public final class QcSuiteTools {
             p1.profileName = profileName;
             p1.profileSnapshot = profile == null ? null
                     : GovernanceTools.flatten(mm.getActiveOntology().getImportsClosure());
+            p1.profileOwned = profile == null ? Collections.emptySet()
+                    : new LinkedHashSet<>(mm.getActiveOntology().getAxioms());
         }
         if (stages.contains(CQS)) {
             p1.cqs = loadCqs(mm);
@@ -141,6 +151,11 @@ public final class QcSuiteTools {
             boolean needInferred = (p1.cqs != null && p1.cqs.stream().anyMatch(cq -> cq.includeInferred))
                     || invariants.stream().anyMatch(i -> i.includeInferred);
             p1.snapshot = SuiteSnapshot.capture(mm, needInferred);
+        }
+        if (wantShacl) {
+            // The SHACL stage validates over the asserted imports-closure RDF (the standalone shacl_validate
+            // tool exposes include_inferred); capture it here on the model thread, validate off it.
+            p1.shaclDataTurtle = SparqlTools.toTurtleBytes(SparqlTools.snapshot(mm, false).ontology());
         }
         return p1;
     }
@@ -197,13 +212,19 @@ public final class QcSuiteTools {
             return StageResult.skipped(PROFILE, "profile check skipped (owl_profile=" + profileName + ").");
         }
         Map<String, Object> check = GovernanceTools.profileCheck(profile, profileName, p1.profileSnapshot,
-                limit);
-        boolean inProfile = Boolean.TRUE.equals(check.get("in_profile"));
+                p1.profileOwned, limit);
+        // Gate on OWNED conformance: a module that merely imports a non-DL upstream (e.g. BFO) must not fail
+        // this stage — only its OWN axioms leaving the profile should. Imported violations are context only.
+        boolean ownedInProfile = Boolean.TRUE.equals(check.get("owned_in_profile"));
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("profile", profileName);
-        summary.put("in_profile", inProfile);
+        summary.put("in_profile", check.get("in_profile"));
+        summary.put("owned_in_profile", ownedInProfile);
         summary.put("violations", check.get("count"));
-        return new StageResult(PROFILE, true, inProfile ? PASS : FAIL, summary, null);
+        if (check.get("imported_violations") != null) {
+            summary.put("imported_violations", check.get("imported_violations"));
+        }
+        return new StageResult(PROFILE, true, ownedInProfile ? PASS : FAIL, summary, null);
     }
 
     static StageResult invariantsStage(SuiteSnapshot snap, List<Invariants.Invariant> invariants,
@@ -277,6 +298,50 @@ public final class QcSuiteTools {
         return out;
     }
 
+    /** Validate the captured data snapshot against the supplied SHACL shapes (graceful when none). */
+    static StageResult shaclStage(Phase1 p1, String shapesText, String shapesPath, int limit, long timeout) {
+        if (!hasText(shapesText, shapesPath)) {
+            return StageResult.skipped(SHACL, "no SHACL shapes supplied — pass 'shacl_shapes' (inline "
+                    + "Turtle) or 'shacl_shapes_path' (a local file).");
+        }
+        if (p1.shaclDataTurtle == null) {
+            return StageResult.skipped(SHACL, "SHACL data snapshot was not captured.");
+        }
+        Map<String, Object> r;
+        try {
+            r = ShaclTools.validate(p1.shaclDataTurtle, shapesText, shapesPath, limit, timeout);
+        } catch (RuntimeException e) {
+            // A malformed shapes graph is a config error for THIS stage — surface it as a failed (errored)
+            // stage rather than aborting the whole suite.
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+            return new StageResult(SHACL, true, FAIL, summary, null);
+        }
+        int violations = num(r.get("violations"));
+        int warnings = num(r.get("warnings"));
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("conforms", r.get("conforms"));
+        summary.put("violations", violations);
+        summary.put("warnings", warnings);
+        summary.put("infos", r.get("infos"));
+        // Violations fail; a warning-only report warns; info-only (or conformant) passes.
+        String verdict = violations > 0 ? FAIL : warnings > 0 ? WARN : PASS;
+        return new StageResult(SHACL, true, verdict, summary, null);
+    }
+
+    private static boolean hasText(String... values) {
+        for (String v : values) {
+            if (v != null && !v.trim().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int num(Object o) {
+        return o instanceof Number ? ((Number) o).intValue() : 0;
+    }
+
     // ================================================================== aggregation (pure)
 
     /** Collapse the stage results into one gate verdict. Package-private for headless testing. */
@@ -292,12 +357,18 @@ public final class QcSuiteTools {
             }
         }
         String gate = worst >= threshold(failOn) ? FAIL : PASS;
-        return Tools.json()
+        Tools.Json json = Tools.json()
                 .put("gate", gate)
                 .put("fail_on", failOn)
                 .put("stages_ran", ran)
-                .put("stages", stagesJson)
-                .result();
+                .put("stages", stagesJson);
+        if (ran == 0) {
+            // Guard the vacuous pass: with zero stages actually run (all requested stages skipped — e.g.
+            // their backing data was absent) the 'pass' gate attests to nothing. Surface that explicitly.
+            json.put("note", "No stages ran — every requested stage was skipped (see each stage's "
+                    + "reason), so the 'pass' gate is vacuous, not an attestation of quality.");
+        }
+        return json.result();
     }
 
     /** One stage's outcome. */
@@ -400,7 +471,9 @@ public final class QcSuiteTools {
                 .str("owl_profile", "OWL 2 profile for the profile stage: DL (default), EL, QL, RL.")
                 .str("fail_on", "Gate severity: none | warn | error (default error).")
                 .integer("limit", "Max samples per check (default 25).")
-                .integer("timeout_ms", "Time budget in ms for the SPARQL stages (default 120000).")
+                .integer("timeout_ms", "Time budget in ms for the SPARQL and SHACL stages (default 120000).")
+                .str("shacl_shapes", "SHACL shapes graph as Turtle (inline) for the 'shacl' stage.")
+                .str("shacl_shapes_path", "Local file path to a SHACL shapes document for the 'shacl' stage.")
                 .build();
         @SuppressWarnings("unchecked")
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");

@@ -84,8 +84,9 @@ collapses them to a single verdict. Stages (default `reasoner` + `profile` + `st
 (consistency + no unsatisfiable classes), `profile` (OWL 2 profile conformance), `structural`
 (`validate_ontology`'s modelling-quality checks — only *warning*-severity smells gate), `invariants`
 (`verify_ontology`-style SPARQL invariants — pass them in `invariants`), `cqs` (the competency-question
-suite), and a reserved `shacl`. A stage whose backing data is absent (no classified reasoner, no
-invariants, no CQs, no SHACL) is **skipped with a reason, never an error**; the overall `gate` is the
+suite), and `shacl` (validate against the SHACL shapes in `shacl_shapes` / `shacl_shapes_path`). A stage
+whose backing data is absent (no classified reasoner, no invariants, no CQs, no SHACL shapes) is
+**skipped with a reason, never an error**; the overall `gate` is the
 worst *ran* stage versus `fail_on`.
 
 *Read-only.*
@@ -97,9 +98,11 @@ worst *ran* stage versus `fail_on`.
 | `stages` | array | no | `["reasoner","profile","structural"]` | Subset of `reasoner`, `profile`, `structural`, `invariants`, `cqs`, `shacl`. |
 | `owl_profile` | string | no | `DL` | OWL 2 profile for the `profile` stage: `DL` \| `EL` \| `QL` \| `RL`. Pass `none` or `Full` to skip the `profile` stage (reported as a skipped stage, not an error). |
 | `invariants` | array | no | — | Invariants for the `invariants` stage (same shape as `verify_ontology`'s `queries[]`). |
+| `shacl_shapes` | string | no | — | SHACL shapes graph as Turtle (inline) for the `shacl` stage. |
+| `shacl_shapes_path` | string | no | — | Local file path to a SHACL shapes document for the `shacl` stage. |
 | `fail_on` | string | no | `error` | Gate severity: `none` \| `warn` \| `error`. |
 | `limit` | integer | no | 25 | Max samples per check. |
-| `timeout_ms` | integer | no | 120000 | Time budget for the SPARQL stages. |
+| `timeout_ms` | integer | no | 120000 | Time budget for the SPARQL and SHACL stages. |
 
 **Returns**
 
@@ -114,6 +117,20 @@ worst *ran* stage versus `fail_on`.
 ```json
 { "stages": ["reasoner", "profile", "structural", "cqs"], "owl_profile": "EL", "fail_on": "warn" }
 ```
+
+## `shacl_validate`
+
+Validate the active ontology's imports-closure RDF against a **SHACL shapes graph** using the embedded Apache Jena SHACL engine — the constraint-validation counterpart to `verify_ontology`'s SPARQL invariants. Provide the shapes **inline** as Turtle in `shapes`, or a **local file** path in `shapes_path` (a URL scheme is refused — remote SHACL fetch is disabled for offline safety, matching `sparql_query`). By default it runs over the **asserted** triples; set `include_inferred=true` to first materialise the active reasoner's inferences (`run_reasoner` first). Read-only.
+
+| Argument | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `shapes` | string | one of | — | SHACL shapes graph as Turtle text (inline). |
+| `shapes_path` | string | one of | — | Path to a **local** SHACL shapes document (format from the extension). |
+| `include_inferred` | boolean | no | `false` | Validate over the reasoner's inferred triples (requires a classified reasoner). |
+| `limit` | integer | no | `1000` | Max validation results to return. |
+| `timeout_ms` | integer | no | `120000` | Time budget for **both** the data snapshot and the validation. |
+
+**Returns** `conforms` (boolean), `total_results`, the `violations` / `warnings` / `infos` counts and `worst_severity`, plus `results[]` — each `{focus_node, result_path, value, severity, constraint_component, source_shape, message}` (capped at `limit`, with `truncated` when more remain).
 
 ## `add_competency_question`
 

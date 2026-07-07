@@ -36,6 +36,7 @@ public final class ToolCatalog {
             GovernanceTools::register,
             CompetencyQuestionTools::register,
             VerifyOntologyTools::register,
+            ShaclTools::register,
             QcSuiteTools::register);
 
     public static List<SyncToolSpecification> buildAll(ToolContext ctx) {

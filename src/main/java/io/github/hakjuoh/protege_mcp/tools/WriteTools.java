@@ -567,6 +567,10 @@ public final class WriteTools {
             }
             rows.add(row);
         }
+        // The batch's net-new entities MUST be computed before the changes are applied: once committed the
+        // entities exist in the closure and read as "not new", which left summary.new_entities empty even
+        // though the per-op rows (computed pre-apply) correctly listed the minted entities.
+        Set<OWLEntity> mintedAll = newEntitiesIntroducedByAxioms(closure, simAdded);
         if (!toApply.isEmpty()) {
             mm.applyChanges(toApply);  // one broadcast → one Protégé undo entry for the whole batch
         }
@@ -577,8 +581,7 @@ public final class WriteTools {
         summary.put("no_ops", noOps);
         summary.put("errors", errors);
         summary.put("single_undo", !toApply.isEmpty());
-        summary.put("new_entities", Tools.entityList(mm,
-                newEntitiesIntroducedByAxioms(closure, simAdded), Integer.MAX_VALUE));
+        summary.put("new_entities", Tools.entityList(mm, mintedAll, Integer.MAX_VALUE));
         return Tools.json().put("operations", rows).put("summary", summary).map();
     }
 

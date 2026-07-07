@@ -177,6 +177,17 @@
             <version>${jena.version}</version>
         </dependency>
 
+        <!-- SHACL engine: Apache Jena SHACL, embedded so shacl_validate (and the run_qc_suite 'shacl'
+             stage) run in-process over the active ontology's RDF rendering. jena-shacl builds on the
+             already-embedded jena-arq/jena-core; its own JenaSubsystemLifecycle (InitShacl) is hand-merged
+             into the shared META-INF/services list (see that resource) so bnd's inline collision does not
+             drop SHACL init from JenaSystem.init(). -->
+        <dependency>
+            <groupId>org.apache.jena</groupId>
+            <artifactId>jena-shacl</artifactId>
+            <version>${jena.version}</version>
+        </dependency>
+
         <!-- ===================================================================== -->
         <!-- test-only (scope=test, so never embedded into the bundle)              -->
         <!-- ===================================================================== -->

@@ -151,12 +151,12 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    is still open. The election logic is factored into package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.4.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.4.1`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
    McpServer.sync(transport)
-            .serverInfo("protege-mcp", "0.4.0")
+            .serverInfo("protege-mcp", "0.4.1")
             .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())  // tools + prompts (both listChanged=false); no resources
             .immediateExecution(true)     // run handlers on the transport (HTTP) thread; the plugin marshals to the EDT itself
             .validateToolInputs(false)
@@ -229,16 +229,17 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (61 tools + 6 prompts)
+## 5. MCP Tool Catalog (64 tools + 6 prompts)
 
-Sixty-one tools — 7 read, 2 context, 18 edit/curation/history/persistence (incl. `preview_changes`,
-`apply_changes`, `set_label`, `create_term`, `create_property`, `deprecate_entity`, `move_class`), 6
-ontology-header (incl. `set_prefix`), 5 document (incl. `set_active_ontology`, `create_ontology`,
-`write_catalog`), 3 rule (`list_rules`/`add_rule`/`remove_rule`), 8 reasoner, 3 SPARQL
-(`sparql_query`/`sparql_schema`/`sparql_validate`), 3 validation (incl. `diff_ontologies`,
-`validate_governance`), and — new in `0.4.0` — 6 safe/testable-authoring tools (`add_competency_question`
-/ `list_competency_questions` / `remove_competency_question` / `run_competency_questions`,
-`verify_ontology`, `run_qc_suite`) — each defined by a `name`, a `description`, and a
+Sixty-four tools — 7 read, 2 context, 19 edit/curation/history/persistence (incl. `preview_changes`,
+`apply_changes`, `set_label`, `create_term`, `create_terms`, `create_property`, `deprecate_entity`,
+`move_class`), 6 ontology-header (incl. `set_prefix`), 5 document (incl. `set_active_ontology`,
+`create_ontology`, `write_catalog`), 1 module (`extract_module`), 3 rule
+(`list_rules`/`add_rule`/`remove_rule`), 8 reasoner, 3 SPARQL
+(`sparql_query`/`sparql_schema`/`sparql_validate`), 4 validation (incl. `diff_ontologies`,
+`validate_governance`, `shacl_validate`), and — new in `0.4.0` — 6 safe/testable-authoring tools
+(`add_competency_question` / `list_competency_questions` / `remove_competency_question` /
+`run_competency_questions`, `verify_ontology`, `run_qc_suite`) — each defined by a `name`, a `description`, and a
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
 **Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
 serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results
@@ -338,9 +339,9 @@ embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern)
   `nodeJson` binding shape `sparql_query` already produces — **never** rendered through the EDT-only
   `mm.getRendering`.
 - **`run_qc_suite`** (F5): one umbrella gate composing the shipping plain-data cores — `reasoner`,
-  `profile`, `structural` (the `validate_ontology` checks), `invariants`, `cqs`, `shacl` (reserved) — over
+  `profile`, `structural` (the `validate_ontology` checks), `invariants`, `cqs`, `shacl` (validate against supplied SHACL shapes) — over
   one shared snapshot, collapsed to a single verdict. A stage whose backing data is absent (no classified
-  reasoner, no invariants, no CQs, no SHACL) is **skipped with a reason, never an error**; the gate is the
+  reasoner, no invariants, no CQs, no SHACL shapes) is **skipped with a reason, never an error**; the gate is the
   worst *ran* stage versus `fail_on`.
 
 | Tool | Mapping / notes |
@@ -479,7 +480,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.4.0`**.
+  `artifactId protege-mcp`, version **`0.4.1`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing

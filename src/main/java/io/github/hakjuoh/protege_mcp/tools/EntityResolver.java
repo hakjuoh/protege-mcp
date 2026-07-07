@@ -50,10 +50,47 @@ public final class EntityResolver {
         return null;
     }
 
+    /**
+     * Expand a registered-prefix CURIE ({@code prefix:local}) to its full IRI using the active ontology's
+     * prefix map, or return null when {@code ref} is not a CURIE against a known prefix. This is what makes
+     * {@code bfo:BFO_0000031} resolve to the imported BFO class instead of being (mis)read by {@link #asIri}
+     * as an absolute IRI whose scheme happens to be {@code bfo} — which would silently mint a junk entity
+     * whose IRI is the literal string "bfo:BFO_0000031". Guards: a real hierarchical IRI ({@code scheme://…})
+     * and an empty or whitespace-bearing local part are never treated as CURIEs, so full IRIs and display
+     * phrases keep their existing behaviour.
+     */
+    static IRI expandCurie(OWLModelManager mm, String ref) {
+        if (ref == null) {
+            return null;
+        }
+        int colon = ref.indexOf(':');
+        if (colon < 0) {
+            return null;                                   // a bare display name, not a CURIE
+        }
+        String local = ref.substring(colon + 1);
+        if (local.isEmpty() || local.startsWith("//") || local.indexOf(' ') >= 0) {
+            return null;                                   // scheme://… , empty, or a phrase — not a CURIE
+        }
+        String prefix = ref.substring(0, colon + 1);       // keep the trailing ':' (prefix map keys carry it)
+        String namespace;
+        try {
+            namespace = SparqlTools.prefixMap(mm, mm.getActiveOntology()).get(prefix);
+        } catch (RuntimeException ignored) {
+            return null;                                   // no active ontology / no prefix map available
+        }
+        return namespace == null ? null : IRI.create(namespace + local);
+    }
+
+    /** A registered-prefix CURIE expanded to its IRI, else {@code ref} parsed as an absolute IRI (or null). */
+    static IRI iriFor(OWLModelManager mm, String ref) {
+        IRI curie = expandCurie(mm, ref);
+        return curie != null ? curie : asIri(ref);
+    }
+
     /** Resolve a single entity by IRI (preferred) or by Protégé display rendering. Null if none. */
     public static OWLEntity findEntity(OWLModelManager mm, String ref) {
         OWLEntityFinder finder = mm.getOWLEntityFinder();
-        IRI iri = asIri(ref);
+        IRI iri = iriFor(mm, ref);
         if (iri != null) {
             Set<OWLEntity> es = finder.getEntities(iri);
             if (es != null && !es.isEmpty()) {
@@ -70,7 +107,7 @@ public final class EntityResolver {
     /** All entities matching {@code ref} (IRI may be "punned" across several entity types). */
     public static Set<OWLEntity> findEntities(OWLModelManager mm, String ref) {
         OWLEntityFinder finder = mm.getOWLEntityFinder();
-        IRI iri = asIri(ref);
+        IRI iri = iriFor(mm, ref);
         if (iri != null) {
             Set<OWLEntity> es = finder.getEntities(iri);
             if (es != null && !es.isEmpty()) {
@@ -91,7 +128,7 @@ public final class EntityResolver {
             throw new ToolArgException(
                     "'" + ref + "' is a " + e.getEntityType().getName() + ", not a " + typeLabel + ".");
         }
-        IRI iri = asIri(ref);
+        IRI iri = iriFor(mm, ref);
         if (iri != null) {
             return mint.apply(iri);
         }
@@ -132,7 +169,7 @@ public final class EntityResolver {
                 throw new ToolArgException("'" + ref + "' is a " + e.getEntityType().getName()
                         + ", not a class expression.");
             }
-            IRI iri = asIri(ref);
+            IRI iri = iriFor(mm, ref);
             if (iri != null) {
                 return mm.getOWLDataFactory().getOWLClass(iri);
             }
@@ -205,7 +242,7 @@ public final class EntityResolver {
                 throw new ToolArgException("'" + ref + "' is a " + e.getEntityType().getName()
                         + ", not a data range.");
             }
-            IRI iri = asIri(ref);
+            IRI iri = iriFor(mm, ref);
             if (iri != null) {
                 return mm.getOWLDataFactory().getOWLDatatype(iri);
             }
@@ -221,7 +258,7 @@ public final class EntityResolver {
         if (e != null) {
             return e.getIRI();
         }
-        IRI iri = asIri(ref);
+        IRI iri = iriFor(mm, ref);
         if (iri != null) {
             return iri;
         }

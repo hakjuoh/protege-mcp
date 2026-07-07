@@ -153,7 +153,7 @@ public final class GovernanceTools {
                     // Phase 2 (off the EDT): the heavy OWL 2 profile check on the private snapshot.
                     if (profile != null && p1.profileSnapshot != null) {
                         Map<String, Object> profileCheck = profileCheck(profile, profileName,
-                                p1.profileSnapshot, limit);
+                                p1.profileSnapshot, p1.ownedAxioms, limit);
                         totalViolations += (int) profileCheck.get("count");
                         checks.add(profileCheck);
                     }
@@ -188,11 +188,15 @@ public final class GovernanceTools {
         /** Non-profile findings, already rendered to JSON on the EDT (their renderer is EDT-only). */
         final List<Map<String, Object>> checks;
         final OWLOntology profileSnapshot;
+        /** Axioms the audited scope owns — lets the profile check attribute violations to owned vs imports. */
+        final Set<OWLAxiom> ownedAxioms;
         final List<String> notes;
 
-        Phase1(List<Map<String, Object>> checks, OWLOntology profileSnapshot, List<String> notes) {
+        Phase1(List<Map<String, Object>> checks, OWLOntology profileSnapshot, Set<OWLAxiom> ownedAxioms,
+                List<String> notes) {
             this.checks = checks;
             this.profileSnapshot = profileSnapshot;
+            this.ownedAxioms = ownedAxioms;
             this.notes = notes;
         }
     }
@@ -225,7 +229,17 @@ public final class GovernanceTools {
             rendered.add(f.toJson(limit));
         }
         OWLOntology snapshot = profile != null ? flatten(active.getImportsClosure()) : null;
-        return new Phase1(rendered, snapshot, notes);
+        Set<OWLAxiom> owned = profile != null ? axiomsOf(scope) : Collections.emptySet();
+        return new Phase1(rendered, snapshot, owned, notes);
+    }
+
+    /** The union of the axioms of every ontology in {@code scope} (the audited scope's owned axioms). */
+    private static Set<OWLAxiom> axiomsOf(Set<OWLOntology> scope) {
+        Set<OWLAxiom> out = new HashSet<>();
+        for (OWLOntology o : scope) {
+            out.addAll(o.getAxioms());
+        }
+        return out;
     }
 
     // ---------------------------------------------------------------- IRI policy
@@ -494,26 +508,61 @@ public final class GovernanceTools {
      */
     static Map<String, Object> profileCheck(Profiles profile, String profileName, OWLOntology snapshot,
             int limit) {
+        // Back-compat overload: with no owned-axiom set, treat every snapshot axiom as owned — the historical
+        // whole-closure behaviour, still exercised by unit tests over import-less ontologies.
+        return profileCheck(profile, profileName, snapshot, snapshot.getAxioms(), limit);
+    }
+
+    /**
+     * Run the OWL 2 profile check on {@code snapshot} (a flattened imports closure) and render the
+     * violations, PARTITIONED into those the audited scope OWNS ({@code ownedAxioms}) versus those inherited
+     * from imported ontologies. Profile conformance is a closure property, so the check must see the whole
+     * closure; but a module author cares whether THEIR axioms leave the profile — an imported non-DL
+     * upstream (e.g. BFO's undeclared-annotation-property axioms) must not drown out, or fail, their own
+     * status. So {@code count}/{@code examples}/{@code owned_in_profile} report the OWNED violations (the
+     * actionable ones), while the inherited ones are surfaced only as {@code imported_violations} context.
+     * A violation with no attributable axiom is counted as inherited (never fails the owned gate). Pure OWL
+     * API — safe off the model thread, unit-tested directly.
+     */
+    static Map<String, Object> profileCheck(Profiles profile, String profileName, OWLOntology snapshot,
+            Set<OWLAxiom> ownedAxioms, int limit) {
         OWLProfileReport report = profile.checkOntology(snapshot);
-        List<OWLProfileViolation> violations = report.getViolations();
+        List<OWLProfileViolation> ownedViolations = new ArrayList<>();
+        int importedCount = 0;
+        for (OWLProfileViolation v : report.getViolations()) {
+            OWLAxiom ax = v.getAxiom();
+            if (ax != null && ownedAxioms.contains(ax)) {
+                ownedViolations.add(v);
+            } else {
+                importedCount++;   // inherited from an import, or not attributable to a single axiom
+            }
+        }
         List<String> samples = new ArrayList<>();
-        for (OWLProfileViolation v : violations) {
+        for (OWLProfileViolation v : ownedViolations) {
             if (samples.size() >= Math.max(0, limit)) {
                 break;
             }
             samples.add(String.valueOf(v));
         }
+        boolean ownedInProfile = ownedViolations.isEmpty();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", "owl_profile");
         m.put("severity", "error");
         m.put("title", "Conformance to OWL 2 " + profileName);
-        m.put("in_profile", report.isInProfile());
-        m.put("count", violations.size());
-        m.put("suggestion", report.isInProfile() ? "In profile."
-                : "Remove or rewrite the offending axioms, or target a less restrictive profile.");
+        m.put("in_profile", report.isInProfile());     // the whole audited closure conforms
+        m.put("owned_in_profile", ownedInProfile);      // the scope's OWN axioms conform — the actionable bit
+        m.put("count", ownedViolations.size());         // owned violations (respects the audited scope)
+        if (importedCount > 0) {
+            m.put("imported_violations", importedCount); // inherited from imports (context, not gated)
+        }
+        m.put("suggestion", ownedInProfile
+                ? (report.isInProfile() ? "In profile."
+                        : "The audited scope's own axioms are in profile; the " + importedCount
+                                + " remaining violation(s) are inherited from imported ontologies.")
+                : "Remove or rewrite the offending owned axioms, or target a less restrictive profile.");
         m.put("examples", samples);
-        if (violations.size() > samples.size()) {
-            m.put("truncated", violations.size() - samples.size());
+        if (ownedViolations.size() > samples.size()) {
+            m.put("truncated", ownedViolations.size() - samples.size());
         }
         return m;
     }

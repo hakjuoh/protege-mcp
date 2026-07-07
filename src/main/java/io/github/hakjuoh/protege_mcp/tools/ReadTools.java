@@ -138,7 +138,7 @@ public final class ReadTools {
                     return ctx.access().compute(mm -> {
                         Set<? extends OWLEntity> matches = search(mm, query, type);
                         Map<String, Object> result =
-                                EntitySearch.enrichedSearch(mm, query, matches, offset, limit);
+                                EntitySearch.enrichedSearch(mm, query, matches, offset, limit, type);
                         result.put("query", query);
                         result.put("type", type == null ? "all" : type);
                         return Tools.ok(result);

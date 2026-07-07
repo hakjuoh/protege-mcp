@@ -22,13 +22,16 @@ public final class AnnotationBuilder {
     private AnnotationBuilder() {
     }
 
-    /** Resolve the subject of an annotation assertion: an existing entity's IRI, or an absolute IRI. */
+    /** Resolve the subject of an annotation assertion: an existing entity's IRI, a registered-prefix
+     *  CURIE, or an absolute IRI. */
     public static IRI annotationSubject(OWLModelManager mm, String ref) {
         OWLEntity e = EntityResolver.findEntity(mm, ref);
         if (e != null) {
             return e.getIRI();
         }
-        IRI iri = EntityResolver.asIri(ref);
+        // iriFor (not asIri) so an UNdeclared registered-prefix CURIE subject (e.g. ex:Foo not yet in the
+        // ontology) expands to its full IRI instead of being taken as the literal IRI "ex:Foo".
+        IRI iri = EntityResolver.iriFor(mm, ref);
         if (iri != null) {
             return iri;
         }

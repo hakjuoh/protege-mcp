@@ -69,7 +69,7 @@ final class EntitySearch {
      */
     static Map<String, Object> enrichedSearch(OWLModelManager mm, String query,
             Set<? extends OWLEntity> matches, int limit) {
-        return build(mm, query, matches, 0, limit, false);
+        return build(mm, query, matches, 0, limit, false, null);
     }
 
     /**
@@ -81,11 +81,23 @@ final class EntitySearch {
      */
     static Map<String, Object> enrichedSearch(OWLModelManager mm, String query,
             Set<? extends OWLEntity> matches, int offset, int limit) {
-        return build(mm, query, matches, offset, limit, true);
+        return build(mm, query, matches, offset, limit, true, null);
+    }
+
+    /**
+     * Type-aware paginated variant: {@code typeFilter} is the {@code search_entities} type filter that
+     * produced {@code matches} (e.g. "class", "annotation_property", "all"/null). It only constrains the
+     * best_match→items reconciliation below — a query that grounds via a label the substring finder missed
+     * is surfaced in {@code items}, but only when its entity type matches the filter, so a {@code class}
+     * search never shows a property. Ranking and mint-prediction are unchanged.
+     */
+    static Map<String, Object> enrichedSearch(OWLModelManager mm, String query,
+            Set<? extends OWLEntity> matches, int offset, int limit, String typeFilter) {
+        return build(mm, query, matches, offset, limit, true, typeFilter);
     }
 
     private static Map<String, Object> build(OWLModelManager mm, String query,
-            Set<? extends OWLEntity> matches, int offset, int limit, boolean paged) {
+            Set<? extends OWLEntity> matches, int offset, int limit, boolean paged, String typeFilter) {
         boolean textual = isTextualQuery(query);
         Map<IRI, List<String>> labels = textual ? labelIndex(mm) : Collections.emptyMap();
         String nq = normalize(query);
@@ -94,6 +106,17 @@ final class EntitySearch {
         for (OWLEntity e : matches) {
             MatchKind kind = textual ? classify(mm, e, nq, labels) : MatchKind.FUZZY;
             scored.add(new Scored(e, kind, mm.getRendering(e)));
+        }
+        // best_match grounds the query to a concrete entity via exact IRI / active rendering / any-language
+        // label — a broader resolution than the case-insensitive substring finder that produced `matches`.
+        // When it grounds to a term the finder missed (e.g. the spaced query "natural language definition"
+        // vs the camelCase rendering), surface that term in `items` too — but only when its type matches the
+        // filter — so a non-null best_match is never reported alongside an empty result set (the F2
+        // inconsistency), while a class search still never lists a property.
+        OWLEntity best = bestMatch(mm, query, matches, labels, textual);
+        if (best != null && typeAllows(best, typeFilter)
+                && scored.stream().noneMatch(s -> s.entity.getIRI().equals(best.getIRI()))) {
+            scored.add(new Scored(best, MatchKind.EXACT, mm.getRendering(best)));
         }
         // Deterministic: score desc, then display asc (case-insensitive), then IRI asc as the stable
         // final tiebreak (the finder returns a Set, so without this the order drifts run-to-run).
@@ -130,11 +153,44 @@ final class EntitySearch {
         } else if (total > items.size()) {
             result.put("truncated", total - items.size());
         }
-        OWLEntity best = bestMatch(mm, query, matches, labels, textual);
         result.put("would_mint", best == null && EntityResolver.asIri(query) == null
                 && isPlainTerm(query));
         result.put("best_match", best == null ? null : best.getIRI().toString());
         return result;
+    }
+
+    /**
+     * Whether {@code e}'s entity type satisfies the {@code search_entities} type filter. Mirrors the exact
+     * spellings {@code ReadTools.search} switches on (both the underscore and no-underscore/plural forms), so
+     * the injected best_match can never disagree with the type-filtered {@code matches}: an unrecognised
+     * type (including {@code null}/"all") means the finder returned every type, so any best_match is allowed.
+     */
+    static boolean typeAllows(OWLEntity e, String typeFilter) {
+        if (typeFilter == null) {
+            return true;
+        }
+        switch (typeFilter.trim().toLowerCase(Locale.ROOT)) {
+            case "class":
+            case "classes":
+                return e.isOWLClass();
+            case "object_property":
+            case "objectproperty":
+                return e.isOWLObjectProperty();
+            case "data_property":
+            case "dataproperty":
+                return e.isOWLDataProperty();
+            case "annotation_property":
+            case "annotationproperty":
+                return e.isOWLAnnotationProperty();
+            case "individual":
+            case "individuals":
+                return e.isOWLNamedIndividual();
+            case "datatype":
+            case "datatypes":
+                return e.isOWLDatatype();
+            default:
+                return true;   // "", "all", or an unrecognised filter → search() returned all types
+        }
     }
 
     // ------------------------------------------------------------------ classification
