@@ -6,7 +6,7 @@
 
     <groupId>io.github.hakjuoh</groupId>
     <artifactId>protege-mcp</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.1</version>
     <packaging>bundle</packaging>
 
     <name>protege-mcp</name>
@@ -276,6 +276,7 @@
                             org.protege.editor.core.*,
                             org.protege.editor.owl.*,
                             org.semanticweb.owlapi.*,
+                            uk.ac.manchester.cs.owlapi.modularity,
                             com.clarkparsia.owlapi.explanation,
                             com.clarkparsia.owlapi.explanation.util,
                             org.slf4j;version="[1.7,2)",

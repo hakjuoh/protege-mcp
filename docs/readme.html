@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>61 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, and SPARQL - every model
+    <li><b>64 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, SPARQL, and SHACL - every model
         edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
         the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>Loopback-only HTTP with <b>OAuth 2.1</b> (dynamic registration + browser consent, persisted
@@ -46,6 +46,28 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.4.1</h4>
+<ul>
+    <li>Modularization, batch intake, pagination, a SPARQL snapshot cache, and SHACL validation (61 &#8594; 64 tools).</li>
+    <li><code>extract_module</code>: signature-based <b>locality module extraction</b> (the interactive
+        analogue of <code>robot extract</code>) via the OWL API's <code>SyntacticLocalityModuleExtractor</code>
+        &#8212; seed a signature and pick <b>STAR</b> (default), <b>BOT</b> (what the seeds use) or <b>TOP</b>
+        (what uses the seeds) over the active ontology or its imports closure; load the module as a new
+        workspace ontology or save it to a file. The extraction runs off the UI thread; no new dependency.</li>
+    <li><code>create_terms</code>: <b>batch term-request intake</b> &#8212; the array form of
+        <code>create_term</code>, applied as ONE undoable transaction with shared
+        <code>namespace</code>/<code>definition_property</code> defaults. Atomic (a malformed or
+        duplicate-IRI term aborts the whole batch) and <code>strict</code>-guarded.</li>
+    <li><b>Paginated reads</b>: <code>list_classes</code> / <code>search_entities</code> /
+        <code>get_axioms_for_entity</code> take an <code>offset</code> and return
+        <code>next_offset</code> (totally-ordered sorts, so paging never drops or repeats an item) &#8212;
+        enumerate a large signature past one page instead of a single truncated blob.</li>
+    <li><b>SPARQL snapshot cache</b>: <code>sparql_query</code> reuses an edit-versioned snapshot instead of
+        copying + serialising + re-parsing the imports closure on every call; any edit (or a
+        <code>set_prefix</code>) transparently invalidates it, and each query still parses fresh immutable
+        bytes so nothing mutable is shared across threads.</li>
+</ul>
 
 <h4>v0.4.0</h4>
 <ul>
