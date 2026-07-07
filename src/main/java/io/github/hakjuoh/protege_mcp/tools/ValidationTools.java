@@ -49,6 +49,25 @@ public final class ValidationTools {
             "http://www.w3.org/2000/01/rdf-schema#",
             "http://www.w3.org/2001/XMLSchema#"};
 
+    /** Tool-internal namespaces this plugin mints for bookkeeping (never project terms) — the CQ
+     * ontology-annotations store's competencyQuestion property lives here; it must not be audited as an
+     * owned term. */
+    private static final String[] TOOL_INTERNAL = {
+            "https://hakjuoh.github.io/protege-mcp/"};
+
+    /** Well-known external metadata vocabularies whose ANNOTATION PROPERTIES the project never owns (so a
+     * stray dcterms:title used as an ontology annotation is not demanded to carry isDefinedBy/definition or
+     * sit in the project namespace). Scoped to annotation properties only, so imported IAO/BFO CLASSES are
+     * still audited under include_imports. */
+    private static final String[] WELL_KNOWN = {
+            "http://purl.org/dc/terms/",
+            "http://purl.org/dc/elements/1.1/",
+            "http://www.w3.org/2004/02/skos/core#",
+            "http://xmlns.com/foaf/0.1/",
+            "http://www.w3.org/ns/prov#",
+            "http://www.geneontology.org/formats/oboInOwl#",
+            "http://purl.obolibrary.org/obo/IAO_"};
+
     /** The check ids, in report order. */
     static final List<String> CHECK_IDS = Collections.unmodifiableList(java.util.Arrays.asList(
             "missing_label", "missing_definition", "duplicate_label", "multiple_labels",
@@ -482,6 +501,18 @@ public final class ValidationTools {
         for (String ns : RESERVED) {
             if (iri.startsWith(ns)) {
                 return true;
+            }
+        }
+        for (String ns : TOOL_INTERNAL) {
+            if (iri.startsWith(ns)) {
+                return true;
+            }
+        }
+        if (e.isOWLAnnotationProperty()) {
+            for (String ns : WELL_KNOWN) {
+                if (iri.startsWith(ns)) {
+                    return true;
+                }
             }
         }
         return false;

@@ -401,13 +401,63 @@ public final class WriteTools {
      * already declared anywhere in the imports closure (the silent-minting signal). When {@code strict}
      * is set and the change would introduce such entities, nothing is applied and an error is returned.
      */
+    /**
+     * Queue a Declaration for each minted entity, matching how {@link #createEntity} declares its
+     * primary entity. Entities first introduced as an operand side effect — an annotation property
+     * referenced by a definition/annotation, an individual named in a class assertion, a class named
+     * in a subclass axiom — otherwise stay used-but-undeclared, which leaves the ontology short of
+     * OWL 2 DL (undeclared annotation properties are a profile violation) and makes a save/reload
+     * round-trip non-identical (the serializer re-adds the type triples as declarations). Skips
+     * built-ins and any declaration already present, and appends to the SAME change list so the
+     * declarations ride along in one undo unit.
+     */
+    static void declareMinted(OWLDataFactory df, OWLOntology ont, Set<OWLEntity> minted,
+            List<OWLOntologyChange> out) {
+        if (minted == null) {
+            return;
+        }
+        for (OWLEntity e : minted) {
+            if (e.isBuiltIn()) {
+                continue;
+            }
+            OWLAxiom decl = df.getOWLDeclarationAxiom(e);
+            if (!ont.containsAxiom(decl)) {
+                out.add(new AddAxiom(ont, decl));
+            }
+        }
+    }
+
+    /**
+     * Convenience over {@link #declareMinted}: compute the entities the AddAxioms in {@code changes}
+     * introduce into the closure (minus {@code exclude}, typically an entity already declared by its
+     * own create step) and queue their declarations into the SAME {@code changes} list. Used by the
+     * direct-apply curation macros (deprecate_entity, move_class) that don't go through applyCuration.
+     */
+    static void declareMintedFromChanges(OWLModelManager mm, OWLOntology ont,
+            List<OWLOntologyChange> changes, OWLEntity exclude) {
+        Set<OWLOntology> closure = ont.getImportsClosure();
+        Set<OWLEntity> minted = new LinkedHashSet<>();
+        for (OWLOntologyChange ch : changes) {
+            if (ch instanceof AddAxiom) {
+                minted.addAll(PreviewTools.newEntities(closure, ((AddAxiom) ch).getAxiom()));
+            }
+        }
+        if (exclude != null) {
+            minted.remove(exclude);
+        }
+        declareMinted(mm.getOWLDataFactory(), ont, minted, changes);
+    }
+
     private static CallToolResult applyAxiom(OWLModelManager mm, OWLOntology ont, OWLAxiom ax,
             boolean strict) {
         Set<OWLEntity> minted = PreviewTools.newEntities(ont.getImportsClosure(), ax);
         if (strict && !minted.isEmpty()) {
             return mintError(mm, minted);
         }
-        mm.applyChange(new AddAxiom(ont, ax));
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        changes.add(new AddAxiom(ont, ax));
+        declareMinted(mm.getOWLDataFactory(), ont, minted, changes);
+        mm.applyChanges(changes);  // axiom + any declarations for side-effect entities, one undo unit
         return applied(mm, ont, ax, minted);
     }
 
@@ -571,6 +621,7 @@ public final class WriteTools {
         // entities exist in the closure and read as "not new", which left summary.new_entities empty even
         // though the per-op rows (computed pre-apply) correctly listed the minted entities.
         Set<OWLEntity> mintedAll = newEntitiesIntroducedByAxioms(closure, simAdded);
+        declareMinted(mm.getOWLDataFactory(), ont, mintedAll, toApply);  // declare side-effect entities
         if (!toApply.isEmpty()) {
             mm.applyChanges(toApply);  // one broadcast → one Protégé undo entry for the whole batch
         }
@@ -622,7 +673,17 @@ public final class WriteTools {
             if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
                 return Tools.error("Cannot create directory: " + dir);
             }
-            OWLDocumentFormat format = formatForPath(path, om.getOntologyFormat(ont));
+            OWLDocumentFormat current = om.getOntologyFormat(ont);
+            OWLDocumentFormat format = formatForPath(path, current);
+            // A save-as picks a fresh format whose prefix map is empty. Carry the ontology's
+            // registered prefixes (custom prefixes + default/base) into it so the save does not
+            // drop them on disk AND in memory — replacing the format with an empty one would
+            // otherwise break every CURIE resolution afterwards (get_entity_context, sparql, ...).
+            if (format != current
+                    && format.isPrefixOWLOntologyFormat()
+                    && current != null && current.isPrefixOWLOntologyFormat()) {
+                format.asPrefixOWLOntologyFormat().copyPrefixesFrom(current.asPrefixOWLOntologyFormat());
+            }
             om.setOntologyFormat(ont, format);
             om.setOntologyDocumentIRI(ont, IRI.create(file));
             saveOrThrow(mm, ont);

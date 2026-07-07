@@ -276,8 +276,10 @@ public final class SparqlTools {
                     + "(Reasoner menu). Select one and run_reasoner, or query without inferences.");
         }
         if (!status.isEnableStop()) {
-            throw new ToolArgException("include_inferred=true but the reasoner has not produced results "
-                    + "yet — call run_reasoner first, or query without inferences.");
+            throw new ToolArgException("include_inferred=true but the reasoner has no current results — "
+                    + "run_reasoner was not called, or the last classification failed and reset to the "
+                    + "Null reasoner (check ~/.Protege/logs/protege.log). Run run_reasoner first, or query "
+                    + "without inferences.");
         }
         return mm.getReasoner();
     }

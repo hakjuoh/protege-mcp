@@ -49,7 +49,7 @@ On an id collision, an error object is returned instead: `{ "error": "Ontology i
 
 ## `set_prefix`
 
-Registers or updates a prefix in the active ontology's prefix map (for example binding `iof-av` → `https://spec.industrialontologies.org/ontology/annotation/`) so that CURIEs like `iof-av:maturity` render and parse and the document serializes with the prefix. The prefix map lives in the ontology's document format, so this changes no axioms.
+Registers or updates a prefix in the active ontology's prefix map (for example binding `ex-av` → `https://example.org/ont/annotation/`) so that CURIEs like `ex-av:maturity` render and parse and the document serializes with the prefix. The prefix map lives in the ontology's document format, so this changes no axioms.
 
 *Mutating (not undoable)* — it edits the document format's prefix map directly and is **not** on the undo stack. Still gated by the read-only/confirm-each-write preferences. Errors if the active ontology's document format has no prefix map.
 
@@ -57,7 +57,7 @@ Registers or updates a prefix in the active ontology's prefix map (for example b
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `prefix` | string | yes | — | Prefix name, with or without a trailing `':'` (e.g. `'iof-av'` or `'iof-av:'`); use `':'` for the default namespace. |
+| `prefix` | string | yes | — | Prefix name, with or without a trailing `':'` (e.g. `'ex-av'` or `'ex-av:'`); use `':'` for the default namespace. |
 | `namespace` | string | yes | — | Namespace IRI the prefix expands to. |
 
 **Returns**
@@ -72,8 +72,8 @@ On failure, an error object is returned: `{ "error": "The active ontology's docu
 
 ```json
 {
-  "prefix": "iof-av",
-  "namespace": "https://spec.industrialontologies.org/ontology/annotation/"
+  "prefix": "ex-av",
+  "namespace": "https://example.org/ont/annotation/"
 }
 ```
 
@@ -106,8 +106,8 @@ If the write is denied or the document fails to load, an error object is returne
 
 ```json
 {
-  "iri": "https://spec.industrialontologies.org/ontology/core/Core/",
-  "document": "https://spec.industrialontologies.org/ontology/core/Core.rdf"
+  "iri": "https://example.org/ontologies/upper",
+  "document": "https://example.org/ontologies/upper.owl"
 }
 ```
 
@@ -134,7 +134,7 @@ If the import is not present, an error object is returned: `{ "error": "Import n
 
 ```json
 {
-  "iri": "https://spec.industrialontologies.org/ontology/core/Core/"
+  "iri": "https://example.org/ontologies/upper"
 }
 ```
 

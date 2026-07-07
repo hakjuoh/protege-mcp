@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **64 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **65 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -70,7 +70,7 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 
 ### [Editing — entities & axioms](editing.html)
 `preview_changes` · `apply_changes` · `create_class` · `create_entity` · `create_term` ·
-`create_terms` · `create_property` · `add_subclass_of` · `add_annotation` · `set_label` · `add_axiom` ·
+`create_terms` · `create_property` · `create_properties` · `add_subclass_of` · `add_annotation` · `set_label` · `add_axiom` ·
 `remove_axiom` · `rename_entity` · `delete_entity` · `deprecate_entity` · `move_class`
 
 ### [Ontology metadata & imports](metadata-imports.html)

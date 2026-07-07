@@ -46,6 +46,8 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.OWLSameIndividualAxiom;
 import org.semanticweb.owlapi.model.OWLSubClassOfAxiom;
 import org.semanticweb.owlapi.model.OWLSubObjectPropertyOfAxiom;
+import org.semanticweb.owlapi.model.OWLObjectInverseOf;
+import org.semanticweb.owlapi.model.OWLObjectPropertyExpression;
 import org.semanticweb.owlapi.model.OWLSubPropertyChainOfAxiom;
 import org.semanticweb.owlapi.model.OWLTransitiveObjectPropertyAxiom;
 
@@ -368,6 +370,22 @@ class AxiomsTest {
         assertInstanceOf(OWLSubPropertyChainOfAxiom.class, ax);
         assertEquals(2, ((OWLSubPropertyChainOfAxiom) ax).getPropertyChain().size(),
                 "chain preserves both properties");
+    }
+
+    @Test
+    void buildSubPropertyChainOfAcceptsInverseLink() throws OWLOntologyCreationException {
+        OWLModelManager mm = FakeModelManager.empty();
+        OWLAxiom ax = Axioms.build(mm, map(
+                "axiom_type", "sub_property_chain_of",
+                "chain", Arrays.asList(NS + "p", "inverse(" + NS + "q)"),
+                "super_property", NS + "r"));
+        assertInstanceOf(OWLSubPropertyChainOfAxiom.class, ax);
+        List<OWLObjectPropertyExpression> chain = ((OWLSubPropertyChainOfAxiom) ax).getPropertyChain();
+        assertEquals(2, chain.size());
+        assertInstanceOf(OWLObjectInverseOf.class, chain.get(1),
+                "the inverse(q) link is an ObjectInverseOf expression");
+        assertEquals(mm.getOWLDataFactory().getOWLObjectProperty(IRI.create(NS + "q")),
+                ((OWLObjectInverseOf) chain.get(1)).getInverse(), "inverse of q");
     }
 
     @Test

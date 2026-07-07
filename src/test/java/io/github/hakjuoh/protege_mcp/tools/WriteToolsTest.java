@@ -1058,4 +1058,25 @@ class WriteToolsTest {
         assertEquals(out.getAbsoluteFile().toString(), m.get("path"),
                 "it writes to the previously bound file");
     }
+
+    @Test
+    void saveAsPreservesRegisteredPrefixes() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLModelManager mm = mutatingManager(o);
+        // A prefix registered on the ontology's current format, exactly as set_prefix does.
+        mm.getOWLOntologyManager().getOntologyFormat(o).asPrefixOWLOntologyFormat()
+                .setPrefix("ex:", "http://example.org/w#");
+        Path dir = Files.createTempDirectory("write-tools-save-prefix");
+        File out = new File(dir.toFile(), "pets.ttl");
+
+        callSaveOntology(mm, out.getPath());   // save-as installs a fresh TurtleDocumentFormat
+
+        // In-memory: the prefix survives, so CURIE resolution keeps working after a save-as ...
+        assertTrue(mm.getOWLOntologyManager().getOntologyFormat(o).asPrefixOWLOntologyFormat()
+                        .getPrefixName2PrefixMap().containsKey("ex:"),
+                "save-as must carry the registered prefixes into the new format (in memory)");
+        // ... and on disk the Turtle header declares it.
+        assertTrue(Files.readString(out.toPath()).contains("@prefix ex:"),
+                "the written Turtle declares the custom prefix");
+    }
 }

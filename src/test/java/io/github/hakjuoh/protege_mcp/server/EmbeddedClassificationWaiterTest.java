@@ -445,6 +445,26 @@ class EmbeddedClassificationWaiterTest {
     }
 
     @Test
+    void completedResetToNullReasonerFlagsClassificationFailed() throws Exception {
+        // A classification that signalled completion but left the reasoner UNINITIALIZED means the
+        // factory threw and Protégé reset to the Null reasoner (e.g. HermiT rejecting a SWRL built-in
+        // atom). runAndWait must flag it so run_reasoner reports an error instead of a benign no-op.
+        FakeState state = new FakeState();
+        state.signalCompletion = true;
+        state.status = ReasonerStatus.REASONER_NOT_INITIALIZED;
+        state.reasonerName = "Protégé Null Reasoner";
+        OntologyAccess access = accessOver(managerProxy(state));
+
+        Map<String, Object> result = EmbeddedClassificationWaiter.runAndWait(access, 30_000L);
+
+        assertEquals(Boolean.TRUE, result.get("completed"), "the run signalled completion");
+        assertEquals(Boolean.TRUE, result.get("classification_failed"),
+                "a completed run that reset to the uninitialized/Null reasoner is a classification failure");
+        assertTrue(((String) result.get("message")).contains("Classification FAILED"),
+                "the message flags the failure: " + result.get("message"));
+    }
+
+    @Test
     void outOfSyncStatusStillReportsUnsatCount() throws Exception {
         FakeState state = new FakeState();
         state.status = ReasonerStatus.OUT_OF_SYNC; // isEnableStop() == true
@@ -490,8 +510,8 @@ class EmbeddedClassificationWaiterTest {
         Map<String, Object> result = EmbeddedClassificationWaiter.runAndWait(access, 30_000L);
 
         assertEquals(
-                Set.of("started", "completed", "reasoner", "status", "inconsistent",
-                        "unsatisfiable_count", "message"),
+                Set.of("started", "completed", "classification_failed", "reasoner", "status",
+                        "inconsistent", "unsatisfiable_count", "message"),
                 new java.util.HashSet<>(result.keySet()),
                 "success result carries exactly these keys");
     }

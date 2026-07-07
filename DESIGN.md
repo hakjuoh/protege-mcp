@@ -151,12 +151,12 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    is still open. The election logic is factored into package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.4.1`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.4.2`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
    McpServer.sync(transport)
-            .serverInfo("protege-mcp", "0.4.1")
+            .serverInfo("protege-mcp", "0.4.2")
             .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())  // tools + prompts (both listChanged=false); no resources
             .immediateExecution(true)     // run handlers on the transport (HTTP) thread; the plugin marshals to the EDT itself
             .validateToolInputs(false)
@@ -229,10 +229,10 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (64 tools + 6 prompts)
+## 5. MCP Tool Catalog (65 tools + 6 prompts)
 
-Sixty-four tools — 7 read, 2 context, 19 edit/curation/history/persistence (incl. `preview_changes`,
-`apply_changes`, `set_label`, `create_term`, `create_terms`, `create_property`, `deprecate_entity`,
+Sixty-five tools — 7 read, 2 context, 20 edit/curation/history/persistence (incl. `preview_changes`,
+`apply_changes`, `set_label`, `create_term`, `create_terms`, `create_property`, `create_properties`, `deprecate_entity`,
 `move_class`), 6 ontology-header (incl. `set_prefix`), 5 document (incl. `set_active_ontology`,
 `create_ontology`, `write_catalog`), 1 module (`extract_module`), 3 rule
 (`list_rules`/`add_rule`/`remove_rule`), 8 reasoner, 3 SPARQL
@@ -251,7 +251,7 @@ New in `0.2.0` (the natural-language layer): `get_ontology_context` / `get_entit
 `validate_ontology` (a modelling-quality audit complementing the reasoner), the full JSON-output
 migration, and the MCP prompts.
 
-New in `0.2.1` (tool-driven-construction ergonomics, found by reconstructing IOF Biopharma through the
+New in `0.2.1` (tool-driven-construction ergonomics, found by reconstructing a multi-module domain ontology through the
 tools): `set_active_ontology`
 (switch the active edit target) and `load_ontology`/`add_import` options that resolve imports without
 stealing it; `apply_changes` (apply a previewed batch in one call); write tools now report minted
@@ -261,10 +261,10 @@ Manchester parser accepts full `<IRI>` operands inside compound expressions; `ge
 returns structured `{iri, …}` neighbours; `validate_ontology` takes `with_reasoner`; and `undo`/`redo`
 report the axiom-count delta.
 
-New in `0.2.2` (closing the multi-module reconstruction gaps found by rebuilding the IOF ontology
+New in `0.2.2` (closing the multi-module reconstruction gaps found by rebuilding a multi-module ontology
 through the tools): structured SWRL rule editing — `list_rules` / `add_rule` / `remove_rule` read,
 add, and remove `swrl:Imp` axioms as body/head atoms, preserving named rule-variable IRIs (e.g.
-`iof-var:process1`) and rule-level annotations that the conventional `?x` text syntax cannot
+`ex-var:process1`) and rule-level annotations that the conventional `?x` text syntax cannot
 round-trip; `create_ontology` mints a new empty module in the workspace (paired with the existing
 `set_ontology_id`); `write_catalog` generates the OASIS `catalog-v001.xml` that maps a module's
 imports to their local files (a file outside the OWL axiom model, so no other tool can produce it);
@@ -480,7 +480,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.4.1`**.
+  `artifactId protege-mcp`, version **`0.4.2`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing

@@ -83,7 +83,7 @@ Trimmed result:
   "vars": ["type", "count"],
   "count": 2,
   "bindings": [
-    { "type": { "type": "uri", "value": "https://spec.industrialontologies.org/ontology/core/Core/MaterialArtifact" },
+    { "type": { "type": "uri", "value": "https://example.org/ont/Widget" },
       "count": { "type": "literal", "value": "12", "datatype": "http://www.w3.org/2001/XMLSchema#integer" } }
   ]
 }
@@ -129,7 +129,7 @@ Discovers the queryable vocabulary for authoring a SPARQL query over the active 
 
 ```json
 {
-  "keyword": "material",
+  "keyword": "widget",
   "limit": 25,
   "include_individuals": false
 }
@@ -142,8 +142,8 @@ Trimmed result:
   "active_ontology": { "ontology_iri": "https://example.org/onto", "version_iri": null, "scope": "imports_closure" },
   "counts": { "classes": 240, "object_properties": 60, "data_properties": 18, "individuals": 0, "datatypes": 3 },
   "matched": { "classes": 4, "object_properties": 1, "data_properties": 0, "datatypes": 0 },
-  "prefix_lines": "PREFIX iof: <https://spec.industrialontologies.org/ontology/core/Core/>\n...",
-  "classes": [ { "curie": "iof:MaterialArtifact", "iri": "https://spec.industrialontologies.org/ontology/core/Core/MaterialArtifact", "display": "Material Artifact" } ]
+  "prefix_lines": "PREFIX ex: <https://example.org/ont/>\n...",
+  "classes": [ { "curie": "ex:Widget", "iri": "https://example.org/ont/Widget", "display": "Widget" } ]
 }
 ```
 
@@ -182,7 +182,7 @@ Checks a SPARQL query before running it: the query is parsed (not executed, unle
 
 ```json
 {
-  "query": "SELECT ?x WHERE { ?x a iof:MaterialArtefact }",
+  "query": "SELECT ?x WHERE { ?x a ex:Widgett }",
   "dry_run": true,
   "sample_limit": 5
 }
@@ -198,7 +198,7 @@ Trimmed result (note the misspelled local name surfaced as an unknown term):
   "vars": ["x"],
   "uses_service": false,
   "unknown_terms": [
-    { "curie": "iof:MaterialArtefact", "iri": "https://spec.industrialontologies.org/ontology/core/Core/MaterialArtefact" }
+    { "curie": "ex:Widgett", "iri": "https://example.org/ont/Widgett" }
   ],
   "issues": ["1 referenced term(s) are not declared as a class/property/individual/datatype in the ontology (usually a typo or a term from another vocabulary) — see unknown_terms."],
   "sample": { "query_type": "SELECT", "vars": ["x"], "count": 0, "bindings": [] }

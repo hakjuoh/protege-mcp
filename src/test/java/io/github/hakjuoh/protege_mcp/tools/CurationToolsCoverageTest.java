@@ -158,6 +158,49 @@ class CurationToolsCoverageTest {
         assertTrue(o.containsAxiom(df.getOWLSubClassOfAxiom(dog, unknownParent)), "and the batch applied");
     }
 
+    @Test
+    void withDefaultsFillsPropertyTypeDefaultWhenAbsent() {
+        java.util.Map<String, Object> plain = new java.util.LinkedHashMap<>();
+        plain.put("name", "hasPart");
+        java.util.Map<String, Object> filled =
+                CurationTools.withDefaults(plain, NS, "skos:definition", "object");
+        assertEquals("object", filled.get("property_type"), "default property_type filled when absent");
+        assertFalse(plain.containsKey("property_type"), "the 4-arg overload does not mutate the input");
+
+        java.util.Map<String, Object> hasType = new java.util.LinkedHashMap<>();
+        hasType.put("name", "hasAge");
+        hasType.put("property_type", "data");
+        assertEquals("data",
+                CurationTools.withDefaults(hasType, NS, null, "object").get("property_type"),
+                "an explicit property_type is not overridden by the default");
+    }
+
+    @Test
+    void applyBatchCurationReportsCreatedProperties() throws OWLOntologyCreationException {
+        // GAP #7: create_properties applies a property batch via applyBatchCuration; the generalized
+        // created list (List<? extends OWLEntity>) must report property entities and apply in one txn.
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = ont(m);
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        OWLObjectProperty hasPart = df.getOWLObjectProperty(IRI.create(NS + "hasPart"));
+        OWLObjectProperty partOf = df.getOWLObjectProperty(IRI.create(NS + "partOf"));
+        List<OWLOntologyChange> changes = new java.util.ArrayList<>();
+        changes.add(new AddAxiom(o, df.getOWLDeclarationAxiom(hasPart)));
+        changes.add(new AddAxiom(o, df.getOWLDeclarationAxiom(partOf)));
+        changes.add(new AddAxiom(o, df.getOWLSubObjectPropertyOfAxiom(partOf, hasPart)));
+        Set<OWLEntity> createdSet = new LinkedHashSet<>(Arrays.asList(hasPart, partOf));
+
+        io.modelcontextprotocol.spec.McpSchema.CallToolResult r = CurationTools.applyBatchCuration(
+                mm, o, changes, false, createdSet, Arrays.asList(hasPart, partOf));
+        assertEquals(Boolean.FALSE, r.isError(), "a property batch succeeds (created list is properties)");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) r.structuredContent();
+        assertEquals(2, body.get("count"), "both properties reported as created");
+        assertTrue(o.isDeclared(partOf), "the second property's declaration applied in the same batch");
+    }
+
     private OWLOntology ont(OWLOntologyManager m) throws OWLOntologyCreationException {
         return m.createOntology(IRI.create("http://example.org/cur"));
     }

@@ -30,11 +30,10 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
  * <p>Two harnesses are used, each pinning down a distinct, empirically verified behavior:
  * <ul>
  *   <li>{@link FakeModelManager} — its entity finder implements only {@code getEntities(IRI)} and
- *       {@code getOWLEntity(String)} and throws {@link UnsupportedOperationException} for the
- *       {@code getOWLClass/getOWLDataProperty/…} lookups the Manchester parser probes with. That
- *       probe throw is swallowed by the {@code catch (RuntimeException)}, so EVERY expression —
- *       including a well-formed full-IRI one — resolves to {@code null} under this harness. Those
- *       parse-success paths are therefore not exercisable through {@code FakeModelManager}.</li>
+ *       {@code getOWLEntity(String)}. The prefix/fragment-aware checker resolves {@code <IRI>} tokens
+ *       through {@code getEntities(IRI)} and bare IRI fragments through the signature scan, and GUARDS
+ *       the finder's throwing by-rendering probes, so a well-formed full-IRI or bare-fragment
+ *       expression now parses under this harness too.</li>
  *   <li>A local {@link #nullLookupManager} whose finder returns {@code null} (rather than throwing)
  *       for every {@code getOWL*} probe — matching how a real Protégé finder answers "no such
  *       entity". This lets the OWL API parser resolve full {@code <IRI>} tokens natively and
@@ -159,20 +158,27 @@ class ManchesterClassExpressionSeamTest {
         assertNull(Tools.tryManchesterClassExpression(mm, "A and B"));
     }
 
-    // ---- FakeModelManager harness: probe-throw masks every result as null ----
+    // ---- FakeModelManager harness: the prefix/fragment-aware checker now resolves via the signature ----
 
     @Test
-    void fakeModelManagerFinderMakesFullIriExpressionReturnNull() {
-        // FakeModelManager's finder throws UnsupportedOperationException for the getOWL* probes the
-        // Manchester parser issues, and tryManchesterClassExpression swallows that RuntimeException,
-        // so even a well-formed full-IRI expression resolves to null under this harness.
+    void fakeModelManagerResolvesFullIriExpressionViaSignature() {
+        // The prefix/fragment-aware checker resolves <IRI> tokens through the finder's getEntities(IRI)
+        // and guards the finder's throwing by-rendering probes, so a well-formed full-IRI expression
+        // now parses under FakeModelManager (it returned null before the CURIE/fragment seam fix).
         OWLModelManager mm = FakeModelManager.over(ontologyWithAB());
-        assertNull(Tools.tryManchesterClassExpression(mm, "<" + NS + "A> and <" + NS + "B>"));
+        OWLClassExpression ce = Tools.tryManchesterClassExpression(mm, "<" + NS + "A> and <" + NS + "B>");
+        assertTrue(ce instanceof OWLObjectIntersectionOf,
+                "expected an ObjectIntersectionOf, got " + (ce == null ? "null" : ce.getClass()));
     }
 
     @Test
-    void fakeModelManagerFinderMakesBareNameReturnNull() {
+    void fakeModelManagerResolvesBareFragmentExpression() {
+        // A bare local name (IRI fragment) resolves through the signature scan of the prefix/fragment
+        // -aware checker (previously the finder's probe throw masked it as null).
         OWLModelManager mm = FakeModelManager.over(ontologyWithAB());
-        assertNull(Tools.tryManchesterClassExpression(mm, "A and B"));
+        OWLClassExpression ce = Tools.tryManchesterClassExpression(mm, "A and B");
+        assertTrue(ce instanceof OWLObjectIntersectionOf,
+                "bare IRI fragments resolve to an ObjectIntersectionOf, got "
+                        + (ce == null ? "null" : ce.getClass()));
     }
 }

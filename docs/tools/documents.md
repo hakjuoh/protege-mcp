@@ -52,7 +52,7 @@ On invalid input (unreadable source, parse failure) the call fails with an error
 
 ```json
 {
-  "source": "https://github.com/BFO-ontology/BFO/blob/master/src/owl/bfo.owl",
+  "source": "https://example.org/ontologies/upper.owl",
   "keep_active": true,
   "connection_timeout_ms": 30000
 }
@@ -120,7 +120,7 @@ On an unreadable source or parse failure the call fails with an error object `{e
 
 ```json
 {
-  "source": "/tmp/iof/Core.rdf",
+  "source": "/tmp/ontology/upper.owl",
   "replace_active": false,
   "copy_ontology_id": false
 }
@@ -227,9 +227,9 @@ On an unreadable signature (no seed resolves), a save failure, or a timeout, the
 
 ```json
 {
-  "signature": ["Centrifuge", "https://spec.industrialontologies.org/ontology/core/Core/MaterialArtifact"],
+  "signature": ["Widget", "https://example.org/ont/Product"],
   "module_type": "STAR",
   "source": "imports_closure",
-  "iri": "https://example.org/modules/equipment-module"
+  "iri": "https://example.org/modules/product-module"
 }
 ```

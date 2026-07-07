@@ -18,6 +18,8 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.AddOntologyAnnotation;
+import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLDataFactory;
@@ -346,6 +348,34 @@ class ValidationToolsCoverageTest {
         assertFalse(s.classes.contains(df.getOWLThing()), "owl:Thing is reserved and dropped");
         assertFalse(s.classes.contains(xsdish), "an XSD-namespaced class is reserved and dropped");
         assertFalse(s.labelable.contains(df.getOWLThing()), "owl:Thing is not labelable");
+    }
+
+    @Test
+    void signatureOfExemptsToolInternalAndWellKnownAnnotationVocab() throws OWLOntologyCreationException {
+        // GAP #8/#9: the tool-internal CQ annotation property and a well-known-vocab annotation property
+        // (dcterms:title) must NOT be audited as owned — but a well-known-NAMESPACE CLASS still is (the
+        // well-known skip is scoped to annotation properties, so imported IAO/BFO classes stay audited).
+        OWLOntologyManager m = mgr();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = ontology(m, "http://example.org/sig-exempt");
+        OWLClass local = cls(df, "Local");
+        m.addAxiom(o, df.getOWLDeclarationAxiom(local));
+        OWLAnnotationProperty dcTitle =
+                df.getOWLAnnotationProperty(IRI.create("http://purl.org/dc/terms/title"));
+        m.applyChange(new AddOntologyAnnotation(o, df.getOWLAnnotation(dcTitle, df.getOWLLiteral("t"))));
+        OWLAnnotationProperty cqProp = df.getOWLAnnotationProperty(
+                IRI.create("https://hakjuoh.github.io/protege-mcp/cq#competencyQuestion"));
+        m.applyChange(new AddOntologyAnnotation(o, df.getOWLAnnotation(cqProp, df.getOWLLiteral("{}"))));
+        OWLClass foafPerson = df.getOWLClass(IRI.create("http://xmlns.com/foaf/0.1/Person"));
+        m.addAxiom(o, df.getOWLSubClassOfAxiom(local, foafPerson));
+
+        ValidationTools.Signature s = ValidationTools.Signature.of(Collections.singleton(o));
+        // The owned 'definable' partition — which required_annotations / missing_definition / iri_policy
+        // iterate — must drop both exempted annotation properties.
+        assertFalse(s.definable.contains(dcTitle), "a well-known-vocab annotation property is not owned");
+        assertFalse(s.definable.contains(cqProp), "the tool-internal CQ annotation property is not owned");
+        assertTrue(s.classes.contains(foafPerson),
+                "a well-known-NAMESPACE class is still audited (exemption is annotation-property-scoped)");
     }
 
     @Test

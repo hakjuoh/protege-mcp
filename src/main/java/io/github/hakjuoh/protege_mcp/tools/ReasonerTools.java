@@ -68,7 +68,15 @@ public final class ReasonerTools {
                         return Tools.error("No reasoner is selected in Protégé. Choose one from the "
                                 + "Reasoner menu, then retry.");
                     }
-                    return Tools.ok(EmbeddedClassificationWaiter.runAndWait(ctx.access(), timeout));
+                    Map<String, Object> res = EmbeddedClassificationWaiter.runAndWait(ctx.access(), timeout);
+                    // Surface a hard failure as an error instead of a benign-looking success envelope: a
+                    // classification that could not start, or that completed only by resetting to the Null
+                    // reasoner (classification_failed — e.g. HermiT rejecting a SWRL built-in atom).
+                    if (Boolean.FALSE.equals(res.get("started"))
+                            || Boolean.TRUE.equals(res.get("classification_failed"))) {
+                        return Tools.error(String.valueOf(res.get("message")));
+                    }
+                    return Tools.ok(res);
                 }));
 
         tools.tool("get_unsatisfiable_classes",
@@ -444,7 +452,9 @@ public final class ReasonerTools {
             throw new ToolArgException("No reasoner is selected in Protégé (Reasoner menu).");
         }
         if (!status.isEnableStop()) {
-            throw new ToolArgException("The reasoner has not produced results yet — call run_reasoner first.");
+            throw new ToolArgException("The reasoner has no current results — run_reasoner was not called, "
+                    + "or the last classification failed and reset to the Null reasoner (check "
+                    + "~/.Protege/logs/protege.log). Run run_reasoner first.");
         }
         return mm.getReasoner();
     }

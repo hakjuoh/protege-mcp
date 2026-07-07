@@ -171,7 +171,7 @@ Creates a class WITH its curation suite in one undoable step (versus `create_cla
 | `label_lang` | string | no | — | Language tag for the `rdfs:label`, e.g. `en`. |
 | `no_label` | boolean | no | `false` | Do not add any `rdfs:label`. |
 | `definition` | string | no | — | Definition text. |
-| `definition_property` | string | no | `rdfs:comment` | Annotation property for the definition (e.g. `skos:definition` or an IOF *Definition property). |
+| `definition_property` | string | no | `rdfs:comment` | Annotation property for the definition (e.g. `skos:definition` or a project-specific definition annotation property). |
 | `definition_lang` | string | no | — | Language tag for the definition literal. |
 | `parents` | array of string | no | — | Superclasses: each a class name, IRI or Manchester class expression. |
 | `equivalent_to` | array of string | no | — | Equivalent class expressions for a defined class (each a name, IRI or Manchester class expression). |
@@ -279,6 +279,45 @@ Creates an object or data property WITH its axioms in one undoable step. It mint
   "range": "Person",
   "characteristics": ["transitive", "irreflexive"],
   "inverse_of": "hasChild"
+}
+```
+
+---
+
+## `create_properties`
+
+Creates MANY object/data properties in ONE undoable transaction — the array form of `create_property` (mirroring how `create_terms` is the array form of `create_term`). `properties` is an array; each item takes the same fields as `create_property` (only `name` is required). Top-level `namespace`, `definition_property` and `property_type` are **defaults** applied to any item that omits its own. Reach for it when intake hands you a batch of properties (e.g. a domain's relation vocabulary) so they land — and undo — as one unit.
+
+*Mutating (undoable)* — the whole batch is a SINGLE undoable change (one `undo_change` reverts every property) and is **atomic**: a malformed item (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing. `strict=true` refuses the batch if any operand would be minted as a new, empty entity. To reference another property in the SAME batch (e.g. as `inverse_of` / `super_properties`), give it an explicit `iri`/`namespace` and reference its full IRI (nothing is in the ontology until the batch commits).
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `properties` | array | yes | — | The properties to create; each item is a `create_property` field set (only `name` is required). |
+| `namespace` | string | no | — | Default namespace for any item that gives neither its own `iri` nor `namespace`. |
+| `definition_property` | string | no | — | Default definition annotation property for any item that omits its own. |
+| `property_type` | string | no | `object` | Default `property_type` (`object`\|`data`) for any item that omits its own. |
+| `strict` | boolean | no | `false` | If true, fail the whole batch instead of minting an unrecognised operand. |
+
+**Returns**
+
+- `created`: array of the created properties as JSON objects.
+- `count`: number of properties created.
+- `new_entities`: array of entities the operands introduced (present only when non-empty).
+- `applied`: number of changes committed.
+
+**Example**
+
+```json
+{
+  "namespace": "https://example.org/ont/",
+  "definition_property": "skos:definition",
+  "properties": [
+    {"name": "hasPart", "characteristics": ["transitive"], "definition": "x has part y."},
+    {"name": "partOf", "inverse_of": "https://example.org/ont/hasPart", "definition": "x is part of y."},
+    {"name": "hasWeight", "property_type": "data", "range": "xsd:decimal[>= 0]"}
+  ]
 }
 ```
 

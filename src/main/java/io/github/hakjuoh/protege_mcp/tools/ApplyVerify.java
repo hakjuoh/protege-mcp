@@ -166,6 +166,7 @@ final class ApplyVerify {
 
         Outcome outcome = decide(verify, verdictComputable, pre.preInconsistent, postInconsistent,
                 pre.preUnsat, postUnsat, intervening, pre.committed);
+        outcome.classificationFailed = Boolean.TRUE.equals(classify.get("classification_failed"));
 
         if (outcome.rolledBack && hm.canUndo()) {
             hm.undo();   // the batch is one logged entry — this reverts the whole batch
@@ -190,6 +191,7 @@ final class ApplyVerify {
         boolean degradedToReport;  // a regression that could not be safely rolled back
         boolean verdictComputable;
         boolean postInconsistent;
+        boolean classificationFailed;  // the post-apply classify reset to the Null reasoner (factory threw)
         Set<String> newlyUnsatisfiable = Collections.emptySet();
     }
 
@@ -238,6 +240,9 @@ final class ApplyVerify {
         v.put("applied", o.batchApplied);
         v.put("classification_started", Boolean.TRUE.equals(classify.get("started")));
         v.put("classification_completed", Boolean.TRUE.equals(classify.get("completed")));
+        if (o.classificationFailed) {
+            v.put("classification_failed", true);
+        }
         v.putIfNotNull("reasoner", classify.get("reasoner"));
         if (o.concurrentChange) {
             v.put("concurrent_change", true);
@@ -255,6 +260,11 @@ final class ApplyVerify {
         if (!pre.committed) {
             n.append("No changes were applied (the batch minimised to zero changes), so there was "
                     + "nothing to verify or roll back.");
+        } else if (!o.verdictComputable && o.classificationFailed) {
+            n.append("The batch was applied but could NOT be verified — the reasoner rejected the "
+                    + "ontology and reset to the Null reasoner (a common cause is a SWRL rule using a "
+                    + "built-in atom, which HermiT does not support). See ~/.Protege/logs/protege.log; "
+                    + "run run_reasoner to surface the exact error.");
         } else if (!o.verdictComputable) {
             n.append("The batch was applied but could not be verified — no completed reasoner "
                     + "classification (select a reasoner and ensure it finishes within timeout_ms). "

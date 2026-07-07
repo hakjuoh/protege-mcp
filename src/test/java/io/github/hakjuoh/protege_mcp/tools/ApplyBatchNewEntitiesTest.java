@@ -51,4 +51,27 @@ class ApplyBatchNewEntitiesTest {
         assertTrue(items.stream().anyMatch(e -> (NS + "ind1").equals(e.get("iri"))),
                 "the minted individual is named in the aggregate");
     }
+
+    @Test
+    void batchDeclaresMintedSideEffectEntity() throws OWLOntologyCreationException {
+        // A side-effect entity (an individual first named by an operand) must get an explicit
+        // Declaration axiom, matching create_*; otherwise it stays used-but-undeclared, which trips
+        // undeclared_entity and — for annotation properties — breaks OWL 2 DL.
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = m.createOntology(IRI.create("http://example.org/f4-decl"));
+        m.addAxiom(o, df.getOWLDeclarationAxiom(df.getOWLClass(IRI.create(NS + "C"))));
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        Map<String, Object> op = new LinkedHashMap<>();
+        op.put("axiom_type", "class_assertion");
+        op.put("individual", NS + "ind1");   // brand-new individual (side-effect entity)
+        op.put("class", NS + "C");
+
+        WriteTools.applyBatchData(mm, List.of(op), false);
+
+        assertTrue(
+                o.containsAxiom(df.getOWLDeclarationAxiom(df.getOWLNamedIndividual(IRI.create(NS + "ind1")))),
+                "the side-effect individual is given an explicit Declaration axiom");
+    }
 }

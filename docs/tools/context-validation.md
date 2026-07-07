@@ -76,7 +76,7 @@ If no entity resolves, returns an error object (see the shared error shape) sugg
 **Example**
 
 ```json
-{ "entity": "MaterialArtifact", "include_imports": true, "limit": 25 }
+{ "entity": "Widget", "include_imports": true, "limit": 25 }
 ```
 
 ## `validate_ontology`

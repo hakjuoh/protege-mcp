@@ -3,14 +3,18 @@ package io.github.hakjuoh.protege_mcp.tools;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.classexpression.OWLExpressionParserException;
 import org.protege.editor.owl.model.find.OWLEntityFinder;
 import org.protege.editor.owl.model.parser.ProtegeOWLEntityChecker;
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.expression.OWLEntityChecker;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
 import org.semanticweb.owlapi.model.OWLClass;
@@ -22,6 +26,7 @@ import org.semanticweb.owlapi.model.OWLDatatype;
 import org.semanticweb.owlapi.model.OWLEntity;
 import org.semanticweb.owlapi.model.OWLNamedIndividual;
 import org.semanticweb.owlapi.model.OWLObjectProperty;
+import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.util.mansyntax.ManchesterOWLSyntaxParser;
 
 /**
@@ -33,6 +38,11 @@ public final class EntityResolver {
 
     private EntityResolver() {
     }
+
+    /** A CURIE token {@code prefix:local} outside angle brackets. The local part must start with an
+     * alphanumeric/underscore, so a full IRI's {@code http://…} (colon followed by '/') never matches. */
+    private static final Pattern CURIE_TOKEN =
+            Pattern.compile("([A-Za-z][A-Za-z0-9_.-]*):([A-Za-z0-9_][A-Za-z0-9_.\\-]*)");
 
     /** Parse {@code ref} as an absolute IRI, or return null if it is not one (e.g. a display name). */
     public static IRI asIri(String ref) {
@@ -179,17 +189,158 @@ public final class EntityResolver {
         }
     }
 
-    /** Parse {@code ref} with the OWL API Manchester parser (full-IRI aware); null if it cannot. */
+    /** Parse {@code ref} with the OWL API Manchester parser (full-IRI-, CURIE- and fragment-aware); null
+     * if it cannot. */
     static OWLClassExpression tryManchesterClassExpression(OWLModelManager mm, String ref) {
         try {
             ManchesterOWLSyntaxParser parser = OWLManager.createManchesterParser();
-            parser.setOWLEntityChecker(new ProtegeOWLEntityChecker(mm.getOWLEntityFinder()));
+            parser.setOWLEntityChecker(prefixAwareChecker(mm));
             parser.setDefaultOntology(mm.getActiveOntology());
-            parser.setStringToParse(ref);
+            parser.setStringToParse(expandCuriesForManchester(mm, ref));
             return parser.parseClassExpression();
         } catch (RuntimeException ignored) {
             return null;
         }
+    }
+
+    /**
+     * A Manchester entity checker that resolves a token first as a registered-prefix CURIE or full IRI
+     * (via {@link #iriFor}, looked up in the signature), then as an unambiguous bare IRI local name
+     * (fragment), and finally delegates to Protégé's rendering/label checker. This lets COMPOUND
+     * Manchester expressions accept {@code iof-core:X} CURIEs and bare fragments — matching what
+     * single-entity operands (sub, chain items, create_* parents) already accept — while quoted-label,
+     * single-word-label and {@code <IRI>} forms keep working through the delegate. Returns null for
+     * unknowns (never mints inside a compound), preserving the "typo → parse error" behaviour.
+     */
+    static OWLEntityChecker prefixAwareChecker(OWLModelManager mm) {
+        OWLEntityChecker delegate = new ProtegeOWLEntityChecker(mm.getOWLEntityFinder());
+        return new OWLEntityChecker() {
+            private <T extends OWLEntity> T lookup(String name, Class<T> cls) {
+                if (name == null) {
+                    return null;
+                }
+                try {
+                    IRI iri = iriFor(mm, name);   // CURIE→IRI, or an absolute IRI; null for a bare name/label
+                    if (iri != null) {
+                        for (OWLEntity ent : mm.getOWLEntityFinder().getEntities(iri)) {
+                            if (cls.isInstance(ent)) {
+                                return cls.cast(ent);
+                            }
+                        }
+                    }
+                    if (name.indexOf(':') < 0 && name.indexOf(' ') < 0) {   // a bare local name / fragment
+                        T match = null;
+                        for (OWLOntology o : mm.getActiveOntologies()) {
+                            for (OWLEntity ent : o.getSignature()) {
+                                if (cls.isInstance(ent) && iriLocalName(ent.getIRI()).equals(name)) {
+                                    if (match != null && !match.equals(ent)) {
+                                        return null;   // ambiguous fragment → defer to the label delegate
+                                    }
+                                    match = cls.cast(ent);
+                                }
+                            }
+                        }
+                        if (match != null) {
+                            return match;
+                        }
+                    }
+                } catch (RuntimeException ignored) {
+                    // A partial manager (e.g. a minimal test mock without a prefix map / imports closure)
+                    // may not support an accessor used here; treat as "not resolved by this checker" and
+                    // let the delegate (and the parser's native <IRI> handling) proceed.
+                }
+                return null;
+            }
+
+            @Override
+            public OWLClass getOWLClass(String name) {
+                return viaDelegate(lookup(name, OWLClass.class), () -> delegate.getOWLClass(name));
+            }
+
+            @Override
+            public OWLObjectProperty getOWLObjectProperty(String name) {
+                return viaDelegate(lookup(name, OWLObjectProperty.class),
+                        () -> delegate.getOWLObjectProperty(name));
+            }
+
+            @Override
+            public OWLDataProperty getOWLDataProperty(String name) {
+                return viaDelegate(lookup(name, OWLDataProperty.class),
+                        () -> delegate.getOWLDataProperty(name));
+            }
+
+            @Override
+            public OWLNamedIndividual getOWLIndividual(String name) {
+                return viaDelegate(lookup(name, OWLNamedIndividual.class),
+                        () -> delegate.getOWLIndividual(name));
+            }
+
+            @Override
+            public OWLDatatype getOWLDatatype(String name) {
+                return viaDelegate(lookup(name, OWLDatatype.class), () -> delegate.getOWLDatatype(name));
+            }
+
+            @Override
+            public OWLAnnotationProperty getOWLAnnotationProperty(String name) {
+                return viaDelegate(lookup(name, OWLAnnotationProperty.class),
+                        () -> delegate.getOWLAnnotationProperty(name));
+            }
+        };
+    }
+
+    /** Return {@code resolved} if non-null, else the delegate's answer — treating a delegate that throws
+     * (e.g. an entity finder that does not implement a by-rendering lookup) as "not found" rather than
+     * letting it abort the parse. The OWL API parser probes several checker methods to type a token, so a
+     * throwing delegate for the non-matching types would otherwise sink an otherwise-resolvable name. */
+    private static <T> T viaDelegate(T resolved, java.util.function.Supplier<T> delegateLookup) {
+        if (resolved != null) {
+            return resolved;
+        }
+        try {
+            return delegateLookup.get();
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    /** IRI local part: the substring after the last '#' or '/'. */
+    private static String iriLocalName(IRI iri) {
+        String s = iri.toString();
+        int cut = Math.max(s.lastIndexOf('#'), s.lastIndexOf('/'));
+        return (cut >= 0 && cut < s.length() - 1) ? s.substring(cut + 1) : s;
+    }
+
+    /**
+     * Rewrite every registered-prefix CURIE ({@code iof-core:Agent}) in a Manchester string to a full
+     * {@code <IRI>}, which the OWL API Manchester parser handles natively. The parser resolves prefixed
+     * names through its own prefix manager (defaults only: owl/rdf/rdfs/xsd) and does NOT consult the
+     * entity checker for them — so a custom checker can add bare-fragment support but not CURIE support;
+     * pre-expansion is what makes {@code iof-core:X} work inside a COMPOUND expression, matching what a
+     * single-entity operand already accepts. Content inside {@code <…>} is untouched (a full IRI's only
+     * colon is {@code http:}/{@code https:}, whose local part starts with '/', so it never matches).
+     */
+    static String expandCuriesForManchester(OWLModelManager mm, String ref) {
+        if (ref == null || ref.indexOf(':') < 0) {
+            return ref;
+        }
+        Map<String, String> prefixes;
+        try {
+            prefixes = SparqlTools.prefixMap(mm, mm.getActiveOntology());
+        } catch (RuntimeException e) {
+            return ref;   // a manager without a prefix map — skip expansion; labels/<IRI> still parse
+        }
+        if (prefixes == null || prefixes.isEmpty()) {
+            return ref;
+        }
+        Matcher matcher = CURIE_TOKEN.matcher(ref);
+        StringBuffer out = new StringBuffer(ref.length());
+        while (matcher.find()) {
+            String ns = prefixes.get(matcher.group(1) + ":");
+            String replacement = ns != null ? "<" + ns + matcher.group(2) + ">" : matcher.group();
+            matcher.appendReplacement(out, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(out);
+        return out.toString();
     }
 
     public static OWLNamedIndividual resolveIndividual(OWLModelManager mm, String ref) {
@@ -233,9 +384,9 @@ public final class EntityResolver {
         }
         try {
             ManchesterOWLSyntaxParser parser = OWLManager.createManchesterParser();
-            parser.setOWLEntityChecker(new ProtegeOWLEntityChecker(mm.getOWLEntityFinder()));
+            parser.setOWLEntityChecker(prefixAwareChecker(mm));
             parser.setDefaultOntology(mm.getActiveOntology());
-            parser.setStringToParse(ref);
+            parser.setStringToParse(expandCuriesForManchester(mm, ref));
             return parser.parseDataRange();
         } catch (RuntimeException parseError) {
             if (e != null) {

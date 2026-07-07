@@ -11,10 +11,12 @@ import java.util.Map;
 import java.util.Set;
 
 import org.protege.editor.owl.model.OWLModelManager;
+import org.protege.editor.owl.model.inference.ReasonerStatus;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.profiles.Profiles;
 
+import io.github.hakjuoh.protege_mcp.server.EmbeddedClassificationWaiter;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -85,6 +87,21 @@ public final class QcSuiteTools {
         String shaclShapes = Tools.optString(a, "shacl_shapes");
         String shaclShapesPath = Tools.optString(a, "shacl_shapes_path");
         boolean wantShacl = stages.contains(SHACL) && hasText(shaclShapes, shaclShapesPath);
+
+        // If the reasoner stage is requested, classify FIRST (off the EDT, bounded by the suite timeout)
+        // so the reasoner stage gets a fresh verdict and any inferred-dependent stage (CQ / invariant
+        // include_inferred) is built on current inferences. Without this an edit leaves the reasoner
+        // OUT_OF_SYNC and the reasoner stage would be skipped — a possible false-pass for an
+        // unsatisfiable-class-only defect. A missing factory is left to the stage to skip gracefully;
+        // a classify failure (e.g. HermiT rejecting a SWRL built-in) leaves it uninitialized, which the
+        // reasoner stage now surfaces as a WARN rather than a silent skip.
+        if (stages.contains(REASONER)) {
+            boolean noFactory = Boolean.TRUE.equals(ctx.access().compute(mm ->
+                    mm.getOWLReasonerManager().getReasonerStatus() == ReasonerStatus.NO_REASONER_FACTORY_CHOSEN));
+            if (!noFactory) {
+                EmbeddedClassificationWaiter.runAndWait(ctx.access(), timeout);
+            }
+        }
 
         // Phase 1 (EDT): everything that needs the live model — reasoner/structural verdicts, the profile
         // flatten snapshot, the CQ load, the one shared SPARQL snapshot, and (when shapes were supplied) the
@@ -166,8 +183,19 @@ public final class QcSuiteTools {
     static StageResult reasonerStage(OWLModelManager mm, int limit) {
         Map<String, Object> v = ValidationTools.reasonerVerdict(mm, limit);
         if (!Boolean.TRUE.equals(v.get("results_available"))) {
-            return StageResult.skipped(REASONER, "no current reasoner results — run run_reasoner first "
-                    + "(status: " + v.get("status") + ").");
+            String status = String.valueOf(v.get("status"));
+            // No reasoner selected at all is a legitimate skip (the user opted out of reasoning). But a
+            // reasoner that is OUT_OF_SYNC, or was reset to uninitialized because classification failed,
+            // must NOT silently pass the gate — surface it as a ran WARN so fail_on=warn trips and the
+            // JSON is never falsely reassuring about consistency / unsatisfiable classes.
+            if ("NO_REASONER_FACTORY_CHOSEN".equals(status)) {
+                return StageResult.skipped(REASONER, "no reasoner is selected in Protégé.");
+            }
+            Map<String, Object> stale = new LinkedHashMap<>();
+            stale.put("status", v.get("status"));
+            stale.put("reason", "no current reasoner results — the reasoner is not classified/in-sync "
+                    + "(run_reasoner was not run, or the last classification failed; see the Protégé log).");
+            return new StageResult(REASONER, true, WARN, stale, null);
         }
         Object consistent = v.get("consistent");
         int unsat = v.get("unsatisfiable_count") instanceof Number

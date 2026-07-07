@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import org.junit.jupiter.api.Test;
@@ -9,6 +10,7 @@ import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLClass;
+import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
@@ -57,6 +59,49 @@ class EntityResolverCurieTest {
     void findEntityResolvesTheCurieToTheImportedTerm() throws Exception {
         OWLModelManager mm = fixture();
         assertEquals(GDC, EntityResolver.findEntity(mm, "bfo:BFO_0000031").getIRI().toString());
+    }
+
+    @Test
+    void manchesterCompoundResolvesCuriesAndFragments() throws Exception {
+        // GAP #5: a COMPOUND Manchester expression must resolve registered-prefix CURIEs and bare IRI
+        // fragments, not only quoted labels / <full IRI>. Target the parser fallback directly (the
+        // primary path needs a live Protégé checker, which FakeModelManager doesn't provide).
+        String b = OBO + "BFO_0000040";
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = m.createOntology(IRI.create("http://example.org/mod2"));
+        m.addAxiom(o, df.getOWLDeclarationAxiom(df.getOWLClass(IRI.create(GDC))));
+        m.addAxiom(o, df.getOWLDeclarationAxiom(df.getOWLClass(IRI.create(b))));
+        TurtleDocumentFormat fmt = new TurtleDocumentFormat();
+        fmt.setPrefix("bfo:", OBO);
+        m.setOntologyFormat(o, fmt);
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        OWLClassExpression expected = df.getOWLObjectUnionOf(
+                df.getOWLClass(IRI.create(GDC)), df.getOWLClass(IRI.create(b)));
+
+        // Baseline: a compound of full <IRI>s must parse (the form CURIEs are pre-expanded to).
+        OWLClassExpression viaIri = EntityResolver.tryManchesterClassExpression(mm,
+                "<" + GDC + "> or <" + b + ">");
+        assertNotNull(viaIri, "a compound of full <IRI>s parses");
+        assertEquals(expected, viaIri);
+
+        // And the CURIE pre-expansion itself yields exactly that <IRI> string.
+        assertEquals("<" + GDC + "> or <" + b + ">",
+                EntityResolver.expandCuriesForManchester(mm, "bfo:BFO_0000031 or bfo:BFO_0000040"),
+                "registered CURIEs pre-expand to full <IRI>s");
+
+        OWLClassExpression viaCurie =
+                EntityResolver.tryManchesterClassExpression(mm, "bfo:BFO_0000031 or bfo:BFO_0000040");
+        assertNotNull(viaCurie, "a compound of registered CURIEs now parses");
+        assertEquals(expected, viaCurie);
+
+        OWLClassExpression viaFragment =
+                EntityResolver.tryManchesterClassExpression(mm, "BFO_0000031 or BFO_0000040");
+        assertEquals(expected, viaFragment, "bare IRI fragments resolve to the same expression");
+
+        assertNull(EntityResolver.tryManchesterClassExpression(mm, "nope:Thing or bfo:BFO_0000031"),
+                "an unregistered prefix keeps the parse unresolved (no silent mint)");
     }
 
     @Test

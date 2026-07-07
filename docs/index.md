@@ -52,7 +52,7 @@ Everything an AI client does flows through Protégé's own model manager, so:
 
 ## Why use it?
 
-- **Author faster in natural language.** "Create a class *Centrifuge* under *Equipment* with a
+- **Author faster in natural language.** "Create a class *Widget* under *Product* with a
   definition and label," or "find every class with no definition and propose fixes" — the assistant
   turns that into concrete, previewable axiom changes.
 - **Stay in control.** Preview edits before they apply, gate or confirm every write, and undo anything
@@ -79,7 +79,7 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | [Installation](installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](connect/) | The server model (ports, OAuth vs. bearer token) and per-environment recipes for Claude Code, Codex CLI, VS Code, and Claude Desktop. |
 | [Ontology Assistant](ontology-assistant.html) | The in-Protégé chat: what it is, how it works, attachments, privacy, and settings. |
-| [Tools](tools/) | All 64 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
+| [Tools](tools/) | All 65 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
 | [Contributing](contributing.html) | Build from source, run the tests, project layout, and how to add a tool. |
 | [Versioning & releases](versioning.html) | The SemVer + Keep-a-Changelog scheme and how releases are cut. |
 | [Changelog](changelog.html) | Release notes for every version. |

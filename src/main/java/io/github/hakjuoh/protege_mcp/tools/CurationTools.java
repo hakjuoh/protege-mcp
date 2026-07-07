@@ -229,6 +229,59 @@ public final class CurationTools {
                     });
                 }));
 
+        tools.tool("create_properties",
+                "Create MANY object/data properties in ONE undoable transaction — the array form of "
+                        + "create_property. 'properties' is an array; each item takes the same fields as "
+                        + "create_property ('name' required, plus property_type/iri/namespace/label/"
+                        + "no_label/definition/definition_property/domain/range/super_properties/"
+                        + "characteristics/inverse_of/annotations). Top-level 'namespace', "
+                        + "'definition_property' and 'property_type' are DEFAULTS applied to any item that "
+                        + "omits its own. The whole batch is a SINGLE undoable change (one undo_change "
+                        + "reverts every property) and ATOMIC: if any item is malformed, nothing is "
+                        + "applied. strict=true refuses the whole batch if any operand would be minted as a "
+                        + "new, empty entity. To reference another property in THIS batch (e.g. as "
+                        + "inverse_of / super_properties), give it an explicit iri/namespace and reference "
+                        + "its full IRI — nothing is in the ontology until the batch commits.",
+                createPropertiesSchema(),
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> a = Tools.args(req);
+                    List<Map<String, Object>> specs = Tools.objList(a, "properties");
+                    if (specs.isEmpty()) {
+                        return Tools.error("Provide at least one property in 'properties'.");
+                    }
+                    boolean strict = Tools.optBool(a, "strict", false);
+                    String defNs = Tools.optString(a, "namespace");
+                    String defDef = Tools.optString(a, "definition_property");
+                    String defType = Tools.optString(a, "property_type");
+                    return WriteTools.write(ctx, "create_properties (" + specs.size() + ")", mm -> {
+                        OWLDataFactory df = mm.getOWLDataFactory();
+                        OWLOntology ont = mm.getActiveOntology();
+                        List<OWLOntologyChange> changes = new ArrayList<>();
+                        List<OWLEntity> created = new ArrayList<>();
+                        Set<OWLEntity> createdSet = new LinkedHashSet<>();
+                        for (int i = 0; i < specs.size(); i++) {
+                            Map<String, Object> spec = withDefaults(specs.get(i), defNs, defDef, defType);
+                            try {
+                                String type = propertyType(spec);
+                                OWLEntity prop = WriteTools.createEntity(mm, type + "_property", spec, changes);
+                                if (!createdSet.add(prop)) {
+                                    throw new ToolArgException("duplicates an earlier property in this "
+                                            + "batch (IRI <" + prop.getIRI() + ">) — each must mint a "
+                                            + "distinct IRI.");
+                                }
+                                changes.addAll("data".equals(type)
+                                        ? dataPropertyAxioms(mm, df, ont, (OWLDataProperty) prop, spec)
+                                        : objectPropertyAxioms(mm, df, ont, (OWLObjectProperty) prop, spec));
+                                created.add(prop);
+                            } catch (ToolArgException e) {
+                                throw new ToolArgException("properties[" + i + "]" + termLabel(spec) + ": "
+                                        + e.getMessage() + " Nothing was applied.");
+                            }
+                        }
+                        return applyBatchCuration(mm, ont, changes, strict, createdSet, created);
+                    });
+                }));
+
         tools.tool("deprecate_entity",
                 "Deprecate a term (the standard obsolescence pattern) in one undoable step: asserts "
                         + "owl:deprecated true, and — when 'replaced_by' is given — a 'term replaced by' "
@@ -274,6 +327,7 @@ public final class CurationTools {
                                             + "nothing to change.")
                                     .result();
                         }
+                        WriteTools.declareMintedFromChanges(mm, ont, changes, target);
                         mm.applyChanges(changes);
                         return Tools.json()
                                 .put("deprecated", Tools.entityJson(mm, target))
@@ -325,6 +379,7 @@ public final class CurationTools {
                                     .put("note", "No change — the class already has exactly this parent.")
                                     .result();
                         }
+                        WriteTools.declareMintedFromChanges(mm, ont, changes, cls);
                         mm.applyChanges(changes);
                         return Tools.json()
                                 .put("moved", Tools.entityJson(mm, cls))
@@ -513,6 +568,7 @@ public final class CurationTools {
                     + "imports closure and would be created as new, empty entities — likely a typo. Fix "
                     + "the reference, create it first, or set strict=false.");
         }
+        WriteTools.declareMinted(mm.getOWLDataFactory(), ont, minted, changes);  // declare side-effect operands
         mm.applyChanges(changes);
         if (!minted.isEmpty()) {
             result.put("new_entities", Tools.entityList(mm, minted, Integer.MAX_VALUE));
@@ -571,6 +627,60 @@ public final class CurationTools {
     }
 
     /**
+     * Schema for {@code create_properties}: a required {@code properties} array whose items mirror {@code
+     * create_property}'s fields, plus top-level {@code namespace} / {@code definition_property} /
+     * {@code property_type} defaults and a {@code strict} flag. The array form of {@code create_property},
+     * mirroring how {@link #createTermsSchema()} is the array form of {@code create_term}.
+     */
+    private static Map<String, Object> createPropertiesSchema() {
+        Map<String, Object> item = Tools.schema()
+                .strReq("name", "Short name — the IRI local part when minting, and the default label.")
+                .str("property_type", "object (default) | data.")
+                .str("iri", "Full IRI to use (optional; overrides 'namespace').")
+                .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional; "
+                        + "falls back to the top-level 'namespace' default).")
+                .str("label", "rdfs:label text (default: 'name').")
+                .str("label_lang", "Language tag for the rdfs:label (optional).")
+                .bool("no_label", "Do not add any rdfs:label (default false).")
+                .str("definition", "Definition text (optional).")
+                .str("definition_property", "Annotation property for the definition (optional; falls back "
+                        + "to the top-level 'definition_property' default, else rdfs:comment).")
+                .str("definition_lang", "Language tag for the definition literal (optional).")
+                .str("domain", "Domain class expression (name, IRI or Manchester; optional).")
+                .str("range", "Range: a class expression for an object property, or a datatype / Manchester "
+                        + "data range (e.g. xsd:integer[>= 0]) for a data property.")
+                .strArray("super_properties", "Super-properties this is a subproperty of (optional).")
+                .strArray("characteristics", "Property characteristics to assert (optional).")
+                .str("inverse_of", "Inverse object property (object properties only; optional).")
+                .annotationArray("annotations", "Extra annotations (array of {property, value | value_iri, "
+                        + "lang, datatype}).")
+                .build();
+
+        Map<String, Object> propertiesArray = new LinkedHashMap<>();
+        propertiesArray.put("type", "array");
+        propertiesArray.put("items", item);
+        propertiesArray.put("description", "The properties to create; each item is a create_property "
+                + "field set (only 'name' is required).");
+
+        Map<String, Object> schemaProperties = new LinkedHashMap<>();
+        schemaProperties.put("properties", propertiesArray);
+        schemaProperties.put("namespace", Tools.stringProperty("Default namespace for any item that gives "
+                + "neither its own 'iri' nor 'namespace' (IRI = namespace + name)."));
+        schemaProperties.put("definition_property", Tools.stringProperty("Default definition annotation "
+                + "property for any item that omits its own 'definition_property'."));
+        schemaProperties.put("property_type", Tools.stringProperty("Default property_type (object|data) "
+                + "for any item that omits its own (else object)."));
+        schemaProperties.put("strict", Tools.boolProperty(WriteTools.STRICT_DESC));
+
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "object");
+        schema.put("properties", schemaProperties);
+        schema.put("required", java.util.Collections.singletonList("properties"));
+        schema.put("additionalProperties", false);
+        return schema;
+    }
+
+    /**
      * A copy of {@code spec} with the batch-level defaults filled in: {@code namespace} only when the term
      * gives neither its own {@code namespace} nor an explicit {@code iri} (so an explicit IRI is never
      * overridden), and {@code definition_property} only when absent. Never mutates the caller's map.
@@ -584,6 +694,20 @@ public final class CurationTools {
         }
         if (defaultDefProp != null && Tools.optString(merged, "definition_property") == null) {
             merged.put("definition_property", defaultDefProp);
+        }
+        return merged;
+    }
+
+    /**
+     * As {@link #withDefaults(Map, String, String)} plus a {@code property_type} default (for
+     * {@code create_properties}), applied only when the item omits its own. The 3-arg form is kept
+     * unchanged for {@code create_terms}.
+     */
+    static Map<String, Object> withDefaults(Map<String, Object> spec, String defaultNamespace,
+            String defaultDefProp, String defaultPropertyType) {
+        Map<String, Object> merged = withDefaults(spec, defaultNamespace, defaultDefProp);
+        if (defaultPropertyType != null && Tools.optString(merged, "property_type") == null) {
+            merged.put("property_type", defaultPropertyType);
         }
         return merged;
     }
@@ -602,7 +726,7 @@ public final class CurationTools {
      */
     static CallToolResult applyBatchCuration(OWLModelManager mm, OWLOntology ont,
             List<OWLOntologyChange> changes, boolean strict, Set<OWLEntity> createdSet,
-            List<OWLClass> created) {
+            List<? extends OWLEntity> created) {
         Set<OWLOntology> closure = ont.getImportsClosure();
         Set<OWLEntity> minted = new LinkedHashSet<>();
         for (OWLOntologyChange ch : changes) {
@@ -618,9 +742,10 @@ public final class CurationTools {
                     + "the reference, create it first (or reference a same-batch term by its full IRI), or "
                     + "set strict=false. Nothing was applied.");
         }
+        WriteTools.declareMinted(mm.getOWLDataFactory(), ont, minted, changes);  // declare side-effect operands
         mm.applyChanges(changes);   // one broadcast → one Protégé undo entry for the whole batch
         List<Map<String, Object>> createdJson = new ArrayList<>();
-        for (OWLClass c : created) {
+        for (OWLEntity c : created) {
             createdJson.add(Tools.entityJson(mm, c));
         }
         Tools.Json result = Tools.json()

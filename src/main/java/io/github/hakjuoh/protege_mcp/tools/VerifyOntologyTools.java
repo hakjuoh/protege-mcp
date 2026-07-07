@@ -15,8 +15,8 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
  *
  * <p>Invariants run over the shared off-EDT snapshot ({@link SuiteSnapshot}); UPDATE/SERVICE are rejected
  * inside {@link SparqlTools#execute}, and violation rows are reported in the {@code nodeJson} binding
- * shape (no EDT rendering). A persisted invariant {@code profile} is reserved for 0.4.1; the MVP is the
- * inline {@code queries[]}.
+ * shape (no EDT rendering). A persisted invariant {@code profile} is reserved for a future release;
+ * the MVP is the inline {@code queries[]}.
  */
 public final class VerifyOntologyTools {
 

@@ -69,7 +69,8 @@ public final class Axioms {
                         + "list; has_key: object/data property IRI/name list")
                 .str("super_property", "sub_object_property_of / sub_data_property_of / "
                         + "sub_property_chain_of / sub_annotation_property_of: super property IRI/name")
-                .strArray("chain", "sub_property_chain_of: ordered object property IRI/name list")
+                .strArray("chain", "sub_property_chain_of: ordered object property list (each a "
+                        + "name/IRI, or an inverse link inverse(P) / ObjectInverseOf(P))")
                 .str("inverse_property", "inverse_object_properties: inverse object property IRI/name")
                 .str("subject", "*_property_assertion / annotation_assertion: subject IRI/name")
                 .str("object", "object_property_assertion / negative_object_property_assertion: object "
@@ -270,9 +271,36 @@ public final class Axioms {
         }
         List<OWLObjectPropertyExpression> chain = new ArrayList<>();
         for (String ref : refs) {
-            chain.add(Tools.resolveObjectProperty(mm, ref));
+            chain.add(chainLink(mm, ref));
         }
         return chain;
+    }
+
+    /** A chain link: a named object property, or an inverse expression inverse(P) / "inverse P" /
+     * ObjectInverseOf(P) → OWLObjectInverseOf (a SubPropertyChainOf link may be any object property
+     * expression, so inverse links are legal — real IOF temporal chains rely on them). */
+    private static OWLObjectPropertyExpression chainLink(OWLModelManager mm, String ref) {
+        String inner = inverseOperand(ref);
+        if (inner != null) {
+            return mm.getOWLDataFactory().getOWLObjectInverseOf(Tools.resolveObjectProperty(mm, inner));
+        }
+        return Tools.resolveObjectProperty(mm, ref);
+    }
+
+    /** If {@code ref} is inverse(X) / "inverse X" / ObjectInverseOf(X), return X (trimmed); else null. */
+    private static String inverseOperand(String ref) {
+        String s = ref.trim();
+        String lower = s.toLowerCase(java.util.Locale.ROOT);
+        if (lower.startsWith("inverse(") && s.endsWith(")")) {
+            return s.substring("inverse(".length(), s.length() - 1).trim();
+        }
+        if (lower.startsWith("objectinverseof(") && s.endsWith(")")) {
+            return s.substring("objectinverseof(".length(), s.length() - 1).trim();
+        }
+        if (lower.startsWith("inverse ")) {
+            return s.substring("inverse ".length()).trim();
+        }
+        return null;
     }
 
     private static Set<OWLClassExpression> classSet(OWLModelManager mm, Map<String, Object> a) {
