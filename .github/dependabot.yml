@@ -17,6 +17,14 @@ updates:
     open-pull-requests-limit: 5
     ignore:
       - dependency-name: "net.sourceforge.owlapi:*"
+      # guava is `provided`-scope: supplied at runtime by Protégé's own guava 18.0.0 bundle and
+      # pinned by Import-Package [18.0,19); it is NOT embedded in the released JAR. The open CVE
+      # alerts against guava 18 (CVE-2023-2976 / CVE-2020-8908 temp-dir perms; CVE-2018-10237
+      # deserialization DoS) were triaged and dismissed as "vulnerable code not used": the plugin
+      # never calls the affected APIs (Files.createTempDir / FileBackedOutputStream / AtomicDoubleArray)
+      # and performs no Java deserialization, and it cannot change the runtime guava regardless. See
+      # SECURITY.md "Third-party dependency CVEs" for the full rationale. Re-triage the same way if
+      # a new guava-18 alert reopens; the real fix belongs upstream in Protégé Desktop.
       - dependency-name: "com.google.guava:guava"
       - dependency-name: "org.slf4j:*"
       - dependency-name: "io.modelcontextprotocol.sdk:*"

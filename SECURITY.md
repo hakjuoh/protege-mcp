@@ -49,3 +49,36 @@ attachments; any write that bypasses the read-only / confirmation gates.
 Attacks that require an already-compromised local account (the model is a single trusted desktop user);
 the security of the third-party LLM providers themselves; and issues in Protégé or its bundled libraries
 that are not reachable through this plugin (please report those upstream).
+
+## Third-party dependency CVEs
+
+Dependency scanners (e.g. GitHub Dependabot) will flag CVEs against libraries listed in `pom.xml`. Not
+every alert describes an exploitable path in this plugin, because the build has two dependency layers:
+
+- **`provided` (runtime-supplied by Protégé, never embedded).** `owlapi`, `guava`, `slf4j` are supplied
+  by the running Protégé/OWLAPI OSGi runtime and pinned via `Import-Package` version ranges. They are
+  **not** shipped in the released JAR, and the plugin cannot change which version the platform loads.
+- **`compile` (embedded/inlined into the bundle).** The MCP + Jetty + Jackson + Reactor + Jena stack is
+  inlined; these are the versions this project actually distributes and can patch.
+
+For a `provided` dependency, bumping its `pom.xml` version does not change the shipped artifact or the
+runtime, and widening its `Import-Package` range beyond what the platform exports breaks OSGi resolution.
+Such alerts are triaged by **reachability** (does the plugin, or an API it drives, invoke the vulnerable
+code?) and dismissed as *"vulnerable code is not actually used"* when unreachable.
+
+**Guava (`com.google.guava:guava` 18.0, `provided`).** Supplied at runtime by Protégé's own
+`guava.jar` (18.0.0) and pinned to `[18.0,19)`; not embedded here. The plugin uses guava only through
+OWLAPI 4.5.x return types (`Optional`, `Multimap`). Three alerts were reviewed and dismissed as
+unreachable:
+
+| CVE | Vulnerable API | Why unreachable here |
+| --- | --- | --- |
+| CVE-2023-2976 | `Files.createTempDir()` | Plugin creates temp files via JDK `java.nio.file.Files.createTempFile`, never guava. |
+| CVE-2020-8908 | `FileBackedOutputStream` | Never referenced in source or via the OWLAPI APIs the plugin drives. |
+| CVE-2018-10237 | `AtomicDoubleArray` / `CompoundOrdering` deserialization | The plugin does no Java deserialization (no `ObjectInputStream`); the MCP transport is JSON over a `127.0.0.1`-bound servlet with no Jetty session store. |
+
+The real remediation ("run on a newer guava") belongs to Protégé Desktop and is outside this plugin's
+control. Note the released JAR does embed *relocated/shaded* guava copies under
+`com.github.jsonldjava.shaded.*` (jsonld-java) and `org.apache.jena.ext.*` (Jena) — distinct Maven
+coordinates that these guava alerts do not target and that have no callers outside their own shaded
+packages.
