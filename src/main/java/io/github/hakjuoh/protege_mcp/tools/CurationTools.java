@@ -76,7 +76,8 @@ public final class CurationTools {
                         + "term and any 'new_entities' the operands introduced; strict=true refuses to "
                         + "mint an unrecognised operand.",
                 Tools.schema()
-                        .strReq("name", "Short name — the IRI local part when minting, and the default label.")
+                        .str("name", "Short name — the IRI local part when minting, and the default label. "
+                                + "Optional when a full 'iri' is given (its local part becomes the name).")
                         .str("iri", "Full IRI to use (optional; overrides 'namespace').")
                         .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional).")
                         .str("label", "rdfs:label text (default: 'name').")
@@ -96,9 +97,8 @@ public final class CurationTools {
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
-                    String name = Tools.reqString(a, "name");
                     boolean strict = Tools.optBool(a, "strict", false);
-                    return WriteTools.write(ctx, "create_term " + name, mm -> {
+                    return WriteTools.write(ctx, "create_term " + WriteTools.summaryName(a), mm -> {
                         OWLDataFactory df = mm.getOWLDataFactory();
                         OWLOntology ont = mm.getActiveOntology();
                         List<OWLOntologyChange> changes = new ArrayList<>();
@@ -111,15 +111,15 @@ public final class CurationTools {
                         Set<OWLAnnotation> extra = Tools.annotationSet(mm, a, "annotations");
                         changes.addAll(termAxioms(df, ont, cls, parents, equivalents,
                                 defProp, defText, defLang, extra));
-                        return applyCuration(mm, ont, changes, strict, cls,
-                                Tools.json().put("created", Tools.entityJson(mm, cls)));
+                        return applyCuration(mm, ont, changes, strict, cls, Tools.json());
                     });
                 }));
 
         tools.tool("create_terms",
                 "Create MANY classes in one undoable transaction (batch term-request intake) — the array "
                         + "form of create_term. 'terms' is an array; each item takes the same fields as "
-                        + "create_term ('name' required, plus 'iri'/'namespace'/'label'/'label_lang'/"
+                        + "create_term ('name', optional when a full 'iri' is given, plus "
+                        + "'iri'/'namespace'/'label'/'label_lang'/"
                         + "'no_label'/'definition'/'definition_property'/'definition_lang'/'parents'/"
                         + "'equivalent_to'/'annotations'). Top-level 'namespace' and 'definition_property' "
                         + "are DEFAULTS applied to any term that omits its own (mint IRIs in a shared "
@@ -190,7 +190,8 @@ public final class CurationTools {
                         + "irreflexive; data: functional) and an 'inverse_of' (object only). Reports "
                         + "'new_entities'; strict=true refuses to mint an unrecognised operand.",
                 Tools.schema()
-                        .strReq("name", "Short name — the IRI local part when minting, and the default label.")
+                        .str("name", "Short name — the IRI local part when minting, and the default label. "
+                                + "Optional when a full 'iri' is given (its local part becomes the name).")
                         .str("property_type", "object (default) | data.")
                         .str("iri", "Full IRI to use (optional; overrides 'namespace').")
                         .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional).")
@@ -213,10 +214,9 @@ public final class CurationTools {
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
-                    String name = Tools.reqString(a, "name");
                     boolean strict = Tools.optBool(a, "strict", false);
                     String type = propertyType(a);
-                    return WriteTools.write(ctx, "create_property " + type + " " + name, mm -> {
+                    return WriteTools.write(ctx, "create_property " + type + " " + WriteTools.summaryName(a), mm -> {
                         OWLDataFactory df = mm.getOWLDataFactory();
                         OWLOntology ont = mm.getActiveOntology();
                         List<OWLOntologyChange> changes = new ArrayList<>();
@@ -224,15 +224,15 @@ public final class CurationTools {
                         changes.addAll("data".equals(type)
                                 ? dataPropertyAxioms(mm, df, ont, (OWLDataProperty) prop, a)
                                 : objectPropertyAxioms(mm, df, ont, (OWLObjectProperty) prop, a));
-                        return applyCuration(mm, ont, changes, strict, prop,
-                                Tools.json().put("created", Tools.entityJson(mm, prop)));
+                        return applyCuration(mm, ont, changes, strict, prop, Tools.json());
                     });
                 }));
 
         tools.tool("create_properties",
                 "Create MANY object/data properties in ONE undoable transaction — the array form of "
                         + "create_property. 'properties' is an array; each item takes the same fields as "
-                        + "create_property ('name' required, plus property_type/iri/namespace/label/"
+                        + "create_property ('name', optional when a full 'iri' is given, plus "
+                        + "property_type/iri/namespace/label/"
                         + "no_label/definition/definition_property/domain/range/super_properties/"
                         + "characteristics/inverse_of/annotations). Top-level 'namespace', "
                         + "'definition_property' and 'property_type' are DEFAULTS applied to any item that "
@@ -569,7 +569,11 @@ public final class CurationTools {
                     + "the reference, create it first, or set strict=false.");
         }
         WriteTools.declareMinted(mm.getOWLDataFactory(), ont, minted, changes);  // declare side-effect operands
+        WriteTools.declareUsedAnnotationProperties(mm.getOWLDataFactory(), ont, changes);
         mm.applyChanges(changes);
+        // Render the created entity AFTER applying so its rdfs:label is already in the ontology and
+        // 'created.display' shows the label, not the bare IRI fragment — matching the batch path.
+        result.put("created", Tools.entityJson(mm, created));
         if (!minted.isEmpty()) {
             result.put("new_entities", Tools.entityList(mm, minted, Integer.MAX_VALUE));
         }
@@ -586,7 +590,8 @@ public final class CurationTools {
      */
     private static Map<String, Object> createTermsSchema() {
         Map<String, Object> item = Tools.schema()
-                .strReq("name", "Short name — the IRI local part when minting, and the default label.")
+                .str("name", "Short name — the IRI local part when minting, and the default label. "
+                        + "Optional when a full 'iri' is given (its local part becomes the name).")
                 .str("iri", "Full IRI to use (optional; overrides 'namespace').")
                 .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional; "
                         + "falls back to the top-level 'namespace' default).")
@@ -608,7 +613,7 @@ public final class CurationTools {
         terms.put("type", "array");
         terms.put("items", item);
         terms.put("description", "The classes to create; each item is a create_term field set (only "
-                + "'name' is required).");
+                + "'name' or a full 'iri' is required).");
 
         Map<String, Object> properties = new LinkedHashMap<>();
         properties.put("terms", terms);
@@ -634,7 +639,8 @@ public final class CurationTools {
      */
     private static Map<String, Object> createPropertiesSchema() {
         Map<String, Object> item = Tools.schema()
-                .strReq("name", "Short name — the IRI local part when minting, and the default label.")
+                .str("name", "Short name — the IRI local part when minting, and the default label. "
+                        + "Optional when a full 'iri' is given (its local part becomes the name).")
                 .str("property_type", "object (default) | data.")
                 .str("iri", "Full IRI to use (optional; overrides 'namespace').")
                 .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional; "
@@ -660,7 +666,7 @@ public final class CurationTools {
         propertiesArray.put("type", "array");
         propertiesArray.put("items", item);
         propertiesArray.put("description", "The properties to create; each item is a create_property "
-                + "field set (only 'name' is required).");
+                + "field set (only 'name' or a full 'iri' is required).");
 
         Map<String, Object> schemaProperties = new LinkedHashMap<>();
         schemaProperties.put("properties", propertiesArray);
@@ -743,6 +749,7 @@ public final class CurationTools {
                     + "set strict=false. Nothing was applied.");
         }
         WriteTools.declareMinted(mm.getOWLDataFactory(), ont, minted, changes);  // declare side-effect operands
+        WriteTools.declareUsedAnnotationProperties(mm.getOWLDataFactory(), ont, changes);
         mm.applyChanges(changes);   // one broadcast → one Protégé undo entry for the whole batch
         List<Map<String, Object>> createdJson = new ArrayList<>();
         for (OWLEntity c : created) {

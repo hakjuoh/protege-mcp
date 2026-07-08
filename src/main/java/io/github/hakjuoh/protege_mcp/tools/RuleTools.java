@@ -56,8 +56,14 @@ public final class RuleTools {
     private RuleTools() {
     }
 
-    /** Default namespace for a {@code ?name} rule variable when {@code variable_namespace} is omitted. */
-    static final String DEFAULT_VARIABLE_NS = "urn:swrl#";
+    /**
+     * Default namespace for a {@code ?name} rule variable when {@code variable_namespace} is omitted.
+     * Must be a scheme-valid IRI: the earlier {@code urn:swrl#} produced variables like
+     * {@code urn:swrl#p} that violate the URN syntax ({@code urn:swrl} has no {@code NID:NSS} colon),
+     * so the RDF/Turtle writer logged a "Bad IRI … SCHEME_PATTERN_MATCH_FAILED" warning on every
+     * serialization (including the SPARQL/SHACL snapshot path). {@code urn:swrl:var#} is a valid URN.
+     */
+    static final String DEFAULT_VARIABLE_NS = "urn:swrl:var#";
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("list_rules",
@@ -531,8 +537,105 @@ public final class RuleTools {
         return argString(arg);
     }
 
+    /** The standard SWRL built-ins namespace, rendered as the {@code swrlb:} prefix. */
+    private static final String SWRLB_NS = "http://www.w3.org/2003/11/swrlb#";
+
+    /**
+     * Render a rule as {@code body -> head} with each atom {@code predicate(args)}. Built from the
+     * structured atoms rather than Protégé's axiom renderer because the latter runs a built-in atom's
+     * predicate through the entity-name quoting path, mangling {@code swrlb:greaterThan} into
+     * {@code '\'<swrlb:greaterThan>\''}. Class/property predicates still use Protégé's rendering (so a
+     * multi-word label stays quoted, e.g. {@code 'is party to'}); a built-in predicate renders as a
+     * clean {@code swrlb:}CURIE (or its fragment), and variables as {@code ?}shortName.
+     */
     static String renderRule(OWLModelManager mm, SWRLRule rule) {
-        return Tools.renderAxiom(mm, rule);
+        return renderAtoms(mm, rule.getBody()) + " -> " + renderAtoms(mm, rule.getHead());
+    }
+
+    private static String renderAtoms(OWLModelManager mm, Set<SWRLAtom> atoms) {
+        StringBuilder sb = new StringBuilder();
+        for (SWRLAtom atom : atoms) {
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append(renderAtom(mm, atom));
+        }
+        return sb.toString();
+    }
+
+    private static String renderAtom(OWLModelManager mm, SWRLAtom atom) {
+        if (atom instanceof SWRLClassAtom) {
+            SWRLClassAtom a = (SWRLClassAtom) atom;
+            return Tools.renderObject(mm, a.getPredicate()) + "(" + renderArg(mm, a.getArgument()) + ")";
+        }
+        if (atom instanceof SWRLObjectPropertyAtom) {
+            SWRLObjectPropertyAtom a = (SWRLObjectPropertyAtom) atom;
+            return Tools.renderObject(mm, a.getPredicate()) + "(" + renderArg(mm, a.getFirstArgument())
+                    + ", " + renderArg(mm, a.getSecondArgument()) + ")";
+        }
+        if (atom instanceof SWRLDataPropertyAtom) {
+            SWRLDataPropertyAtom a = (SWRLDataPropertyAtom) atom;
+            return Tools.renderObject(mm, a.getPredicate()) + "(" + renderArg(mm, a.getFirstArgument())
+                    + ", " + renderArg(mm, a.getSecondArgument()) + ")";
+        }
+        if (atom instanceof SWRLSameIndividualAtom) {
+            SWRLSameIndividualAtom a = (SWRLSameIndividualAtom) atom;
+            return "sameAs(" + renderArg(mm, a.getFirstArgument()) + ", "
+                    + renderArg(mm, a.getSecondArgument()) + ")";
+        }
+        if (atom instanceof SWRLDifferentIndividualsAtom) {
+            SWRLDifferentIndividualsAtom a = (SWRLDifferentIndividualsAtom) atom;
+            return "differentFrom(" + renderArg(mm, a.getFirstArgument()) + ", "
+                    + renderArg(mm, a.getSecondArgument()) + ")";
+        }
+        if (atom instanceof SWRLBuiltInAtom) {
+            SWRLBuiltInAtom a = (SWRLBuiltInAtom) atom;
+            StringBuilder sb = new StringBuilder(renderBuiltin(a.getPredicate())).append("(");
+            boolean first = true;
+            for (SWRLDArgument d : a.getArguments()) {
+                if (!first) {
+                    sb.append(", ");
+                }
+                sb.append(renderArg(mm, d));
+                first = false;
+            }
+            return sb.append(")").toString();
+        }
+        return atom.toString();
+    }
+
+    /** A rule argument: a variable as {@code ?}shortName, an individual via Protégé, a literal lexically. */
+    private static String renderArg(OWLModelManager mm, SWRLArgument arg) {
+        if (arg instanceof SWRLVariable) {
+            return "?" + shortName(((SWRLVariable) arg).getIRI());
+        }
+        if (arg instanceof SWRLIndividualArgument) {
+            return Tools.renderObject(mm, ((SWRLIndividualArgument) arg).getIndividual());
+        }
+        if (arg instanceof SWRLLiteralArgument) {
+            return ((SWRLLiteralArgument) arg).getLiteral().getLiteral();
+        }
+        return arg.toString();
+    }
+
+    /** A built-in predicate as {@code swrlb:}fragment (standard ns), else its fragment, else the full IRI. */
+    private static String renderBuiltin(IRI builtin) {
+        String s = builtin.toString();
+        if (s.startsWith(SWRLB_NS)) {
+            return "swrlb:" + s.substring(SWRLB_NS.length());
+        }
+        return shortName(builtin);
+    }
+
+    /** The fragment of an IRI, else its last path segment, else the whole IRI. */
+    private static String shortName(IRI iri) {
+        String frag = iri.getFragment();
+        if (frag != null && !frag.isEmpty()) {
+            return frag;
+        }
+        String s = iri.toString();
+        int slash = s.lastIndexOf('/');
+        return slash >= 0 && slash < s.length() - 1 ? s.substring(slash + 1) : s;
     }
 
     private static boolean hasLabel(SWRLRule rule, String label) {

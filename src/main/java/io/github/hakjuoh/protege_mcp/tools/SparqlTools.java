@@ -36,7 +36,6 @@ import org.apache.jena.sys.JenaSystem;
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.inference.OWLReasonerManager;
 import org.protege.editor.owl.model.inference.ReasonerStatus;
-import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.AddOntologyAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotation;
@@ -199,7 +198,7 @@ public final class SparqlTools {
     /** Reasoner-injected core of {@link #snapshot(OWLModelManager, boolean)} (headless-testable). */
     static Snapshot snapshot(OWLModelManager mm, OWLReasoner reasoner, boolean includeInferred) {
         OWLOntology active = mm.getActiveOntology();
-        OWLOntologyManager priv = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager priv = OwlManagers.create();
         OWLOntology iso = buildSnapshotOntology(priv, active.getOntologyID(), active.getImportsClosure());
         String note = null;
         if (includeInferred) {

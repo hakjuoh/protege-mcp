@@ -58,8 +58,9 @@ public final class WriteTools {
                         + "entity-creation settings. An rdfs:label ('label' or 'name', tagged with "
                         + "'label_lang') is added unless 'no_label'. Optionally set a 'parent' superclass.",
                 Tools.schema()
-                        .strReq("name", "Short name for the class — the IRI local part when minting, and "
-                                + "the default rdfs:label.")
+                        .str("name", "Short name for the class — the IRI local part when minting, and "
+                                + "the default rdfs:label. Optional when a full 'iri' is given (its local "
+                                + "part becomes the name).")
                         .str("iri", "Full IRI to use (optional; overrides 'namespace').")
                         .str("namespace", "Namespace to mint the IRI in: IRI becomes namespace + name "
                                 + "(optional).")
@@ -70,8 +71,7 @@ public final class WriteTools {
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
-                    String name = Tools.reqString(a, "name");
-                    return write(ctx, "create_class " + name, mm -> {
+                    return write(ctx, "create_class " + summaryName(a), mm -> {
                         OWLDataFactory df = mm.getOWLDataFactory();
                         OWLOntology ont = mm.getActiveOntology();
                         List<OWLOntologyChange> changes = new ArrayList<>();
@@ -100,8 +100,9 @@ public final class WriteTools {
                 Tools.schema()
                         .strReq("entity_type", "class | object_property | data_property | "
                                 + "annotation_property | individual | datatype")
-                        .strReq("name", "Short name — the IRI local part when minting, and the default "
-                                + "rdfs:label.")
+                        .str("name", "Short name — the IRI local part when minting, and the default "
+                                + "rdfs:label. Optional when a full 'iri' is given (its local part "
+                                + "becomes the name).")
                         .str("iri", "Full IRI to use (optional; overrides 'namespace').")
                         .str("namespace", "Namespace to mint the IRI in: IRI becomes namespace + name "
                                 + "(optional).")
@@ -112,8 +113,7 @@ public final class WriteTools {
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String type = Tools.reqString(a, "entity_type");
-                    String name = Tools.reqString(a, "name");
-                    return write(ctx, "create_entity " + type + " " + name, mm -> {
+                    return write(ctx, "create_entity " + type + " " + summaryName(a), mm -> {
                         List<OWLOntologyChange> changes = new ArrayList<>();
                         OWLEntity e = createEntity(mm, type, a, changes);
                         mm.applyChanges(changes);
@@ -427,6 +427,80 @@ public final class WriteTools {
         }
     }
 
+    /** A human label for the write summary: 'name', else the 'iri' local part, else "entity". */
+    static String summaryName(Map<String, Object> a) {
+        String name = Tools.optString(a, "name");
+        if (name != null) {
+            return name;
+        }
+        String iri = Tools.optString(a, "iri");
+        return iri != null ? localName(iri) : "entity";
+    }
+
+    /**
+     * OWL 2 DL requires a Declaration for every non-built-in annotation property used in an annotation.
+     * The create_* and annotation write paths inject annotation properties (a definition property such as
+     * skos:definition, dcterms:*, a project av:* property) that are commonly used-but-never-declared
+     * across the imports closure — e.g. an imported ontology uses skos:definition without declaring it —
+     * so {@link PreviewTools#newEntities} / {@link #declareMinted} (which treat an entity already present
+     * in the closure signature as "known") never declare them and the active ontology silently leaves
+     * OWL 2 DL. Declare, in the active ontology, each annotation property referenced by the AddAxioms in
+     * {@code changes} that is not OWL-built-in and that NO ontology in the imports closure declares.
+     * Keyed on isDeclared (not containsEntityInSignature), so a used-but-undeclared upstream annotation
+     * property is still declared locally. Appends to the SAME change list (one undo unit).
+     */
+    static void declareUsedAnnotationProperties(OWLDataFactory df, OWLOntology ont,
+            List<OWLOntologyChange> changes) {
+        Set<OWLAnnotationProperty> used = new LinkedHashSet<>();
+        for (OWLOntologyChange ch : changes) {
+            if (ch instanceof AddAxiom) {
+                used.addAll(((AddAxiom) ch).getAxiom().getAnnotationPropertiesInSignature());
+            }
+        }
+        declareAnnotationProperties(df, ont, used, changes);
+    }
+
+    /**
+     * Declare, in {@code ont}, each annotation property in {@code used} that is not OWL-built-in and is
+     * not declared anywhere in the imports closure (appending to {@code changes}). Shared by the
+     * axiom-path {@link #declareUsedAnnotationProperties} and the ontology-annotation write path (whose
+     * property is not carried by any axiom).
+     */
+    static void declareAnnotationProperties(OWLDataFactory df, OWLOntology ont,
+            Set<OWLAnnotationProperty> used, List<OWLOntologyChange> changes) {
+        if (used.isEmpty()) {
+            return;
+        }
+        Set<OWLOntology> closure = ont.getImportsClosure();
+        for (OWLAnnotationProperty ap : used) {
+            if (ap.isBuiltIn() || isDeclaredInClosure(closure, ap)) {
+                continue;
+            }
+            OWLAxiom decl = df.getOWLDeclarationAxiom(ap);
+            if (!ont.containsAxiom(decl) && !isAlreadyAdded(changes, decl)) {
+                changes.add(new AddAxiom(ont, decl));
+            }
+        }
+    }
+
+    private static boolean isDeclaredInClosure(Set<OWLOntology> closure, OWLEntity e) {
+        for (OWLOntology o : closure) {
+            if (o.isDeclared(e)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isAlreadyAdded(List<OWLOntologyChange> changes, OWLAxiom decl) {
+        for (OWLOntologyChange ch : changes) {
+            if (ch instanceof AddAxiom && ((AddAxiom) ch).getAxiom().equals(decl)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Convenience over {@link #declareMinted}: compute the entities the AddAxioms in {@code changes}
      * introduce into the closure (minus {@code exclude}, typically an entity already declared by its
@@ -446,6 +520,7 @@ public final class WriteTools {
             minted.remove(exclude);
         }
         declareMinted(mm.getOWLDataFactory(), ont, minted, changes);
+        declareUsedAnnotationProperties(mm.getOWLDataFactory(), ont, changes);
     }
 
     private static CallToolResult applyAxiom(OWLModelManager mm, OWLOntology ont, OWLAxiom ax,
@@ -457,6 +532,7 @@ public final class WriteTools {
         List<OWLOntologyChange> changes = new ArrayList<>();
         changes.add(new AddAxiom(ont, ax));
         declareMinted(mm.getOWLDataFactory(), ont, minted, changes);
+        declareUsedAnnotationProperties(mm.getOWLDataFactory(), ont, changes);
         mm.applyChanges(changes);  // axiom + any declarations for side-effect entities, one undo unit
         return applied(mm, ont, ax, minted);
     }
@@ -622,6 +698,7 @@ public final class WriteTools {
         // though the per-op rows (computed pre-apply) correctly listed the minted entities.
         Set<OWLEntity> mintedAll = newEntitiesIntroducedByAxioms(closure, simAdded);
         declareMinted(mm.getOWLDataFactory(), ont, mintedAll, toApply);  // declare side-effect entities
+        declareUsedAnnotationProperties(mm.getOWLDataFactory(), ont, toApply);
         if (!toApply.isEmpty()) {
             mm.applyChanges(toApply);  // one broadcast → one Protégé undo entry for the whole batch
         }
@@ -757,9 +834,20 @@ public final class WriteTools {
         OWLDataFactory df = mm.getOWLDataFactory();
         OWLOntology ont = mm.getActiveOntology();
         String t = type.toLowerCase();
-        String name = Tools.reqString(a, "name");
         String iri = Tools.optString(a, "iri");
         String namespace = Tools.optString(a, "namespace");
+        String name = Tools.optString(a, "name");
+        if (name == null) {
+            // 'name' is optional when a full 'iri' pins the entity: derive its local part as the
+            // default label so create_* need not repeat the fragment. A 'namespace' still needs a
+            // 'name' (it supplies only the local part), and with neither we cannot mint an IRI.
+            if (iri != null) {
+                name = localName(iri);
+            } else {
+                throw new ToolArgException("Provide 'name' (the IRI local part and default label), "
+                        + "or a full 'iri'.");
+            }
+        }
         if (iri == null && namespace != null) {
             iri = joinNamespace(namespace, name);
         }
@@ -820,6 +908,26 @@ public final class WriteTools {
         }
         char last = namespace.charAt(namespace.length() - 1);
         return (last == '/' || last == '#' || last == ':') ? namespace + local : namespace + "/" + local;
+    }
+
+    /**
+     * The local part of an IRI, for use as a default name/label: the fragment after '#', else the
+     * segment after the last '/', else (for an opaque IRI such as {@code urn:example:Dog}) the part
+     * after the last ':'. A trailing separator is dropped first so a namespace IRI
+     * ({@code http://ex/vocab#}) still yields its last segment rather than the whole IRI; falls back
+     * to the full IRI only when nothing else remains.
+     */
+    static String localName(String iri) {
+        String s = iri;
+        while (s.endsWith("#") || s.endsWith("/")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        int cut = Math.max(s.lastIndexOf('#'), s.lastIndexOf('/'));
+        if (cut < 0) {
+            cut = s.lastIndexOf(':');
+        }
+        String local = (cut >= 0 && cut < s.length() - 1) ? s.substring(cut + 1) : s;
+        return local.isEmpty() ? iri : local;
     }
 
     private static OWLEntity entityAtIri(OWLDataFactory df, String type, IRI iri) {

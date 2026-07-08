@@ -13,7 +13,6 @@ import java.util.Set;
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.event.EventType;
 import org.protege.xmlcatalog.owlapi.XMLCatalogIRIMapper;
-import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.io.FileDocumentSource;
 import org.semanticweb.owlapi.io.IRIDocumentSource;
 import org.semanticweb.owlapi.io.OWLOntologyDocumentSource;
@@ -282,7 +281,7 @@ public final class OntologyDocumentTools {
      * recorded so {@link #attach} can warn about them.
      */
     private static LoadedDocument fetch(String normalized, int timeoutMs) {
-        OWLOntologyManager manager = OWLManager.createConcurrentOWLOntologyManager();
+        OWLOntologyManager manager = OwlManagers.createConcurrent();
         List<String> unresolvedImports = new ArrayList<>();
         manager.addMissingImportListener(event -> unresolvedImports.add(event.getImportedOntologyURI().toString()));
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
@@ -417,7 +416,7 @@ public final class OntologyDocumentTools {
 
     private static LoadedOntology load(String source, int timeoutMs) {
         String normalized = normalizeSource(source);
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OwlManagers.create();
         // Missing imports are handled SILENTly so the load still succeeds; record the unresolved IRIs
         // so the merge result can warn about them rather than swallowing them entirely.
         List<String> unresolvedImports = new ArrayList<>();

@@ -52,6 +52,20 @@ class RuleToolsTest {
     }
 
     @Test
+    void defaultVariableNamespaceIsSchemeValid() {
+        // Regression for the FIBO-recon finding: the old default urn:swrl# minted variables like
+        // urn:swrl#p, an invalid URN (urn:swrl has no NID:NSS colon) that made every Turtle/SPARQL
+        // serialization log "Bad IRI ... SCHEME_PATTERN_MATCH_FAILED". A valid URN needs urn:<NID>:<NSS>.
+        assertEquals("urn:swrl:var#", RuleTools.DEFAULT_VARIABLE_NS);
+        String iri = RuleTools.variableIri("?p", null).toString();
+        assertEquals("urn:swrl:var#p", iri);
+        assertTrue(iri.startsWith("urn:"), "a URN scheme");
+        String urnBody = iri.substring("urn:".length(), iri.indexOf('#'));   // "swrl:var"
+        assertTrue(urnBody.contains(":"),
+                "a valid URN carries NID:NSS (the old urn:swrl# had no colon before the fragment): " + iri);
+    }
+
+    @Test
     void nonVariableArgumentsAreNotVariables() {
         assertNull(RuleTools.variableIri("SomeIndividual", IOF_VAR));
         assertNull(RuleTools.variableIri("", IOF_VAR));

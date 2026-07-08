@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.Set;
 
 import org.protege.editor.owl.model.OWLModelManager;
-import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
@@ -161,7 +160,7 @@ public final class ModuleTools {
         for (OWLOntology o : scope) {
             axioms.addAll(o.getAxioms());
         }
-        OWLOntologyManager priv = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager priv = OwlManagers.create();
         OWLOntology source;
         try {
             source = priv.createOntology(axioms);
@@ -199,7 +198,7 @@ public final class ModuleTools {
     /** Save the extracted module to {@code path} via a private manager (Protégé-free, off the EDT). */
     private static CallToolResult saveModuleToFile(Set<OWLAxiom> moduleAxioms, IRI moduleIri, String path,
             List<String> seeds, Prep prep, ModuleType moduleType, boolean fromClosure) {
-        OWLOntologyManager modMgr = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager modMgr = OwlManagers.create();
         OWLOntology module;
         try {
             module = moduleIri != null

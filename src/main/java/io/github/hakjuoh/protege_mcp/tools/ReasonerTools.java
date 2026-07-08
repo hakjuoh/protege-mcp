@@ -16,7 +16,6 @@ import org.protege.editor.owl.model.inference.OWLReasonerManager;
 import org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo;
 import org.protege.editor.owl.model.inference.ReasonerStatus;
 import io.github.hakjuoh.protege_mcp.server.EmbeddedClassificationWaiter;
-import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLClassExpression;
@@ -282,7 +281,7 @@ public final class ReasonerTools {
         for (OWLOntology o : active.getImportsClosure()) {
             axioms.addAll(o.getAxioms());
         }
-        OWLOntologyManager priv = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager priv = OwlManagers.create();
         try {
             return priv.createOntology(axioms);
         } catch (OWLOntologyCreationException e) {

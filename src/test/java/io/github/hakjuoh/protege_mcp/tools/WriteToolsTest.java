@@ -1079,4 +1079,153 @@ class WriteToolsTest {
         assertTrue(Files.readString(out.toPath()).contains("@prefix ex:"),
                 "the written Turtle declares the custom prefix");
     }
+
+    // ================================================================== F1: name optional when iri given
+
+    @Test
+    void localNameExtractsFragmentThenLastSegment() {
+        assertEquals("Dog", WriteTools.localName("http://x#Dog"), "fragment after '#'");
+        assertEquals("Dog", WriteTools.localName("http://x/y/Dog"), "segment after the last '/'");
+        assertEquals("Dog", WriteTools.localName("Dog"), "a bare name is its own local part");
+        // A trailing separator (a namespace IRI) yields the last segment, not the whole IRI.
+        assertEquals("vocab", WriteTools.localName("http://x/vocab#"), "trailing '#' → last segment");
+        assertEquals("vocab", WriteTools.localName("http://x/vocab/"), "trailing '/' → last segment");
+        // An opaque IRI splits on the last ':'.
+        assertEquals("Dog", WriteTools.localName("urn:example:Dog"), "opaque IRI → after the last ':'");
+    }
+
+    @Test
+    void createEntityWithIriAndNoNameDerivesLocalNameLabel() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLModelManager mm = mutatingManager(o);
+        OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
+        Map<String, Object> a = new LinkedHashMap<>();
+        a.put("iri", NS + "Dog");   // full IRI, no 'name'
+        List<OWLOntologyChange> changes = new ArrayList<>();
+
+        OWLEntity e = callCreateEntity(mm, "class", a, changes);
+        assertEquals(NS + "Dog", e.getIRI().toString(), "the entity is created at the given IRI");
+        assertTrue(changes.contains(new AddAxiom(o, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), e.getIRI(), df.getOWLLiteral("Dog")))),
+                "F1: the default rdfs:label is derived from the IRI local part when 'name' is absent");
+    }
+
+    @Test
+    void createEntityWithNeitherNameNorIriThrows() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLModelManager mm = mutatingManager(o);
+        Map<String, Object> a = new LinkedHashMap<>();   // neither 'name' nor 'iri'
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        assertThrows(ToolArgException.class, () -> callCreateEntity(mm, "class", a, changes),
+                "with neither a name nor an iri there is nothing to mint an IRI from");
+    }
+
+    // ================================================================== F3: declare used annotation properties
+
+    private static final String SKOS_DEF = "http://www.w3.org/2004/02/skos/core#definition";
+
+    @Test
+    void declareUsedAnnotationPropertiesDeclaresNonBuiltinButNotBuiltin() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
+        OWLClass dog = declaredClass(o, "Dog");
+        OWLAnnotationProperty skosDef = df.getOWLAnnotationProperty(IRI.create(SKOS_DEF));
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        changes.add(new AddAxiom(o, df.getOWLAnnotationAssertionAxiom(skosDef, dog.getIRI(),
+                df.getOWLLiteral("a domestic dog"))));
+        changes.add(new AddAxiom(o, df.getOWLAnnotationAssertionAxiom(df.getRDFSComment(), dog.getIRI(),
+                df.getOWLLiteral("note"))));
+
+        WriteTools.declareUsedAnnotationProperties(df, o, changes);
+
+        assertTrue(changes.contains(new AddAxiom(o, df.getOWLDeclarationAxiom(skosDef))),
+                "F3: an undeclared non-built-in annotation property is declared");
+        assertFalse(changes.contains(new AddAxiom(o, df.getOWLDeclarationAxiom(df.getRDFSComment()))),
+                "a built-in annotation property (rdfs:comment) is never declared");
+    }
+
+    @Test
+    void declareUsedAnnotationPropertiesSkipsAlreadyDeclared() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
+        OWLClass dog = declaredClass(o, "Dog");
+        OWLAnnotationProperty skosDef = df.getOWLAnnotationProperty(IRI.create(SKOS_DEF));
+        o.getOWLOntologyManager().addAxiom(o, df.getOWLDeclarationAxiom(skosDef));   // already declared
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        changes.add(new AddAxiom(o, df.getOWLAnnotationAssertionAxiom(skosDef, dog.getIRI(),
+                df.getOWLLiteral("x"))));
+
+        WriteTools.declareUsedAnnotationProperties(df, o, changes);
+        assertEquals(1, changes.size(), "an already-declared property gets no duplicate declaration");
+    }
+
+    @Test
+    void declareUsedAnnotationPropertiesDeclaresPropertyUsedButUndeclaredInImport() throws Throwable {
+        OWLOntologyManager om = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = om.getOWLDataFactory();
+        OWLAnnotationProperty skosDef = df.getOWLAnnotationProperty(IRI.create(SKOS_DEF));
+        // An imported ontology that USES skos:definition without declaring it: the property is then in
+        // the closure SIGNATURE but isDeclared is false — the exact hole newEntities/declareMinted missed.
+        IRI impIri = IRI.create("http://example.org/imp");
+        OWLOntology imported = om.createOntology(impIri);
+        om.addAxiom(imported, df.getOWLAnnotationAssertionAxiom(skosDef,
+                IRI.create("http://example.org/imp#Thing"), df.getOWLLiteral("upstream use")));
+        OWLOntology active = om.createOntology(IRI.create("http://example.org/active"));
+        om.applyChange(new org.semanticweb.owlapi.model.AddImport(active,
+                df.getOWLImportsDeclaration(impIri)));
+        assertTrue(active.getImportsClosure().stream().anyMatch(x -> x.containsEntityInSignature(skosDef)),
+                "precondition: skos:definition is in the closure signature (via the import)");
+        assertFalse(active.getImportsClosure().stream().anyMatch(x -> x.isDeclared(skosDef)),
+                "precondition: skos:definition is not declared anywhere in the closure");
+
+        OWLClass dog = df.getOWLClass(IRI.create("http://example.org/active#Dog"));
+        om.addAxiom(active, df.getOWLDeclarationAxiom(dog));
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        changes.add(new AddAxiom(active, df.getOWLAnnotationAssertionAxiom(skosDef, dog.getIRI(),
+                df.getOWLLiteral("a dog"))));
+
+        WriteTools.declareUsedAnnotationProperties(df, active, changes);
+        assertTrue(changes.contains(new AddAxiom(active, df.getOWLDeclarationAxiom(skosDef))),
+                "F3: a property used-but-undeclared across the imports closure is declared locally, "
+                        + "keeping the active ontology in OWL 2 DL");
+    }
+
+    @Test
+    void applyAxiomDeclaresUsedAnnotationProperty() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
+        OWLClass dog = declaredClass(o, "Dog");
+        OWLAnnotationProperty skosDef = df.getOWLAnnotationProperty(IRI.create(SKOS_DEF));
+        OWLModelManager mm = mutatingManager(o);
+        OWLAxiom ax = df.getOWLAnnotationAssertionAxiom(skosDef, dog.getIRI(), df.getOWLLiteral("a dog"));
+
+        invoke(priv("applyAxiom", OWLModelManager.class, OWLOntology.class, OWLAxiom.class, boolean.class),
+                mm, o, ax, false);
+        assertTrue(o.isDeclared(skosDef),
+                "F3 wiring: the write path declares the annotation property it introduces");
+    }
+
+    // ================================================================== F6: OSGi-safe OWLManager creation
+
+    @Test
+    void owlManagersCreateReturnsUsableManager() throws Exception {
+        OWLOntologyManager m = OwlManagers.create();
+        assertNotNull(m, "a manager is returned");
+        assertNotNull(m.createOntology(IRI.create("http://example.org/f6")), "it can create an ontology");
+    }
+
+    @Test
+    void owlManagersCreateConcurrentReturnsUsableManager() throws Exception {
+        OWLOntologyManager m = OwlManagers.createConcurrent();
+        assertNotNull(m, "a concurrent manager is returned");
+        assertNotNull(m.createOntology(IRI.create("http://example.org/f6c")), "it can create an ontology");
+    }
+
+    @Test
+    void owlManagersRestoresContextClassLoader() {
+        ClassLoader before = Thread.currentThread().getContextClassLoader();
+        OwlManagers.create();
+        assertTrue(Thread.currentThread().getContextClassLoader() == before,
+                "the thread context classloader is restored after creating a manager");
+    }
 }

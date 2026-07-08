@@ -13,7 +13,6 @@ import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
 import org.protege.editor.owl.model.OWLModelManager;
-import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
@@ -573,7 +572,7 @@ public final class GovernanceTools {
         for (OWLOntology o : closure) {
             axioms.addAll(o.getAxioms());
         }
-        OWLOntologyManager priv = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager priv = OwlManagers.create();
         try {
             return priv.createOntology(axioms);
         } catch (OWLOntologyCreationException e) {

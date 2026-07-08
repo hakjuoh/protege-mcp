@@ -78,7 +78,7 @@ Adds a SWRL rule (`swrl:Imp`) to the active ontology, built from structured `bod
 | --- | --- | --- | --- | --- |
 | `body` | array of atom objects | no | — | Body atoms (the rule's premise; may be empty). |
 | `head` | array of atom objects | yes | — | Head atoms (the rule's conclusion; at least one). |
-| `variable_namespace` | string | no | `urn:swrl#` | Namespace for `?name` variables. `?<absolute IRI>` ignores this. |
+| `variable_namespace` | string | no | `urn:swrl:var#` | Namespace for `?name` variables. `?<absolute IRI>` ignores this. |
 | `annotations` | array of annotation objects | no | — | Optional rule-level annotations (`rdfs:label`, `dcterms:description`, …). |
 
 Each atom object accepts `type`, `predicate`, `predicate_iri`, `arg1`, `arg2`, `value`, `lang`, `datatype`, `builtin`, and `args` (see `list_rules` return shape and the per-type combinations above). Each annotation object accepts `property` (default `rdfs:label`), `value`, `value_iri`, `lang`, `datatype`.
@@ -121,7 +121,7 @@ Removes a SWRL rule from the active ontology. Identify the target by `index` (in
 | --- | --- | --- | --- | --- |
 | `body` | array of atom objects | no | — | Body atoms of the exact rule to remove (with `head`). |
 | `head` | array of atom objects | no | — | Head atoms of the exact rule to remove (with `body`). |
-| `variable_namespace` | string | no | `urn:swrl#` | Namespace for `?name` variables. `?<absolute IRI>` ignores this. |
+| `variable_namespace` | string | no | `urn:swrl:var#` | Namespace for `?name` variables. `?<absolute IRI>` ignores this. |
 | `annotations` | array of annotation objects | no | — | Rule-level annotations, matched as part of the exact rule. |
 | `index` | integer | no | — | 0-based index into the active ontology's rules in the same rendering-sorted order `list_rules` returns (call `list_rules` without `include_imports`). |
 | `label` | string | no | — | Remove rule(s) whose `rdfs:label` equals this. |

@@ -132,8 +132,37 @@ class RuleToolsCoverageTest {
 
         String rendering = RuleTools.renderRule(mm, rule);
         assertNotNull(rendering, "renderRule never returns null");
-        assertFalse(rendering.isEmpty(), "renderRule falls back to a non-empty rendering (rule.toString())");
-        assertEquals(Tools.renderAxiom(mm, rule), rendering, "renderRule delegates to Tools.renderAxiom");
+        assertFalse(rendering.isEmpty(), "renderRule produces a non-empty rendering");
+        assertTrue(rendering.contains("->"), "a rule renders as body -> head");
+        assertTrue(rendering.contains("before(?x, ?y)"),
+                "an object-property atom renders as predicate(?arg1, ?arg2) with short variable names: "
+                        + rendering);
+    }
+
+    @Test
+    void renderRuleRendersBuiltinAtomCleanlyWithoutQuoteMangling() throws OWLOntologyCreationException {
+        // Regression for the FIBO-recon finding: Protégé's axiom renderer mangled a built-in atom's
+        // predicate into '\'<swrlb:greaterThan>\''; the structured renderer must emit swrlb:greaterThan.
+        OWLOntologyManager m = mgr();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLOntology o = m.createOntology(IRI.create("http://example.org/builtin"));
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        IRI greaterThan = IRI.create("http://www.w3.org/2003/11/swrlb#greaterThan");
+        java.util.List<org.semanticweb.owlapi.model.SWRLDArgument> args = new java.util.ArrayList<>();
+        args.add(df.getSWRLVariable(IRI.create(VAR_NS + "a")));
+        args.add(df.getSWRLLiteralArgument(df.getOWLLiteral("1000000")));
+        SWRLRule rule = df.getSWRLRule(
+                Collections.singleton(df.getSWRLBuiltInAtom(greaterThan, args)),
+                Collections.singleton(df.getSWRLClassAtom(
+                        df.getOWLClass(IRI.create(NS + "Big")), var(df, "a"))));
+
+        String rendering = RuleTools.renderRule(mm, rule);
+        assertTrue(rendering.contains("swrlb:greaterThan(?a, 1000000)"),
+                "a built-in atom renders as swrlb:greaterThan(?a, 1000000): " + rendering);
+        assertFalse(rendering.contains("'"),
+                "no stray single-quote mangling of the built-in predicate: " + rendering);
+        assertFalse(rendering.contains("<http"), "no raw angle-bracketed IRI in the rendering: " + rendering);
     }
 
     // ------------------------------------------------------------------ ruleJson: index handling

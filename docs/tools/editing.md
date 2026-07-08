@@ -102,7 +102,7 @@ Creates a named class. Give a full `iri`, or a `namespace` to mint the IRI in (I
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `name` | string | yes | — | Short name — the IRI local part when minting, and the default `rdfs:label`. |
+| `name` | string | no | — | Short name — the IRI local part when minting, and the default `rdfs:label`. |
 | `iri` | string | no | — | Full IRI to use (overrides `namespace`). |
 | `namespace` | string | no | — | Namespace to mint the IRI in: IRI becomes `namespace` + `name`. |
 | `label` | string | no | `name` | `rdfs:label` text. |
@@ -135,7 +135,7 @@ Creates a named entity of a given type: `class`, `object_property`, `data_proper
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `entity_type` | string | yes | — | `class` \| `object_property` \| `data_property` \| `annotation_property` \| `individual` \| `datatype`. |
-| `name` | string | yes | — | Short name — the IRI local part when minting, and the default `rdfs:label`. |
+| `name` | string | no | — | Short name — the IRI local part when minting, and the default `rdfs:label`. |
 | `iri` | string | no | — | Full IRI to use (overrides `namespace`). |
 | `namespace` | string | no | — | Namespace to mint the IRI in: IRI becomes `namespace` + `name`. |
 | `label` | string | no | `name` | `rdfs:label` text. |
@@ -164,7 +164,7 @@ Creates a class WITH its curation suite in one undoable step (versus `create_cla
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `name` | string | yes | — | Short name — the IRI local part when minting, and the default label. |
+| `name` | string | no | — | Short name — the IRI local part when minting, and the default label. |
 | `iri` | string | no | — | Full IRI to use (overrides `namespace`). |
 | `namespace` | string | no | — | Namespace to mint the IRI in: IRI = `namespace` + `name`. |
 | `label` | string | no | `name` | `rdfs:label` text. |
@@ -200,7 +200,7 @@ Creates a class WITH its curation suite in one undoable step (versus `create_cla
 
 ## `create_terms`
 
-The batch form of `create_term`: creates many classes, each with its full curation suite, in ONE undoable transaction (one `undo_change` reverts every term). Each item in `terms` takes the same fields as `create_term` (`name` required, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`); the top-level `namespace` and `definition_property` act as **defaults** applied to any term that omits its own. Reach for it to intake a set of related terms in a single move. Because nothing lands in the ontology until the whole batch commits, a term that references another term from the same batch must refer to it **by full IRI**.
+The batch form of `create_term`: creates many classes, each with its full curation suite, in ONE undoable transaction (one `undo_change` reverts every term). Each item in `terms` takes the same fields as `create_term` (`name` or a full `iri`, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`); the top-level `namespace` and `definition_property` act as **defaults** applied to any term that omits its own. Reach for it to intake a set of related terms in a single move. Because nothing lands in the ontology until the whole batch commits, a term that references another term from the same batch must refer to it **by full IRI**.
 
 *Mutating (undoable)* — the whole batch applies as one undoable transaction; honours `strict` (refuses to mint an unrecognised operand) and reports `new_entities`. New-entity detection is against the imports closure. **Atomic**: a malformed term (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing.
 
@@ -208,7 +208,7 @@ The batch form of `create_term`: creates many classes, each with its full curati
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `terms` | array | yes | — | Terms to create; each item mirrors `create_term`'s fields (`name` required, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`). |
+| `terms` | array | yes | — | Terms to create; each item mirrors `create_term`'s fields (`name` or a full `iri`, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`). |
 | `namespace` | string | no | — | Default namespace to mint IRIs in, applied to any term that omits its own `namespace`. |
 | `definition_property` | string | no | `rdfs:comment` | Default definition annotation property, applied to any term that omits its own `definition_property`. |
 | `strict` | boolean | no | `false` | If true, fail instead of minting an unrecognised operand (aborts the whole batch). |
@@ -245,7 +245,7 @@ Creates an object or data property WITH its axioms in one undoable step. It mint
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `name` | string | yes | — | Short name — the IRI local part when minting, and the default label. |
+| `name` | string | no | — | Short name — the IRI local part when minting, and the default label. |
 | `property_type` | string | no | `object` | `object` \| `data`. |
 | `iri` | string | no | — | Full IRI to use (overrides `namespace`). |
 | `namespace` | string | no | — | Namespace to mint the IRI in: IRI = `namespace` + `name`. |

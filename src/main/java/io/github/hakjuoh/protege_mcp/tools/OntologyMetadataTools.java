@@ -1,5 +1,7 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import org.protege.editor.owl.model.OWLModelManager;
@@ -11,6 +13,7 @@ import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLImportsDeclaration;
 import org.semanticweb.owlapi.model.OWLOntology;
+import org.semanticweb.owlapi.model.OWLOntologyChange;
 import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.RemoveImport;
@@ -204,7 +207,14 @@ public final class OntologyMetadataTools {
                                 Tools.annotationValue(mm, a),
                                 Tools.annotationSet(mm, a, "annotations"));
                         boolean alreadyPresent = ont.getAnnotations().contains(annotation);
-                        mm.applyChange(new AddOntologyAnnotation(ont, annotation));
+                        List<OWLOntologyChange> changes = new ArrayList<>();
+                        changes.add(new AddOntologyAnnotation(ont, annotation));
+                        // Keep the ontology in OWL 2 DL: an ontology annotation is not an axiom, so the
+                        // axiom-scanning declare pass never sees its property — declare it here when the
+                        // property is non-built-in and undeclared across the imports closure.
+                        WriteTools.declareAnnotationProperties(df, ont,
+                                annotation.getAnnotationPropertiesInSignature(), changes);
+                        mm.applyChanges(changes);
                         return Tools.json()
                                 .put("added", !alreadyPresent)
                                 .put("annotation", Tools.annotationJson(mm, annotation))

@@ -7,7 +7,6 @@ import java.util.Map;
 import java.util.Set;
 
 import org.protege.editor.owl.model.OWLModelManager;
-import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.MissingImportHandlingStrategy;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLOntology;
@@ -152,7 +151,7 @@ public final class DiffTools {
      */
     private static Set<OWLAxiom> loadDocumentAxioms(String source, boolean closure, boolean logicalOnly) {
         String normalized = OntologyDocumentTools.normalizeSource(source);
-        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntologyManager manager = OwlManagers.create();
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                 .setFollowRedirects(true);
