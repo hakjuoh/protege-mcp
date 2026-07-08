@@ -47,6 +47,24 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h3>Version information</h3>
 
+<h4>v0.4.3</h4>
+<ul>
+    <li>Operational-safety and transparency patch &#8212; 65 &#8594; 66 tools. New
+        <code>explain_inconsistency</code> finds a minimal jointly-inconsistent axiom set (the other
+        reasoner query tools now return a pointed error over an inconsistent ontology instead of a raw
+        exception).</li>
+    <li>Dry-runs for the destructive tools: <code>rename_entity</code> / <code>delete_entity</code> /
+        <code>merge_ontology_document</code> take <code>preview=true</code>; <code>undo_change</code>
+        gains <code>peek=true</code> and the history tools report <code>undo_depth</code>.</li>
+    <li><code>save_ontology</code> maps <code>.obo</code> and makes an unrecognized extension a hard
+        error instead of a silent format fallback (a failed save-as no longer rebinds the ontology to
+        the broken target), and <code>all=true</code> saves every dirty ontology;
+        <code>list_ontologies</code> reports <code>dirty</code>/<code>document</code>.</li>
+    <li><code>run_reasoner</code> / <code>run_qc_suite</code> warn when the ontology has SWRL rules the
+        selected reasoner (ELK) silently ignores; <code>create_terms</code> / <code>create_properties</code>
+        gain <code>verify=report|rollback</code>.</li>
+</ul>
+
 <h4>v0.4.2</h4>
 <ul>
     <li>Reliability and authoring-ergonomics fixes from a full multi-module ontology reconstruction functional test,
