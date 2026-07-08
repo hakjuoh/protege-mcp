@@ -158,6 +158,8 @@ Runs a Protégé DL Query: given a Manchester-syntax class expression, returns t
 
 *Read-only.* Requires a reasoner that has produced results.
 
+> **Complex-expression caveat.** For a **complex (anonymous)** class expression with `direct=false`, some reasoners — notably **ELK** — return an *incomplete* set of sub/superclasses, omitting the **direct** level (Protégé's own DL Query tab shows the same). When that combination is detected under ELK the response carries a `warning`. Set `complete=true` to reconstruct the exhaustive set (the reasoner's direct results unioned with each direct class's transitive descent, which every reasoner computes reliably for named classes), or re-run with `direct=true`, or classify with a DL reasoner such as HermiT.
+
 **Arguments**
 
 | Name | Type | Required | Default | Description |
@@ -165,6 +167,7 @@ Runs a Protégé DL Query: given a Manchester-syntax class expression, returns t
 | `query` | string | yes | — | Manchester-syntax class expression, e.g. `"hasOwner some Person"` or `"Animal and (hasOwner some Person)"`. |
 | `relation` | string | no | `all` | Limits the result: `equivalent` \| `subclasses` \| `superclasses` \| `instances` \| `all`. |
 | `direct` | boolean | no | `true` | Direct results only for sub/super/instances. |
+| `complete` | boolean | no | `false` | For a complex (anonymous) expression with `direct=false`, reconstruct the exhaustive sub/superclass set (direct + named-class descent) instead of the raw reasoner call — working around reasoners (e.g. ELK) that under-report complex-expression queries. |
 | `timeout_ms` | integer | no | `60000` | Max wait in ms for the query. |
 
 **Returns**
@@ -175,6 +178,8 @@ Runs a Protégé DL Query: given a Manchester-syntax class expression, returns t
 - `superclasses`: entity list; present when `relation` is `all` or `superclasses`.
 - `subclasses`: entity list; present when `relation` is `all` or `subclasses`.
 - `instances`: entity list; present when `relation` is `all` or `instances`.
+- `warning`: string — present when the ELK complex-expression / `direct=false` incompleteness is detected and `complete` was not set.
+- `completed`: boolean, `note`: string — present when `complete=true` reconstructed the exhaustive set (which goes beyond a single raw reasoner call and beyond what Protégé's DL Query tab shows for that reasoner).
 
 If no reasoner is selected, or it has not produced results yet, the tool returns an error object `{error}`.
 

@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -171,13 +172,24 @@ public final class ReasonerTools {
                         + "reasoner's equivalent classes, subclasses, superclasses, and instances. "
                         + "'relation' limits the result (equivalent | subclasses | superclasses | "
                         + "instances | all, default all); 'direct' limits sub/super/instance results "
-                        + "to direct ones (default true). Call run_reasoner first.",
+                        + "to direct ones (default true). Caveat: for a COMPLEX (anonymous) class "
+                        + "expression with direct=false, some reasoners — notably ELK — can return an "
+                        + "INCOMPLETE set of sub/superclasses, omitting the DIRECT level (Protégé's own "
+                        + "DL Query tab shows the same); the response then carries a 'warning'. Set "
+                        + "complete=true to reconstruct the exhaustive set (the reasoner's direct results "
+                        + "unioned with each direct class's transitive descent, which every reasoner "
+                        + "computes reliably for named classes), or classify with a DL reasoner (e.g. "
+                        + "HermiT). Call run_reasoner first.",
                 Tools.schema()
                         .strReq("query", "Manchester-syntax class expression, e.g. "
                                 + "\"hasOwner some Person\" or \"Animal and (hasOwner some Person)\".")
                         .str("relation", "equivalent | subclasses | superclasses | instances | all "
                                 + "(default all).")
                         .bool("direct", "Direct results only for sub/super/instances (default true).")
+                        .bool("complete", "For a complex (anonymous) expression with direct=false, "
+                                + "reconstruct the exhaustive sub/superclass set (direct + named-class "
+                                + "descent) instead of the raw reasoner call, working around reasoners "
+                                + "(e.g. ELK) that under-report complex-expression queries (default false).")
                         .integer("timeout_ms", "Max wait in ms for the query (default 60000).")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
@@ -186,11 +198,12 @@ public final class ReasonerTools {
                     String relation = Tools.optString(a, "relation");
                     String rel = relation == null ? "all" : relation.toLowerCase();
                     boolean direct = Tools.optBool(a, "direct", true);
+                    boolean complete = Tools.optBool(a, "complete", false);
                     int timeout = Tools.optInt(a, "timeout_ms", 60_000);
                     return ctx.access().compute(mm -> {
                         OWLReasoner r = requireReasoner(mm);
                         OWLClassExpression ce = Tools.resolveClassExpression(mm, query);
-                        return Tools.ok(dlQuery(mm, r, query, ce, rel, direct));
+                        return Tools.ok(dlQuery(mm, r, query, ce, rel, direct, complete));
                     }, timeout);
                 }));
 
@@ -422,26 +435,83 @@ public final class ReasonerTools {
 
     /** DL-query results (equivalent/super/sub/instances) for the resolved class expression {@code ce}. */
     static Map<String, Object> dlQuery(OWLModelManager mm, OWLReasoner r, String query,
-            OWLClassExpression ce, String rel, boolean direct) {
+            OWLClassExpression ce, String rel, boolean direct, boolean complete) {
         boolean all = "all".equals(rel);
+        boolean subOrSuper = all || "subclasses".equals(rel) || "superclasses".equals(rel);
+        // The combination where a reasoner (notably ELK) can under-report a COMPLEX expression:
+        // subclass/superclass of an anonymous class expression, non-direct.
+        boolean gap = ce.isAnonymous() && !direct && subOrSuper;
+        boolean completed = complete && gap;
         Tools.Json json = Tools.json().put("query", query).put("direct", direct);
         if (all || "equivalent".equals(rel)) {
             json.put("equivalent",
                     Tools.entityList(mm, r.getEquivalentClasses(ce).getEntities(), Integer.MAX_VALUE));
         }
         if (all || "superclasses".equals(rel)) {
-            json.put("superclasses",
-                    Tools.entityList(mm, r.getSuperClasses(ce, direct).getFlattened(), Integer.MAX_VALUE));
+            Set<OWLClass> sup = completed
+                    ? completeSuperClasses(r, ce)
+                    : r.getSuperClasses(ce, direct).getFlattened();
+            json.put("superclasses", Tools.entityList(mm, sup, Integer.MAX_VALUE));
         }
         if (all || "subclasses".equals(rel)) {
-            json.put("subclasses",
-                    Tools.entityList(mm, r.getSubClasses(ce, direct).getFlattened(), Integer.MAX_VALUE));
+            Set<OWLClass> sub = completed
+                    ? completeSubClasses(r, ce)
+                    : r.getSubClasses(ce, direct).getFlattened();
+            json.put("subclasses", Tools.entityList(mm, sub, Integer.MAX_VALUE));
         }
         if (all || "instances".equals(rel)) {
             json.put("instances",
                     Tools.entityList(mm, r.getInstances(ce, direct).getFlattened(), Integer.MAX_VALUE));
         }
+        if (completed) {
+            json.put("completed", true);
+            json.put("note", "Complex-expression sub/superclasses were reconstructed as the reasoner's "
+                    + "direct results unioned with each direct class's transitive descent, so the set is "
+                    + "exhaustive but goes beyond a single raw reasoner call (and beyond what Protégé's DL "
+                    + "Query tab shows for this reasoner).");
+        } else if (gap && isElkReasoner(r)) {
+            json.put("warning", "The active reasoner (ELK) can return an INCOMPLETE set of sub/superclasses "
+                    + "for a complex (anonymous) class expression with direct=false — the DIRECT level may "
+                    + "be missing (Protégé's DL Query tab shows the same). Re-run with direct=true to see the "
+                    + "direct level, set complete=true to get the exhaustive set, or classify with a DL "
+                    + "reasoner such as HermiT.");
+        }
         return json.map();
+    }
+
+    /** Whether {@code r} is the ELK reasoner (which under-reports complex-expression sub/superclasses). */
+    private static boolean isElkReasoner(OWLReasoner r) {
+        String name = r.getReasonerName();
+        return name != null && name.toLowerCase(Locale.ROOT).contains("elk");
+    }
+
+    /**
+     * Exhaustive subclasses of a (possibly anonymous) class expression, robust to reasoners that
+     * under-report complex-expression queries: the reasoner's own non-direct and direct results, plus
+     * the transitive descent of each direct subclass (getSubClasses of a NAMED class is reliable even
+     * for ELK). owl:Nothing is a subclass of everything, so it is carried through but not descended.
+     */
+    private static Set<OWLClass> completeSubClasses(OWLReasoner r, OWLClassExpression ce) {
+        Set<OWLClass> out = new HashSet<>(r.getSubClasses(ce, false).getFlattened());
+        for (OWLClass direct : r.getSubClasses(ce, true).getFlattened()) {
+            out.add(direct);
+            if (!direct.isOWLNothing()) {
+                out.addAll(r.getSubClasses(direct, false).getFlattened());
+            }
+        }
+        return out;
+    }
+
+    /** Exhaustive superclasses of {@code ce}; the {@link #completeSubClasses} counterpart (ascends). */
+    private static Set<OWLClass> completeSuperClasses(OWLReasoner r, OWLClassExpression ce) {
+        Set<OWLClass> out = new HashSet<>(r.getSuperClasses(ce, false).getFlattened());
+        for (OWLClass direct : r.getSuperClasses(ce, true).getFlattened()) {
+            out.add(direct);
+            if (!direct.isOWLThing()) {
+                out.addAll(r.getSuperClasses(direct, false).getFlattened());
+            }
+        }
+        return out;
     }
 
     private static OWLReasoner requireReasoner(OWLModelManager mm) {

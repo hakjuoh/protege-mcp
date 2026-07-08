@@ -17,6 +17,7 @@ import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
+import org.semanticweb.owlapi.model.OWLClassExpression;
 import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLNamedIndividual;
 import org.semanticweb.owlapi.model.OWLObjectProperty;
@@ -216,7 +217,7 @@ class ReasonerToolsSeamTest {
     @Test
     void dlQueryAllIncludesAllFourRelationKeys() {
         Fixture f = new Fixture();
-        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "all", true);
+        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "all", true, false);
         assertTrue(result.containsKey("equivalent"), "all includes equivalent");
         assertTrue(result.containsKey("superclasses"), "all includes superclasses");
         assertTrue(result.containsKey("subclasses"), "all includes subclasses");
@@ -226,7 +227,7 @@ class ReasonerToolsSeamTest {
     @Test
     void dlQueryEchoesQueryAndDirectKeys() {
         Fixture f = new Fixture();
-        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "all", false);
+        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "all", false, false);
         assertEquals("A", result.get("query"), "query echoed verbatim");
         assertEquals(Boolean.FALSE, result.get("direct"), "direct echoed");
     }
@@ -234,7 +235,7 @@ class ReasonerToolsSeamTest {
     @Test
     void dlQuerySingleRelationIncludesOnlyThatKey() {
         Fixture f = new Fixture();
-        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "subclasses", true);
+        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "subclasses", true, false);
         assertTrue(result.containsKey("subclasses"), "requested relation present");
         assertFalse(result.containsKey("equivalent"), "other relations omitted");
         assertFalse(result.containsKey("superclasses"), "other relations omitted");
@@ -245,7 +246,7 @@ class ReasonerToolsSeamTest {
     @SuppressWarnings("unchecked")
     void dlQuerySubclassesDirectForAReturnsBAsEntityList() {
         Fixture f = new Fixture();
-        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "subclasses", true);
+        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "subclasses", true, false);
         Map<String, Object> subs = (Map<String, Object>) result.get("subclasses");
         assertTrue(displays(subs).contains("B"), "B is the direct subclass of A");
         assertFalse(displays(subs).contains("C"), "C is not a direct subclass of A");
@@ -255,9 +256,50 @@ class ReasonerToolsSeamTest {
     @SuppressWarnings("unchecked")
     void dlQueryInstancesForAIncludesIndividualI() {
         Fixture f = new Fixture();
-        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "instances", false);
+        Map<String, Object> result = ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "instances", false, false);
         Map<String, Object> instances = (Map<String, Object>) result.get("instances");
         assertTrue(displays(instances).contains("i"), "i is an instance of A");
+    }
+
+    @Test
+    void dlQueryCompleteFlagSetsCompletedAndNoteForAnonymousNonDirect() {
+        Fixture f = new Fixture();
+        OWLClassExpression anon = f.df.getOWLObjectSomeValuesFrom(f.p, f.A);
+        Map<String, Object> result =
+                ReasonerTools.dlQuery(f.mm, f.r, "p some A", anon, "subclasses", false, true);
+        assertEquals(Boolean.TRUE, result.get("completed"),
+                "complete=true on an anonymous, non-direct sub/superclass query marks it completed");
+        assertNotNull(result.get("note"), "a note explains the reconstruction");
+        assertFalse(result.containsKey("warning"), "no incompleteness warning once the set is completed");
+    }
+
+    @Test
+    void dlQueryCompleteFlagIgnoredForNamedClass() {
+        Fixture f = new Fixture();
+        // A named class is not the under-reported case, so complete=true is a no-op (no metadata).
+        Map<String, Object> result =
+                ReasonerTools.dlQuery(f.mm, f.r, "A", f.A, "subclasses", false, true);
+        assertFalse(result.containsKey("completed"), "named-class query is not 'completed'");
+        assertFalse(result.containsKey("note"), "named-class query carries no completion note");
+    }
+
+    @Test
+    void dlQueryCompleteFlagIgnoredWhenDirect() {
+        Fixture f = new Fixture();
+        OWLClassExpression anon = f.df.getOWLObjectSomeValuesFrom(f.p, f.A);
+        Map<String, Object> result =
+                ReasonerTools.dlQuery(f.mm, f.r, "p some A", anon, "subclasses", true, true);
+        assertFalse(result.containsKey("completed"), "direct=true has no completeness gap to fill");
+    }
+
+    @Test
+    void dlQueryNoIncompletenessWarningForNonElkReasoner() {
+        Fixture f = new Fixture();
+        // The incompleteness warning is gated on ELK; the StructuralReasoner here must not trip it.
+        OWLClassExpression anon = f.df.getOWLObjectSomeValuesFrom(f.p, f.A);
+        Map<String, Object> result =
+                ReasonerTools.dlQuery(f.mm, f.r, "p some A", anon, "subclasses", false, false);
+        assertFalse(result.containsKey("warning"), "no ELK warning for a non-ELK reasoner");
     }
 
     // ------------------------------------------------------------------ structuralExplanation
