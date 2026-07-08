@@ -23,7 +23,7 @@ an assistant that edits it for you, without ever leaving Protégé.
 **Protégé MCP** is a plugin for [Protégé Desktop](https://protege.stanford.edu/) that runs a local
 **MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) server** inside Protégé. It exposes
 the **live, active ontology** — the one you have open in the editor — to any MCP-compatible AI client,
-so the client can *explore it and make edits for you* through **64 structured tools** and **6 guided
+so the client can *explore it and make edits for you* through **65 structured tools** and **6 guided
 prompts**.
 
 Two ways to use it:

@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>64 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, SPARQL, and SHACL - every model
+    <li><b>65 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, SPARQL, and SHACL - every model
         edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
         the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>Loopback-only HTTP with <b>OAuth 2.1</b> (dynamic registration + browser consent, persisted
@@ -46,6 +46,19 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.4.2</h4>
+<ul>
+    <li>Reliability and authoring-ergonomics fixes from a full multi-module ontology reconstruction functional test,
+        plus <code>create_properties</code> (batch property creation) &#8212; 64 &#8594; 65 tools.</li>
+    <li><code>run_reasoner</code> now surfaces a failed classification (e.g. HermiT rejecting a SWRL
+        built-in atom) as an error instead of a benign-looking Null-reasoner result; <code>save_ontology</code>
+        save-as preserves the prefix map; side-effect entities get a <code>Declaration</code> (fixing spurious
+        OWL&#160;2 DL / undeclared-entity findings); <code>run_qc_suite</code> classifies for its reasoner
+        stage; compound Manchester expressions accept CURIEs and IRI fragments; <code>sub_property_chain_of</code>
+        accepts an <code>inverse(P)</code> link; and governance stops flagging standard/tool-internal
+        vocabulary as owned.</li>
+</ul>
 
 <h4>v0.4.1</h4>
 <ul>
@@ -177,7 +190,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
     <li>Full-fidelity SWRL rule editing (41 &#8594; 47 tools): <code>list_rules</code> /
         <code>add_rule</code> / <code>remove_rule</code> read, add and remove SWRL rules
         (<code>swrl:Imp</code>) as structured body/head atoms, preserving named rule-variable IRIs
-        (e.g. <code>iof-var:process1</code>) and rule-level annotations that a <code>?x</code> text
+        (e.g. <code>ex-var:process1</code>) and rule-level annotations that a <code>?x</code> text
         syntax cannot round-trip.</li>
     <li><code>create_ontology</code> mints a new empty module in the workspace and makes it the active
         edit target (pairs with <code>set_ontology_id</code>), so a multi-module ontology can be built
@@ -223,7 +236,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
         <code>add_subclass_safely</code>, <code>find_and_fix_unsatisfiable</code>,
         <code>model_domain</code>.</li>
     <li><code>validate_ontology</code> is import-aware: the per-entity quality checks audit only the
-        terms the active ontology is responsible for, so imported BFO/IOF terms are not false-flagged
+        terms the active ontology is responsible for, so imported upstream terms are not false-flagged
         for label/definition/domain/range that lives upstream (set <code>include_imports=true</code>
         to audit the whole imports closure).</li>
 </ul>

@@ -21,6 +21,106 @@ each section is also published as the body of its
 
 ---
 
+## [0.4.2] - 2026-07-07
+
+**Reliability and authoring-ergonomics fixes surfaced by a full multi-module ontology reconstruction
+functional test, plus one new batch tool.** **64 → 65 tools.**
+
+### New tools
+- **`create_properties`** — batch object/data property creation: the array form of `create_property`,
+  applied as **ONE undoable transaction** and **atomic** (a malformed item aborts the whole batch,
+  applying nothing). Top-level `namespace` / `definition_property` / `property_type` act as **defaults**
+  for any item that omits its own; a property may reference another in the same batch **by full IRI**.
+  Closes the gap where `create_terms` batched classes but properties had to be created one call at a time.
+
+### Fixed
+- **`run_reasoner` no longer hides a failed classification.** When the selected reasoner rejects the
+  ontology at initialization (e.g. HermiT does not support SWRL **built-in atoms**), Protégé catches the
+  exception and silently resets to the Null reasoner; `run_reasoner` used to return a benign-looking
+  `{reasoner:"Protégé Null Reasoner", status:REASONER_NOT_INITIALIZED, completed:true}` (the real
+  exception went only to the Protégé log) or hang until the timeout. It now detects the reset
+  (`classification_failed`) and returns an **error** naming the likely cause and the log; the shared
+  "no current results" message across the reasoner-backed tools also now mentions a possible failed classification.
+- **`save_ontology` (save-as) preserves the prefix map.** Saving to a new `path` installed a fresh
+  document format with an empty prefix map, dropping every registered prefix **on disk and in memory** —
+  which silently broke all subsequent CURIE resolution. Save-as now copies the ontology's prefixes into
+  the new format.
+- **Side-effect entities are declared.** Entities first introduced as an operand side effect — an
+  annotation property named by a `definition_property`/annotation, an individual in a `class_assertion`,
+  a class in a `subclass_of` — were left used-but-undeclared, which tripped `undeclared_entity` and (for
+  annotation properties) left the ontology short of **OWL 2 DL**. `add_axiom`, `apply_changes`, the
+  curation macros, `deprecate_entity` and `move_class` now emit a `Declaration` for every entity they
+  introduce, within the same undoable change (matching how `create_*` already declares its primary entity).
+- **`run_qc_suite` classifies for its reasoner stage.** The stage required a pre-classified, in-sync
+  reasoner and was silently skipped after any edit — so an unsatisfiable-class-only defect could
+  false-pass the gate. The suite now classifies (off the EDT, bounded by `timeout_ms`) before the stages
+  when the reasoner stage is requested, and a still-unusable reasoner surfaces as a **`warn`** stage
+  rather than a silent skip (a deliberately unselected reasoner stays a legitimate skip).
+- **`apply_changes verify` surfaces a failed classification.** A verify run whose post-apply
+  classification reset to the Null reasoner now reports `classification_failed` with a precise note
+  instead of the generic "no completed classification".
+- **Compound Manchester expressions accept CURIEs and IRI fragments.** A compound `super`/`classes[]`
+  operand (e.g. `(ex:A or ex:B) and (ex:p some ex:C)`) previously accepted only
+  rdfs:label short-forms or `<full IRI>`; registered-prefix CURIEs are now pre-expanded to full IRIs
+  before parsing and bare IRI local names resolve via the signature, matching what single-entity operands
+  already accept. Applies to class-expression and data-range operands.
+- **`sub_property_chain_of` accepts an inverse link.** A chain element may now be `inverse(P)` /
+  `ObjectInverseOf(P)`, so a property chain that needs an inverse property expression (as some real
+  temporal property chains do) is expressible.
+- **Governance no longer flags standard/tool-internal vocabulary as owned.** `validate_governance` and
+  `validate_ontology` exempt well-known metadata vocabularies (dcterms, dc, skos, foaf, prov, oboInOwl,
+  IAO — **annotation properties only**, so imported IAO classes are still audited) and the plugin's
+  own competency-question annotation property from the owned-entity checks (undeclared / missing-definition
+  / IRI-policy / required-annotations); the OWL 2 profile check is unaffected.
+- **`create_*` no longer require `name` when a full `iri` is given.** `create_class`, `create_entity`,
+  `create_term`, `create_property` and the batch `create_terms` / `create_properties` now derive the
+  default name/label from the IRI's local part when `name` is omitted but `iri` is supplied, so an
+  IRI-first authoring call need not repeat the fragment; `name` is optional in every create_* schema
+  (a call with neither `name` nor `iri` is still rejected).
+- **`create_property` / `create_term` echo the label in `created.display`.** The confirmation entity was
+  rendered *before* its `rdfs:label` axiom was applied, so `created.display` showed the bare IRI
+  fragment; it is now rendered after applying (matching the batch tools). Cosmetic — the label axiom
+  itself was always written correctly.
+- **Undeclared annotation properties are declared to keep OWL 2 DL.** Extending the side-effect
+  declaration above: a definition/annotation property such as `skos:definition`, a `dcterms:*` or a
+  project `*-av` property that is *used but declared nowhere in the imports closure* is now declared in
+  the active ontology — across `create_*`, `add_annotation`, `add_axiom`, `apply_changes`, the curation
+  macros and **`add_ontology_annotation`** (whose property no axiom carries). Keyed on whether the
+  property is declared anywhere in the closure (not merely present in its signature), closing the case
+  where an import *used* the property without declaring it and the module silently left OWL 2 DL.
+- **SWRL built-in atoms render cleanly.** `list_rules` / `add_rule` / `remove_rule` ran a built-in
+  predicate through the entity-name quoting path, mangling it to `'\'<swrlb:greaterThan>\''`; the
+  rendering is now built from the structured atoms, so a built-in reads as `swrlb:greaterThan(?a, 1000000)`.
+  The structured `body`/`head` output was always correct.
+- **The default SWRL variable namespace is a valid IRI.** `add_rule`'s default `variable_namespace` was
+  `urn:swrl#`, which mints invalid variable IRIs (`urn:swrl#p` violates the URN syntax — no `NID:NSS`
+  colon) and made every Turtle / SPARQL-snapshot serialization log a `Bad IRI … SCHEME_PATTERN_MATCH_FAILED`
+  warning; the default is now `urn:swrl:var#`. Existing rules round-trip unchanged (`list_rules` emits
+  each variable by its full IRI).
+- **OSGi ontology-manager creation is quiet.** The `extract_module`, `diff_ontologies`, reasoner-snapshot,
+  `sparql_*` and `validate_governance` tools create private OWL API managers; under Protégé's OSGi
+  runtime the OWL API injector could not resolve some factory bindings from the plugin's bundle
+  classloader and logged a stream of `No instantiation found for Supplier<OWLOntologyLoaderConfiguration>`
+  errors (non-fatal — the tools still worked). Managers are now created with the OWL API bundle
+  classloader as the thread context classloader, silencing the noise.
+- **`execute_dl_query` completes complex-expression sub/superclasses under ELK.** ELK returns an
+  INCOMPLETE set of sub/superclasses for a **complex (anonymous)** class expression with `direct=false`,
+  omitting the **direct** level (Protégé's own DL Query tab shows the same), so an "all subclasses of an
+  expression" query — the core expression-constraint use case — silently lost the most-general, most-
+  relevant matches; a named-class query and HermiT are unaffected. The tool now attaches a `warning` when
+  that ELK combination is detected (results unchanged — still a faithful mirror of the DL Query tab), and
+  a new opt-in **`complete`** flag reconstructs the exhaustive set non-destructively (the reasoner's
+  direct results unioned with each direct named class's transitive descent, reliable even under ELK, plus
+  the raw non-direct set as a floor), marking the response `completed` with a `note`.
+
+### Notes
+- Found by from-scratch **ontology reconstructions** exercising the reasoner, SWRL, SHACL, competency
+  questions, SPARQL and governance end to end — a multi-module reconstruction (the first eight fixes and
+  `create_properties`), a **FIBO FND reconstruction** (the six `create_*`/SWRL/OSGi fixes above,
+  adversarially source-reviewed before folding in), and a **SNOMED CT reconstruction** (OWL 2 EL,
+  classified with ELK — the `execute_dl_query` fix). A regression test was added for each fix; suite
+  **2095 → 2120**.
+
 ## [0.4.1] - 2026-07-07
 
 **Modularization, batch intake, pagination, and a SPARQL snapshot cache.** Raise the tool's ceiling
@@ -38,8 +138,8 @@ SPARQL at the same model state without rebuilding the snapshot, and validate the
 - **SPARQL queries reuse an edit-versioned snapshot cache.** `sparql_query` previously copied the whole imports closure, serialised it and re-parsed it into Jena on **every** call. It now caches the serialised snapshot, keyed by a monotonic model-state version bumped on any change (edits, imports, load/reload, reasoner classification, active-ontology switch — and a `set_prefix` edit invalidates it explicitly). A repeated query at the same model state skips the rebuild; each query still re-parses the cached **immutable** bytes into a *fresh* Jena model, and the asserted and inferred snapshots are cached separately. No new arguments.
 
 ### Fixed
-- **CURIE operands resolve.** A registered-prefix CURIE (e.g. `bfo:BFO_0000031`) passed to any operand or to `get_entity` is now **expanded via the active ontology's prefix map** before being treated as an IRI, resolving to the imported term — instead of silently minting a junk entity whose IRI was the literal string `bfo:BFO_0000031`. Applies to entity / class-expression / data-range operands, the annotation subject, and `get_entity`.
-- **OWL 2 profile check separates owned from imported.** `validate_governance` (and the `run_qc_suite` `profile` stage) now partition profile violations into the audited scope's **own** axioms versus those inherited from imports (`owned_in_profile` / `imported_violations`); the profile QC stage gates on the **owned** conformance, so importing a non-DL upstream (e.g. BFO) no longer swamps or fails a clean module.
+- **CURIE operands resolve.** A registered-prefix CURIE (e.g. `ex:Widget`) passed to any operand or to `get_entity` is now **expanded via the active ontology's prefix map** before being treated as an IRI, resolving to the imported term — instead of silently minting a junk entity whose IRI was the literal string `ex:Widget`. Applies to entity / class-expression / data-range operands, the annotation subject, and `get_entity`.
+- **OWL 2 profile check separates owned from imported.** `validate_governance` (and the `run_qc_suite` `profile` stage) now partition profile violations into the audited scope's **own** axioms versus those inherited from imports (`owned_in_profile` / `imported_violations`); the profile QC stage gates on the **owned** conformance, so importing a non-DL upstream ontology no longer swamps or fails a clean module.
 - **`apply_changes` reports minted entities in its summary.** The batch `summary.new_entities` aggregate was computed after the changes were applied (when the entities already existed) and read empty; it is now computed pre-apply and lists them, matching the per-operation rows.
 - **`search_entities` is self-consistent.** A `best_match` resolved via a label the substring finder missed is now surfaced in `items` too (type-filter-aware), so a non-null `best_match` no longer accompanies an empty result set.
 - **`run_qc_suite` annotates a vacuous pass.** When zero stages actually run (every requested stage skipped), the `pass` gate now carries a `note` making the vacuous pass explicit.
@@ -153,10 +253,10 @@ Install: download `protege-mcp-0.3.0.jar` below, or use Protégé ▸ File ▸ C
 
 ## [0.2.2] - 2026-06-28
 
-Closes the multi-module reconstruction gaps found by rebuilding the IOF ontology (iofoundry/ontology) through the tools alone. **41 → 47 tools.**
+Closes the multi-module reconstruction gaps found by rebuilding a large multi-module ontology through the tools alone. **41 → 47 tools.**
 
 ### New tools
-- **Structured SWRL rule editing** — `list_rules` / `add_rule` / `remove_rule` read, add, and remove `swrl:Imp` axioms as structured body/head atoms (`class`, `object_property`, `data_property`, `same_as`, `different_from`, `builtin`). A `?`-prefixed argument is a rule variable (`?name` → `variable_namespace` + name, `?<IRI>` → that IRI exactly), so **named variable IRIs** like `iof-var:process1` reconstruct faithfully where a `?x` text syntax would lose them; rule-level annotations (rdfs:label/comment/…) ride the existing `annotations` operand. OWLAPI 4.5.29 ships no standalone SWRL parser, so the structured form is the round-trippable primitive.
+- **Structured SWRL rule editing** — `list_rules` / `add_rule` / `remove_rule` read, add, and remove `swrl:Imp` axioms as structured body/head atoms (`class`, `object_property`, `data_property`, `same_as`, `different_from`, `builtin`). A `?`-prefixed argument is a rule variable (`?name` → `variable_namespace` + name, `?<IRI>` → that IRI exactly), so **named variable IRIs** like `ex-var:process1` reconstruct faithfully where a `?x` text syntax would lose them; rule-level annotations (rdfs:label/comment/…) ride the existing `annotations` operand. OWLAPI 4.5.29 ships no standalone SWRL parser, so the structured form is the round-trippable primitive.
 - **`create_ontology`** — mint a new empty module in the workspace and make it the active edit target (pairs with `set_ontology_id`), so a multi-module ontology can be built from nothing.
 - **`write_catalog`** — generate/refresh an OASIS `catalog-v001.xml` mapping the active ontology's imports (ontology + version IRIs) to their local files, so a reconstructed module re-opens in Protégé with imports resolved offline. Catalog files live outside the OWL axiom model, so no other tool can produce them.
 - **`diff_ontologies`** — axiom-level semantic diff / round-trip check between two loaded ontologies, or the active ontology against a freshly-loaded document (without adding it to the workspace); `identical=true` means the reconstruction is axiom-for-axiom faithful.
@@ -171,7 +271,7 @@ Install: download `protege-mcp-0.2.2.jar` below, or use Protégé ▸ File ▸ C
 
 ## protege-mcp 0.2.1 — tool-driven construction ergonomics
 
-Driving a real BFO/IOF ontology (IOF Biopharma/Agent) entirely through the tools surfaced the friction points of natural-language-driven authoring. This release closes them. Additive and backward-compatible; **37 → 41 tools**.
+Driving a real multi-module ontology entirely through the tools surfaced the friction points of natural-language-driven authoring. This release closes them. Additive and backward-compatible; **37 → 41 tools**.
 
 - **`set_active_ontology`** — switch which loaded ontology your edits target. `load_ontology keep_active=true` and `add_import document=…` now resolve imports **without** stealing the active ontology (the #1 wall in the reconstruction).
 - **`apply_changes`** — apply a previewed `operations[]` batch in **one call** and **one undo entry** (a single `undo_change` reverts the whole batch, like `create_class`). Reports per-operation results, the new entities each add introduces, and a summary. `strict=true` skips any add that would mint a brand-new entity from an unrecognized IRI/name.
@@ -190,7 +290,7 @@ Requires Java 17. Install via Protégé ▸ File ▸ Check for plugins, or drop 
 - **Structured JSON output** from every tool (mirrored as text) so an LLM client gets machine-readable results instead of prose.
 - **Orientation & safety tools**: `get_ontology_context`, `get_entity_context`, `preview_changes` (diff an edit before applying), and `validate_ontology` (modelling-quality audit).
 - **Guided MCP prompts**: `audit_ontology`, `explain_class`, `add_subclass_safely`, `find_and_fix_unsatisfiable`, `model_domain`.
-- **Import-aware `validate_ontology`**: the per-entity quality checks audit only the terms the active ontology is responsible for, so imported BFO/IOF terms are no longer false-flagged for label/definition/domain/range that lives upstream. Set `include_imports=true` to audit the whole imports closure.
+- **Import-aware `validate_ontology`**: the per-entity quality checks audit only the terms the active ontology is responsible for, so imported upstream terms are no longer false-flagged for label/definition/domain/range that lives upstream. Set `include_imports=true` to audit the whole imports closure.
 
 Requires Java 17. Install via Protégé ▸ File ▸ Check for plugins, or drop `protege-mcp-0.2.0.jar` into the Protégé `plugins/` directory and restart.
 
@@ -210,7 +310,7 @@ Install via **File ▸ Check for plugins** (the registry advertises 0.1.2), or d
 
 ## [0.1.1] - 2026-06-27
 
-Complete the granular (incremental) authoring surface so a rich document like IOF Core.rdf can be reconstructed by hand, plus merge/read robustness fixes. **26 tools total.**
+Complete the granular (incremental) authoring surface so a rich multi-module ontology document can be reconstructed by hand, plus merge/read robustness fixes. **26 tools total.**
 
 ### Authoring surface (`add_axiom`: 22 → 38 axiom types)
 - `declaration`, `annotation_assertion`, `sub_annotation_property_of`, `annotation_property_domain`/`range`, `same_individual`/`different_individuals`, `negative_object`/`data_property_assertion`, `equivalent`/`disjoint` object & data properties, `disjoint_union`, `has_key`, `datatype_definition`

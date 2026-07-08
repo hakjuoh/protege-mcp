@@ -64,7 +64,7 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 `diff_ontologies`
 
 ### [Safe authoring & QC](quality.html)
-`verify_ontology` · `run_qc_suite` · `add_competency_question` · `list_competency_questions` ·
+`verify_ontology` · `run_qc_suite` · `shacl_validate` · `add_competency_question` · `list_competency_questions` ·
 `remove_competency_question` · `run_competency_questions` *(plus `apply_changes verify=` and
 `search_entities` grounding — see their category pages)*
 
