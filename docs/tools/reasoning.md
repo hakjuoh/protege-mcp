@@ -7,7 +7,7 @@ nav_order: 8
 # Reasoning
 {: .no_toc }
 
-Select and run the reasoner Protégé has installed, then read what it inferred — unsatisfiable classes, inferred class/individual relations, DL-query answers, entailment checks, and minimal justifications (explanations). Every result is a structured JSON object.
+Select and run the reasoner Protégé has installed, then read what it inferred — unsatisfiable classes, inferred class/individual relations, DL-query answers, entailment checks, minimal justifications (explanations), and a minimal explanation of an inconsistent ontology. Every result is a structured JSON object.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -66,7 +66,7 @@ If no installed reasoner matches `reasoner`, the tool returns an error object `{
 
 ## `run_reasoner`
 
-Runs the reasoner selected in Protégé (classification) and blocks off-EDT until it signals completion or the timeout elapses. Reach for it after `set_reasoner` (or after choosing a reasoner from the Reasoner menu) and before any tool that reads inferences. Reports the resulting reasoner status and, when available, the unsatisfiable-class count.
+Runs the reasoner selected in Protégé (classification) and blocks off-EDT until it signals completion or the timeout elapses. Reach for it after `set_reasoner` (or after choosing a reasoner from the Reasoner menu) and before any tool that reads inferences. Reports the resulting reasoner status and, when available, the unsatisfiable-class count — and **warns** when the ontology has SWRL rules the selected reasoner silently ignores (ELK).
 
 *Read-only.* If no reasoner is selected, it returns an error object rather than classifying.
 
@@ -87,6 +87,7 @@ On a run that could be started:
 - `inconsistent`: boolean — whether the ontology is inconsistent.
 - `unsatisfiable_count`: integer — number of unsatisfiable classes; present only when the reasoner produced results and could answer.
 - `message`: string — a human-readable summary (timeout note, reasoner, status, inconsistency/unsat details).
+- `warning`: string — present only when the ontology (with imports) contains SWRL rules and the selected reasoner is **ELK**, which does not support SWRL and silently IGNORES rules: the results include no rule-derived inferences (use a rule-aware reasoner such as Pellet — or HermiT for rules without built-in atoms — when the rules matter).
 
 If classification could not be started (no reasoner selected, or one already running) the result is the shorter `{started: false, message}`. If no reasoner is selected up front, an error object `{error}` is returned instead.
 
@@ -100,7 +101,7 @@ If classification could not be started (no reasoner selected, or one already run
 
 ## `get_unsatisfiable_classes`
 
-Lists the unsatisfiable classes (those the reasoner has found equivalent to `owl:Nothing`), excluding `owl:Nothing` itself. Use it after `run_reasoner` to see which class definitions are contradictory.
+Lists the unsatisfiable classes (those the reasoner has found equivalent to `owl:Nothing`), excluding `owl:Nothing` itself. Use it after `run_reasoner` to see which class definitions are contradictory. If the whole ontology is INCONSISTENT, use `explain_inconsistency` instead.
 
 *Read-only.* Requires a reasoner that has produced results.
 
@@ -115,7 +116,7 @@ None.
 - `truncated`: integer — number omitted; present only if the list was capped (this tool passes no limit, so effectively absent).
 - `coherent`: boolean — `true` when there are no unsatisfiable classes.
 
-If no reasoner is selected, or it has not produced results yet, the tool returns an error object `{error}`.
+If no reasoner is selected, or it has not produced results yet, the tool returns an error object `{error}`. Over an **inconsistent** ontology it returns a pointed error directing to `explain_inconsistency` (an inconsistent ontology entails everything, and reasoners refuse such queries).
 
 ---
 
@@ -142,7 +143,7 @@ Reads an inferred relation for a class or individual from the reasoner: supercla
 - `entity`: string — the entity reference that was queried (echoed as given).
 - `direct`: boolean — whether the query was limited to direct relations.
 
-If no reasoner is selected, or it has not produced results yet, the tool returns an error object `{error}`.
+If no reasoner is selected, or it has not produced results yet, the tool returns an error object `{error}`. Over an **inconsistent** ontology it returns a pointed error directing to `explain_inconsistency`.
 
 **Example**
 
@@ -181,7 +182,7 @@ Runs a Protégé DL Query: given a Manchester-syntax class expression, returns t
 - `warning`: string — present when the ELK complex-expression / `direct=false` incompleteness is detected and `complete` was not set.
 - `completed`: boolean, `note`: string — present when `complete=true` reconstructed the exhaustive set (which goes beyond a single raw reasoner call and beyond what Protégé's DL Query tab shows for that reasoner).
 
-If no reasoner is selected, or it has not produced results yet, the tool returns an error object `{error}`.
+If no reasoner is selected, or it has not produced results yet, the tool returns an error object `{error}`. Over an **inconsistent** ontology it returns a pointed error directing to `explain_inconsistency` (an inconsistent ontology entails everything, and reasoners refuse such queries).
 
 **Example**
 
@@ -232,7 +233,7 @@ The full axiom schema (same operands as `add_axiom`). `axiom_type` is required; 
 - `entailed`: boolean — whether the reasoner entails the axiom.
 - `axiom`: object `{axiom_type, rendering}` — the axiom that was checked.
 
-If no reasoner is selected, or it has not produced results yet, the tool returns an error object `{error}`.
+If no reasoner is selected, or it has not produced results yet, the tool returns an error object `{error}`. Over an **inconsistent** ontology it returns a pointed error directing to `explain_inconsistency` (an inconsistent ontology entails everything, and reasoners refuse such queries).
 
 **Example**
 
@@ -277,7 +278,7 @@ For any other `axiom_type` (structural-context fallback):
 - `note`: string — explains that no minimal justification is available for this axiom type.
 - `related_axioms`: axiom list `{count, items:[{axiom_type, rendering}...], truncated?}` — asserted logical axioms in the imports closure mentioning the same entities (a structural neighbourhood, not a minimal justification); present only when the axiom is entailed.
 
-If no reasoner is selected, the tool returns an error object `{error}`.
+If no reasoner is selected, the tool returns an error object `{error}`. Over an **inconsistent** ontology it returns a pointed error directing to `explain_inconsistency` (an inconsistent ontology entails everything, and reasoners refuse such queries).
 
 **Example**
 
@@ -289,4 +290,40 @@ Explaining an unsatisfiable class `C`:
 
 ```json
 { "axiom_type": "subclass_of", "sub": "C", "super": "owl:Nothing" }
+```
+
+---
+
+## `explain_inconsistency`
+
+Explains WHY the ontology is INCONSISTENT: finds a set of asserted logical axioms that together cause the contradiction. The result's `minimal` flag reports whether the set was fully minimized within the time budget (`true` means removing any one of them breaks *this* contradiction; `false` means still jointly inconsistent but reduced-not-minimal). The contraction search runs the selected reasoner over a **private copy** of the active ontology's imports closure, off the UI thread, so the live reasoner state, Protégé's undo stack, and the GUI stay untouched. If the ontology is consistent it says so. Use it after `run_reasoner` reports INCONSISTENT — the other explanation/query tools cannot run over an inconsistent ontology (they return a pointed error directing here).
+
+*Read-only.* Requires a reasoner selected in Protégé. Time-bounded: on expiry the current still-inconsistent axiom set is returned with `minimal=false`.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `timeout_ms` | integer | no | `60000` | Time budget in ms for the whole search. On expiry the current still-inconsistent axiom set is returned with `minimal=false`. |
+
+**Returns**
+
+When the ontology is inconsistent:
+
+- `inconsistent`: boolean — `true`.
+- `reasoner`: string — the reasoner used for the consistency checks.
+- `minimal`: boolean — `true` when the set is genuinely minimal; `false` when the time budget expired first (the listed axioms are still jointly inconsistent but not necessarily all needed).
+- `consistency_checks`: integer — how many consistency probes the search ran.
+- `axiom_count`: integer — the true size of the jointly inconsistent set (can exceed the rendered `justification` when the budget expired before minimization).
+- `justification`: axiom list `{count, items:[{axiom_type, rendering}...], truncated?}` — the jointly inconsistent asserted logical axioms, rendered up to a cap of 100.
+- `note`: string — how to read the set. When minimal: removing any one axiom breaks THIS contradiction (others may remain — fix and re-run), and a reasoner that ignores axioms it does not support (e.g. ELK) minimizes only what it sees. On a timeout: re-run with a larger `timeout_ms`, or `extract_module` around the suspect terms and diagnose the smaller module.
+
+When the ontology is consistent: `{inconsistent: false, reasoner, note}` — there is no inconsistency to explain.
+
+If no reasoner is selected, the tool returns an error object `{error}`. If the selected reasoner cannot evaluate the ontology at all (e.g. HermiT rejecting a SWRL built-in atom), the tool returns an error naming the reasoner exception rather than misreporting the ontology as consistent — choose another reasoner via `set_reasoner` and re-run.
+
+**Example**
+
+```json
+{ "timeout_ms": 120000 }
 ```

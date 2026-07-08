@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -26,6 +27,8 @@ import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.protege.editor.owl.model.OWLModelManager;
+import org.protege.editor.owl.model.history.HistoryManager;
+import org.protege.editor.owl.model.history.UndoManagerListener;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
@@ -33,6 +36,7 @@ import org.semanticweb.owlapi.formats.OWLXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.AddAxiom;
+import org.semanticweb.owlapi.model.AddImport;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
 import org.semanticweb.owlapi.model.OWLAxiom;
@@ -750,16 +754,51 @@ class WriteToolsTest {
     }
 
     @Test
-    void formatForPathUnknownFallsBackToCurrent() throws Throwable {
-        OWLDocumentFormat current = new TurtleDocumentFormat();
-        assertTrue(callFormatForPath("/tmp/a.unknown", current) == current,
-                "an unrecognized extension keeps the current format");
+    void formatForPathObo() throws Throwable {
+        assertInstanceOf(org.semanticweb.owlapi.formats.OBODocumentFormat.class,
+                callFormatForPath("/tmp/a.obo", null));
+        assertInstanceOf(org.semanticweb.owlapi.formats.OBODocumentFormat.class,
+                callFormatForPath("/tmp/A.OBO", null), "extension matching is case-insensitive");
     }
 
     @Test
-    void formatForPathUnknownNoCurrentDefaultsToRdfXml() throws Throwable {
-        assertInstanceOf(RDFXMLDocumentFormat.class, callFormatForPath("/tmp/a.unknown", null),
-                "unrecognized extension with no current format → RDF/XML");
+    void formatForPathUnknownExtensionIsAnError() throws Throwable {
+        // 0.4.3: an unrecognized extension used to silently fall back to the current format (or
+        // RDF/XML) — saving pets.obo as RDF/XML. It is now a hard error naming the supported set.
+        ToolArgException e = assertThrows(ToolArgException.class,
+                () -> callFormatForPath("/tmp/a.unknown", new TurtleDocumentFormat()));
+        assertTrue(e.getMessage().contains("Unrecognized ontology file extension '.unknown'"),
+                "names the offending extension: " + e.getMessage());
+        assertTrue(e.getMessage().contains(".obo"), "lists the supported extensions");
+    }
+
+    @Test
+    void formatForPathNoExtensionFallsBackToCurrent() throws Throwable {
+        OWLDocumentFormat current = new TurtleDocumentFormat();
+        assertTrue(callFormatForPath("/tmp/ontology-file", current) == current,
+                "a path with no extension keeps the current format");
+    }
+
+    @Test
+    void formatForPathNoExtensionNoCurrentDefaultsToRdfXml() throws Throwable {
+        assertInstanceOf(RDFXMLDocumentFormat.class, callFormatForPath("/tmp/ontology-file", null),
+                "no extension and no current format → RDF/XML");
+    }
+
+    @Test
+    void formatForPathDotFileHasNoExtension() throws Throwable {
+        OWLDocumentFormat current = new TurtleDocumentFormat();
+        assertTrue(callFormatForPath("/tmp/.hidden", current) == current,
+                "a dotfile name is not an extension");
+        assertTrue(callFormatForPath("/tmp/trailing.", current) == current,
+                "a trailing dot is not an extension");
+    }
+
+    @Test
+    void formatForPathDottedDirectoryDoesNotCountAsExtension() throws Throwable {
+        OWLDocumentFormat current = new TurtleDocumentFormat();
+        assertTrue(callFormatForPath("/tmp/v1.2/ontology", current) == current,
+                "only the file NAME's extension counts, not a dot in a directory");
     }
 
     // ================================================================== isLabelChangeFor
@@ -1032,6 +1071,55 @@ class WriteToolsTest {
     }
 
     @Test
+    void saveOntologyRejectedExtensionLeavesNoDirectories() throws Throwable {
+        // 0.4.3 review fix: argument validation (the unknown-extension error) must complete
+        // before any filesystem effect — a rejected save-as used to leave the parent tree behind.
+        OWLOntology o = emptyOntology();
+        OWLModelManager mm = mutatingManager(o);
+        Path base = Files.createTempDirectory("write-tools-save-reject");
+        File out = new File(base.toFile(), "x/y/pets.json");
+
+        assertThrows(ToolArgException.class, () -> callSaveOntology(mm, out.getPath()));
+        assertFalse(new File(base.toFile(), "x").exists(),
+                "a rejected extension must not create the parent directory tree");
+    }
+
+    @Test
+    void saveOntologyFailedSaveAsRestoresFormatAndDocumentBinding() throws Throwable {
+        // 0.4.3 review fix: a save-as whose STORE fails (deterministic with OBO — its writer
+        // rejects duplicate name clauses, i.e. two rdfs:labels on one entity) must not leave the
+        // ontology bound to the broken format/path, or every later argument-less save (and the
+        // GUI's File ▸ Save) would silently retry the failing target.
+        OWLOntology o = emptyOntology();
+        OWLOntologyManager om = o.getOWLOntologyManager();
+        OWLDataFactory df = om.getOWLDataFactory();
+        OWLClass dog = declaredClass(o, "Dog");
+        om.addAxiom(o, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), dog.getIRI(), df.getOWLLiteral("Dog", "en")));
+        om.addAxiom(o, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), dog.getIRI(), df.getOWLLiteral("Hund", "de")));
+        OWLModelManager mm = mutatingManager(o);
+        Path dir = Files.createTempDirectory("write-tools-save-fail");
+        File good = new File(dir.toFile(), "pets.ttl");
+        assertEquals(Boolean.FALSE, callSaveOntology(mm, good.getPath()).isError(),
+                "the Turtle save-as establishes a good binding");
+        OWLDocumentFormat boundFormat = om.getOntologyFormat(o);
+        IRI boundDoc = om.getOntologyDocumentIRI(o);
+
+        File bad = new File(dir.toFile(), "pets.obo");
+        ToolArgException e = assertThrows(ToolArgException.class,
+                () -> callSaveOntology(mm, bad.getPath()));
+        assertTrue(e.getMessage().contains("Save failed"),
+                "the storage failure is surfaced: " + e.getMessage());
+        assertSame(boundFormat, om.getOntologyFormat(o),
+                "a failed save-as must not rebind the format");
+        assertEquals(boundDoc, om.getOntologyDocumentIRI(o),
+                "a failed save-as must not rebind the document IRI");
+        assertEquals(Boolean.FALSE, callSaveOntology(mm, null).isError(),
+                "the previous good target still works for argument-less saves");
+    }
+
+    @Test
     void saveOntologyNoPathNeverSavedIsError() throws Throwable {
         OWLOntology o = emptyOntology();
         OWLModelManager mm = mutatingManager(o);
@@ -1227,5 +1315,267 @@ class WriteToolsTest {
         OwlManagers.create();
         assertTrue(Thread.currentThread().getContextClassLoader() == before,
                 "the thread context classloader is restored after creating a manager");
+    }
+
+    // ================================================================== saveAllDirty (0.4.3 save all=true)
+
+    /**
+     * A {@link MutatingHandler}-backed manager that also answers {@code getDirtyOntologies()} with a
+     * scripted set — the real dirty tracking lives in Protégé's model manager, so the save-all path
+     * needs it stubbed to be testable headless. Saves still write through the real OWL API manager.
+     */
+    private static OWLModelManager dirtyManager(OWLOntology ontology, Set<OWLOntology> dirty) {
+        MutatingHandler mutating = new MutatingHandler(ontology);
+        return (OWLModelManager) Proxy.newProxyInstance(
+                WriteToolsTest.class.getClassLoader(),
+                new Class<?>[] { OWLModelManager.class },
+                (proxy, method, args) -> "getDirtyOntologies".equals(method.getName())
+                        ? dirty
+                        : mutating.invoke(proxy, method, args));
+    }
+
+    private CallToolResult callSaveAllDirty(OWLModelManager mm) throws Throwable {
+        return (CallToolResult) invoke(priv("saveAllDirty", OWLModelManager.class), mm);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> listOf(CallToolResult r, String key) {
+        return (List<Map<String, Object>>) structured(r).get(key);
+    }
+
+    @Test
+    void saveAllDirtyNothingDirtyReportsNothingToSave() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLModelManager mm = dirtyManager(o, Collections.emptySet());
+
+        CallToolResult r = callSaveAllDirty(mm);
+        Map<String, Object> m = structured(r);
+        assertEquals(Boolean.FALSE, r.isError(), "an empty dirty set is not an error");
+        assertTrue(listOf(r, "saved").isEmpty(), "nothing was saved");
+        assertTrue(listOf(r, "skipped").isEmpty(), "nothing was skipped");
+        assertTrue(String.valueOf(m.get("message")).contains("Nothing to save"),
+                "the message says there is nothing to save");
+    }
+
+    @Test
+    void saveAllDirtyWritesFileBackedOntologyAndReportsPath() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLOntologyManager om = o.getOWLOntologyManager();
+        Path dir = Files.createTempDirectory("write-tools-save-all");
+        File out = new File(dir.toFile(), "pets.owl");
+        om.setOntologyDocumentIRI(o, IRI.create(out));
+        OWLModelManager mm = dirtyManager(o, Collections.singleton(o));
+
+        CallToolResult r = callSaveAllDirty(mm);
+        Map<String, Object> m = structured(r);
+        List<Map<String, Object>> saved = listOf(r, "saved");
+        assertEquals(1, saved.size(), "the one dirty file-backed ontology is saved");
+        assertEquals("http://example.org/w", saved.get(0).get("ontology"),
+                "the row names the ontology by its label");
+        assertEquals(out.getAbsoluteFile().toString(), saved.get(0).get("path"),
+                "the row carries the file path written to");
+        assertTrue(listOf(r, "skipped").isEmpty(), "nothing was skipped");
+        assertTrue(out.isFile(), "the ontology document was actually written to disk");
+        assertEquals("1 of 1 modified ontology saved.", m.get("message"),
+                "singular message for a single dirty ontology");
+    }
+
+    @Test
+    void saveAllDirtySkipsOntologyWithoutFileDocument() throws Throwable {
+        OWLOntology o = emptyOntology();
+        // A fresh ontology's document IRI defaults to its (http:) ontology IRI — not a file.
+        OWLModelManager mm = dirtyManager(o, Collections.singleton(o));
+
+        CallToolResult r = callSaveAllDirty(mm);
+        Map<String, Object> m = structured(r);
+        assertTrue(listOf(r, "saved").isEmpty(), "nothing was saved");
+        List<Map<String, Object>> skipped = listOf(r, "skipped");
+        assertEquals(1, skipped.size(), "the web-document ontology is skipped, not failed");
+        assertEquals("http://example.org/w", skipped.get(0).get("ontology"),
+                "the skipped row names the ontology");
+        assertTrue(String.valueOf(skipped.get(0).get("reason")).contains("no file document"),
+                "the reason explains there is no file document to save to");
+        assertEquals("0 of 1 modified ontology saved.", m.get("message"),
+                "the message counts zero saves out of one dirty ontology");
+    }
+
+    // ================================================================== peekUndo (0.4.3 undo introspection)
+
+    /** A scripted {@link HistoryManager}: a fixed undo stack; the mutators are unsupported. */
+    private static final class ScriptedHistory implements HistoryManager {
+        private final List<List<OWLOntologyChange>> stack;
+
+        ScriptedHistory(List<List<OWLOntologyChange>> stack) {
+            this.stack = stack;
+        }
+
+        @Override
+        public void logChanges(List<? extends OWLOntologyChange> changes) {
+            throw new UnsupportedOperationException("peek must not log changes");
+        }
+
+        @Override
+        public boolean canUndo() {
+            return !stack.isEmpty();
+        }
+
+        @Override
+        public void undo() {
+            throw new UnsupportedOperationException("peek must not undo");
+        }
+
+        @Override
+        public boolean canRedo() {
+            return false;
+        }
+
+        @Override
+        public void redo() {
+            throw new UnsupportedOperationException("peek must not redo");
+        }
+
+        @Override
+        public void clear() {
+            throw new UnsupportedOperationException("peek must not clear");
+        }
+
+        @Override
+        public List<List<OWLOntologyChange>> getLoggedChanges() {
+            return stack;
+        }
+
+        @Override
+        public void addUndoManagerListener(UndoManagerListener listener) {
+        }
+
+        @Override
+        public void removeUndoManagerListener(UndoManagerListener listener) {
+        }
+    }
+
+    /**
+     * A manager that answers {@code getHistoryManager()} with a scripted stack and delegates the rest
+     * to the shared {@link FakeModelManager} (peekUndo only reads and renders, so no write-through is
+     * needed) — the same delegation shape as {@link MutatingHandler}.
+     */
+    private static OWLModelManager historyManager(OWLOntology ontology,
+            List<List<OWLOntologyChange>> stack) {
+        OWLModelManager delegate = FakeModelManager.over(ontology);
+        HistoryManager history = new ScriptedHistory(stack);
+        return (OWLModelManager) Proxy.newProxyInstance(
+                WriteToolsTest.class.getClassLoader(),
+                new Class<?>[] { OWLModelManager.class },
+                (proxy, method, args) -> {
+                    switch (method.getName()) {
+                        case "getHistoryManager":
+                            return history;
+                        case "hashCode":
+                            return System.identityHashCode(proxy);
+                        case "equals":
+                            return proxy == args[0];
+                        default:
+                            try {
+                                return method.invoke(delegate, args);
+                            } catch (InvocationTargetException e) {
+                                throw e.getCause();
+                            }
+                    }
+                });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> nextUndo(CallToolResult r) {
+        return (Map<String, Object>) structured(r).get("next_undo");
+    }
+
+    @Test
+    void peekUndoEmptyStackReportsNothingToUndo() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLModelManager mm = historyManager(o, Collections.emptyList());
+
+        CallToolResult r = WriteTools.peekUndo(mm);
+        Map<String, Object> m = structured(r);
+        assertEquals(Boolean.FALSE, r.isError(), "peeking an empty stack is not an error");
+        assertEquals(Boolean.TRUE, m.get("peek"), "the result is flagged as a peek");
+        assertEquals(Boolean.FALSE, m.get("can_undo"), "nothing to undo");
+        assertEquals(Boolean.FALSE, m.get("can_redo"), "nothing to redo");
+        assertEquals(0, m.get("undo_depth"), "an empty stack has depth zero");
+        assertTrue(String.valueOf(m.get("note")).contains("The undo stack is empty"),
+                "the note explains the stack is empty");
+        assertFalse(m.containsKey("next_undo"), "no next_undo key on an empty stack");
+    }
+
+    @Test
+    void peekUndoRendersLastTransactionWithOpsInOrder() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
+        OWLClass dog = cls(df, "Dog");
+        OWLClass animal = cls(df, "Animal");
+        List<OWLOntologyChange> first = Collections.singletonList(
+                new AddAxiom(o, df.getOWLDeclarationAxiom(dog)));
+        List<OWLOntologyChange> last = Arrays.asList(
+                new AddAxiom(o, df.getOWLSubClassOfAxiom(dog, animal)),
+                new RemoveAxiom(o, df.getOWLDeclarationAxiom(animal)));
+        OWLModelManager mm = historyManager(o, Arrays.asList(first, last));
+
+        CallToolResult r = WriteTools.peekUndo(mm);
+        Map<String, Object> m = structured(r);
+        assertEquals(Boolean.TRUE, m.get("can_undo"), "a non-empty stack can undo");
+        assertEquals(2, m.get("undo_depth"), "two logged transactions");
+        Map<String, Object> next = nextUndo(r);
+        assertNotNull(next, "next_undo is present");
+        assertEquals(2, next.get("changes"), "the LAST transaction's change count");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> sample = (List<Map<String, Object>>) next.get("sample");
+        assertEquals(2, sample.size(), "both axiom changes are sampled");
+        assertEquals("add", sample.get(0).get("op"), "the first change is the add");
+        assertEquals("remove", sample.get(1).get("op"), "the second change is the remove");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> axiom = (Map<String, Object>) sample.get(0).get("axiom");
+        assertNotNull(axiom, "each sampled change carries an axiom map");
+        assertEquals("SubClassOf", axiom.get("axiom_type"), "the axiom map has its type");
+        assertNotNull(axiom.get("rendering"), "and a rendering");
+        assertFalse(next.containsKey("non_axiom_changes"),
+                "an all-axiom transaction has no non_axiom_changes key");
+        assertTrue(String.valueOf(m.get("note")).contains("Nothing was undone"),
+                "the note stresses that nothing was changed");
+    }
+
+    @Test
+    void peekUndoCountsNonAxiomChangesWithoutRenderingThem() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
+        List<OWLOntologyChange> tx = Arrays.asList(
+                new AddAxiom(o, df.getOWLDeclarationAxiom(cls(df, "Dog"))),
+                new AddImport(o, df.getOWLImportsDeclaration(IRI.create("http://example.org/imp"))));
+        OWLModelManager mm = historyManager(o, Collections.singletonList(tx));
+
+        CallToolResult r = WriteTools.peekUndo(mm);
+        Map<String, Object> next = nextUndo(r);
+        assertEquals(2, next.get("changes"), "both changes are counted");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> sample = (List<Map<String, Object>>) next.get("sample");
+        assertEquals(1, sample.size(), "only the axiom change is rendered");
+        assertEquals("add", sample.get(0).get("op"), "the rendered change is the axiom add");
+        assertEquals(1, next.get("non_axiom_changes"),
+                "the import change is counted under non_axiom_changes, not rendered");
+    }
+
+    @Test
+    void peekUndoCapsSampleAtTwentyAxiomChanges() throws Throwable {
+        OWLOntology o = emptyOntology();
+        OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
+        List<OWLOntologyChange> tx = new ArrayList<>();
+        for (int i = 0; i < 25; i++) {
+            tx.add(new AddAxiom(o, df.getOWLDeclarationAxiom(cls(df, "C" + i))));
+        }
+        OWLModelManager mm = historyManager(o, Collections.singletonList(tx));
+
+        CallToolResult r = WriteTools.peekUndo(mm);
+        Map<String, Object> next = nextUndo(r);
+        assertEquals(25, next.get("changes"), "the true change count is reported uncapped");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> sample = (List<Map<String, Object>>) next.get("sample");
+        assertEquals(20, sample.size(), "the sample is capped at 20");
     }
 }

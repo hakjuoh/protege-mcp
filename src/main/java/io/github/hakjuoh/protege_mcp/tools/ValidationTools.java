@@ -180,8 +180,9 @@ public final class ValidationTools {
                 m.put("unsatisfiable_count", unsat.size());
                 m.put("unsatisfiable_classes", Tools.entityList(mm, unsat, limit));
             } else {
-                m.put("note", "Ontology is INCONSISTENT — everything is entailed. Use "
-                        + "get_unsatisfiable_classes / get_explanations to diagnose.");
+                m.put("note", "Ontology is INCONSISTENT — everything is entailed. Run "
+                        + "explain_inconsistency to find a minimal set of axioms causing the "
+                        + "contradiction.");
             }
         } catch (RuntimeException e) {
             m.put("error", e.getClass().getSimpleName() + (e.getMessage() == null ? "" : ": " + e.getMessage()));

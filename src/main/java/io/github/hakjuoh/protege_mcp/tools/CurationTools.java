@@ -130,7 +130,9 @@ public final class CurationTools {
                         + "term reference ANOTHER term in the SAME batch (e.g. as a parent), give that other "
                         + "term an explicit 'iri'/'namespace' and reference it by its full IRI — nothing is "
                         + "in the ontology until the batch commits, so a bare name for a same-batch term "
-                        + "won't resolve.",
+                        + "won't resolve. Optionally set verify=report|rollback to classify the reasoner "
+                        + "after applying and detect a regression (as in apply_changes); rollback undoes "
+                        + "the whole batch when one is found.",
                 createTermsSchema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
@@ -142,41 +144,19 @@ public final class CurationTools {
                     boolean strict = Tools.optBool(a, "strict", false);
                     String defaultNamespace = Tools.optString(a, "namespace");
                     String defaultDefProp = Tools.optString(a, "definition_property");
-                    return WriteTools.write(ctx, "create_terms (" + termSpecs.size() + ")", mm -> {
-                        OWLDataFactory df = mm.getOWLDataFactory();
-                        OWLOntology ont = mm.getActiveOntology();
-                        List<OWLOntologyChange> changes = new ArrayList<>();
-                        List<OWLClass> created = new ArrayList<>();
-                        Set<OWLEntity> createdSet = new LinkedHashSet<>();
-                        for (int i = 0; i < termSpecs.size(); i++) {
-                            Map<String, Object> spec =
-                                    withDefaults(termSpecs.get(i), defaultNamespace, defaultDefProp);
-                            try {
-                                OWLClass cls = (OWLClass) WriteTools.createEntity(mm, "class", spec, changes);
-                                List<OWLClassExpression> parents = classExprs(mm, spec, "parents", "parent");
-                                List<OWLClassExpression> equivalents =
-                                        classExprs(mm, spec, "equivalent_to", null);
-                                OWLAnnotationProperty defProp = definitionProperty(mm, spec);
-                                if (!createdSet.add(cls)) {
-                                    // Two specs resolving to the same IRI would otherwise silently merge
-                                    // into one class (accumulating both labels/definitions) yet be
-                                    // reported as two created terms. Reject the collision instead.
-                                    throw new ToolArgException("duplicates an earlier term in this batch "
-                                            + "(IRI <" + cls.getIRI() + ">) — each term must mint a "
-                                            + "distinct IRI.");
-                                }
-                                changes.addAll(termAxioms(df, ont, cls, parents, equivalents, defProp,
-                                        Tools.optString(spec, "definition"),
-                                        Tools.optString(spec, "definition_lang"),
-                                        Tools.annotationSet(mm, spec, "annotations")));
-                                created.add(cls);
-                            } catch (ToolArgException e) {
-                                throw new ToolArgException("terms[" + i + "]" + termLabel(spec) + ": "
-                                        + e.getMessage() + " Nothing was applied.");
-                            }
-                        }
-                        return applyBatchCuration(mm, ont, changes, strict, createdSet, created);
-                    });
+                    String verify = ApplyVerify.normalizeMode(Tools.optString(a, "verify"));
+                    String summary = "create_terms (" + termSpecs.size() + ")"
+                            + (ApplyVerify.MODE_NONE.equals(verify) ? "" : " (verify=" + verify + ")");
+                    if (ApplyVerify.MODE_NONE.equals(verify)) {
+                        return WriteTools.write(ctx, summary, mm -> asResult(
+                                createTermsBatch(mm, termSpecs, strict, defaultNamespace, defaultDefProp)));
+                    }
+                    int timeout = Tools.optInt(a, "timeout_ms", 60_000);
+                    if (timeout <= 0) {
+                        timeout = 60_000;
+                    }
+                    return ApplyVerify.verifiedApply(ctx, verify, timeout, summary, "create_terms",
+                            mm -> createTermsBatch(mm, termSpecs, strict, defaultNamespace, defaultDefProp));
                 }));
 
         tools.tool("create_property",
@@ -241,7 +221,10 @@ public final class CurationTools {
                         + "applied. strict=true refuses the whole batch if any operand would be minted as a "
                         + "new, empty entity. To reference another property in THIS batch (e.g. as "
                         + "inverse_of / super_properties), give it an explicit iri/namespace and reference "
-                        + "its full IRI — nothing is in the ontology until the batch commits.",
+                        + "its full IRI — nothing is in the ontology until the batch commits. Optionally "
+                        + "set verify=report|rollback to classify the reasoner after applying and detect "
+                        + "a regression (as in apply_changes); rollback undoes the whole batch when one "
+                        + "is found.",
                 createPropertiesSchema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
@@ -253,33 +236,19 @@ public final class CurationTools {
                     String defNs = Tools.optString(a, "namespace");
                     String defDef = Tools.optString(a, "definition_property");
                     String defType = Tools.optString(a, "property_type");
-                    return WriteTools.write(ctx, "create_properties (" + specs.size() + ")", mm -> {
-                        OWLDataFactory df = mm.getOWLDataFactory();
-                        OWLOntology ont = mm.getActiveOntology();
-                        List<OWLOntologyChange> changes = new ArrayList<>();
-                        List<OWLEntity> created = new ArrayList<>();
-                        Set<OWLEntity> createdSet = new LinkedHashSet<>();
-                        for (int i = 0; i < specs.size(); i++) {
-                            Map<String, Object> spec = withDefaults(specs.get(i), defNs, defDef, defType);
-                            try {
-                                String type = propertyType(spec);
-                                OWLEntity prop = WriteTools.createEntity(mm, type + "_property", spec, changes);
-                                if (!createdSet.add(prop)) {
-                                    throw new ToolArgException("duplicates an earlier property in this "
-                                            + "batch (IRI <" + prop.getIRI() + ">) — each must mint a "
-                                            + "distinct IRI.");
-                                }
-                                changes.addAll("data".equals(type)
-                                        ? dataPropertyAxioms(mm, df, ont, (OWLDataProperty) prop, spec)
-                                        : objectPropertyAxioms(mm, df, ont, (OWLObjectProperty) prop, spec));
-                                created.add(prop);
-                            } catch (ToolArgException e) {
-                                throw new ToolArgException("properties[" + i + "]" + termLabel(spec) + ": "
-                                        + e.getMessage() + " Nothing was applied.");
-                            }
-                        }
-                        return applyBatchCuration(mm, ont, changes, strict, createdSet, created);
-                    });
+                    String verify = ApplyVerify.normalizeMode(Tools.optString(a, "verify"));
+                    String summary = "create_properties (" + specs.size() + ")"
+                            + (ApplyVerify.MODE_NONE.equals(verify) ? "" : " (verify=" + verify + ")");
+                    if (ApplyVerify.MODE_NONE.equals(verify)) {
+                        return WriteTools.write(ctx, summary, mm -> asResult(
+                                createPropertiesBatch(mm, specs, strict, defNs, defDef, defType)));
+                    }
+                    int timeout = Tools.optInt(a, "timeout_ms", 60_000);
+                    if (timeout <= 0) {
+                        timeout = 60_000;
+                    }
+                    return ApplyVerify.verifiedApply(ctx, verify, timeout, summary, "create_properties",
+                            mm -> createPropertiesBatch(mm, specs, strict, defNs, defDef, defType));
                 }));
 
         tools.tool("deprecate_entity",
@@ -622,6 +591,8 @@ public final class CurationTools {
         properties.put("definition_property", Tools.stringProperty("Default definition annotation "
                 + "property for any term that omits its own 'definition_property' (e.g. skos:definition)."));
         properties.put("strict", Tools.boolProperty(WriteTools.STRICT_DESC));
+        properties.put("verify", Tools.stringProperty(VERIFY_DESC));
+        properties.put("timeout_ms", Tools.intProperty(VERIFY_TIMEOUT_DESC));
 
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", "object");
@@ -630,6 +601,15 @@ public final class CurationTools {
         schema.put("additionalProperties", false);
         return schema;
     }
+
+    /** The shared verify=/timeout_ms schema wording (mirrors apply_changes). */
+    static final String VERIFY_DESC = "none (default) | report | rollback. With report or rollback, "
+            + "classify the reasoner after applying and flag a regression (newly unsatisfiable class, "
+            + "or newly inconsistent ontology); rollback undoes the whole batch on a regression. "
+            + "Requires a reasoner selected in Protégé; rollback additionally refuses up front "
+            + "(applying nothing) when no pre-apply baseline classification can be established.";
+    static final String VERIFY_TIMEOUT_DESC = "Max wait in ms for EACH classification the verify "
+            + "pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000.";
 
     /**
      * Schema for {@code create_properties}: a required {@code properties} array whose items mirror {@code
@@ -677,6 +657,8 @@ public final class CurationTools {
         schemaProperties.put("property_type", Tools.stringProperty("Default property_type (object|data) "
                 + "for any item that omits its own (else object)."));
         schemaProperties.put("strict", Tools.boolProperty(WriteTools.STRICT_DESC));
+        schemaProperties.put("verify", Tools.stringProperty(VERIFY_DESC));
+        schemaProperties.put("timeout_ms", Tools.intProperty(VERIFY_TIMEOUT_DESC));
 
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", "object");
@@ -724,6 +706,87 @@ public final class CurationTools {
         return name == null ? "" : " ('" + name + "')";
     }
 
+    /** The batch cores return a payload map, or a decline {@link CallToolResult}; wrap the former. */
+    @SuppressWarnings("unchecked")
+    private static CallToolResult asResult(Object batchOutcome) {
+        return batchOutcome instanceof CallToolResult
+                ? (CallToolResult) batchOutcome
+                : Tools.ok((Map<String, Object>) batchOutcome);
+    }
+
+    /**
+     * The create_terms batch body: build every term's changes (atomic — any malformed item aborts
+     * the whole batch), then commit as ONE transaction. Returns the payload map, or a decline
+     * {@link CallToolResult} (strict refusal). Split out of the handler so the verify=report|rollback
+     * path can inject it into {@link ApplyVerify#verifiedApply} unchanged.
+     */
+    static Object createTermsBatch(OWLModelManager mm, List<Map<String, Object>> termSpecs,
+            boolean strict, String defaultNamespace, String defaultDefProp) {
+        OWLDataFactory df = mm.getOWLDataFactory();
+        OWLOntology ont = mm.getActiveOntology();
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        List<OWLClass> created = new ArrayList<>();
+        Set<OWLEntity> createdSet = new LinkedHashSet<>();
+        for (int i = 0; i < termSpecs.size(); i++) {
+            Map<String, Object> spec =
+                    withDefaults(termSpecs.get(i), defaultNamespace, defaultDefProp);
+            try {
+                OWLClass cls = (OWLClass) WriteTools.createEntity(mm, "class", spec, changes);
+                List<OWLClassExpression> parents = classExprs(mm, spec, "parents", "parent");
+                List<OWLClassExpression> equivalents =
+                        classExprs(mm, spec, "equivalent_to", null);
+                OWLAnnotationProperty defProp = definitionProperty(mm, spec);
+                if (!createdSet.add(cls)) {
+                    // Two specs resolving to the same IRI would otherwise silently merge
+                    // into one class (accumulating both labels/definitions) yet be
+                    // reported as two created terms. Reject the collision instead.
+                    throw new ToolArgException("duplicates an earlier term in this batch "
+                            + "(IRI <" + cls.getIRI() + ">) — each term must mint a "
+                            + "distinct IRI.");
+                }
+                changes.addAll(termAxioms(df, ont, cls, parents, equivalents, defProp,
+                        Tools.optString(spec, "definition"),
+                        Tools.optString(spec, "definition_lang"),
+                        Tools.annotationSet(mm, spec, "annotations")));
+                created.add(cls);
+            } catch (ToolArgException e) {
+                throw new ToolArgException("terms[" + i + "]" + termLabel(spec) + ": "
+                        + e.getMessage() + " Nothing was applied.");
+            }
+        }
+        return applyBatchCurationData(mm, ont, changes, strict, createdSet, created);
+    }
+
+    /** The create_properties batch body; see {@link #createTermsBatch}. */
+    static Object createPropertiesBatch(OWLModelManager mm, List<Map<String, Object>> specs,
+            boolean strict, String defNs, String defDef, String defType) {
+        OWLDataFactory df = mm.getOWLDataFactory();
+        OWLOntology ont = mm.getActiveOntology();
+        List<OWLOntologyChange> changes = new ArrayList<>();
+        List<OWLEntity> created = new ArrayList<>();
+        Set<OWLEntity> createdSet = new LinkedHashSet<>();
+        for (int i = 0; i < specs.size(); i++) {
+            Map<String, Object> spec = withDefaults(specs.get(i), defNs, defDef, defType);
+            try {
+                String type = propertyType(spec);
+                OWLEntity prop = WriteTools.createEntity(mm, type + "_property", spec, changes);
+                if (!createdSet.add(prop)) {
+                    throw new ToolArgException("duplicates an earlier property in this "
+                            + "batch (IRI <" + prop.getIRI() + ">) — each must mint a "
+                            + "distinct IRI.");
+                }
+                changes.addAll("data".equals(type)
+                        ? dataPropertyAxioms(mm, df, ont, (OWLDataProperty) prop, spec)
+                        : objectPropertyAxioms(mm, df, ont, (OWLObjectProperty) prop, spec));
+                created.add(prop);
+            } catch (ToolArgException e) {
+                throw new ToolArgException("properties[" + i + "]" + termLabel(spec) + ": "
+                        + e.getMessage() + " Nothing was applied.");
+            }
+        }
+        return applyBatchCurationData(mm, ont, changes, strict, createdSet, created);
+    }
+
     /**
      * Apply a whole batch of curated terms as ONE transaction. Mirrors {@link #applyCuration} but for many
      * created entities: the minted-operand set is every entity the batch's adds introduce minus the terms
@@ -731,6 +794,16 @@ public final class CurationTools {
      * false strict violation). With {@code strict} and a non-empty remainder, nothing is applied.
      */
     static CallToolResult applyBatchCuration(OWLModelManager mm, OWLOntology ont,
+            List<OWLOntologyChange> changes, boolean strict, Set<OWLEntity> createdSet,
+            List<? extends OWLEntity> created) {
+        return asResult(applyBatchCurationData(mm, ont, changes, strict, createdSet, created));
+    }
+
+    /**
+     * {@link #applyBatchCuration} with the outcome left raw for {@link ApplyVerify}: the payload
+     * map on success, or the strict-refusal {@link CallToolResult} (nothing applied) verbatim.
+     */
+    static Object applyBatchCurationData(OWLModelManager mm, OWLOntology ont,
             List<OWLOntologyChange> changes, boolean strict, Set<OWLEntity> createdSet,
             List<? extends OWLEntity> created) {
         Set<OWLOntology> closure = ont.getImportsClosure();
@@ -762,7 +835,7 @@ public final class CurationTools {
         if (!minted.isEmpty()) {
             result.put("new_entities", Tools.entityList(mm, minted, Integer.MAX_VALUE));
         }
-        return result.result();
+        return result.map();
     }
 
     /** Resolve the class expressions named by {@code key} (and an optional singular {@code singularKey}). */

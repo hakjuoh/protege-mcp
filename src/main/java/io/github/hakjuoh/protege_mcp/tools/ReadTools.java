@@ -27,27 +27,36 @@ public final class ReadTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("list_ontologies",
-                "List all loaded ontologies (the active ontology and its imports closure). "
-                        + "Marks which one is active.",
+                "List EVERY ontology loaded in the Protégé workspace — the active ontology, its "
+                        + "imports closure, and any other loaded ontologies. Marks which one is "
+                        + "active, which have unsaved changes (dirty), and where each is saved "
+                        + "(document).",
                 Tools.emptySchema(),
                 (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
                     OWLOntology active = mm.getActiveOntology();
                     Set<OWLOntology> onts = mm.getOntologies();
+                    Set<OWLOntology> dirty = mm.getDirtyOntologies();
                     List<Map<String, Object>> list = new ArrayList<>();
                     for (OWLOntology o : onts) {
                         Map<String, Object> entry = new LinkedHashMap<>();
                         entry.put("id", ontologyLabel(o));
                         entry.put("anonymous", o.getOntologyID().isAnonymous());
                         entry.put("active", o.equals(active));
+                        entry.put("dirty", dirty.contains(o));
                         entry.put("axioms", o.getAxiomCount());
                         entry.put("logical_axioms", o.getLogicalAxiomCount());
+                        entry.put("document", String.valueOf(
+                                mm.getOWLOntologyManager().getOntologyDocumentIRI(o)));
                         list.add(entry);
                     }
                     return Tools.json()
                             .put("count", onts.size())
                             .put("active", ontologyLabel(active))
+                            .put("dirty_count", dirty.size())
                             .put("ontologies", list)
-                            .put("note", "The active ontology is the target of edits.")
+                            .put("note", "The active ontology is the target of edits. 'dirty' = "
+                                    + "unsaved changes (save_ontology writes the active ontology; "
+                                    + "all=true saves every dirty one).")
                             .result();
                 })));
 
@@ -345,7 +354,8 @@ public final class ReadTools {
         }
     }
 
-    private static String ontologyLabel(OWLOntology o) {
+    /** Display label for an ontology: its IRI, or a placeholder when anonymous. */
+    static String ontologyLabel(OWLOntology o) {
         OWLOntologyID id = o.getOntologyID();
         if (id.isAnonymous()) {
             return "(anonymous ontology)";

@@ -101,7 +101,8 @@ public final class EmbeddedClassificationWaiter {
             message.append("Reasoner: ").append(rm.getCurrentReasonerName())
                     .append(". Status: ").append(status).append('.');
             if (status == ReasonerStatus.INCONSISTENT) {
-                message.append(" The ontology is INCONSISTENT.");
+                message.append(" The ontology is INCONSISTENT — run explain_inconsistency to find "
+                        + "a minimal set of axioms causing the contradiction.");
             } else if (status.isEnableStop()) {
                 try {
                     OWLReasoner reasoner = mm.getReasoner();

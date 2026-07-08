@@ -16,6 +16,8 @@ import org.semanticweb.owlapi.model.RemoveAxiom;
 import org.semanticweb.owlapi.util.OWLEntityRemover;
 import org.semanticweb.owlapi.util.OWLEntityRenamer;
 
+import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+
 /**
  * High-level entity edits that span many axioms: renaming an entity's IRI and deleting an entity.
  * Both compute their {@link OWLOntologyChange}s with the OWL API utilities and apply them via
@@ -28,92 +30,172 @@ public final class EntityRefactorTools {
     private EntityRefactorTools() {
     }
 
+    /** Axioms rendered in a preview sample before the list is truncated to a count. */
+    static final int PREVIEW_SAMPLE_LIMIT = 20;
+
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("rename_entity",
                 "Change an entity's IRI throughout the active ontology (every axiom and annotation "
                         + "that references the old IRI is rewritten to the new one). If the IRI is "
                         + "punned across several entity types, all of them are renamed. The new IRI "
-                        + "must be a full absolute IRI.",
+                        + "must be a full absolute IRI. Pass preview=true to only REPORT what the "
+                        + "rename would rewrite, without changing anything.",
                 Tools.schema()
                         .strReq("entity", "Entity to rename: an IRI or display name.")
                         .strReq("new_iri", "New full IRI for the entity.")
+                        .bool("preview", "Dry-run: report the rewrite without applying anything "
+                                + "(works in read-only mode). Default false.")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
                     String newIriRef = Tools.reqString(a, "new_iri");
-                    return WriteTools.write(ctx, "rename " + entityRef + " to " + newIriRef, mm -> {
-                        OWLEntity entity = Tools.findEntity(mm, entityRef);
-                        if (entity == null) {
-                            return Tools.error("Entity not found: '" + entityRef + "'.");
-                        }
-                        IRI newIri = Tools.asIri(newIriRef);
-                        if (newIri == null) {
-                            return Tools.error("new_iri must be a full absolute IRI: '" + newIriRef + "'.");
-                        }
-                        IRI oldIri = entity.getIRI();
-                        if (oldIri.equals(newIri)) {
-                            return Tools.error("The entity already has IRI <" + newIri + ">.");
-                        }
-                        OWLOntology active = mm.getActiveOntology();
-                        OWLEntityRenamer renamer = new OWLEntityRenamer(
-                                mm.getOWLOntologyManager(), Collections.singleton(active));
-                        List<OWLOntologyChange> changes = renamer.changeIRI(oldIri, newIri);
-                        if (changes.isEmpty()) {
-                            return Tools.error("Nothing to rename: <" + oldIri + "> is not referenced "
-                                    + "in the active ontology.");
-                        }
-                        mm.applyChanges(changes);
-                        return Tools.json()
-                                .put("renamed", true)
-                                .put("old_iri", oldIri.toString())
-                                .put("new_iri", newIri.toString())
-                                .put("changes", changes.size())
-                                .result();
-                    });
+                    if (Tools.optBool(a, "preview", false)) {
+                        return ctx.access().compute(mm -> renameEntity(mm, entityRef, newIriRef, true));
+                    }
+                    return WriteTools.write(ctx, "rename " + entityRef + " to " + newIriRef,
+                            mm -> renameEntity(mm, entityRef, newIriRef, false));
                 }));
 
         tools.tool("delete_entity",
                 "Delete an entity from the active ontology: removes its declaration and every axiom "
                         + "that references it. If the IRI is punned across several entity types, all "
-                        + "are removed unless 'entity_type' narrows it to one.",
+                        + "are removed unless 'entity_type' narrows it to one. Pass preview=true to "
+                        + "only REPORT the blast radius (every axiom the delete would remove), "
+                        + "without changing anything.",
                 Tools.schema()
                         .strReq("entity", "Entity to delete: an IRI or display name.")
                         .str("entity_type", "Optional: class | object_property | data_property | "
                                 + "annotation_property | individual | datatype (narrows a punned IRI).")
+                        .bool("preview", "Dry-run: report what would be removed without applying "
+                                + "anything (works in read-only mode). Default false.")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
                     String entityType = Tools.optString(a, "entity_type");
+                    if (Tools.optBool(a, "preview", false)) {
+                        return ctx.access().compute(mm -> deleteEntity(mm, entityRef, entityType, true));
+                    }
                     return WriteTools.write(ctx, "delete entity " + entityRef
-                            + (entityType != null ? " (" + entityType + ")" : ""), mm -> {
-                        Set<OWLEntity> targets = resolveTargets(mm, entityRef, entityType);
-                        if (targets.isEmpty()) {
-                            return Tools.error("Entity not found: '" + entityRef + "'"
-                                    + (entityType != null ? " of type " + entityType : "") + ".");
-                        }
-                        OWLOntology active = mm.getActiveOntology();
-                        OWLEntityRemover remover = new OWLEntityRemover(Collections.singleton(active));
-                        for (OWLEntity e : targets) {
-                            e.accept(remover);
-                        }
-                        List<RemoveAxiom> changes = remover.getChanges();
-                        if (changes.isEmpty()) {
-                            return Tools.error("Nothing to delete: " + describe(mm, targets)
-                                    + " is not referenced in the active ontology.");
-                        }
-                        mm.applyChanges(new ArrayList<OWLOntologyChange>(changes));
-                        List<Map<String, Object>> deleted = new ArrayList<>();
-                        for (OWLEntity e : targets) {
-                            deleted.add(Tools.entityJson(mm, e));
-                        }
-                        return Tools.json()
-                                .put("deleted", deleted)
-                                .put("removed_axioms", changes.size())
-                                .result();
-                    });
+                            + (entityType != null ? " (" + entityType + ")" : ""),
+                            mm -> deleteEntity(mm, entityRef, entityType, false));
                 }));
+    }
+
+    /**
+     * Compute (and unless {@code preview}, apply) the rename. The change list is the same either
+     * way, so what the preview reports is exactly what an apply would do.
+     */
+    static CallToolResult renameEntity(OWLModelManager mm, String entityRef, String newIriRef,
+            boolean preview) {
+        OWLEntity entity = Tools.findEntity(mm, entityRef);
+        if (entity == null) {
+            return Tools.error("Entity not found: '" + entityRef + "'.");
+        }
+        IRI newIri = Tools.asIri(newIriRef);
+        if (newIri == null) {
+            return Tools.error("new_iri must be a full absolute IRI: '" + newIriRef + "'.");
+        }
+        IRI oldIri = entity.getIRI();
+        if (oldIri.equals(newIri)) {
+            return Tools.error("The entity already has IRI <" + newIri + ">.");
+        }
+        OWLOntology active = mm.getActiveOntology();
+        OWLEntityRenamer renamer = new OWLEntityRenamer(
+                mm.getOWLOntologyManager(), Collections.singleton(active));
+        List<OWLOntologyChange> changes = renamer.changeIRI(oldIri, newIri);
+        if (changes.isEmpty()) {
+            return Tools.error("Nothing to rename: <" + oldIri + "> is not referenced "
+                    + "in the active ontology.");
+        }
+        if (preview) {
+            boolean collision = false;
+            for (OWLOntology o : active.getImportsClosure()) {
+                if (o.containsEntityInSignature(newIri)) {
+                    collision = true;
+                    break;
+                }
+            }
+            List<Map<String, Object>> sample = new ArrayList<>();
+            for (OWLOntologyChange c : changes) {
+                if (sample.size() >= PREVIEW_SAMPLE_LIMIT) {
+                    break;
+                }
+                if (c.isAddAxiom()) {
+                    sample.add(Tools.axiomJson(mm, c.getAxiom()));
+                }
+            }
+            return Tools.json()
+                    .put("preview", true)
+                    .put("old_iri", oldIri.toString())
+                    .put("new_iri", newIri.toString())
+                    .put("changes", changes.size())
+                    .put("new_iri_already_in_signature", collision)
+                    .put("rewritten_axioms_sample", sample)
+                    .put("note", "Nothing was changed. The sample shows how referencing axioms "
+                            + "would read after the rename"
+                            + (collision ? "; the new IRI already occurs in the signature, so "
+                                    + "renaming would merge the two entities" : "")
+                            + ". Re-run without 'preview' to apply.")
+                    .result();
+        }
+        mm.applyChanges(changes);
+        return Tools.json()
+                .put("renamed", true)
+                .put("old_iri", oldIri.toString())
+                .put("new_iri", newIri.toString())
+                .put("changes", changes.size())
+                .result();
+    }
+
+    /**
+     * Compute (and unless {@code preview}, apply) the delete. The change list is the same either
+     * way, so the previewed blast radius is exactly what an apply would remove.
+     */
+    static CallToolResult deleteEntity(OWLModelManager mm, String entityRef, String entityType,
+            boolean preview) {
+        Set<OWLEntity> targets = resolveTargets(mm, entityRef, entityType);
+        if (targets.isEmpty()) {
+            return Tools.error("Entity not found: '" + entityRef + "'"
+                    + (entityType != null ? " of type " + entityType : "") + ".");
+        }
+        OWLOntology active = mm.getActiveOntology();
+        OWLEntityRemover remover = new OWLEntityRemover(Collections.singleton(active));
+        for (OWLEntity e : targets) {
+            e.accept(remover);
+        }
+        List<RemoveAxiom> changes = remover.getChanges();
+        if (changes.isEmpty()) {
+            return Tools.error("Nothing to delete: " + describe(mm, targets)
+                    + " is not referenced in the active ontology.");
+        }
+        List<Map<String, Object>> targetsJson = new ArrayList<>();
+        for (OWLEntity e : targets) {
+            targetsJson.add(Tools.entityJson(mm, e));
+        }
+        if (preview) {
+            List<Map<String, Object>> sample = new ArrayList<>();
+            for (RemoveAxiom c : changes) {
+                if (sample.size() >= PREVIEW_SAMPLE_LIMIT) {
+                    break;
+                }
+                sample.add(Tools.axiomJson(mm, c.getAxiom()));
+            }
+            return Tools.json()
+                    .put("preview", true)
+                    .put("would_delete", targetsJson)
+                    .put("removed_axioms", changes.size())
+                    .put("removed_axioms_sample", sample)
+                    .put("note", "Nothing was deleted. Every counted axiom would be removed from "
+                            + "the active ontology. Re-run without 'preview' to apply.")
+                    .result();
+        }
+        mm.applyChanges(new ArrayList<OWLOntologyChange>(changes));
+        return Tools.json()
+                .put("deleted", targetsJson)
+                .put("removed_axioms", changes.size())
+                .result();
     }
 
     /** Resolve the entities to delete: all puns at the IRI, or just the one matching {@code entityType}. */

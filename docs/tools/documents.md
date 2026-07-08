@@ -90,9 +90,9 @@ If no loaded ontology matches the reference, an error object `{error: "No loaded
 
 ## `merge_ontology_document`
 
-Loads an OWL ontology document from a local path or document IRI/URL and copies its axioms, direct import declarations, and ontology annotations into the active ontology. This preserves axiom annotations and axiom types that are not exposed by the structured `add_axiom` tool, which makes it the right tool for pulling an existing document's full content into the ontology you are editing. GitHub blob URLs are converted to `raw.githubusercontent.com` URLs automatically.
+Loads an OWL ontology document from a local path or document IRI/URL and copies its axioms, direct import declarations, and ontology annotations into the active ontology. This preserves axiom annotations and axiom types that are not exposed by the structured `add_axiom` tool, which makes it the right tool for pulling an existing document's full content into the ontology you are editing. GitHub blob URLs are converted to `raw.githubusercontent.com` URLs automatically. Pass `preview=true` to fetch and parse the document but only REPORT what the merge would do, without changing anything.
 
-*Mutating (undoable)* — the merge is applied via `applyChanges`, so it appears immediately in the GUI and joins the shared undo stack; it obeys the read-only / confirm-each-write gate. With `replace_active=true` it first removes all of the active ontology's axioms, imports, and ontology annotations.
+*Mutating (undoable)* — the merge is applied via `applyChanges`, so it appears immediately in the GUI and joins the shared undo stack; it obeys the read-only / confirm-each-write gate. With `replace_active=true` it first removes all of the active ontology's axioms, imports, and ontology annotations. With `preview=true` nothing is applied (a read-only dry-run that works even in read-only mode; the document is still fetched and parsed).
 
 **Arguments**
 
@@ -101,6 +101,7 @@ Loads an OWL ontology document from a local path or document IRI/URL and copies 
 | `source` | string | yes | — | Local file path, `file:` IRI, http(s) document IRI, or GitHub blob URL. |
 | `replace_active` | boolean | no | `false` | Remove active ontology axioms/imports/ontology annotations first. |
 | `copy_ontology_id` | boolean | no | value of `replace_active` | Copy source ontology IRI/version to the active ontology. |
+| `preview` | boolean | no | `false` | Dry-run: report what the merge would copy/remove without applying anything (works in read-only mode). |
 | `connection_timeout_ms` | integer | no | `15000` | Remote document connection timeout. |
 
 **Returns**
@@ -113,6 +114,15 @@ Loads an OWL ontology document from a local path or document IRI/URL and copies 
 - `skipped_ontology_id`: string (optional) — present when the id copy was skipped because of a collision; the collision message.
 - `unresolved_imports`: array of strings — import IRIs that were silently skipped during load.
 - `active`: object — counts for the active ontology after the merge: `{axioms, logical_axioms, direct_imports, ontology_annotations}`.
+
+With `preview=true` (nothing is applied):
+
+- `preview`: `true`, plus `merged_document` / `source_ontology` / `replace_active` / `skipped_ontology_id` / `unresolved_imports` as above.
+- `would_copy`: object — the `{axioms, imports, ontology_annotations, ontology_id}` counts the merge would copy (in place of `copied`).
+- `would_remove`: object (only when `replace_active` is true) — the `{axioms, imports, ontology_annotations}` counts that would be removed first (in place of `removed`).
+- `already_present_axioms`: integer (plain merge only) — how many of the document's axioms the active ontology already asserts (those adds would be no-ops).
+- `total_changes`: integer — total ontology changes the merge would apply.
+- `note`: reminder that nothing was changed and the merge would apply as one undoable change.
 
 On an unreadable source or parse failure the call fails with an error object `{error: "..."}`.
 

@@ -64,7 +64,9 @@ public final class ModuleTools {
                         + "imports_closure (default — extract from the active ontology + its imports) or "
                         + "active (the active ontology only). By default the module is loaded as a NEW "
                         + "ontology in the Protégé workspace (give 'iri' to name it); pass 'path' to save "
-                        + "it to a file instead (format from the extension: .ttl/.owl/.omn/.ofn/.owx). "
+                        + "it to a file instead (format from the extension: .ttl/.turtle, "
+                        + ".owl/.rdf/.xml, .omn, .ofn/.fss, .owx, .obo — anything else is an error; no "
+                        + "extension writes RDF/XML). "
                         + "Reports the module's axiom/entity counts and which seeds resolved.",
                 Tools.schema()
                         .strArrayReq("signature", "Seed entities: names or full IRIs (classes, "
@@ -75,8 +77,9 @@ public final class ModuleTools {
                         .str("iri", "IRI for the new module ontology (optional; anonymous if omitted). "
                                 + "Ignored when 'path' is given and the file format has no ontology IRI.")
                         .str("path", "File to save the module to (save instead of loading into the "
-                                + "workspace); format inferred from the extension (.ttl, .owl/.rdf/.xml, "
-                                + ".omn, .ofn, .owx).")
+                                + "workspace); format inferred from the extension (.ttl/.turtle, "
+                                + ".owl/.rdf/.xml, .omn, .ofn/.fss, .owx, .obo — anything else is an "
+                                + "error; no extension writes RDF/XML).")
                         .integer("timeout_ms", "Time budget in ms for the on-EDT phases (seed resolution "
                                 + "+ closure snapshot, and the workspace load); default 60000. It does "
                                 + "not interrupt the extraction itself, which runs off the UI thread.")
@@ -92,6 +95,12 @@ public final class ModuleTools {
                     boolean fromClosure = fromClosure(Tools.optString(a, "source"));
                     String iriStr = Tools.optString(a, "iri");
                     String path = Tools.optString(a, "path");
+                    if (path != null) {
+                        // Fail fast on an unrecognized extension — BEFORE the confirmation dialog,
+                        // the closure snapshot and the (potentially minutes-long) extraction, not
+                        // after them in saveModuleToFile.
+                        WriteTools.formatForPath(path, null);
+                    }
                     int timeout = Tools.optInt(a, "timeout_ms", 60_000);
                     if (timeout <= 0) {
                         timeout = 60_000;

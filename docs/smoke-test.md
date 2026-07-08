@@ -56,6 +56,19 @@ counterpart — run it against the built `v0.4.2` jar before publishing a releas
 | 24 | `run_qc_suite` before `run_reasoner` (fresh load) | the `reasoner` stage is `ran:false` with a "run run_reasoner" reason, **not** an error |
 | 25 | `remove_competency_question` the CQ | `removed=true`; the `.rq` file is gone |
 
+### 0.4.3 — previews, save-all, inconsistency triage
+
+| # | Tool call | Expect |
+| --- | --- | --- |
+| 26 | Edit two loaded ontologies, `list_ontologies`, then `save_ontology` `all=true` | edited rows show `dirty:true` + top-level `dirty_count`; save-all returns `saved:[{ontology,path}]`, a file-less (never-saved) ontology lands in `skipped:[{ontology,reason}]`, and the dirty flags clear |
+| 27 | `save_ontology` path=`…/smoke.foo`, then path=`…/smoke.obo` | `.foo` is an error naming the supported extensions (no silent RDF/XML fallback); `.obo` saves as OBO |
+| 28 | `rename_entity` / `delete_entity` with `preview=true` (try in read-only mode too) | rename: `old_iri`/`new_iri`, `changes`, `new_iri_already_in_signature`, `rewritten_axioms_sample`; delete: `would_delete`, `removed_axioms`, `removed_axioms_sample`; **nothing** changes in the GUI or undo stack |
+| 29 | `merge_ontology_document` `preview=true` against a local document | `would_copy` / `total_changes` (+ `already_present_axioms` on a plain merge); the active ontology is untouched |
+| 30 | `undo_change` `peek=true` after a macro (e.g. `create_term`) | `next_undo.changes` + `sample` of `{op, axiom}` rows and `undo_depth`; nothing is undone (repeat the peek — same answer) |
+| 31 | `run_reasoner` with **ELK** selected and a SWRL rule present | classification succeeds but the result carries `warning` (ELK silently ignores rules); `run_qc_suite`'s `reasoner` stage `findings_summary` shows the same `warning` without gating |
+| 32 | `explain_inconsistency` on a deliberately inconsistent scratch ontology (e.g. an individual asserted into two disjoint classes) | `inconsistent=true`, a small `justification` with `minimal=true`; **UI stays responsive** (search runs off-EDT over a private copy); `get_explanations`/`execute_dl_query` etc. over the same ontology return a pointed error naming `explain_inconsistency` |
+| 33 | `create_terms` `verify=rollback` with a term whose `parents` are two disjoint classes | `verify.regression=true`, `verify.rolled_back=true`, `newly_unsatisfiable` names the term; no terms remain (one undo entry reverted) |
+
 Any step that errors, freezes the UI, or does not appear in Protégé's editor/undo stack is a release
 blocker — capture the JSON error and the Protégé log. Steps 16–18 must **never** undo an unrelated edit:
 if a GUI edit happens between apply and re-classification, expect `verify.concurrent_change=true` and no

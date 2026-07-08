@@ -2,9 +2,11 @@ package io.github.hakjuoh.protege_mcp.tools;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -15,6 +17,7 @@ import org.protege.editor.owl.model.entity.OWLEntityCreationSet;
 import org.protege.editor.owl.model.history.HistoryManager;
 import org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
+import org.semanticweb.owlapi.formats.OBODocumentFormat;
 import org.semanticweb.owlapi.formats.OWLXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
@@ -256,7 +259,8 @@ public final class WriteTools {
                     if (timeout <= 0) {
                         timeout = 60_000;
                     }
-                    return ApplyVerify.verifiedApply(ctx, operations, strict, verify, timeout, summary);
+                    return ApplyVerify.verifiedApply(ctx, verify, timeout, summary, "apply_changes",
+                            mm -> applyBatchData(mm, operations, strict));
                 }));
 
         tools.tool("set_label",
@@ -305,23 +309,34 @@ public final class WriteTools {
                 }));
 
         tools.tool("undo_change",
-                "Undo the last change on the shared Protégé undo stack.",
-                Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> write(ctx, "undo last change", mm -> {
-                    HistoryManager hm = mm.getHistoryManager();
-                    if (!hm.canUndo()) {
-                        return Tools.error("Nothing to undo.");
+                "Undo the last change on the shared Protégé undo stack. Pass peek=true to instead "
+                        + "REPORT what the next undo would revert (the transaction's change count "
+                        + "and a sample of its axioms) without undoing anything.",
+                Tools.schema()
+                        .bool("peek", "Inspect the next-undo transaction without undoing it "
+                                + "(works in read-only mode). Default false.")
+                        .build(),
+                (ex, req) -> Tools.guard(() -> {
+                    if (Tools.optBool(Tools.args(req), "peek", false)) {
+                        return ctx.access().compute(WriteTools::peekUndo);
                     }
-                    long before = totalAxioms(mm);
-                    hm.undo();
-                    long after = totalAxioms(mm);
-                    return Tools.json().put("undone", true)
-                            .put("message", "Undid the last change.")
-                            .put("axioms_before", before)
-                            .put("axioms_after", after)
-                            .put("net_axiom_change", after - before)
-                            .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
-                })));
+                    return write(ctx, "undo last change", mm -> {
+                        HistoryManager hm = mm.getHistoryManager();
+                        if (!hm.canUndo()) {
+                            return Tools.error("Nothing to undo.");
+                        }
+                        long before = totalAxioms(mm);
+                        hm.undo();
+                        long after = totalAxioms(mm);
+                        return Tools.json().put("undone", true)
+                                .put("message", "Undid the last change.")
+                                .put("axioms_before", before)
+                                .put("axioms_after", after)
+                                .put("net_axiom_change", after - before)
+                                .put("undo_depth", hm.getLoggedChanges().size())
+                                .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
+                    });
+                }));
 
         tools.tool("redo_change",
                 "Redo the last undone change on the shared Protégé undo stack.",
@@ -339,6 +354,7 @@ public final class WriteTools {
                             .put("axioms_before", before)
                             .put("axioms_after", after)
                             .put("net_axiom_change", after - before)
+                            .put("undo_depth", hm.getLoggedChanges().size())
                             .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
                 })));
 
@@ -346,23 +362,46 @@ public final class WriteTools {
                 "Save the active ontology to disk. With no arguments it writes to the ontology's "
                         + "existing document; a never-saved (untitled) ontology has no file yet, so "
                         + "pass 'path' to choose one (save-as). The serialization format is inferred "
-                        + "from the file extension (.ttl, .owl/.rdf/.xml, .omn, .ofn, .owx) or falls "
-                        + "back to the ontology's current format. After a save-as the ontology is "
-                        + "bound to that file, so later argument-less saves go to the same place.",
+                        + "from the file extension (.ttl/.turtle, .owl/.rdf/.xml, .omn, .ofn/.fss, "
+                        + ".owx, .obo — anything else is an error); a path without an extension "
+                        + "keeps the ontology's current format. After a save-as the ontology is "
+                        + "bound to that file, so later argument-less saves go to the same place. "
+                        + "Pass all=true to instead save EVERY ontology with unsaved changes to its "
+                        + "own existing document (list_ontologies shows which are dirty).",
                 Tools.schema()
                         .str("path", "Optional file path to save to (save-as), e.g. /tmp/pets.ttl.")
+                        .bool("all", "Save every dirty ontology to its existing document instead of "
+                                + "just the active one (default false; cannot be combined with "
+                                + "'path' — ontologies without a file are reported as skipped).")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String path = Tools.optString(a, "path");
+                    boolean all = Tools.optBool(a, "all", false);
+                    if (all && path != null) {
+                        return Tools.error("'all' saves every dirty ontology to its own existing "
+                                + "document and cannot be combined with 'path' (a save-as targets "
+                                + "only the active ontology).");
+                    }
+                    if (all) {
+                        return write(ctx, "save all modified ontologies to disk",
+                                WriteTools::saveAllDirty, SAVE_TIMEOUT_MS);
+                    }
                     String summary = path != null
                             ? "save the active ontology to " + path
                             : "save the active ontology to disk";
-                    return write(ctx, summary, mm -> saveOntology(mm, path));
+                    return write(ctx, summary, mm -> saveOntology(mm, path), SAVE_TIMEOUT_MS);
                 }));
     }
 
     // ------------------------------------------------------------------ shared helpers
+
+    /**
+     * Serializing a big ontology — worse, EVERY dirty ontology under all=true — can legitimately
+     * outlive the default EDT wait, and a "timed out" report while the files keep being written is
+     * a false failure. Same rationale (and value) as the document tools' merge/load bound.
+     */
+    private static final long SAVE_TIMEOUT_MS = 120_000L;
 
     /** Apply the read-only + confirmation gates, then run {@code body} on the EDT. */
     static CallToolResult write(ToolContext ctx, String summary,
@@ -372,6 +411,16 @@ public final class WriteTools {
             return denied;
         }
         return ctx.access().compute(body);
+    }
+
+    /** {@link #write(ToolContext, String, Function)} with an explicit EDT wait bound. */
+    static CallToolResult write(ToolContext ctx, String summary,
+            Function<OWLModelManager, CallToolResult> body, long boundMillis) {
+        CallToolResult denied = checkWriteAllowed(ctx, summary);
+        if (denied != null) {
+            return denied;
+        }
+        return ctx.access().compute(body, boundMillis);
     }
 
     static CallToolResult checkWriteAllowed(ToolContext ctx, String summary) {
@@ -591,7 +640,9 @@ public final class WriteTools {
         props.put("verify", Tools.stringProperty("none (default) | report | rollback. With report or "
                 + "rollback, classify the reasoner after applying and flag a regression (newly "
                 + "unsatisfiable class, or newly inconsistent ontology); rollback undoes the whole batch "
-                + "on a regression. Requires a reasoner selected in Protégé."));
+                + "on a regression. Requires a reasoner selected in Protégé; rollback additionally "
+                + "refuses up front (applying nothing) when no pre-apply baseline classification can "
+                + "be established."));
         props.put("timeout_ms", Tools.intProperty("Max wait in ms for EACH classification the verify "
                 + "pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000."));
         return schema;
@@ -746,12 +797,14 @@ public final class WriteTools {
         OWLOntologyManager om = mm.getOWLOntologyManager();
         if (path != null) {
             File file = new File(path).getAbsoluteFile();
+            OWLDocumentFormat current = om.getOntologyFormat(ont);
+            // Resolve the format FIRST: it can reject the extension, and a rejected save-as must
+            // not leave side effects (created directories, rebound format/document IRI).
+            OWLDocumentFormat format = formatForPath(path, current);
             File dir = file.getParentFile();
             if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
                 return Tools.error("Cannot create directory: " + dir);
             }
-            OWLDocumentFormat current = om.getOntologyFormat(ont);
-            OWLDocumentFormat format = formatForPath(path, current);
             // A save-as picks a fresh format whose prefix map is empty. Carry the ontology's
             // registered prefixes (custom prefixes + default/base) into it so the save does not
             // drop them on disk AND in memory — replacing the format with an empty one would
@@ -761,9 +814,22 @@ public final class WriteTools {
                     && current != null && current.isPrefixOWLOntologyFormat()) {
                 format.asPrefixOWLOntologyFormat().copyPrefixesFrom(current.asPrefixOWLOntologyFormat());
             }
+            IRI previousDoc = om.getOntologyDocumentIRI(ont);
             om.setOntologyFormat(ont, format);
             om.setOntologyDocumentIRI(ont, IRI.create(file));
-            saveOrThrow(mm, ont);
+            try {
+                saveOrThrow(mm, ont);
+            } catch (RuntimeException e) {
+                // A failed save-as (realistic with OBO, whose writer validates frame structure —
+                // e.g. two rdfs:labels on one entity) must not leave the ontology bound to the
+                // target that just failed: every later argument-less save AND the GUI's own
+                // File ▸ Save would silently retry the broken format/path. Restore the binding.
+                if (current != null) {
+                    om.setOntologyFormat(ont, current);
+                }
+                om.setOntologyDocumentIRI(ont, previousDoc);
+                throw e;
+            }
             return Tools.json()
                     .put("saved", true)
                     .put("path", file.toString())
@@ -779,6 +845,96 @@ public final class WriteTools {
         return Tools.json()
                 .put("saved", true)
                 .put("path", new File(doc.toURI()).toString())
+                .result();
+    }
+
+    /** How many of a transaction's changes {@link #peekUndo} renders. */
+    private static final int UNDO_PEEK_SAMPLE_LIMIT = 20;
+
+    /**
+     * Read-only view of the next-undo transaction: Protégé's {@code HistoryManager} keeps the undo
+     * stack as forward change lists ({@code getLoggedChanges()}, oldest first), so the LAST entry
+     * is what {@code undo()} would revert — adds get removed, removes re-added. The redo stack has
+     * no public accessor, so redo stays a boolean.
+     */
+    static CallToolResult peekUndo(OWLModelManager mm) {
+        HistoryManager hm = mm.getHistoryManager();
+        List<List<OWLOntologyChange>> logged = hm.getLoggedChanges();
+        Tools.Json json = Tools.json()
+                .put("peek", true)
+                .put("can_undo", hm.canUndo())
+                .put("can_redo", hm.canRedo())
+                .put("undo_depth", logged.size());
+        if (logged.isEmpty()) {
+            return json.put("note", "The undo stack is empty — nothing to undo.").result();
+        }
+        List<OWLOntologyChange> next = logged.get(logged.size() - 1);
+        Map<String, Object> nextUndo = new LinkedHashMap<>();
+        nextUndo.put("changes", next.size());
+        List<Map<String, Object>> sample = new ArrayList<>();
+        int other = 0;
+        for (OWLOntologyChange c : next) {
+            if (!c.isAxiomChange()) {
+                other++;   // import / ontology-annotation / ontology-id changes — counted, not rendered
+                continue;
+            }
+            if (sample.size() >= UNDO_PEEK_SAMPLE_LIMIT) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("op", c.isAddAxiom() ? "add" : "remove");
+            row.put("axiom", Tools.axiomJson(mm, c.getAxiom()));
+            sample.add(row);
+        }
+        nextUndo.put("sample", sample);
+        if (other > 0) {
+            nextUndo.put("non_axiom_changes", other);
+        }
+        return json.put("next_undo", nextUndo)
+                .put("note", "Nothing was undone. 'next_undo' is the transaction undo_change would "
+                        + "revert — each listed 'add' would be removed and each 'remove' re-added.")
+                .result();
+    }
+
+    /**
+     * Save every dirty (modified since its last save) ontology to its existing document. An
+     * ontology without a file document (never saved, or loaded straight from the web) has nowhere
+     * safe to be written implicitly, so it is reported under 'skipped' instead — make it active
+     * and use save_ontology with 'path'. One failed save does not abort the rest.
+     */
+    private static CallToolResult saveAllDirty(OWLModelManager mm) {
+        List<OWLOntology> dirty = new ArrayList<>(mm.getDirtyOntologies());
+        dirty.sort(Comparator.comparing(ReadTools::ontologyLabel));
+        OWLOntologyManager om = mm.getOWLOntologyManager();
+        List<Map<String, Object>> saved = new ArrayList<>();
+        List<Map<String, Object>> skipped = new ArrayList<>();
+        for (OWLOntology o : dirty) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("ontology", ReadTools.ontologyLabel(o));
+            IRI doc = om.getOntologyDocumentIRI(o);
+            if (!isFileDocument(doc)) {
+                row.put("reason", "no file document to save to (current document: " + doc
+                        + ") — set it active and use save_ontology with 'path'");
+                skipped.add(row);
+                continue;
+            }
+            try {
+                mm.save(o);
+                row.put("path", new File(doc.toURI()).toString());
+                saved.add(row);
+            } catch (OWLOntologyStorageException | RuntimeException e) {
+                // RuntimeException too: a storer's unchecked IO wrapper must not abort the rest
+                row.put("reason", "save failed: " + e.getMessage());
+                skipped.add(row);
+            }
+        }
+        return Tools.json()
+                .put("saved", saved)
+                .put("skipped", skipped)
+                .put("message", dirty.isEmpty()
+                        ? "Nothing to save — no ontology has unsaved changes."
+                        : saved.size() + " of " + dirty.size() + " modified "
+                                + (dirty.size() == 1 ? "ontology" : "ontologies") + " saved.")
                 .result();
     }
 
@@ -801,9 +957,14 @@ public final class WriteTools {
         }
     }
 
-    /** Pick a serialization format from the file extension, falling back to the current format. */
+    /**
+     * Pick a serialization format from the file extension. A path with no extension keeps the
+     * ontology's current format (or RDF/XML when there is none, e.g. a fresh module); an extension
+     * we do not recognize is an error rather than a silent fallback — writing pets.obo as RDF/XML
+     * because .obo was unmapped surprises the caller far more than a hard stop.
+     */
     static OWLDocumentFormat formatForPath(String path, OWLDocumentFormat current) {
-        String p = path.toLowerCase();
+        String p = path.toLowerCase(Locale.ROOT);
         if (p.endsWith(".ttl") || p.endsWith(".turtle")) {
             return new TurtleDocumentFormat();
         }
@@ -816,10 +977,28 @@ public final class WriteTools {
         if (p.endsWith(".owx")) {
             return new OWLXMLDocumentFormat();
         }
+        if (p.endsWith(".obo")) {
+            return new OBODocumentFormat();
+        }
         if (p.endsWith(".owl") || p.endsWith(".rdf") || p.endsWith(".xml")) {
             return new RDFXMLDocumentFormat();
         }
+        String ext = extension(p);
+        if (ext != null) {
+            throw new ToolArgException("Unrecognized ontology file extension '." + ext + "'. "
+                    + "Supported: .ttl/.turtle (Turtle), .owl/.rdf/.xml (RDF/XML), .owx (OWL/XML), "
+                    + ".omn (Manchester), .ofn/.fss (Functional), .obo (OBO). Use one of these, or "
+                    + "a path without an extension to keep the current format.");
+        }
         return current != null ? current : new RDFXMLDocumentFormat();
+    }
+
+    /** The extension of the path's file name, or null if there is none (dotfiles do not count). */
+    private static String extension(String lowerPath) {
+        int slash = Math.max(lowerPath.lastIndexOf('/'), lowerPath.lastIndexOf('\\'));
+        String name = lowerPath.substring(slash + 1);
+        int dot = name.lastIndexOf('.');
+        return dot > 0 && dot < name.length() - 1 ? name.substring(dot + 1) : null;
     }
 
     /**

@@ -84,13 +84,17 @@ public final class OntologyDocumentTools {
                         + "axioms, direct import declarations, and ontology annotations into the "
                         + "active ontology. This preserves axiom annotations and axiom types that "
                         + "are not exposed by the structured add_axiom tool. GitHub blob URLs are "
-                        + "converted to raw.githubusercontent.com URLs automatically.",
+                        + "converted to raw.githubusercontent.com URLs automatically. Pass "
+                        + "preview=true to fetch and parse the document but only REPORT what the "
+                        + "merge would do, without changing anything.",
                 Tools.schema()
                         .strReq("source", "Local file path, file: IRI, http(s) document IRI, or GitHub blob URL.")
                         .bool("replace_active", "Remove active ontology axioms/imports/ontology annotations first "
                                 + "(default false).")
                         .bool("copy_ontology_id", "Copy source ontology IRI/version to the active ontology. "
                                 + "Defaults to replace_active.")
+                        .bool("preview", "Dry-run: report what the merge would copy/remove without "
+                                + "applying anything (works in read-only mode). Default false.")
                         .integer("connection_timeout_ms", "Remote document connection timeout (default 15000).")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
@@ -98,20 +102,24 @@ public final class OntologyDocumentTools {
                     String source = Tools.reqString(a, "source");
                     boolean replaceActive = Tools.optBool(a, "replace_active", false);
                     boolean copyOntologyId = Tools.optBool(a, "copy_ontology_id", replaceActive);
+                    boolean preview = Tools.optBool(a, "preview", false);
                     int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);
                     String summary = replaceActive
                             ? "replace active ontology — delete ALL its axioms, imports and ontology "
                                     + "annotations — with " + source
                             : "merge ontology document " + source;
-                    CallToolResult denied = WriteTools.checkWriteAllowed(ctx, summary);
-                    if (denied != null) {
-                        return denied;
+                    if (!preview) {
+                        CallToolResult denied = WriteTools.checkWriteAllowed(ctx, summary);
+                        if (denied != null) {
+                            return denied;
+                        }
                     }
                     LoadedOntology loaded = load(source, timeoutMs);
                     // A whole-document merge applies thousands of changes in one EDT batch, so give it a
                     // longer bound than the default — otherwise a slow-but-succeeding apply is reported
                     // as a timeout while the model keeps mutating.
-                    return ctx.access().compute(mm -> apply(mm, loaded, replaceActive, copyOntologyId),
+                    return ctx.access().compute(
+                            mm -> apply(mm, loaded, replaceActive, copyOntologyId, preview),
                             MERGE_TIMEOUT_MS);
                 }));
 
@@ -536,7 +544,7 @@ public final class OntologyDocumentTools {
     }
 
     private static CallToolResult apply(OWLModelManager mm, LoadedOntology loaded,
-            boolean replaceActive, boolean copyOntologyId) {
+            boolean replaceActive, boolean copyOntologyId, boolean preview) {
         OWLOntology active = mm.getActiveOntology();
         List<OWLOntologyChange> changes = new ArrayList<>();
         int removedAxioms = 0;
@@ -577,7 +585,21 @@ public final class OntologyDocumentTools {
             changes.add(new AddAxiom(active, ax));
         }
 
-        mm.applyChanges(changes);
+        // In a plain merge, adds of already-asserted axioms are no-ops — count them so a preview
+        // says how much of the document is actually new. Irrelevant under replace_active (the
+        // active axioms are all queued for removal first).
+        int alreadyPresent = 0;
+        if (preview && !replaceActive) {
+            for (OWLAxiom ax : loaded.axioms) {
+                if (active.containsAxiom(ax)) {
+                    alreadyPresent++;
+                }
+            }
+        }
+
+        if (!preview) {
+            mm.applyChanges(changes);
+        }
 
         Map<String, Object> copied = new LinkedHashMap<>();
         copied.put("axioms", loaded.axioms.size());
@@ -585,14 +607,11 @@ public final class OntologyDocumentTools {
         copied.put("ontology_annotations", loaded.annotations.size());
         copied.put("ontology_id", ontologyIdCopied);
 
-        Map<String, Object> activeCounts = new LinkedHashMap<>();
-        activeCounts.put("axioms", active.getAxiomCount());
-        activeCounts.put("logical_axioms", active.getLogicalAxiomCount());
-        activeCounts.put("direct_imports", active.getImportsDeclarations().size());
-        activeCounts.put("ontology_annotations", active.getAnnotations().size());
-
-        Tools.Json json = Tools.json()
-                .put("merged_document", loaded.source)
+        Tools.Json json = Tools.json();
+        if (preview) {
+            json.put("preview", true);
+        }
+        json.put("merged_document", loaded.source)
                 .put("source_ontology", ontologyLabel(loaded.ontologyId))
                 .put("replace_active", replaceActive);
         if (replaceActive) {
@@ -600,12 +619,27 @@ public final class OntologyDocumentTools {
             removed.put("axioms", removedAxioms);
             removed.put("imports", removedImports);
             removed.put("ontology_annotations", removedAnnotations);
-            json.put("removed", removed);
+            json.put(preview ? "would_remove" : "removed", removed);
         }
-        json.put("copied", copied)
+        json.put(preview ? "would_copy" : "copied", copied)
                 .putIfNotNull("skipped_ontology_id", idCollisionSkip)
-                .put("unresolved_imports", new ArrayList<>(loaded.unresolvedImports))
-                .put("active", activeCounts);
+                .put("unresolved_imports", new ArrayList<>(loaded.unresolvedImports));
+        if (preview) {
+            if (!replaceActive) {
+                json.put("already_present_axioms", alreadyPresent);
+            }
+            return json.put("total_changes", changes.size())
+                    .put("note", "Nothing was changed. Re-run without 'preview' to apply the "
+                            + "merge as one undoable change.")
+                    .result();
+        }
+
+        Map<String, Object> activeCounts = new LinkedHashMap<>();
+        activeCounts.put("axioms", active.getAxiomCount());
+        activeCounts.put("logical_axioms", active.getLogicalAxiomCount());
+        activeCounts.put("direct_imports", active.getImportsDeclarations().size());
+        activeCounts.put("ontology_annotations", active.getAnnotations().size());
+        json.put("active", activeCounts);
         return json.result();
     }
 

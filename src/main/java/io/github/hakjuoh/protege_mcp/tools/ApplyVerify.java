@@ -8,6 +8,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
 
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.history.HistoryManager;
@@ -23,7 +24,8 @@ import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
- * The {@code apply_changes verify=report|rollback} orchestration (F1): apply a batch, classify the
+ * The {@code verify=report|rollback} orchestration (F1), shared by the batch write tools
+ * (apply_changes, create_terms, create_properties): apply a batch, classify the
  * reasoner, and decide whether the batch caused a <em>regression</em> — a class that became unsatisfiable
  * or an ontology that became inconsistent <em>because of this batch</em>. {@code report} keeps the batch
  * and returns the verdict; {@code rollback} additionally reverts the whole batch (one {@code undo}) when a
@@ -70,11 +72,19 @@ final class ApplyVerify {
     // ================================================================== orchestration (live Protégé)
 
     /**
-     * Apply {@code operations} and verify. Precondition: {@code verify} is report or rollback. Holds the
+     * Apply a batch and verify. Precondition: {@code verify} is report or rollback. Holds the
      * write mutex across the whole pre-read → apply → classify → post-read → (conditional) undo sequence.
+     *
+     * <p>The batch itself is injected as {@code applier} so any batch-shaped write tool
+     * (apply_changes, create_terms, create_properties) can be verified. The applier runs on the
+     * EDT inside phase B and MUST commit everything via one {@code mm.applyChanges} broadcast
+     * (one undo entry — what rollback reverts, and what the intervening-change bracket counts).
+     * It returns either the tool's result payload (a {@code Map} merged into the top-level result
+     * next to {@code verify}) or a {@link CallToolResult} decline (e.g. a strict refusal) that is
+     * returned verbatim — nothing was applied, so nothing is classified or verified.
      */
-    static CallToolResult verifiedApply(ToolContext ctx, List<Map<String, Object>> operations,
-            boolean strict, String verify, int timeoutMs, String summary) {
+    static CallToolResult verifiedApply(ToolContext ctx, String verify, int timeoutMs, String summary,
+            String toolName, Function<OWLModelManager, Object> applier) {
         CallToolResult denied = WriteTools.checkWriteAllowed(ctx, summary);
         if (denied != null) {
             return denied;
@@ -87,16 +97,23 @@ final class ApplyVerify {
             // true with no event and burn the whole timeout, so we refuse up front (mirrors run_reasoner).
             Probe probe = access.compute(ApplyVerify::probe);
             if (probe.noFactory) {
-                return Tools.error("apply_changes verify=" + verify + " needs a reasoner, but none is "
-                        + "selected in Protégé (Reasoner menu). Select one, or call apply_changes with "
-                        + "verify=none.");
+                return Tools.error(toolName + " verify=" + verify + " needs a reasoner, but none is "
+                        + "selected in Protégé (Reasoner menu). Select one, or call " + toolName
+                        + " with verify=none.");
             }
             // Cold reasoner: classify once to establish a pre-apply baseline (the 2-classification path).
             if (!probe.warm) {
                 EmbeddedClassificationWaiter.runAndWait(access, timeoutMs);
             }
-            // Phase B: read the pre-apply baseline AND apply the batch in one EDT hop.
-            PreApply pre = access.compute(mm -> preApply(mm, operations, strict));
+            // Phase B: read the pre-apply baseline AND apply the batch in one EDT hop. For
+            // verify=rollback the baseline is load-bearing — without it no regression can ever be
+            // attributed, so preApply declines BEFORE applying (fail closed) rather than leaving
+            // an "applied but unverifiable" batch behind (e.g. the cold-start classification
+            // above failed or timed out).
+            PreApply pre = access.compute(mm -> preApply(mm, verify, applier));
+            if (pre.declined != null) {
+                return pre.declined;
+            }
             // Phase C: classify the edited model, off the EDT.
             Map<String, Object> classify = EmbeddedClassificationWaiter.runAndWait(access, timeoutMs);
             // Phase D: post-read, decide, and conditionally undo — one EDT hop.
@@ -113,8 +130,9 @@ final class ApplyVerify {
     }
 
     /** Phase B: capture pre-apply unsat baseline + inconsistency, then apply the batch. */
-    private static PreApply preApply(OWLModelManager mm, List<Map<String, Object>> operations,
-            boolean strict) {
+    @SuppressWarnings("unchecked")
+    private static PreApply preApply(OWLModelManager mm, String verify,
+            Function<OWLModelManager, Object> applier) {
         ReasonerStatus status = mm.getOWLReasonerManager().getReasonerStatus();
         boolean preInconsistent = status == ReasonerStatus.INCONSISTENT;
         boolean baselineAvailable = resultsCurrent(status);
@@ -126,9 +144,24 @@ final class ApplyVerify {
                 baselineAvailable = false;   // could not read a baseline → cannot attribute later
             }
         }
+        if (MODE_ROLLBACK.equals(verify) && !baselineAvailable) {
+            // Fail closed: rollback promises "reverted on regression", which is impossible to
+            // honor without a pre-apply baseline. Refuse up front — nothing has been applied yet —
+            // instead of applying a batch that can then only be reported as unverifiable.
+            return new PreApply(Tools.error("verify=rollback needs a usable pre-apply reasoner "
+                    + "baseline, but none is available (reasoner status: " + status + " — the "
+                    + "cold-start classification failed, timed out, or its results could not be "
+                    + "read). NOTHING was applied. Run run_reasoner to surface the reasoner "
+                    + "error, or re-run with verify=report or verify=none."));
+        }
         HistoryManager hm = mm.getHistoryManager();
         int loggedBefore = hm.getLoggedChanges().size();
-        Map<String, Object> batch = WriteTools.applyBatchData(mm, operations, strict);
+        Object result = applier.apply(mm);
+        if (result instanceof CallToolResult) {
+            // The applier declined (e.g. strict refusal) — nothing was applied; short-circuit.
+            return new PreApply((CallToolResult) result);
+        }
+        Map<String, Object> batch = (Map<String, Object>) result;
         // Use the ACTUAL post-apply log size as the intervening-change baseline, not loggedBefore+1: the
         // model manager's ChangeListMinimizer can collapse the batch to zero and log NO undo entry even
         // when applyBatch planned changes, so a +1 assumption would over/under-count. "committed to the
@@ -248,11 +281,13 @@ final class ApplyVerify {
             v.put("concurrent_change", true);
         }
         v.put("note", note(pre, o));
-        return Tools.json()
-                .put("operations", pre.batch.get("operations"))
-                .put("summary", pre.batch.get("summary"))
-                .put("verify", v.map())
-                .result();
+        // The applier's own payload (apply_changes: operations/summary; the curation batches:
+        // created/count/applied/new_entities) carries through unchanged, with 'verify' appended.
+        Tools.Json out = Tools.json();
+        for (Map.Entry<String, Object> e : pre.batch.entrySet()) {
+            out.put(e.getKey(), e.getValue());
+        }
+        return out.put("verify", v.map()).result();
     }
 
     private static String note(PreApply pre, Outcome o) {
@@ -347,6 +382,8 @@ final class ApplyVerify {
         final boolean committed;
         /** The log size right after our apply — the intervening-change baseline. */
         final int expectedLogged;
+        /** Non-null when the applier refused (nothing applied) — returned to the client verbatim. */
+        final CallToolResult declined;
 
         PreApply(boolean baselineAvailable, boolean preInconsistent, Set<String> preUnsat,
                 Map<String, Object> batch, boolean committed, int expectedLogged) {
@@ -356,6 +393,17 @@ final class ApplyVerify {
             this.batch = batch;
             this.committed = committed;
             this.expectedLogged = expectedLogged;
+            this.declined = null;
+        }
+
+        PreApply(CallToolResult declined) {
+            this.baselineAvailable = false;
+            this.preInconsistent = false;
+            this.preUnsat = Collections.emptySet();
+            this.batch = Collections.emptyMap();
+            this.committed = false;
+            this.expectedLogged = 0;
+            this.declined = declined;
         }
     }
 }

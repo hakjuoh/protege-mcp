@@ -21,6 +21,67 @@ each section is also published as the body of its
 
 ---
 
+## [0.4.3] - 2026-07-08
+
+**Operational-safety and transparency patch on top of the 0.4.2 reliability release: destructive
+tools gain dry-runs, saving becomes explicit about formats and unsaved work, a silently-ignored SWRL
+rule set is surfaced, and an inconsistent ontology finally gets a diagnosis path.** **65 → 66 tools.**
+
+### New tools
+- **`explain_inconsistency`** — explain WHY the ontology is inconsistent: finds a **minimal** set of
+  asserted logical axioms that are jointly inconsistent (or a reduced, still-inconsistent set flagged
+  `minimal=false` when the `timeout_ms` budget expires first). Runs the **selected** reasoner over a
+  private copy of the imports closure, off the UI thread; the live reasoner state is untouched. The
+  search uses `isConsistent()` as its only oracle, so it works where the justification generator
+  cannot: every existing explanation/query tool throws `InconsistentOntologyException` over an
+  inconsistent ontology — those tools now return a pointed error directing here instead of the raw
+  exception, and `run_reasoner` / `validate_ontology` INCONSISTENT messages name this entry point.
+
+### Added
+- **`save_ontology all=true`** saves **every** ontology with unsaved changes to its own existing
+  document in one call, reporting per-ontology results — an ontology without a file (never saved /
+  loaded from the web) is reported as `skipped` with a reason instead of being written somewhere
+  surprising. **`list_ontologies`** now marks each ontology `dirty` (unsaved changes), reports its
+  `document` location, and totals `dirty_count`, so "what have I not saved?" is one read call.
+- **Dry-runs for the destructive / high-blast-radius tools.** `rename_entity`, `delete_entity` and
+  `merge_ontology_document` take `preview=true` (read-only-safe): the tool computes the exact change
+  set the apply would use and reports it — rename: rewrite count, a rendered sample, and whether the
+  new IRI already exists (a rename would merge the two entities); delete: every axiom that would be
+  removed (count + sample) per deleted pun; merge: what would be copied/removed, how many source
+  axioms are `already_present`, and `total_changes` — without touching the ontology.
+- **`undo_change peek=true`** inspects the next-undo transaction (change count + a rendered sample,
+  non-axiom changes counted) without undoing; `undo_change` / `redo_change` also report the undo-stack
+  depth (`undo_depth`). The redo stack has no public accessor in Protégé, so redo stays a boolean.
+- **`create_terms` / `create_properties` gain `verify=report|rollback`** — the same post-apply
+  reasoner regression check as `apply_changes` (newly unsatisfiable class or newly inconsistent
+  ontology; `rollback` reverts the whole batch in its single undo transaction). The verify
+  orchestration is shared, so semantics (write mutex, intervening-edit degrade, warm/cold
+  classification) match `apply_changes` exactly. `rollback` (on all three tools) now **fails
+  closed**: when no pre-apply baseline classification can be established (cold-start
+  classification failed or timed out), it refuses up front and applies **nothing**, instead of
+  applying a batch that could only be reported as unverifiable.
+
+### Fixed
+- **`save_ontology` no longer silently falls back on an unknown extension.** Saving to `pets.obo`
+  used to write the ontology's current format (or RDF/XML) under an `.obo` name; `.obo` now maps to
+  the real OBO format, and any *unrecognized* extension is an error listing the supported ones
+  (`.ttl`/`.turtle`, `.owl`/`.rdf`/`.xml`, `.owx`, `.omn`, `.ofn`/`.fss`, `.obo`). A path with no
+  extension still keeps the current format. The same policy applies to `extract_module` `path` (validated up front, before the extraction).
+- **A silently rule-blind classification now warns.** ELK has no SWRL support and quietly ignores
+  rules, so classification "succeeds" with every rule-derived inference missing. When the ontology
+  (with imports) contains SWRL rules and the selected reasoner is ELK, `run_reasoner` attaches a
+  `warning` and the `run_qc_suite` reasoner stage carries the same warning in its findings summary
+  (surfaced, deliberately not gated) — completing the 0.4.2 axis that surfaced HermiT's loud SWRL
+  built-in failure and ELK's incomplete complex-expression DL queries.
+- **Reasoner query tools no longer die with a raw exception over an inconsistent ontology.**
+  `get_unsatisfiable_classes`, `get_inferred_superclasses`, `execute_dl_query`, `explain_entailment`
+  and `get_explanations` returned the bare `InconsistentOntologyException: Inconsistent ontology`
+  (and `validate_ontology`'s INCONSISTENT note recommended two of those failing tools as the remedy);
+  all now return an actionable error pointing at `explain_inconsistency`.
+- **`delete_entity` renders what it deleted with labels.** The `deleted[]` confirmation was rendered
+  *after* the axioms (including `rdfs:label`) were removed, so it showed bare IRI fragments; it is
+  now rendered from the pre-delete state.
+
 ## [0.4.2] - 2026-07-07
 
 **Reliability and authoring-ergonomics fixes surfaced by a full multi-module ontology reconstruction

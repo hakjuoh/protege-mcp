@@ -230,13 +230,13 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (65 tools + 6 prompts)
+## 5. MCP Tool Catalog (66 tools + 6 prompts)
 
-Sixty-five tools — 7 read, 2 context, 20 edit/curation/history/persistence (incl. `preview_changes`,
+Sixty-six tools — 7 read, 2 context, 20 edit/curation/history/persistence (incl. `preview_changes`,
 `apply_changes`, `set_label`, `create_term`, `create_terms`, `create_property`, `create_properties`, `deprecate_entity`,
 `move_class`), 6 ontology-header (incl. `set_prefix`), 5 document (incl. `set_active_ontology`,
 `create_ontology`, `write_catalog`), 1 module (`extract_module`), 3 rule
-(`list_rules`/`add_rule`/`remove_rule`), 8 reasoner, 3 SPARQL
+(`list_rules`/`add_rule`/`remove_rule`), 9 reasoner (incl. `explain_inconsistency`, new in `0.4.3`), 3 SPARQL
 (`sparql_query`/`sparql_schema`/`sparql_validate`), 4 validation (incl. `diff_ontologies`,
 `validate_governance`, `shacl_validate`), and — new in `0.4.0` — 6 safe/testable-authoring tools
 (`add_competency_question` / `list_competency_questions` / `remove_competency_question` /
@@ -345,9 +345,28 @@ embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern)
   reasoner, no invariants, no CQs, no SHACL shapes) is **skipped with a reason, never an error**; the gate is the
   worst *ran* stage versus `fail_on`.
 
+New in `0.4.3` (operational safety / transparency): `save_ontology` maps `.obo` and makes an
+*unrecognized* extension a hard error instead of a silent format fallback (extensionless paths still keep
+the current format), and gains `all=true` (save every dirty ontology to its own document, file-less ones
+reported as skipped); `list_ontologies` reports per-ontology `dirty` + `document` and a `dirty_count`;
+`rename_entity` / `delete_entity` / `merge_ontology_document` gain `preview=true` (report the exact change
+set / blast radius without applying — the same computed change list the apply path uses); `undo_change`
+gains `peek=true` (inspect the next-undo transaction via `HistoryManager.getLoggedChanges()`; the redo
+stack has no public accessor, so redo stays boolean) and both history tools report `undo_depth`;
+`run_reasoner` and the `run_qc_suite` reasoner stage warn when the ontology has SWRL rules the selected
+reasoner silently ignores (ELK — surfaced, deliberately not gated); `create_terms` / `create_properties`
+gain `apply_changes`-style `verify=report|rollback` (the `ApplyVerify` orchestration now takes the batch
+as an injected applier); and **`explain_inconsistency`** finds a minimal jointly-inconsistent axiom set via
+a contraction-only search over a private closure copy — `OWLReasoner.isConsistent()` is the sole oracle
+(the one query that does not throw `InconsistentOntologyException`; the clarkparsia black-box generator's
+first satisfiability probe throws, and a lenient-config variant seeds only from `owl:Thing` and finds
+nothing) — off the EDT and time-bounded (budget expiry returns the still-inconsistent-but-unminimized set,
+flagged `minimal=false`). The reasoner-backed query tools now convert `InconsistentOntologyException` into
+a pointed error naming `explain_inconsistency`.
+
 | Tool | Mapping / notes |
 |---|---|
-| `list_ontologies` | `OWLModelManager.getOntologies()` / `getActiveOntologies()` + `getActiveOntology()`; marks the active one |
+| `list_ontologies` | `OWLModelManager.getOntologies()` / `getActiveOntologies()` + `getActiveOntology()`; marks the active one; `0.4.3`: per-ontology `dirty` (`getDirtyOntologies()`) + `document` IRI |
 | `get_active_ontology` | `getActiveOntology().getOntologyID()`, axiom/logical-axiom counts, imports. ⚠️ `isActiveOntologyMutable()` is **always true**, so write protection is a plugin-side setting |
 | `summarize_ontology` | signature, annotation/import, and axiom-type counts over the active ontology, optionally including imports |
 | `list_classes` | `getActiveOntology().getClassesInSignature()` + `OWLModelManager.getRendering(obj)` |
@@ -370,8 +389,8 @@ embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern)
 | `create_ontology` | `OWLModelManager.createNewOntology(id, physicalURI)` (collision guard; sets active + fires `ONTOLOGY_CREATED`; optional `keep_active`; not undoable) |
 | `write_catalog` | build an `org.protege.xmlcatalog.XMLCatalog` of `UriEntry`s mapping each `owl:imports` declaration IRI (and the resolved ontology's IRI/version) to its local file (relativized via `CatalogUtilities.relativize`), then `CatalogUtilities.save(catalog, catalog-v001.xml)` — a filesystem write, not undoable |
 | `list_rules` / `add_rule` / `remove_rule` | `getAxioms(AxiomType.SWRL_RULE)`; build `SWRLRule`s from structured body/head atoms via `getSWRL*` factory methods (`?name`/`?<IRI>` → `getSWRLVariable(IRI)` preserves named variable IRIs); rule annotations via `getSWRLRule(body, head, annotations)`; remove via `RemoveAxiom` |
-| `undo_change` / `redo_change` | `getHistoryManager().undo()/redo()` (shared with the GUI) |
-| `save_ontology` | `OWLModelManager.save()` |
+| `undo_change` / `redo_change` | `getHistoryManager().undo()/redo()` (shared with the GUI); `0.4.3`: both report `undo_depth` (`getLoggedChanges().size()`), and `undo_change peek=true` renders the last logged transaction without undoing |
+| `save_ontology` | `OWLModelManager.save()` / `save(ontology)`; save-as picks the format from the extension (unknown extension = error, `0.4.3`); `all=true` loops `getDirtyOntologies()` (file-less documents skipped-with-reason) |
 | `list_reasoners` / `set_reasoner` | `OWLReasonerManager.getInstalledReasonerFactories()` / `setCurrentReasonerFactoryId(id)` |
 | `run_reasoner` | `classifyAsynchronously(...)` then `EmbeddedClassificationWaiter` (listener + latch, §4.1 item 7) |
 | `get_unsatisfiable_classes` | `getUnsatisfiableClasses()` returns a `Node<OWLClass>`; reported via `getEntitiesMinusBottom()` |
@@ -379,6 +398,7 @@ embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern)
 | `execute_dl_query` | resolve a Manchester class expression, then `reasoner.getEquivalentClasses/getSubClasses/getSuperClasses/getInstances` (DL Query workbench) |
 | `explain_entailment` | `reasoner.isEntailed(axiom)` for a structured axiom |
 | `get_explanations` | `com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator.getExplanations(axiom, max)` — minimal justifications, using the selected reasoner's factory; for an axiom type the generator can't convert, falls back to an `isEntailed` check plus the related asserted axioms as structural context (capped) |
+| `explain_inconsistency` (`0.4.3`) | contraction-only minimal-inconsistent-subset search over an `isolatedClosure` copy, `OWLReasoner.isConsistent()` as the sole oracle (fresh reasoner per probe, disposed), fast window pass + one-by-one pass, time-bounded off the EDT; renders on the EDT |
 | `diff_ontologies` | pure set difference over `getAxioms()` / `getLogicalAxioms()` (optionally imports closures) of two loaded ontologies, or the active ontology vs. a document loaded into a throwaway manager; `identical=true` ⇔ both sides empty (a faithful round-trip) |
 | `add_competency_question` / `list_competency_questions` / `remove_competency_question` (`0.4.0`) | upsert / detect+union / remove CQs across the `CqStore` conventions (`robot-sparql-dir` `*.rq`, `sidecar-manifest` JSON, `ontology-annotations`); writes gated by `checkWriteAllowed`, ids sanitised, malformed entries skipped-with-reason |
 | `run_competency_questions` (`0.4.0`) | load the matching CQs, build ONE `SuiteSnapshot` (asserted + at most one inferred materialisation), then judge each query off the EDT via `SparqlTools.execute` against its `Expectation` (`nonEmpty`/`empty`/`count`/`exactRows`); per-CQ pass + overall `{passed, failed, gate}`, open-world / truncation caveats surfaced |

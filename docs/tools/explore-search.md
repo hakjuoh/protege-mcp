@@ -19,7 +19,7 @@ Read-only tools for getting your bearings in the currently loaded ontologies: li
 
 ## `list_ontologies`
 
-Lists every ontology currently loaded in Protégé — the active ontology together with its imports closure — and marks which one is active. Reach for it first to see what is available and to confirm which ontology your edits will target.
+Lists every ontology currently loaded in the Protégé workspace — the active ontology, its imports closure, and any other loaded ontologies — and marks which one is active, which have **unsaved changes** (dirty), and where each is saved (its document). Reach for it first to see what is available, to confirm which ontology your edits will target, and to check what still needs saving before `save_ontology`.
 
 *Read-only.*
 
@@ -31,8 +31,9 @@ None.
 
 - `count`: integer — number of loaded ontologies.
 - `active`: string — the active ontology's label (its ontology IRI, or `(anonymous ontology)`).
-- `ontologies`: array — one row per loaded ontology, each `{id, anonymous, active, axioms, logical_axioms}` where `id` is the ontology label (string), `anonymous` and `active` are booleans, and `axioms`/`logical_axioms` are the total and logical axiom counts.
-- `note`: string — a reminder that the active ontology is the target of edits.
+- `dirty_count`: integer — number of loaded ontologies with unsaved changes.
+- `ontologies`: array — one row per loaded ontology, each `{id, anonymous, active, dirty, axioms, logical_axioms, document}` where `id` is the ontology label (string), `anonymous`/`active`/`dirty` are booleans (`dirty` = unsaved changes), `axioms`/`logical_axioms` are the total and logical axiom counts, and `document` is the document IRI it was loaded from / saves to.
+- `note`: string — a reminder that the active ontology is the target of edits and that `save_ontology` writes the active ontology (`all=true` saves every dirty one).
 
 **Example**
 

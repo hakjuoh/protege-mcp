@@ -10,12 +10,14 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
 import org.junit.jupiter.api.Test;
 import org.protege.editor.owl.model.OWLModelManager;
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.model.AddOntologyAnnotation;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
 import org.semanticweb.owlapi.model.OWLClass;
@@ -29,16 +31,19 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
+import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+
 /**
- * Method-level tests for the Protégé-free helper cores of {@link EntityRefactorTools}
- * ({@code typeKey}, {@code byIri}, {@code resolveTargets}, {@code describe}). These are private static
- * methods, so they are invoked reflectively; entity resolution is driven through the shared
- * {@link FakeModelManager} harness over hand-built in-memory ontologies.
+ * Method-level tests for the Protégé-free helper cores of {@link EntityRefactorTools}: the private
+ * statics ({@code typeKey}, {@code byIri}, {@code resolveTargets}, {@code describe}, invoked
+ * reflectively) and the package-private tool cores {@code renameEntity}/{@code deleteEntity} (called
+ * directly), in both preview and apply mode. Entity resolution and rendering are driven through the
+ * shared {@link FakeModelManager} harness over hand-built in-memory ontologies; the fake's
+ * {@code applyChanges} routes to the real OWL API manager, so apply-mode mutation is observable.
  *
- * <p>The {@code specs(ToolContext)} factory and both tool-handler lambdas are intentionally not
- * exercised here: they route through {@code WriteTools.write} / {@code OWLModelManager.applyChanges}
- * and the OWL entity renamer/remover against the live Protégé runtime, which is out of scope for a
- * headless unit test.
+ * <p>The {@code register(ToolRegistry, ToolContext)} wiring and its handler lambdas are intentionally
+ * not exercised here: they route through {@code WriteTools.write} and the access gate against the
+ * live Protégé runtime, which is out of scope for a headless unit test.
  */
 class EntityRefactorToolsTest {
 
@@ -91,6 +96,20 @@ class EntityRefactorToolsTest {
         }
     }
 
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> structured(CallToolResult r) {
+        return (Map<String, Object>) r.structuredContent();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> mapList(Map<String, Object> m, String key) {
+        return (List<Map<String, Object>>) m.get(key);
+    }
+
+    private static int intOf(Map<String, Object> m, String key) {
+        return ((Number) m.get(key)).intValue();
+    }
+
     // ------------------------------------------------------------------ fixtures
 
     private OWLDataFactory df;
@@ -105,6 +124,59 @@ class EntityRefactorToolsTest {
     /** Declare an entity in the ontology signature so the finder can resolve it. */
     private void declare(OWLOntology o, OWLEntity e) {
         m.addAxiom(o, df.getOWLDeclarationAxiom(e));
+    }
+
+    /**
+     * Rename fixture: {@code Widget} referenced by three axioms (its declaration, a SubClassOf to
+     * {@code Device}, and an rdfs:label), so a rename rewrites 3 axioms = 6 changes (remove + add
+     * per axiom). {@code Device} is declared too, giving a collision target for merge previews.
+     */
+    private OWLOntology renameFixture() throws OWLOntologyCreationException {
+        OWLOntology o = fresh();
+        OWLClass widget = df.getOWLClass(IRI.create(NS + "Widget"));
+        OWLClass device = df.getOWLClass(IRI.create(NS + "Device"));
+        declare(o, widget);
+        declare(o, device);
+        m.addAxiom(o, df.getOWLSubClassOfAxiom(widget, device));
+        m.addAxiom(o, df.getOWLAnnotationAssertionAxiom(df.getRDFSLabel(), widget.getIRI(),
+                df.getOWLLiteral("widget", "en")));
+        return o;
+    }
+
+    /**
+     * Delete fixture: class {@code A} referenced by three axioms (declaration, rdfs:label, and a
+     * SubClassOf to the declared class {@code B}), so deleting {@code A} removes exactly 3 axioms
+     * and leaves only {@code B}'s declaration behind.
+     */
+    private OWLOntology deleteFixture() throws OWLOntologyCreationException {
+        OWLOntology o = fresh();
+        OWLClass a = df.getOWLClass(IRI.create(NS + "A"));
+        OWLClass b = df.getOWLClass(IRI.create(NS + "B"));
+        declare(o, a);
+        declare(o, b);
+        m.addAxiom(o, df.getOWLSubClassOfAxiom(a, b));
+        m.addAxiom(o, df.getOWLAnnotationAssertionAxiom(df.getRDFSLabel(), a.getIRI(),
+                df.getOWLLiteral("a label")));
+        return o;
+    }
+
+    /**
+     * Pun fixture: one IRI {@code Pun} declared both as a class (with a SubClassOf to {@code Other})
+     * and as a named individual (with a ClassAssertion), so an {@code entity_type} filter can carve
+     * off exactly one of the two puns. 5 axioms in total; 2 reference only the class pun.
+     */
+    private OWLOntology punFixture() throws OWLOntologyCreationException {
+        OWLOntology o = fresh();
+        IRI pun = IRI.create(NS + "Pun");
+        OWLClass punCls = df.getOWLClass(pun);
+        OWLNamedIndividual punInd = df.getOWLNamedIndividual(pun);
+        OWLClass other = df.getOWLClass(IRI.create(NS + "Other"));
+        declare(o, punCls);
+        declare(o, punInd);
+        declare(o, other);
+        m.addAxiom(o, df.getOWLSubClassOfAxiom(punCls, other));
+        m.addAxiom(o, df.getOWLClassAssertionAxiom(other, punInd));
+        return o;
     }
 
     // ------------------------------------------------------------------ typeKey
@@ -354,6 +426,276 @@ class EntityRefactorToolsTest {
         String d = describe(mm, two);
         assertEquals("2 entities at <" + shared + ">", d,
                 "multi-entity describe reports the count and the shared IRI");
+    }
+
+    // ------------------------------------------------------------------ renameEntity: preview
+
+    @Test
+    void renamePreviewReportsChangesWithoutMutating() throws OWLOntologyCreationException {
+        OWLOntology o = renameFixture();
+        OWLModelManager mm = FakeModelManager.over(o);
+        int axiomsBefore = o.getAxiomCount();
+
+        CallToolResult r = EntityRefactorTools.renameEntity(mm, NS + "Widget", NS + "Gizmo", true);
+        Map<String, Object> res = structured(r);
+
+        assertEquals(Boolean.TRUE, res.get("preview"), "preview mode is reported");
+        assertEquals(NS + "Widget", res.get("old_iri"), "old IRI is echoed");
+        assertEquals(NS + "Gizmo", res.get("new_iri"), "new IRI is echoed");
+        assertEquals(6, intOf(res, "changes"), "3 referencing axioms -> remove+add each = 6 changes");
+        assertEquals(Boolean.FALSE, res.get("new_iri_already_in_signature"),
+                "Gizmo does not exist yet, so no merge collision");
+        List<Map<String, Object>> sample = mapList(res, "rewritten_axioms_sample");
+        assertEquals(3, sample.size(), "one sample entry per rewritten (add) axiom");
+        for (Map<String, Object> ax : sample) {
+            String rendering = String.valueOf(ax.get("rendering"));
+            assertTrue(rendering.contains(NS + "Gizmo"),
+                    "sample shows the axiom as it would read AFTER the rename: " + rendering);
+            assertFalse(rendering.contains(NS + "Widget"),
+                    "the old IRI no longer appears in the rewritten axiom: " + rendering);
+        }
+        assertTrue(String.valueOf(res.get("note")).contains("Nothing was changed"),
+                "the note says the preview applied nothing");
+
+        // And indeed nothing changed.
+        assertEquals(axiomsBefore, o.getAxiomCount(), "axiom count is untouched by the preview");
+        assertTrue(o.containsEntityInSignature(IRI.create(NS + "Widget")),
+                "the old IRI is still in the signature");
+        assertFalse(o.containsEntityInSignature(IRI.create(NS + "Gizmo")),
+                "the new IRI was not introduced");
+    }
+
+    @Test
+    void renamePreviewFlagsSignatureCollisionAsMerge() throws OWLOntologyCreationException {
+        OWLOntology o = renameFixture();
+        OWLModelManager mm = FakeModelManager.over(o);
+        int axiomsBefore = o.getAxiomCount();
+
+        // Device is already declared: renaming Widget onto it would merge the two classes.
+        CallToolResult r = EntityRefactorTools.renameEntity(mm, NS + "Widget", NS + "Device", true);
+        Map<String, Object> res = structured(r);
+
+        assertEquals(Boolean.TRUE, res.get("preview"));
+        assertEquals(Boolean.TRUE, res.get("new_iri_already_in_signature"),
+                "the existing Device IRI is flagged as a collision");
+        assertTrue(String.valueOf(res.get("note")).contains("merge"),
+                "the note warns that the rename would merge the two entities");
+        assertEquals(axiomsBefore, o.getAxiomCount(), "the collision preview changed nothing");
+        assertTrue(o.containsEntityInSignature(IRI.create(NS + "Widget")),
+                "Widget survives the preview");
+    }
+
+    // ------------------------------------------------------------------ renameEntity: apply
+
+    @Test
+    void renameApplyRewritesReferencesAndMatchesPreviewCount() throws OWLOntologyCreationException {
+        // Preview on one fixture...
+        OWLModelManager previewMm = FakeModelManager.over(renameFixture());
+        int previewedChanges = intOf(structured(
+                EntityRefactorTools.renameEntity(previewMm, NS + "Widget", NS + "Gizmo", true)),
+                "changes");
+
+        // ...apply on an identical fixture: same change count, but this time it mutates.
+        OWLOntology o = renameFixture();
+        OWLModelManager mm = FakeModelManager.over(o);
+        int axiomsBefore = o.getAxiomCount();
+        CallToolResult r = EntityRefactorTools.renameEntity(mm, NS + "Widget", NS + "Gizmo", false);
+        Map<String, Object> res = structured(r);
+
+        assertEquals(Boolean.TRUE, res.get("renamed"), "apply mode reports renamed=true");
+        assertEquals(NS + "Widget", res.get("old_iri"));
+        assertEquals(NS + "Gizmo", res.get("new_iri"));
+        assertEquals(previewedChanges, intOf(res, "changes"),
+                "apply performs exactly the change list the preview reported");
+        assertFalse(o.containsEntityInSignature(IRI.create(NS + "Widget")),
+                "the old IRI is gone from the signature");
+        assertTrue(o.containsEntityInSignature(IRI.create(NS + "Gizmo")),
+                "the new IRI took its place");
+        assertEquals(axiomsBefore, o.getAxiomCount(),
+                "a rename rewrites axioms without changing their number");
+    }
+
+    // ------------------------------------------------------------------ deleteEntity: preview
+
+    @Test
+    void deletePreviewReportsBlastRadiusWithoutMutating() throws OWLOntologyCreationException {
+        OWLOntology o = deleteFixture();
+        OWLModelManager mm = FakeModelManager.over(o);
+        int axiomsBefore = o.getAxiomCount();
+
+        CallToolResult r = EntityRefactorTools.deleteEntity(mm, NS + "A", null, true);
+        Map<String, Object> res = structured(r);
+
+        assertEquals(Boolean.TRUE, res.get("preview"), "preview mode is reported");
+        List<Map<String, Object>> wouldDelete = mapList(res, "would_delete");
+        assertEquals(1, wouldDelete.size(), "exactly the one resolved entity would be deleted");
+        assertEquals(NS + "A", wouldDelete.get(0).get("iri"));
+        assertEquals("Class", wouldDelete.get(0).get("type"));
+        assertEquals(3, intOf(res, "removed_axioms"),
+                "declaration + label + SubClassOf all reference A");
+        assertEquals(3, mapList(res, "removed_axioms_sample").size(),
+                "every removed axiom fits in the sample");
+        assertTrue(String.valueOf(res.get("note")).contains("Nothing was deleted"),
+                "the note says the preview applied nothing");
+
+        assertEquals(axiomsBefore, o.getAxiomCount(), "axiom count is untouched by the preview");
+        assertTrue(o.containsEntityInSignature(IRI.create(NS + "A")),
+                "A is still in the signature");
+    }
+
+    @Test
+    void deletePreviewSampleIsCappedAtLimit() throws OWLOntologyCreationException {
+        OWLOntology o = fresh();
+        OWLClass hub = df.getOWLClass(IRI.create(NS + "Hub"));
+        declare(o, hub);
+        // 25 subclass axioms + the declaration = 26 referencing axioms, above the 20-axiom cap.
+        for (int i = 0; i < 25; i++) {
+            OWLClass spoke = df.getOWLClass(IRI.create(NS + "Spoke" + i));
+            declare(o, spoke);
+            m.addAxiom(o, df.getOWLSubClassOfAxiom(spoke, hub));
+        }
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        Map<String, Object> res = structured(
+                EntityRefactorTools.deleteEntity(mm, NS + "Hub", null, true));
+        assertEquals(26, intOf(res, "removed_axioms"), "the count reports the full blast radius");
+        assertEquals(EntityRefactorTools.PREVIEW_SAMPLE_LIMIT,
+                mapList(res, "removed_axioms_sample").size(),
+                "the rendered sample stops at PREVIEW_SAMPLE_LIMIT");
+    }
+
+    // ------------------------------------------------------------------ deleteEntity: apply
+
+    @Test
+    void deleteApplyRemovesEntityAndReferencingAxioms() throws OWLOntologyCreationException {
+        OWLOntology o = deleteFixture();
+        OWLClass a = df.getOWLClass(IRI.create(NS + "A"));
+        OWLClass b = df.getOWLClass(IRI.create(NS + "B"));
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        CallToolResult r = EntityRefactorTools.deleteEntity(mm, NS + "A", null, false);
+        Map<String, Object> res = structured(r);
+
+        List<Map<String, Object>> deleted = mapList(res, "deleted");
+        assertEquals(1, deleted.size(), "the one deleted entity is rendered back");
+        assertEquals(NS + "A", deleted.get(0).get("iri"));
+        assertEquals("A", deleted.get(0).get("display"), "display uses the manager rendering");
+        assertEquals(3, intOf(res, "removed_axioms"));
+
+        assertFalse(o.containsEntityInSignature(a.getIRI()), "A is gone from the signature");
+        assertFalse(o.containsAxiom(df.getOWLSubClassOfAxiom(a, b)),
+                "the SubClassOf referencing A was removed");
+        assertTrue(o.containsAxiom(df.getOWLDeclarationAxiom(b)),
+                "the unrelated declaration of B survives");
+        assertEquals(1, o.getAxiomCount(), "only B's declaration is left");
+    }
+
+    @Test
+    void deletePunnedIriNarrowedByEntityTypePreviewThenApply() throws OWLOntologyCreationException {
+        OWLOntology o = punFixture();
+        IRI pun = IRI.create(NS + "Pun");
+        OWLClass punCls = df.getOWLClass(pun);
+        OWLNamedIndividual punInd = df.getOWLNamedIndividual(pun);
+        OWLClass other = df.getOWLClass(IRI.create(NS + "Other"));
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        // Preview first: only the class pun and its 2 referencing axioms are in scope.
+        Map<String, Object> preview = structured(
+                EntityRefactorTools.deleteEntity(mm, pun.toString(), "class", true));
+        assertEquals(Boolean.TRUE, preview.get("preview"));
+        List<Map<String, Object>> wouldDelete = mapList(preview, "would_delete");
+        assertEquals(1, wouldDelete.size(), "entity_type=class narrows the pun to one entity");
+        assertEquals("Class", wouldDelete.get(0).get("type"));
+        assertEquals(2, intOf(preview, "removed_axioms"),
+                "only the class declaration and its SubClassOf are counted");
+        assertEquals(5, o.getAxiomCount(), "the preview left all 5 axioms in place");
+
+        // Then apply on the same (untouched) ontology.
+        Map<String, Object> res = structured(
+                EntityRefactorTools.deleteEntity(mm, pun.toString(), "class", false));
+        assertEquals(1, mapList(res, "deleted").size());
+        assertEquals("Class", mapList(res, "deleted").get(0).get("type"));
+        assertEquals(2, intOf(res, "removed_axioms"));
+
+        assertFalse(o.containsAxiom(df.getOWLDeclarationAxiom(punCls)),
+                "the class pun's declaration was removed");
+        assertFalse(o.containsAxiom(df.getOWLSubClassOfAxiom(punCls, other)),
+                "the class pun's SubClassOf was removed");
+        assertTrue(o.containsAxiom(df.getOWLDeclarationAxiom(punInd)),
+                "the individual pun's declaration survives");
+        assertTrue(o.containsAxiom(df.getOWLClassAssertionAxiom(other, punInd)),
+                "the individual pun's ClassAssertion survives");
+        assertTrue(o.containsEntityInSignature(pun),
+                "the IRI stays in the signature through the surviving individual");
+    }
+
+    // ------------------------------------------------------------------ error branches
+
+    @Test
+    void renameUnknownEntityIsErrorInBothModes() throws OWLOntologyCreationException {
+        OWLModelManager mm = FakeModelManager.over(renameFixture());
+        for (boolean preview : new boolean[] { true, false }) {
+            CallToolResult r = EntityRefactorTools.renameEntity(
+                    mm, NS + "Missing", NS + "Anywhere", preview);
+            assertEquals(Boolean.TRUE, r.isError(), "unknown entity is an error (preview=" + preview + ")");
+            assertTrue(String.valueOf(structured(r).get("error")).contains("Entity not found"),
+                    "the error names the failure");
+        }
+    }
+
+    @Test
+    void renameRelativeNewIriIsErrorInBothModes() throws OWLOntologyCreationException {
+        OWLOntology o = renameFixture();
+        OWLModelManager mm = FakeModelManager.over(o);
+        int axiomsBefore = o.getAxiomCount();
+        for (boolean preview : new boolean[] { true, false }) {
+            CallToolResult r = EntityRefactorTools.renameEntity(mm, NS + "Widget", "JustAName", preview);
+            assertEquals(Boolean.TRUE, r.isError(), "a relative new_iri is refused (preview=" + preview + ")");
+            assertTrue(String.valueOf(structured(r).get("error"))
+                    .contains("new_iri must be a full absolute IRI"), "the error explains the requirement");
+        }
+        assertEquals(axiomsBefore, o.getAxiomCount(), "nothing was applied on the error path");
+    }
+
+    @Test
+    void renameToIdenticalIriIsError() throws OWLOntologyCreationException {
+        OWLModelManager mm = FakeModelManager.over(renameFixture());
+        CallToolResult r = EntityRefactorTools.renameEntity(mm, NS + "Widget", NS + "Widget", false);
+        assertEquals(Boolean.TRUE, r.isError(), "renaming to the same IRI is refused");
+        assertTrue(String.valueOf(structured(r).get("error")).contains("already has IRI"),
+                "the error says the entity already carries that IRI");
+    }
+
+    @Test
+    void deleteUnknownEntityIsErrorAndNamesTheTypeFilter() throws OWLOntologyCreationException {
+        OWLModelManager mm = FakeModelManager.over(deleteFixture());
+        CallToolResult r = EntityRefactorTools.deleteEntity(mm, NS + "Missing", null, true);
+        assertEquals(Boolean.TRUE, r.isError(), "unknown entity is an error");
+        assertTrue(String.valueOf(structured(r).get("error")).contains("Entity not found"));
+
+        // A pun narrowed to a type with no entity of that type also fails, and says which type.
+        CallToolResult typed = EntityRefactorTools.deleteEntity(mm, NS + "A", "individual", false);
+        assertEquals(Boolean.TRUE, typed.isError(), "no pun of the requested type -> error");
+        assertTrue(String.valueOf(structured(typed).get("error")).contains("of type individual"),
+                "the error repeats the entity_type filter");
+    }
+
+    @Test
+    void deleteEntityWithNoReferencingAxiomsIsError() throws OWLOntologyCreationException {
+        OWLOntology o = fresh();
+        // An annotation property used ONLY in an ontology annotation: it is in the signature (so it
+        // resolves), but no axiom references it, so the remover has nothing to remove.
+        OWLAnnotationProperty note = df.getOWLAnnotationProperty(IRI.create(NS + "note"));
+        m.applyChange(new AddOntologyAnnotation(o,
+                df.getOWLAnnotation(note, df.getOWLLiteral("scratch"))));
+        OWLModelManager mm = FakeModelManager.over(o);
+
+        for (boolean preview : new boolean[] { true, false }) {
+            CallToolResult r = EntityRefactorTools.deleteEntity(mm, NS + "note", null, preview);
+            assertEquals(Boolean.TRUE, r.isError(), "no referencing axioms -> error (preview=" + preview + ")");
+            assertTrue(String.valueOf(structured(r).get("error")).contains("Nothing to delete"),
+                    "the error explains that no axiom references the entity");
+        }
     }
 
     // ------------------------------------------------------------------ helpers

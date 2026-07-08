@@ -2,6 +2,7 @@ package io.github.hakjuoh.protege_mcp.tools;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -11,12 +12,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.Supplier;
 
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.inference.OWLReasonerManager;
 import org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo;
 import org.protege.editor.owl.model.inference.ReasonerStatus;
 import io.github.hakjuoh.protege_mcp.server.EmbeddedClassificationWaiter;
+import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLClassExpression;
@@ -25,11 +28,14 @@ import org.semanticweb.owlapi.model.OWLNamedIndividual;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.reasoner.InconsistentOntologyException;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
 
 import com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator;
 import com.clarkparsia.owlapi.explanation.util.SilentExplanationProgressMonitor;
+
+import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
  * Reasoning tools: select the reasoner, run classification, list unsatisfiable classes, read
@@ -58,13 +64,19 @@ public final class ReasonerTools {
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("run_reasoner",
                 "Run the reasoner selected in Protégé (classify) and wait for completion. Reports the "
-                        + "resulting status and unsatisfiable-class count.",
+                        + "resulting status and unsatisfiable-class count, and warns when the ontology "
+                        + "has SWRL rules the selected reasoner silently ignores (ELK).",
                 Tools.schema().integer("timeout_ms", "Max wait in ms (default 60000).").build(),
                 (ex, req) -> Tools.guard(() -> {
                     int timeout = Tools.optInt(Tools.args(req), "timeout_ms", 60_000);
-                    String pre = ctx.access().compute(mm -> mm.getOWLReasonerManager()
-                            .getReasonerStatus() == ReasonerStatus.NO_REASONER_FACTORY_CHOSEN ? "none" : null);
-                    if ("none".equals(pre)) {
+                    Map<String, Object> pre = ctx.access().compute(mm -> {
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("no_reasoner", mm.getOWLReasonerManager()
+                                .getReasonerStatus() == ReasonerStatus.NO_REASONER_FACTORY_CHOSEN);
+                        m.put("swrl_warning", swrlIgnoredWarning(mm));
+                        return m;
+                    });
+                    if (Boolean.TRUE.equals(pre.get("no_reasoner"))) {
                         return Tools.error("No reasoner is selected in Protégé. Choose one from the "
                                 + "Reasoner menu, then retry.");
                     }
@@ -76,15 +88,20 @@ public final class ReasonerTools {
                             || Boolean.TRUE.equals(res.get("classification_failed"))) {
                         return Tools.error(String.valueOf(res.get("message")));
                     }
+                    if (pre.get("swrl_warning") != null) {
+                        res.put("warning", pre.get("swrl_warning"));
+                    }
                     return Tools.ok(res);
                 }));
 
         tools.tool("get_unsatisfiable_classes",
-                "List unsatisfiable (equivalent to owl:Nothing) classes from the active reasoner.",
+                "List unsatisfiable (equivalent to owl:Nothing) classes from the active reasoner. "
+                        + "If the whole ontology is INCONSISTENT, use explain_inconsistency instead.",
                 Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
-                    return Tools.ok(unsatisfiableClasses(mm, requireReasoner(mm)));
-                })));
+                (ex, req) -> Tools.guard(() -> guardInconsistency("get_unsatisfiable_classes",
+                        () -> ctx.access().compute(mm -> {
+                            return Tools.ok(unsatisfiableClasses(mm, requireReasoner(mm)));
+                        }))));
 
         tools.tool("get_inferred_superclasses",
                 "Read inferred relations from the reasoner. 'relation' is one of superclasses "
@@ -101,8 +118,9 @@ public final class ReasonerTools {
                     String relation = Tools.optString(a, "relation");
                     boolean direct = Tools.optBool(a, "direct", true);
                     String rel = relation == null ? "superclasses" : relation.toLowerCase();
-                    return ctx.access().compute(mm ->
-                            Tools.ok(inferredRelation(mm, requireReasoner(mm), entity, rel, direct)));
+                    return guardInconsistency("get_inferred_superclasses",
+                            () -> ctx.access().compute(mm ->
+                                    Tools.ok(inferredRelation(mm, requireReasoner(mm), entity, rel, direct))));
                 }));
 
         tools.tool("explain_entailment",
@@ -112,8 +130,9 @@ public final class ReasonerTools {
                 Axioms.schema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
-                    return ctx.access().compute(mm ->
-                            Tools.ok(explainEntailment(mm, requireReasoner(mm), Axioms.build(mm, a))));
+                    return guardInconsistency("explain_entailment",
+                            () -> ctx.access().compute(mm ->
+                                    Tools.ok(explainEntailment(mm, requireReasoner(mm), Axioms.build(mm, a)))));
                 }));
 
         tools.tool("get_explanations",
@@ -134,15 +153,17 @@ public final class ReasonerTools {
                     String axiomType = Tools.reqString(a, "axiom_type").toLowerCase();
                     if (!EXPLAINABLE_AXIOM_TYPES.contains(axiomType)) {
                         int fallbackTimeout = Tools.optInt(a, "timeout_ms", 60_000);
-                        return ctx.access().compute(mm -> {
-                            OWLReasoner r = requireReasoner(mm);
-                            OWLAxiom ax = Axioms.build(mm, a);
-                            return Tools.ok(structuralExplanation(mm, ax, axiomType, r.isEntailed(ax)));
-                        }, fallbackTimeout);
+                        return guardInconsistency("get_explanations",
+                                () -> ctx.access().compute(mm -> {
+                                    OWLReasoner r = requireReasoner(mm);
+                                    OWLAxiom ax = Axioms.build(mm, a);
+                                    return Tools.ok(structuralExplanation(mm, ax, axiomType,
+                                            r.isEntailed(ax)));
+                                }, fallbackTimeout));
                     }
                     int max = Tools.optInt(a, "max", 3);
                     int timeout = Tools.optInt(a, "timeout_ms", 60_000);
-                    return ctx.access().compute(mm -> {
+                    return guardInconsistency("get_explanations", () -> ctx.access().compute(mm -> {
                         OWLReasonerManager rm = mm.getOWLReasonerManager();
                         if (rm.getReasonerStatus() == ReasonerStatus.NO_REASONER_FACTORY_CHOSEN) {
                             return Tools.error("No reasoner is selected in Protégé. Use set_reasoner "
@@ -164,7 +185,49 @@ public final class ReasonerTools {
                                 ? gen.getExplanations(ax, max)
                                 : gen.getExplanations(ax);
                         return Tools.ok(explanationsJson(mm, ax, explanations));
-                    }, timeout);
+                    }, timeout));
+                }));
+
+        tools.tool("explain_inconsistency",
+                "Explain WHY the ontology is INCONSISTENT: find a set of asserted logical axioms "
+                        + "that together cause the contradiction. The result's 'minimal' flag "
+                        + "reports whether the set was fully minimized within the time budget "
+                        + "(false = still jointly inconsistent, but reduced-not-minimal). Runs the "
+                        + "selected reasoner over a private copy of the imports closure (off the "
+                        + "UI thread; the live reasoner state is untouched). If the ontology is "
+                        + "consistent it says so. Use after run_reasoner reports INCONSISTENT — "
+                        + "the other explanation/query tools cannot run over an inconsistent "
+                        + "ontology.",
+                Tools.schema()
+                        .integer("timeout_ms", "Time budget in ms for the whole search "
+                                + "(default 60000). On expiry the current still-inconsistent axiom "
+                                + "set is returned with minimal=false.")
+                        .build(),
+                (ex, req) -> Tools.guard(() -> {
+                    int timeout = Tools.optInt(Tools.args(req), "timeout_ms", 60_000);
+                    // Phase 1 (EDT): capture the selected factory + a private closure snapshot.
+                    Object[] snap = ctx.access().compute(mm -> {
+                        OWLReasonerManager rm = mm.getOWLReasonerManager();
+                        if (rm.getReasonerStatus() == ReasonerStatus.NO_REASONER_FACTORY_CHOSEN) {
+                            return null;
+                        }
+                        return new Object[] {
+                                rm.getCurrentReasonerFactory().getReasonerFactory(),
+                                isolatedClosure(mm.getActiveOntology())
+                        };
+                    });
+                    if (snap == null) {
+                        return Tools.error("No reasoner is selected in Protégé. Use set_reasoner "
+                                + "(or the Reasoner menu) to choose one first.");
+                    }
+                    OWLReasonerFactory factory = (OWLReasonerFactory) snap[0];
+                    OWLOntology working = (OWLOntology) snap[1];
+                    // Phase 2 (off the EDT): the contraction search — many fresh reasoners over
+                    // throwaway subsets; would freeze the UI if run in a compute.
+                    InconsistencySearch s = findInconsistentSubset(working, factory, timeout);
+                    // Phase 3 (EDT): render with Protégé's (non-thread-safe) entity renderer.
+                    return ctx.access().compute(mm ->
+                            Tools.ok(inconsistencyJson(mm, s, factory.getReasonerName())));
                 }));
 
         tools.tool("execute_dl_query",
@@ -200,11 +263,12 @@ public final class ReasonerTools {
                     boolean direct = Tools.optBool(a, "direct", true);
                     boolean complete = Tools.optBool(a, "complete", false);
                     int timeout = Tools.optInt(a, "timeout_ms", 60_000);
-                    return ctx.access().compute(mm -> {
-                        OWLReasoner r = requireReasoner(mm);
-                        OWLClassExpression ce = Tools.resolveClassExpression(mm, query);
-                        return Tools.ok(dlQuery(mm, r, query, ce, rel, direct, complete));
-                    }, timeout);
+                    return guardInconsistency("execute_dl_query",
+                            () -> ctx.access().compute(mm -> {
+                                OWLReasoner r = requireReasoner(mm);
+                                OWLClassExpression ce = Tools.resolveClassExpression(mm, query);
+                                return Tools.ok(dlQuery(mm, r, query, ce, rel, direct, complete));
+                            }, timeout));
                 }));
 
         tools.tool("list_reasoners",
@@ -481,8 +545,54 @@ public final class ReasonerTools {
 
     /** Whether {@code r} is the ELK reasoner (which under-reports complex-expression sub/superclasses). */
     private static boolean isElkReasoner(OWLReasoner r) {
-        String name = r.getReasonerName();
+        return isElkName(r.getReasonerName());
+    }
+
+    private static boolean isElkName(String name) {
         return name != null && name.toLowerCase(Locale.ROOT).contains("elk");
+    }
+
+    /**
+     * Advisory for run_reasoner / run_qc_suite when the SELECTED reasoner silently ignores SWRL
+     * rules: ELK has no SWRL support, so classification succeeds but every rule-derived inference
+     * is missing — invisible unless surfaced (HermiT, by contrast, fails loudly on unsupported
+     * built-in atoms, which classification_failed already reports). Returns null when there is
+     * nothing to warn about. Matches the selected FACTORY (name and id), not the live reasoner
+     * instance — the instance reads "Protégé Null Reasoner" before classification and after a
+     * failed one, exactly when this warning matters.
+     */
+    static String swrlIgnoredWarning(OWLModelManager mm) {
+        int rules = 0;
+        for (OWLOntology o : mm.getActiveOntology().getImportsClosure()) {
+            rules += o.getAxiomCount(AxiomType.SWRL_RULE);
+        }
+        if (rules == 0) {
+            return null;
+        }
+        OWLReasonerManager rm = mm.getOWLReasonerManager();
+        String id = rm.getCurrentReasonerFactoryId();
+        String name = null;
+        if (id != null) {
+            for (ProtegeOWLReasonerInfo info : rm.getInstalledReasonerFactories()) {
+                if (id.equals(info.getReasonerId())) {
+                    name = info.getReasonerName();
+                    break;
+                }
+            }
+        }
+        if (!isElkName(name) && !isElkName(id)) {
+            return null;
+        }
+        return swrlIgnoredWarning(rules, name != null ? name : id);
+    }
+
+    /** The warning text itself; parameterized so tests need no live reasoner manager. */
+    static String swrlIgnoredWarning(int rules, String reasonerName) {
+        return "The ontology (with imports) contains " + rules + " SWRL rule"
+                + (rules == 1 ? "" : "s") + ", but the selected reasoner (" + reasonerName
+                + ") does not support SWRL and silently IGNORES rules — these results include no "
+                + "rule-derived inferences. Use a rule-aware reasoner (e.g. Pellet, or HermiT for "
+                + "rules without built-in atoms) when the rules matter.";
     }
 
     /**
@@ -512,6 +622,174 @@ public final class ReasonerTools {
             }
         }
         return out;
+    }
+
+    /**
+     * Run {@code body} and convert the {@link InconsistentOntologyException} reasoners throw for
+     * queries over an inconsistent ontology into a pointed, actionable error ({@code what} names
+     * the failing tool). Without this, callers get the raw one-line exception and no way forward.
+     */
+    private static CallToolResult guardInconsistency(String what,
+            Supplier<CallToolResult> body) {
+        try {
+            return body.get();
+        } catch (InconsistentOntologyException e) {
+            return Tools.error("The ontology is INCONSISTENT, so " + what + " cannot run (an "
+                    + "inconsistent ontology entails everything, and reasoners refuse such "
+                    + "queries). Run explain_inconsistency to find a minimal set of axioms "
+                    + "causing the contradiction.");
+        }
+    }
+
+    /** Outcome of {@link #findInconsistentSubset}: a still-inconsistent axiom set, or 'consistent'. */
+    static final class InconsistencySearch {
+        boolean consistent;
+        boolean minimal;
+        int checks;
+        List<OWLAxiom> axioms = new ArrayList<>();
+    }
+
+    /** Fast-pruning window count: candidates are dropped in chunks of size/N before one-by-one. */
+    private static final int FAST_PRUNE_WINDOWS = 20;
+    /** How many justification axioms to render (a MINIMAL set is far smaller in practice). */
+    private static final int INCONSISTENCY_RENDER_CAP = 100;
+
+    /**
+     * Contraction-only search for a minimal inconsistent subset of {@code working}'s logical
+     * axioms. Uses {@code OWLReasoner.isConsistent()} as the sole oracle — the one query reasoners
+     * answer over an inconsistent ontology without throwing {@link InconsistentOntologyException}
+     * (the clarkparsia black-box generator cannot be used here: its very first satisfiability
+     * probe throws). Correctness rests on monotonicity — every subset of a consistent set is
+     * consistent — so an axiom verified droppable/necessary against the current candidate set
+     * stays so for every later, smaller set; one fast window pass plus one one-by-one pass
+     * therefore yields a genuinely minimal set. Time-bounded: on expiry the current (still
+     * jointly inconsistent) candidates are returned with {@code minimal=false}.
+     */
+    static InconsistencySearch findInconsistentSubset(OWLOntology working,
+            OWLReasonerFactory factory, long budgetMs) {
+        long deadline = System.nanoTime() + budgetMs * 1_000_000L;
+        OWLOntologyManager mgr = working.getOWLOntologyManager();
+        InconsistencySearch s = new InconsistencySearch();
+        List<OWLAxiom> current = new ArrayList<>(working.getLogicalAxioms());
+        // The INITIAL full-set probe must not swallow a reasoner failure: answering "consistent —
+        // nothing to explain" about an ontology the reasoner could not even evaluate is a wrong
+        // verdict (e.g. HermiT throwing on a SWRL built-in atom). Inside the prune loops a throw
+        // only means "keep the chunk" — conservative and correct — so those stay swallowed.
+        if (!subsetInconsistent(mgr, factory, current, s, true)) {
+            s.consistent = true;
+            return s;
+        }
+        // Fast pruning: drop window-sized chunks whose removal keeps the rest inconsistent.
+        int window = Math.max(current.size() / FAST_PRUNE_WINDOWS, 1);
+        if (window > 1) {
+            for (int i = 0; i < current.size();) {
+                if (System.nanoTime() > deadline) {
+                    s.axioms = current;
+                    return s;
+                }
+                int end = Math.min(i + window, current.size());
+                List<OWLAxiom> rest = new ArrayList<>(current.subList(0, i));
+                rest.addAll(current.subList(end, current.size()));
+                if (subsetInconsistent(mgr, factory, rest, s, false)) {
+                    current = rest;            // chunk dropped; next chunk now starts at i
+                } else {
+                    i = end;                   // chunk (partly) needed; keep and move on
+                }
+            }
+        }
+        // Slow pruning: drop axioms one by one; what survives a full pass is minimal.
+        for (int i = 0; i < current.size();) {
+            if (System.nanoTime() > deadline) {
+                s.axioms = current;
+                return s;
+            }
+            List<OWLAxiom> rest = new ArrayList<>(current);
+            rest.remove(i);
+            if (subsetInconsistent(mgr, factory, rest, s, false)) {
+                current = rest;
+            } else {
+                i++;
+            }
+        }
+        s.minimal = true;
+        s.axioms = current;
+        return s;
+    }
+
+    /**
+     * Whether {@code axioms} alone are inconsistent under a fresh reasoner over a throwaway
+     * ontology. On a reasoner failure: with {@code rethrowFailure} the error surfaces as a
+     * {@link ToolArgException} (the initial full-set probe, where a swallow would misreport
+     * "consistent"); without it the failure counts as consistent — conservative: the caller then
+     * keeps the axioms it tried to drop, preserving the candidate set's inconsistency invariant.
+     */
+    private static boolean subsetInconsistent(OWLOntologyManager mgr, OWLReasonerFactory factory,
+            Collection<OWLAxiom> axioms, InconsistencySearch s, boolean rethrowFailure) {
+        s.checks++;
+        OWLOntology probe = null;
+        OWLReasoner r = null;
+        try {
+            probe = mgr.createOntology(new LinkedHashSet<>(axioms));
+            r = factory.createNonBufferingReasoner(probe);
+            return !r.isConsistent();
+        } catch (OWLOntologyCreationException | RuntimeException e) {
+            if (rethrowFailure) {
+                throw new ToolArgException("The selected reasoner could not evaluate the ontology: "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())
+                        + ". Choose another reasoner (set_reasoner) and re-run "
+                        + "explain_inconsistency.");
+            }
+            return false;
+        } finally {
+            if (r != null) {
+                try {
+                    r.dispose();
+                } catch (RuntimeException ignored) {
+                    // a broken reasoner must not mask the probe result
+                }
+            }
+            if (probe != null) {
+                mgr.removeOntology(probe);
+            }
+        }
+    }
+
+    /** Render the search outcome (on the EDT — the entity renderer is not thread-safe). */
+    static Map<String, Object> inconsistencyJson(OWLModelManager mm, InconsistencySearch s,
+            String reasonerName) {
+        if (s.consistent) {
+            return Tools.json()
+                    .put("inconsistent", false)
+                    .put("reasoner", reasonerName)
+                    .put("note", "The ontology (imports closure) is consistent under " + reasonerName
+                            + " — there is no inconsistency to explain.")
+                    .map();
+        }
+        // Cap the COLLECTION before rendering, not just the rendered window: axiomList renders
+        // every input axiom to build its sort key, and a budget-expired result can still hold
+        // thousands of axioms — rendering them all would stall the EDT (mirrors
+        // relatedAssertedAxioms' collection cap). The true size is reported as axiom_count.
+        List<OWLAxiom> capped = s.axioms.size() > INCONSISTENCY_RENDER_CAP
+                ? s.axioms.subList(0, INCONSISTENCY_RENDER_CAP)
+                : s.axioms;
+        return Tools.json()
+                .put("inconsistent", true)
+                .put("reasoner", reasonerName)
+                .put("minimal", s.minimal)
+                .put("consistency_checks", s.checks)
+                .put("axiom_count", s.axioms.size())
+                .put("justification", Tools.axiomList(mm,
+                        new LinkedHashSet<>(capped), INCONSISTENCY_RENDER_CAP))
+                .put("note", s.minimal
+                        ? "A minimal set of asserted logical axioms that are jointly inconsistent: "
+                                + "removing any one of them breaks THIS contradiction (others may "
+                                + "remain — fix and re-run). Note a reasoner that ignores axioms it "
+                                + "does not support (e.g. ELK) minimizes only what it sees."
+                        : "The time budget expired before full minimization: the listed axioms are "
+                                + "still jointly inconsistent but not necessarily all needed. "
+                                + "Re-run with a larger timeout_ms, or extract_module around the "
+                                + "suspect terms and diagnose the smaller module.")
+                .map();
     }
 
     private static OWLReasoner requireReasoner(OWLModelManager mm) {

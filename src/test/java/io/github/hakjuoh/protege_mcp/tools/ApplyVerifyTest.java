@@ -145,4 +145,89 @@ class ApplyVerifyTest {
         assertTrue(o.batchApplied);
         assertTrue(o.newlyUnsatisfiable.isEmpty(), "no verdict → no attributed unsat classes");
     }
+
+    // -------------------------------------------------- preApply: rollback fails closed (0.4.3)
+
+    /**
+     * A model-manager double for the {@code preApply} gate: answers only
+     * {@code getOWLReasonerManager().getReasonerStatus()} (scripted) — enough to reach the
+     * fail-closed decision, which must fire BEFORE anything else (history, applier) is touched.
+     */
+    private static org.protege.editor.owl.model.OWLModelManager statusOnlyManager(
+            org.protege.editor.owl.model.inference.ReasonerStatus status) {
+        Object rm = java.lang.reflect.Proxy.newProxyInstance(
+                ApplyVerifyTest.class.getClassLoader(),
+                new Class<?>[] { org.protege.editor.owl.model.inference.OWLReasonerManager.class },
+                (proxy, method, args) -> {
+                    if ("getReasonerStatus".equals(method.getName())) {
+                        return status;
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                });
+        return (org.protege.editor.owl.model.OWLModelManager) java.lang.reflect.Proxy.newProxyInstance(
+                ApplyVerifyTest.class.getClassLoader(),
+                new Class<?>[] { org.protege.editor.owl.model.OWLModelManager.class },
+                (proxy, method, args) -> {
+                    if ("getOWLReasonerManager".equals(method.getName())) {
+                        return rm;
+                    }
+                    throw new UnsupportedOperationException(method.getName());
+                });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Object callPreApply(Object mm, String verify,
+            java.util.function.Function<?, ?> applier) throws Throwable {
+        java.lang.reflect.Method m = ApplyVerify.class.getDeclaredMethod("preApply",
+                org.protege.editor.owl.model.OWLModelManager.class, String.class,
+                java.util.function.Function.class);
+        m.setAccessible(true);
+        try {
+            return m.invoke(null, mm, verify, applier);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            throw e.getCause();
+        }
+    }
+
+    private static Object declinedOf(Object preApply) throws Throwable {
+        java.lang.reflect.Field f = preApply.getClass().getDeclaredField("declined");
+        f.setAccessible(true);
+        return f.get(preApply);
+    }
+
+    @Test
+    void rollbackWithoutABaselineDeclinesBeforeApplying() throws Throwable {
+        // The reasoner never produced usable pre-apply results (e.g. the cold-start classification
+        // failed): verify=rollback must refuse up front — the applier must never run.
+        java.util.function.Function<Object, Object> neverRuns = mm -> {
+            throw new AssertionError("the applier must not run when rollback fails closed");
+        };
+        Object pre = callPreApply(
+                statusOnlyManager(org.protege.editor.owl.model.inference.ReasonerStatus.REASONER_NOT_INITIALIZED),
+                ApplyVerify.MODE_ROLLBACK, neverRuns);
+        Object declined = declinedOf(pre);
+        assertTrue(declined instanceof io.modelcontextprotocol.spec.McpSchema.CallToolResult,
+                "rollback without a baseline declines with an error result");
+        io.modelcontextprotocol.spec.McpSchema.CallToolResult r =
+                (io.modelcontextprotocol.spec.McpSchema.CallToolResult) declined;
+        assertEquals(Boolean.TRUE, r.isError());
+        String msg = String.valueOf(((java.util.Map<String, Object>) r.structuredContent()).get("error"));
+        assertTrue(msg.contains("NOTHING was applied"), "says nothing was applied: " + msg);
+        assertTrue(msg.contains("REASONER_NOT_INITIALIZED"), "names the status: " + msg);
+        assertTrue(msg.contains("verify=report"), "offers the report/none fallback: " + msg);
+    }
+
+    @Test
+    void reportWithoutABaselineStillApplies() throws Throwable {
+        // verify=report keeps 0.4.0 semantics: apply, then report the batch as unverifiable. The
+        // status-only manager throws on getHistoryManager, proving the gate is rollback-specific
+        // by failing PAST the decline point.
+        java.util.function.Function<Object, Object> applier = mm -> java.util.Collections.emptyMap();
+        UnsupportedOperationException e = assertThrows(UnsupportedOperationException.class,
+                () -> callPreApply(
+                        statusOnlyManager(org.protege.editor.owl.model.inference.ReasonerStatus.REASONER_NOT_INITIALIZED),
+                        ApplyVerify.MODE_REPORT, applier));
+        assertEquals("getHistoryManager", e.getMessage(),
+                "report mode proceeds past the baseline gate into the apply leg");
+    }
 }

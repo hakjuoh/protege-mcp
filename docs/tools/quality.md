@@ -110,7 +110,10 @@ worst *ran* stage versus `fail_on`.
 - `fail_on`: string, the effective gate severity.
 - `stages_ran`: integer, how many stages actually ran.
 - `stages`: array, per-stage `{stage, ran, verdict?, findings_summary?, reason?}` (`verdict` is
-  `pass`/`warn`/`fail` when it ran; `reason` explains a skip).
+  `pass`/`warn`/`fail` when it ran; `reason` explains a skip). The `reasoner` stage's
+  `findings_summary` may carry a `warning` when the ontology has SWRL rules the selected reasoner
+  silently ignores (ELK) — surfaced, deliberately **not** gated (an ELK + SWRL setup can be
+  intentional, but a pass must never read as "the rules were checked").
 
 **Example**
 

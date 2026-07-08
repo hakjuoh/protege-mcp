@@ -202,7 +202,7 @@ Creates a class WITH its curation suite in one undoable step (versus `create_cla
 
 The batch form of `create_term`: creates many classes, each with its full curation suite, in ONE undoable transaction (one `undo_change` reverts every term). Each item in `terms` takes the same fields as `create_term` (`name` or a full `iri`, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`); the top-level `namespace` and `definition_property` act as **defaults** applied to any term that omits its own. Reach for it to intake a set of related terms in a single move. Because nothing lands in the ontology until the whole batch commits, a term that references another term from the same batch must refer to it **by full IRI**.
 
-*Mutating (undoable)* — the whole batch applies as one undoable transaction; honours `strict` (refuses to mint an unrecognised operand) and reports `new_entities`. New-entity detection is against the imports closure. **Atomic**: a malformed term (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing.
+*Mutating (undoable)* — the whole batch applies as one undoable transaction; honours `strict` (refuses to mint an unrecognised operand) and reports `new_entities`. New-entity detection is against the imports closure. **Atomic**: a malformed term (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing. Optionally set `verify=report|rollback` to classify the reasoner after applying and detect a regression, exactly as in `apply_changes` (see its "Reasoner-verified apply" section); `rollback` undoes the whole batch when one is found.
 
 **Arguments**
 
@@ -212,6 +212,8 @@ The batch form of `create_term`: creates many classes, each with its full curati
 | `namespace` | string | no | — | Default namespace to mint IRIs in, applied to any term that omits its own `namespace`. |
 | `definition_property` | string | no | `rdfs:comment` | Default definition annotation property, applied to any term that omits its own `definition_property`. |
 | `strict` | boolean | no | `false` | If true, fail instead of minting an unrecognised operand (aborts the whole batch). |
+| `verify` | string | no | `none` | `none` \| `report` \| `rollback` — reasoner-verify the batch (flag a newly unsatisfiable class or newly inconsistent ontology; `rollback` undoes the whole batch on a regression). Requires a reasoner selected in Protégé; `rollback` additionally refuses up front (applying nothing) when no pre-apply baseline classification can be established. |
+| `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). |
 
 **Returns**
 
@@ -219,6 +221,7 @@ The batch form of `create_term`: creates many classes, each with its full curati
 - `count`: number of terms created.
 - `applied`: number of changes committed.
 - `new_entities`: array of entities the operands introduced (present only when non-empty).
+- `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}` — same shape as `apply_changes`.
 
 **Example**
 
@@ -288,7 +291,7 @@ Creates an object or data property WITH its axioms in one undoable step. It mint
 
 Creates MANY object/data properties in ONE undoable transaction — the array form of `create_property` (mirroring how `create_terms` is the array form of `create_term`). `properties` is an array; each item takes the same fields as `create_property` (only `name` is required). Top-level `namespace`, `definition_property` and `property_type` are **defaults** applied to any item that omits its own. Reach for it when intake hands you a batch of properties (e.g. a domain's relation vocabulary) so they land — and undo — as one unit.
 
-*Mutating (undoable)* — the whole batch is a SINGLE undoable change (one `undo_change` reverts every property) and is **atomic**: a malformed item (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing. `strict=true` refuses the batch if any operand would be minted as a new, empty entity. To reference another property in the SAME batch (e.g. as `inverse_of` / `super_properties`), give it an explicit `iri`/`namespace` and reference its full IRI (nothing is in the ontology until the batch commits).
+*Mutating (undoable)* — the whole batch is a SINGLE undoable change (one `undo_change` reverts every property) and is **atomic**: a malformed item (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing. `strict=true` refuses the batch if any operand would be minted as a new, empty entity. To reference another property in the SAME batch (e.g. as `inverse_of` / `super_properties`), give it an explicit `iri`/`namespace` and reference its full IRI (nothing is in the ontology until the batch commits). Optionally set `verify=report|rollback` to classify the reasoner after applying and detect a regression, exactly as in `apply_changes` (see its "Reasoner-verified apply" section); `rollback` undoes the whole batch when one is found.
 
 **Arguments**
 
@@ -299,6 +302,8 @@ Creates MANY object/data properties in ONE undoable transaction — the array fo
 | `definition_property` | string | no | — | Default definition annotation property for any item that omits its own. |
 | `property_type` | string | no | `object` | Default `property_type` (`object`\|`data`) for any item that omits its own. |
 | `strict` | boolean | no | `false` | If true, fail the whole batch instead of minting an unrecognised operand. |
+| `verify` | string | no | `none` | `none` \| `report` \| `rollback` — reasoner-verify the batch (flag a newly unsatisfiable class or newly inconsistent ontology; `rollback` undoes the whole batch on a regression). Requires a reasoner selected in Protégé; `rollback` additionally refuses up front (applying nothing) when no pre-apply baseline classification can be established. |
+| `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). |
 
 **Returns**
 
@@ -306,6 +311,7 @@ Creates MANY object/data properties in ONE undoable transaction — the array fo
 - `count`: number of properties created.
 - `new_entities`: array of entities the operands introduced (present only when non-empty).
 - `applied`: number of changes committed.
+- `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}` — same shape as `apply_changes`.
 
 **Example**
 
@@ -473,9 +479,9 @@ Removes a structured axiom — the same `axiom_type` + operands as `add_axiom`. 
 
 ## `rename_entity`
 
-Changes an entity's IRI throughout the active ontology — every axiom and annotation that references the old IRI is rewritten to the new one. If the IRI is punned across several entity types, all of them are renamed. The `new_iri` must be a full absolute IRI. Use it to repoint references, not to change a display label (see `set_label` for that).
+Changes an entity's IRI throughout the active ontology — every axiom and annotation that references the old IRI is rewritten to the new one. If the IRI is punned across several entity types, all of them are renamed. The `new_iri` must be a full absolute IRI. Use it to repoint references, not to change a display label (see `set_label` for that). Pass `preview=true` to only REPORT what the rename would rewrite, without changing anything.
 
-*Mutating (undoable)* — operates on the active ontology only (imported ontologies are not edited). Returns an error object if the entity is not found, `new_iri` is not absolute, the IRI is unchanged, or the old IRI is not referenced.
+*Mutating (undoable)* — operates on the active ontology only (imported ontologies are not edited); with `preview=true` it is a read-only dry-run that works even in read-only mode. Returns an error object if the entity is not found, `new_iri` is not absolute, the IRI is unchanged, or the old IRI is not referenced.
 
 **Arguments**
 
@@ -483,6 +489,7 @@ Changes an entity's IRI throughout the active ontology — every axiom and annot
 | --- | --- | --- | --- | --- |
 | `entity` | string | yes | — | Entity to rename: an IRI or display name. |
 | `new_iri` | string | yes | — | New full IRI for the entity. |
+| `preview` | boolean | no | `false` | Dry-run: report the rewrite without applying anything (works in read-only mode). |
 
 **Returns**
 
@@ -490,6 +497,15 @@ Changes an entity's IRI throughout the active ontology — every axiom and annot
 - `old_iri`: the previous IRI (string).
 - `new_iri`: the new IRI (string).
 - `changes`: number of ontology changes applied.
+
+With `preview=true` (nothing is changed; the change list is the same either way, so the preview is exactly what an apply would do):
+
+- `preview`: `true`.
+- `old_iri` / `new_iri`: as above.
+- `changes`: number of ontology changes the rename would apply.
+- `new_iri_already_in_signature`: boolean — `true` when the new IRI already occurs in the imports closure's signature, so renaming would **merge** the two entities.
+- `rewritten_axioms_sample`: array of up to 20 axiom objects — how referencing axioms would read after the rename.
+- `note`: reminder that nothing was changed (and a merge warning when the new IRI collides).
 
 **Example**
 
@@ -501,9 +517,9 @@ Changes an entity's IRI throughout the active ontology — every axiom and annot
 
 ## `delete_entity`
 
-Deletes an entity from the active ontology: removes its declaration and every axiom that references it. If the IRI is punned across several entity types, all are removed unless `entity_type` narrows it to one. Reach for it to fully retract a term; contrast with `deprecate_entity`, which keeps the term.
+Deletes an entity from the active ontology: removes its declaration and every axiom that references it. If the IRI is punned across several entity types, all are removed unless `entity_type` narrows it to one. Reach for it to fully retract a term; contrast with `deprecate_entity`, which keeps the term. Pass `preview=true` to only REPORT the blast radius — every axiom the delete would remove — without changing anything.
 
-*Mutating (undoable)* — operates on the active ontology only. Returns an error object if no matching entity is found, or if the target is not referenced in the active ontology.
+*Mutating (undoable)* — operates on the active ontology only; with `preview=true` it is a read-only dry-run that works even in read-only mode. Returns an error object if no matching entity is found, or if the target is not referenced in the active ontology.
 
 **Arguments**
 
@@ -511,11 +527,20 @@ Deletes an entity from the active ontology: removes its declaration and every ax
 | --- | --- | --- | --- | --- |
 | `entity` | string | yes | — | Entity to delete: an IRI or display name. |
 | `entity_type` | string | no | — | `class` \| `object_property` \| `data_property` \| `annotation_property` \| `individual` \| `datatype` (narrows a punned IRI). |
+| `preview` | boolean | no | `false` | Dry-run: report what would be removed without applying anything (works in read-only mode). |
 
 **Returns**
 
 - `deleted`: array of the removed entities as JSON objects.
 - `removed_axioms`: number of axioms removed.
+
+With `preview=true` (nothing is deleted; the change list is the same either way, so the previewed blast radius is exactly what an apply would remove):
+
+- `preview`: `true`.
+- `would_delete`: array of the targeted entities as JSON objects.
+- `removed_axioms`: number of axioms the delete would remove.
+- `removed_axioms_sample`: array of up to 20 axiom objects — a sample of the axioms that would be removed.
+- `note`: reminder that nothing was deleted.
 
 **Example**
 

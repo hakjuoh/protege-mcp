@@ -204,6 +204,12 @@ public final class QcSuiteTools {
         summary.put("status", v.get("status"));
         summary.put("consistent", consistent);
         summary.put("unsatisfiable_count", unsat);
+        // Like the cqs stage's caveats: surfaced, deliberately not gated — an ELK + SWRL setup can
+        // be intentional, but a pass must never read as "the rules were checked".
+        String swrl = ReasonerTools.swrlIgnoredWarning(mm);
+        if (swrl != null) {
+            summary.put("warning", swrl);
+        }
         String verdict = (Boolean.TRUE.equals(consistent) && unsat == 0) ? PASS : FAIL;
         return new StageResult(REASONER, true, verdict, summary, null);
     }

@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **65 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **66 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -86,7 +86,8 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 
 ### [Reasoning](reasoning.html)
 `list_reasoners` · `set_reasoner` · `run_reasoner` · `get_unsatisfiable_classes` ·
-`get_inferred_superclasses` · `execute_dl_query` · `explain_entailment` · `get_explanations`
+`get_inferred_superclasses` · `execute_dl_query` · `explain_entailment` · `get_explanations` ·
+`explain_inconsistency`
 
 ### [SPARQL](sparql.html)
 `sparql_query` · `sparql_schema` · `sparql_validate`
