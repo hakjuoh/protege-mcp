@@ -1,11 +1,9 @@
-package io.github.hakjuoh.protege_mcp.tools;
+package io.github.hakjuoh.protege_mcp.prompts;
 
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 
-import io.modelcontextprotocol.server.McpServerFeatures.SyncPromptSpecification;
 import io.modelcontextprotocol.spec.McpSchema.PromptArgument;
 
 /**
@@ -20,9 +18,7 @@ public final class Prompts {
     private Prompts() {
     }
 
-    public static List<SyncPromptSpecification> all() {
-        PromptRegistry prompts = new PromptRegistry();
-
+    public static void register(PromptRegistry prompts) {
         prompts.prompt("audit_ontology",
                 "Audit the active ontology for modelling-quality issues and propose fixes.",
                 Collections.emptyList(),
@@ -131,8 +127,6 @@ public final class Prompts {
                             + "add_subclass_of, then call validate_ontology and run_reasoner to check the "
                             + "result. Work in small, reviewable batches.";
                 });
-
-        return prompts.build();
     }
 
     // ------------------------------------------------------------------ helpers

@@ -164,7 +164,7 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
             .jsonSchemaValidator(new DefaultJsonSchemaValidator(objectMapper))  // sync server still validates tool SCHEMAS even with validateToolInputs(false)
             .instructions(...)
             .tools(allSpecs)              // the §5 tool specs
-            .prompts(Prompts.all())       // the §5 guided-workflow prompts
+            .prompts(PromptCatalog.buildAll())  // the §5 guided-workflow prompts
             .build();
    ```
    `close()` calls `closeGracefully()` then `close()`.
@@ -419,7 +419,9 @@ a pointed error naming `explain_inconsistency`.
   full structured `axiom_type` surface (see the README catalog).
 - The server registers **tools and prompts** (no MCP `resources` capability). The six prompts
   (`audit_ontology`, `explain_class`, `add_subclass_safely`, `find_and_fix_unsatisfiable`,
-  `author_sparql_query`, `model_domain`) are pure templates (`tools/Prompts.java`): each expands to a single user message that
+  `author_sparql_query`, `model_domain`) are pure templates (`prompts/Prompts.java`; the `prompts`
+  package mirrors the `tools` package's registry pattern — `PromptRegistry`/`PromptSpecs`/
+  `PromptProvider`/`PromptCatalog`): each expands to a single user message that
   drives the tools in a safe order (orient → preview → confirm/apply → verify). They touch no model
   state and run on the transport thread.
 - **New context/validation/preview tools (`0.2.0`).** `get_ontology_context` (active-ontology
@@ -944,5 +946,7 @@ model alias already ships, and long-context compaction is owned by the CLI's age
 | `tools/ToolCatalog`, `ToolSpecs`, `ToolContext` | tool aggregation, spec factory, handler context |
 | `tools/ReadTools`, `WriteTools`, `EntityRefactorTools`, `ReasonerTools`, `Axioms` | the §5 tools + structured-axiom support |
 | `tools/Tools`, `tools/ToolArgException` | shared OWLAPI/finder/render helpers; an invalid-argument signal turned into a non-fatal MCP error result |
+| `prompts/PromptCatalog`, `PromptSpecs`, `PromptProvider`, `PromptRegistry` | prompt aggregation, spec factory, provider SAM, fluent sink (mirrors the tools registry pattern) |
+| `prompts/Prompts` | the guided-workflow prompt templates (§5) |
 | `config/McpConfig` | preferences snapshot (`io.github.hakjuoh.protege_mcp` / `server`); token + OAuth state keys |
 | `ui/McpServerView`, `ui/McpPreferencesPanel` | status view (connected-clients table) + settings panel |

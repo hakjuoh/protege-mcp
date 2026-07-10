@@ -1,4 +1,4 @@
-package io.github.hakjuoh.protege_mcp.tools;
+package io.github.hakjuoh.protege_mcp.prompts;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,22 +25,28 @@ import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.Content;
 import io.modelcontextprotocol.spec.McpSchema.GetPromptRequest;
 import io.modelcontextprotocol.spec.McpSchema.GetPromptResult;
-import io.modelcontextprotocol.spec.McpSchema.Prompt;
 import io.modelcontextprotocol.spec.McpSchema.PromptArgument;
 import io.modelcontextprotocol.spec.McpSchema.PromptMessage;
 import io.modelcontextprotocol.spec.McpSchema.Role;
 import io.modelcontextprotocol.spec.McpSchema.TextContent;
 
 /**
- * Method-level tests for {@link Prompts}.
+ * Method-level tests for {@link Prompts}, the provider that registers every built-in prompt.
  *
  * <p>{@code Prompts} is a pure template/data builder with no OWLAPI, Protégé runtime, Swing, or I/O
- * dependencies, so every test here is deterministic and headless. The public {@link Prompts#all()}
- * API is exercised directly; the private helpers ({@code prompt}, {@code arg}, {@code str}) are
- * exercised via reflection to hit their enumerated edge cases directly, and also transitively
- * through the rendered prompt handlers.
+ * dependencies, so every test here is deterministic and headless. The provider is exercised the way
+ * {@link PromptCatalog#buildAll} drives it — registered into a fresh {@link PromptRegistry}; the
+ * private helpers ({@code arg}, {@code str}) are exercised via reflection to hit their enumerated
+ * edge cases directly, and also transitively through the rendered prompt handlers.
  */
 class PromptsTest {
+
+    /** Build the provider's specs the way the catalog does: register into a fresh registry. */
+    private static List<SyncPromptSpecification> all() {
+        PromptRegistry registry = new PromptRegistry();
+        Prompts.register(registry);
+        return registry.build();
+    }
 
     // ------------------------------------------------------------------ helpers (reflection)
 
@@ -83,7 +89,7 @@ class PromptsTest {
 
     /** Find the spec whose prompt name equals {@code name}, or fail. */
     private static SyncPromptSpecification specNamed(String name) {
-        for (SyncPromptSpecification s : Prompts.all()) {
+        for (SyncPromptSpecification s : all()) {
             if (name.equals(s.prompt().name())) {
                 return s;
             }
@@ -115,22 +121,17 @@ class PromptsTest {
             "author_sparql_query",
             "model_domain");
 
-    // ------------------------------------------------------------------ all(): structure
+    // ------------------------------------------------------------------ register(): structure
 
     @Test
-    void allReturnsNonNullList() {
-        assertNotNull(Prompts.all(), "all() must never return null");
+    void registerContributesExactlySixPrompts() {
+        assertEquals(6, all().size(), "expected 6 built-in prompts");
     }
 
     @Test
-    void allReturnsExactlySixPrompts() {
-        assertEquals(6, Prompts.all().size(), "expected 6 built-in prompts");
-    }
-
-    @Test
-    void allReturnsExpectedNamesInOrder() {
+    void registerContributesExpectedNamesInOrder() {
         List<String> actual = new ArrayList<>();
-        for (SyncPromptSpecification s : Prompts.all()) {
+        for (SyncPromptSpecification s : all()) {
             actual.add(s.prompt().name());
         }
         assertEquals(EXPECTED_NAMES, actual, "prompt names/order");
@@ -138,7 +139,7 @@ class PromptsTest {
 
     @Test
     void everyPromptHasNonEmptyName() {
-        for (SyncPromptSpecification s : Prompts.all()) {
+        for (SyncPromptSpecification s : all()) {
             String n = s.prompt().name();
             assertNotNull(n, "name null");
             assertFalse(n.isBlank(), "name blank: " + n);
@@ -147,7 +148,7 @@ class PromptsTest {
 
     @Test
     void everyPromptHasNonEmptyDescription() {
-        for (SyncPromptSpecification s : Prompts.all()) {
+        for (SyncPromptSpecification s : all()) {
             String d = s.prompt().description();
             assertNotNull(d, "description null for " + s.prompt().name());
             assertFalse(d.isBlank(), "description blank for " + s.prompt().name());
@@ -156,24 +157,24 @@ class PromptsTest {
 
     @Test
     void everyPromptHasAHandler() {
-        for (SyncPromptSpecification s : Prompts.all()) {
+        for (SyncPromptSpecification s : all()) {
             assertNotNull(s.promptHandler(), "handler null for " + s.prompt().name());
         }
     }
 
     @Test
-    void allIsIdempotentAndReturnsFreshList() {
-        List<SyncPromptSpecification> a = Prompts.all();
-        List<SyncPromptSpecification> b = Prompts.all();
-        org.junit.jupiter.api.Assertions.assertNotSame(a, b, "each call should build a fresh list");
+    void registerIsIdempotentAcrossFreshRegistries() {
+        List<SyncPromptSpecification> a = all();
+        List<SyncPromptSpecification> b = all();
+        org.junit.jupiter.api.Assertions.assertNotSame(a, b, "each registration should build a fresh list");
         List<String> namesA = new ArrayList<>();
         List<String> namesB = new ArrayList<>();
         a.forEach(s -> namesA.add(s.prompt().name()));
         b.forEach(s -> namesB.add(s.prompt().name()));
-        assertEquals(namesA, namesB, "same names across calls");
+        assertEquals(namesA, namesB, "same names across registrations");
     }
 
-    // ------------------------------------------------------------------ all(): argument shapes
+    // ------------------------------------------------------------------ register(): argument shapes
 
     @Test
     void auditOntologyHasZeroArguments() {
@@ -223,7 +224,7 @@ class PromptsTest {
 
     @Test
     void everyDeclaredArgumentIsRequiredAndDescribed() {
-        for (SyncPromptSpecification s : Prompts.all()) {
+        for (SyncPromptSpecification s : all()) {
             for (PromptArgument a : s.prompt().arguments()) {
                 assertEquals(Boolean.TRUE, a.required(),
                         "arg " + a.name() + " of " + s.prompt().name() + " should be required");
@@ -235,11 +236,11 @@ class PromptsTest {
         }
     }
 
-    // ------------------------------------------------------------------ all(): handler rendering
+    // ------------------------------------------------------------------ register(): handler rendering
 
     @Test
     void everyHandlerReturnsUserRoleTextResultForNullArgs() {
-        for (SyncPromptSpecification s : Prompts.all()) {
+        for (SyncPromptSpecification s : all()) {
             GetPromptRequest req = new GetPromptRequest(s.prompt().name(), null);
             GetPromptResult r = s.promptHandler().apply(null, req);
             assertNotNull(r, "result null for " + s.prompt().name());
@@ -254,7 +255,7 @@ class PromptsTest {
 
     @Test
     void everyHandlerRendersWithEmptyArgsMap() {
-        for (SyncPromptSpecification s : Prompts.all()) {
+        for (SyncPromptSpecification s : all()) {
             GetPromptResult r = render(s, new HashMap<>());
             assertFalse(textOf(r).isBlank(), "empty-args render blank for " + s.prompt().name());
         }
@@ -488,54 +489,13 @@ class PromptsTest {
         assertEquals("", a.description());
     }
 
-    // ------------------------------------------------------------------ PromptRegistry.prompt() wiring
-
-    @Test
-    void promptBuildsSpecWithNameDescriptionAndArguments() {
-        PromptRegistry registry = new PromptRegistry();
-        PromptRegistry.Template template = a -> "rendered:" + (a == null ? "null" : a.get("x"));
-
-        List<PromptArgument> argList = Collections.singletonList(
-                new PromptArgument("x", "an x", Boolean.TRUE));
-        registry.prompt("custom", "a custom prompt", argList, template);
-        SyncPromptSpecification spec = registry.build().get(0);
-
-        Prompt p = spec.prompt();
-        assertAll(
-                () -> assertEquals("custom", p.name()),
-                () -> assertEquals("a custom prompt", p.description()),
-                () -> assertEquals(1, p.arguments().size()),
-                () -> assertEquals("x", p.arguments().get(0).name()));
-
-        Map<String, Object> reqArgs = new HashMap<>();
-        reqArgs.put("x", "hi");
-        GetPromptResult result = spec.promptHandler().apply(
-                null, new GetPromptRequest("custom", reqArgs));
-        assertEquals("a custom prompt", result.description(),
-                "handler result description echoes the prompt description");
-        assertEquals(1, result.messages().size());
-        PromptMessage m = result.messages().get(0);
-        assertEquals(Role.USER, m.role());
-        assertInstanceOf(TextContent.class, m.content());
-        assertEquals("rendered:hi", ((TextContent) m.content()).text(),
-                "handler delegates to template.render with the request arguments");
-    }
-
-    @Test
-    void promptWithEmptyArgumentListProducesNoArguments() {
-        PromptRegistry registry = new PromptRegistry();
-        registry.prompt("empty", "no-arg prompt", Collections.emptyList(), a -> "x");
-        SyncPromptSpecification spec = registry.build().get(0);
-        assertTrue(spec.prompt().arguments().isEmpty(), "no arguments expected");
-    }
-
     // ------------------------------------------------------------------ handler independence
 
     @Test
     void distinctPromptsHaveDistinctHandlerInstances() {
-        List<SyncPromptSpecification> all = Prompts.all();
-        BiFunction<?, ?, ?> h0 = all.get(0).promptHandler();
-        BiFunction<?, ?, ?> h1 = all.get(1).promptHandler();
+        List<SyncPromptSpecification> specs = all();
+        BiFunction<?, ?, ?> h0 = specs.get(0).promptHandler();
+        BiFunction<?, ?, ?> h1 = specs.get(1).promptHandler();
         org.junit.jupiter.api.Assertions.assertNotSame(h0, h1,
                 "each prompt should carry its own handler");
     }

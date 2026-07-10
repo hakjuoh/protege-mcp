@@ -333,6 +333,7 @@
                                     <element>BUNDLE</element>
                                     <includes>
                                         <include>io.github.hakjuoh.protege_mcp.tools.*</include>
+                                        <include>io.github.hakjuoh.protege_mcp.prompts.*</include>
                                         <include>io.github.hakjuoh.protege_mcp.server.*</include>
                                         <include>io.github.hakjuoh.protege_mcp.oauth.*</include>
                                     </includes>

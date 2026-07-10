@@ -65,7 +65,8 @@ Everything lives under `src/main/java/io/github/hakjuoh/protege_mcp/`:
 | --- | --- |
 | `server` | The embedded HTTP MCP server: lifecycle (`McpServerManager`, `McpServerController`), Jetty host (`EmbeddedHttpServer`), auth (`AccessTokenFilter`), and `OntologyAccess` (marshals tool work onto the EDT). |
 | `oauth` | The embedded OAuth authorization server (dynamic client registration, PKCE, consent, token store). |
-| `tools` | The tool implementations. Each `*Tools.java` builds a list of `SyncToolSpecification`s; `ToolCatalog` aggregates them all. `Prompts.java` holds the guided prompts. |
+| `tools` | The tool implementations. Each `*Tools.java` builds a list of `SyncToolSpecification`s; `ToolCatalog` aggregates them all. |
+| `prompts` | The guided MCP prompts. `Prompts.java` registers the templates; `PromptCatalog` aggregates the providers (mirrors the `tools` registry pattern). |
 | `chat` | The Ontology Assistant back end: the `ChatProvider` SPI and the Claude / Codex CLI providers + event parsers. |
 | `ui` | Swing views/panels: `McpServerView`, `McpPreferencesPanel`, `ChatView`, `ChatTab`, `ChatPreferencesPanel`. |
 | `config` | `McpConfig` — the settings snapshot backed by Protégé's preferences store. |

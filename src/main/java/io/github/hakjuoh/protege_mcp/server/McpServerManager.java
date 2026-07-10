@@ -8,7 +8,7 @@ import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.json.schema.JsonSchemaValidator;
 import io.modelcontextprotocol.json.schema.jackson2.DefaultJsonSchemaValidator;
-import io.github.hakjuoh.protege_mcp.tools.Prompts;
+import io.github.hakjuoh.protege_mcp.prompts.PromptCatalog;
 
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
@@ -83,7 +83,7 @@ public final class McpServerManager {
                 .jsonMapper(jsonMapper)
                 .jsonSchemaValidator(schemaValidator)
                 .tools(tools)
-                .prompts(Prompts.all())
+                .prompts(PromptCatalog.buildAll())
                 .build();
     }
 
