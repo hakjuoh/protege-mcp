@@ -222,8 +222,13 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
     starting Protégé process probes `~/.protege-mcp/broker.json` + `GET /internal/info`; if no live broker
     answers, it spawns one (`java -cp <this plugin's bundle jar + Protégé's slf4j jars> BrokerMain` —
     compile-scope deps are inlined into the bundle so the jar is self-sufficient; only provided-scope slf4j
-    is resolved from the running framework's CodeSource); on spawn failure, or when a broker already exists,
-    it simply uses whichever broker is alive. The broker **reference-counts** registered processes (2s
+    is resolved from the running framework's CodeSource). The classpath is **staged**: both jars are copied
+    to `~/.protege-mcp/jars/<name>-<sha256/12>.jar` and the broker runs from the copies, never from the
+    plugins directory — a JVM holds its classpath jars open, and a broker outliving Protégé (linger/grace)
+    would otherwise block deleting/replacing the plugin jar on Windows during an update. Content-hash names
+    make a rebuilt same-version jar a fresh copy and concurrent spawns race-free; unused copies are swept
+    (age-gated, best-effort) on later spawns; staging failure falls back to the original jars. On spawn
+    failure, or when a broker already exists, it simply uses whichever broker is alive. The broker **reference-counts** registered processes (2s
     heartbeats plus a pid/staleness reaper for crashed instances) and **exits itself** once no instance
     references it (15s linger; 60s boot grace for orphans). `BrokerServer` reuses `EmbeddedHttpServer`,
     `AccessTokenFilter` and the OAuth stack, persisting OAuth state to `~/.protege-mcp/oauth.json`;

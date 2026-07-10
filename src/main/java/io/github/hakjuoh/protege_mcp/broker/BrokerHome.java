@@ -20,9 +20,10 @@ import java.util.Set;
  * <p>Everything lives under one owner-only directory (default {@code ~/.protege-mcp}, {@code 0700}):
  * {@code secret} (the same-user trust anchor for the {@code /internal} API and never sent to MCP
  * clients), {@code broker.json} (the live broker's pid/port/version, written atomically), {@code
- * oauth.json} (the broker's persisted OAuth clients + tokens) and {@code broker.log} (the spawned
- * process's stdout/stderr). Same-user trust comes from the file permissions: only a process that can
- * read {@code secret} may register instances or ask the broker to shut down.
+ * oauth.json} (the broker's persisted OAuth clients + tokens), {@code broker.log} (the spawned
+ * process's stdout/stderr) and {@code jars/} (content-named classpath copies the broker runs from —
+ * see {@link BrokerSpawner}). Same-user trust comes from the file permissions: only a process that
+ * can read {@code secret} may register instances or ask the broker to shut down.
  */
 public final class BrokerHome {
 
@@ -61,6 +62,11 @@ public final class BrokerHome {
 
     public Path logFile() {
         return dir.resolve("broker.log");
+    }
+
+    /** Directory of staged classpath copies the broker process launches from. */
+    public Path jarsDir() {
+        return dir.resolve("jars");
     }
 
     /** Create the home directory owner-only if missing (permissions are best-effort on non-POSIX). */

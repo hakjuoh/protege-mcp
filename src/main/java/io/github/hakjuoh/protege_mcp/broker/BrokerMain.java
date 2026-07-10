@@ -8,8 +8,9 @@ import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
 
 /**
  * Entry point of the standalone shared-broker process. Spawned on demand by the first Protégé
- * instance that finds no live broker ({@code java -cp <plugin jar> ... BrokerMain --port N}); exits
- * on its own once no instance references it (see {@link BrokerServer}'s maintenance loop).
+ * instance that finds no live broker ({@code java -cp <staged jar copies> ... BrokerMain --port N},
+ * see {@link BrokerSpawner}); exits on its own once no instance references it (see
+ * {@link BrokerServer}'s maintenance loop).
  *
  * <p>Runs from the plugin bundle jar outside OSGi/Protégé, so everything reachable from here must
  * stay free of Protégé imports. Its own lifecycle lines go to stdout, which the spawner redirects to

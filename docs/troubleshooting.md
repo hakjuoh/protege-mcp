@@ -113,6 +113,13 @@ If the broker seems stuck (unresponsive but still holding the port), check `~/.p
 and kill the broker process — its pid is in `~/.protege-mcp/broker.json`. Instances re-spawn a fresh
 broker on demand within seconds; a broker that merely lost its instances exits by itself.
 
+The broker runs from jar copies staged under `~/.protege-mcp/jars/`, so it normally holds no handle on
+the plugin jar in Protégé's plugins directory — replacing the jar during an update works even while a
+broker is still winding down. (If staging ever fails — say, the home directory is unwritable — the
+broker falls back to the original jar and `~/.Protege/logs/protege.log` records a *could not stage*
+warning; on Windows the plugin jar then stays locked until that broker exits.) Old copies are cleaned
+up on later starts; the directory is safe to delete whenever no broker process is running.
+
 ## Still stuck?
 
 Open an issue with the relevant `protege.log` excerpt (the `Java: JVM` banner and any
