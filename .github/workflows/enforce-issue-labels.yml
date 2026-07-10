@@ -1,0 +1,66 @@
+name: Enforce required issue labels
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  issues: write
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close issue when required labels are missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          # Labels added right after creation via the web UI need a moment to land.
+          if [ "${{ github.event.action }}" = "opened" ]; then
+            sleep 30
+          fi
+
+          labels=$(gh issue view "$ISSUE" -R "$REPO" --json labels --jq '.labels[].name')
+
+          has_severity=false
+          has_category=false
+          while IFS= read -r label; do
+            [ -z "$label" ] && continue
+            case "$label" in
+              severity:*) has_severity=true ;;
+              *) has_category=true ;;
+            esac
+          done <<< "$labels"
+
+          # Issue Forms can't map a dropdown answer to a label, so derive severity
+          # from the form body's "### Severity" section and apply it.
+          if [ "$has_severity" = false ]; then
+            body=$(gh issue view "$ISSUE" -R "$REPO" --json body --jq '.body')
+            # tr strips the \r that GitHub API bodies carry (CRLF) — otherwise the
+            # blank line after the heading is "\r" (NF=1) and awk grabs it instead.
+            sev=$(printf '%s\n' "$body" | tr -d '\r' | awk '/^### Severity/{f=1;next} f&&NF{print;exit}' | grep -oE '^severity:(critical|high|medium|low)' || true)
+            if [ -n "$sev" ]; then
+              gh issue edit "$ISSUE" -R "$REPO" --add-label "$sev"
+              has_severity=true
+            fi
+          fi
+
+          if [ "$has_severity" = true ] && [ "$has_category" = true ]; then
+            echo "Required labels present."
+            exit 0
+          fi
+
+          # shellcheck disable=SC2016  # Markdown backticks in single-quoted printf strings are intentional: single quotes stop the shell from ever evaluating them.
+          {
+            printf '%s\n\n' 'This issue is missing required labels and was closed automatically.'
+            printf '%s\n' 'Missing:'
+            [ "$has_severity" = true ] || printf '%s\n' '- one `severity:*` label (`severity:critical`, `severity:high`, `severity:medium`, `severity:low`)'
+            [ "$has_category" = true ] || printf '%s\n' '- one category label (e.g. `bug`, `enhancement`, `documentation`, `question`, `gap`)'
+            printf '\n%s\n' 'Tip: creating issues via https://github.com/hakjuoh/protege-mcp/issues/new/choose applies the required labels automatically.'
+            printf '\n%s\n' 'Add the missing label(s) and reopen the issue — the check re-runs on reopen.'
+          } > "$RUNNER_TEMP/comment.md"
+
+          gh issue comment "$ISSUE" -R "$REPO" --body-file "$RUNNER_TEMP/comment.md"
+          gh issue close "$ISSUE" -R "$REPO" --reason "not planned"

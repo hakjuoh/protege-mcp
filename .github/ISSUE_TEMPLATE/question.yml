@@ -1,0 +1,30 @@
+name: Question
+description: Further information is requested
+labels: ["question"]
+body:
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Pick the impact level — it is applied as a severity:* label automatically.
+      options:
+        - "severity:critical — Blocks default flow / data loss / prod-breaking"
+        - "severity:high — Degrades a default flow; >3x repeat or >50% failure"
+        - "severity:medium — Friction in a working flow; weekly+ exposure"
+        - "severity:low — Cosmetic / cleanup / nice-to-have"
+      default: 3
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you working on, and what have you already tried?
+    validations:
+      required: false

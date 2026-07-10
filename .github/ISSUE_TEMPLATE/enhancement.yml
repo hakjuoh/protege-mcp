@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest a new tool, prompt, or capability
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Pick the impact level — it is applied as a severity:* label automatically.
+      options:
+        - "severity:critical — Blocks default flow / data loss / prod-breaking"
+        - "severity:high — Degrades a default flow; >3x repeat or >50% failure"
+        - "severity:medium — Friction in a working flow; weekly+ exposure"
+        - "severity:low — Cosmetic / cleanup / nice-to-have"
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to do that the plugin doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What tool, prompt, or behavior would solve it? If it's a new MCP tool, sketch its arguments and what it returns.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Anything you've tried or other approaches you weighed.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+    validations:
+      required: false

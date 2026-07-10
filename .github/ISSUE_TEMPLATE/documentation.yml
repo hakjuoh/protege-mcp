@@ -1,0 +1,30 @@
+name: Documentation
+description: Improvements or additions to documentation
+labels: ["documentation"]
+body:
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Pick the impact level — it is applied as a severity:* label automatically.
+      options:
+        - "severity:critical — Blocks default flow / data loss / prod-breaking"
+        - "severity:high — Degrades a default flow; >3x repeat or >50% failure"
+        - "severity:medium — Friction in a working flow; weekly+ exposure"
+        - "severity:low — Cosmetic / cleanup / nice-to-have"
+      default: 3
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: Location (file/page)
+      placeholder: e.g. README.md, DESIGN.md, or a page under https://hakjuoh.github.io/protege-mcp/
+    validations:
+      required: false
+  - type: textarea
+    id: what
+    attributes:
+      label: What is missing or wrong?
+    validations:
+      required: true
