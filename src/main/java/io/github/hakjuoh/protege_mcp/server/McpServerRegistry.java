@@ -66,7 +66,7 @@ public final class McpServerRegistry {
     static void electAndStartIfNoOwner(Collection<? extends ManagedServer> registered, ManagedServer candidate)
             throws Exception {
         for (ManagedServer other : registered) {
-            if (other != candidate && other.isRunning()
+            if (other != candidate && other.isRunning() && !other.isBrokerManaged()
                     && (other.getConfiguredPort() == 0 || other.getBoundPort() == other.getConfiguredPort())) {
                 return; // a window already holds the configured port (or ephemeral-by-choice) — stay idle
             }
@@ -86,7 +86,7 @@ public final class McpServerRegistry {
      */
     static void promoteSuccessor(Collection<? extends ManagedServer> registered) {
         for (ManagedServer s : registered) {
-            if (s.isRunning()
+            if (s.isRunning() && !s.isBrokerManaged()
                     && (s.getConfiguredPort() == 0 || s.getBoundPort() == s.getConfiguredPort())) {
                 return; // the configured port is already served (or ephemeral-by-choice) — done
             }

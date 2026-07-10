@@ -20,6 +20,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
 
     private JSpinner portSpinner;
     private JCheckBox ephemeralCheck;
+    private JCheckBox sharedBrokerCheck;
     private JCheckBox autoStartCheck;
     private JCheckBox readOnlyCheck;
     private JCheckBox confirmWritesCheck;
@@ -38,6 +39,9 @@ public class McpPreferencesPanel extends PreferencesPanel {
         ephemeralCheck = new JCheckBox("Use an ephemeral (auto-assigned) port", ephemeral);
         ephemeralCheck.addActionListener(e -> portSpinner.setEnabled(!ephemeralCheck.isSelected()));
 
+        sharedBrokerCheck = new JCheckBox("Share one MCP endpoint across all Protégé windows and "
+                + "instances (broker process)", p.getBoolean(McpConfig.KEY_SHARED_BROKER, true));
+
         autoStartCheck = new JCheckBox("Start the server automatically when a window opens",
                 p.getBoolean(McpConfig.KEY_AUTOSTART, true));
         readOnlyCheck = new JCheckBox("Read-only mode (block all write tools)",
@@ -49,7 +53,12 @@ public class McpPreferencesPanel extends PreferencesPanel {
         panel.addGroup("Connection");
         panel.addLabelledGroupComponent("Port:", portSpinner);
         panel.addGroupComponent(ephemeralCheck);
-        panel.addHelpText("The server binds to 127.0.0.1 only. Port changes take effect on restart.");
+        panel.addGroupComponent(sharedBrokerCheck);
+        panel.addHelpText("The server binds to 127.0.0.1 only. With the shared broker on, the port "
+                + "belongs to a small broker process that outlives any single window and routes MCP "
+                + "clients to the right window; each window's own server uses an ephemeral port behind "
+                + "it. Port and broker changes apply the next time a server (or the broker) starts — "
+                + "for a clean switch, close all Protégé windows and reopen.");
         panel.addSeparator();
         panel.addGroup("Startup");
         panel.addGroupComponent(autoStartCheck);
@@ -66,6 +75,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
         Preferences p = McpConfig.prefs();
         int port = ephemeralCheck.isSelected() ? 0 : (Integer) portSpinner.getValue();
         p.putInt(McpConfig.KEY_PORT, port);
+        p.putBoolean(McpConfig.KEY_SHARED_BROKER, sharedBrokerCheck.isSelected());
         p.putBoolean(McpConfig.KEY_AUTOSTART, autoStartCheck.isSelected());
         p.putBoolean(McpConfig.KEY_READ_ONLY, readOnlyCheck.isSelected());
         p.putBoolean(McpConfig.KEY_CONFIRM_WRITES, confirmWritesCheck.isSelected());

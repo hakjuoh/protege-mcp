@@ -96,6 +96,9 @@ public class McpServerView extends AbstractOWLViewComponent {
             McpServerController c = controller();
             if (c != null) {
                 c.regenerateToken();
+                // The broker validates the static token from the last heartbeat's snapshot — push
+                // one now so the regenerated token applies there immediately too.
+                io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().pokeHeartbeat();
                 refresh();
             }
         });
@@ -180,13 +183,20 @@ public class McpServerView extends AbstractOWLViewComponent {
             return;
         }
         boolean running = c.isRunning();
+        String brokerNote = "";
+        if (running && c.isBrokerManaged()) {
+            brokerNote = io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().brokerMcpUrl() != null
+                    ? "  (via shared broker — this window direct: " + c.getEndpointUrl() + ")"
+                    : "  (shared broker unreachable, re-connecting — direct: " + c.getEndpointUrl() + ")";
+        }
         statusLabel.setText("MCP server: " + (running ? "RUNNING" : "stopped")
+                + brokerNote
                 + (running && c.isPortFallback()
                         ? "  (configured port " + c.getConfiguredPort() + " was busy at start — using "
                                 + c.getBoundPort() + ")"
                         : "")
                 + (c.getLastError() != null && !running ? "  (last error: " + c.getLastError() + ")" : ""));
-        urlField.setText(running ? c.getEndpointUrl() : "");
+        urlField.setText(running ? clientFacingUrl(c) : "");
         String token = c.getToken();
         tokenField.setText(showToken.isSelected() ? token : mask(token));
         readOnlyLabel.setText("Mode: " + (c.isReadOnly() ? "READ-ONLY" : "writable")
@@ -194,7 +204,17 @@ public class McpServerView extends AbstractOWLViewComponent {
         startButton.setEnabled(!running);
         stopButton.setEnabled(running);
 
-        updateClientsTable(c);
+        if (running && c.isBrokerManaged()) {
+            // OAuth clients live in the broker process in this mode; this window's store is empty by
+            // design. Don't render an empty table as "no clients connected".
+            clientsModel.setRowCount(0);
+            clientsLabel.setText("Connected clients: managed by the shared broker "
+                    + "(state in ~/.protege-mcp/oauth.json)");
+            staticUseLabel.setText("");
+            updateRevokeEnabled();
+        } else {
+            updateClientsTable(c);
+        }
     }
 
     private void updateClientsTable(McpServerController c) {
@@ -273,8 +293,10 @@ public class McpServerView extends AbstractOWLViewComponent {
         Thread worker = new Thread(() -> {
             try {
                 if (start) {
-                    c.start();
+                    // Same broker-first policy as auto-start and the chat's lazy start.
+                    io.github.hakjuoh.protege_mcp.broker.McpBoot.ensureStarted(c);
                 } else {
+                    io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().detach(c);
                     c.stop();
                 }
             } catch (Exception ex) {
@@ -294,7 +316,18 @@ public class McpServerView extends AbstractOWLViewComponent {
         }
         // OAuth: no header needed — Claude opens a browser to authorize on first connect. The
         // static token below remains a manual fallback for clients without OAuth support.
-        return ServerViewText.connectCommand(c.getEndpointUrl());
+        return ServerViewText.connectCommand(clientFacingUrl(c));
+    }
+
+    /** What external clients should connect to: the shared broker when attached, else this window. */
+    private String clientFacingUrl(McpServerController c) {
+        if (c.isBrokerManaged()) {
+            String brokerUrl = io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().brokerMcpUrl();
+            if (brokerUrl != null) {
+                return brokerUrl;
+            }
+        }
+        return c.getEndpointUrl();
     }
 
     private static JPanel labelled(String label, JTextField field) {

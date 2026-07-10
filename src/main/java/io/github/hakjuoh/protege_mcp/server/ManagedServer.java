@@ -17,4 +17,11 @@ interface ManagedServer {
 
     /** The port the user configured at the time this server started ({@code 0} = ephemeral by choice). */
     int getConfiguredPort();
+
+    /**
+     * True while running as a backend of the shared broker. Such a server never represents the
+     * user-facing configured port, so it must satisfy neither the standalone owner election nor the
+     * close-time hand-off — otherwise a broker backend would suppress the standalone fallback.
+     */
+    boolean isBrokerManaged();
 }

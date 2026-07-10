@@ -100,12 +100,18 @@ If Protégé loads but the MCP server doesn't come up, check the log for a Jetty
 **Settings ▸ MCP** and restart, or free the port. The **MCP Server** view shows the current bound URL
 and status.
 
-Note that a busy port alone no longer stops the server: when the configured port is already in use
-(commonly a second Protégé window or instance already serving MCP), each window's server **falls back
-to an ephemeral port** and keeps working — the log then shows a *configured port … is already in use*
-warning instead of a bind error, and the **MCP Server** view shows the actual URL. The **Ontology
-Assistant** uses the actual port automatically, so chat works in every window; only an external
-client pinned to the fixed port needs the URL from the view of the window that holds it.
+Note that a busy port alone no longer stops MCP access. In the default **shared-broker** mode the
+configured port is owned by the broker process, which serves every window and instance at once — a
+second Protégé window/instance simply registers with it, so there is nothing to conflict. In
+standalone mode (broker toggled off or unavailable), when the configured port is already in use each
+window's server **falls back to an ephemeral port** and keeps working — the log then shows a
+*configured port … is already in use* warning instead of a bind error, and the **MCP Server** view
+shows the actual URL. The **Ontology Assistant** talks to its own window's server directly in both
+modes, so chat always works.
+
+If the broker seems stuck (unresponsive but still holding the port), check `~/.protege-mcp/broker.log`
+and kill the broker process — its pid is in `~/.protege-mcp/broker.json`. Instances re-spawn a fresh
+broker on demand within seconds; a broker that merely lost its instances exits by itself.
 
 ## Still stuck?
 

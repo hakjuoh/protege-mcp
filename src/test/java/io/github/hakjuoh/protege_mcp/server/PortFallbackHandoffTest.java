@@ -74,6 +74,11 @@ class PortFallbackHandoffTest {
             return CONFIGURED_PORT;
         }
 
+        @Override
+        public boolean isBrokerManaged() {
+            return false; // this file models the standalone (non-broker) mode
+        }
+
         boolean isPortFallback() {
             return running && boundPort != CONFIGURED_PORT;
         }

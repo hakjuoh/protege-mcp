@@ -3,6 +3,8 @@ package io.github.hakjuoh.protege_mcp;
 import org.protege.editor.core.editorkit.EditorKit;
 import org.protege.editor.core.editorkit.plugin.EditorKitHook;
 import org.protege.editor.owl.OWLEditorKit;
+import io.github.hakjuoh.protege_mcp.broker.BrokerLink;
+import io.github.hakjuoh.protege_mcp.broker.McpBoot;
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.McpServerRegistry;
@@ -38,9 +40,11 @@ public class McpServerHook extends EditorKitHook {
             final McpServerController toStart = controller;
             Thread starter = new Thread(() -> {
                 try {
-                    // Defer to a window that already owns the single process-wide port instead of
-                    // fighting over the bind; promoteSuccessor() hands the port to us if it later frees.
-                    McpServerRegistry.startIfNoOwner(toStart);
+                    // Broker-first: attach this window as a backend of the shared cross-process
+                    // broker; otherwise defer to a window that already owns the single process-wide
+                    // port instead of fighting over the bind (promoteSuccessor() hands the port to
+                    // us if it later frees).
+                    McpBoot.autoStart(toStart);
                 } catch (Exception e) {
                     // non-fatal: a bind failure must not abort EditorKit creation; surface in the view
                     log.error("protege-mcp: MCP server failed to auto-start", e);
@@ -62,8 +66,10 @@ public class McpServerHook extends EditorKitHook {
         if (toStop != null) {
             Thread stopper = new Thread(() -> {
                 boolean wasRunning = toStop.isRunning();
+                boolean wasBrokerManaged = toStop.isBrokerManaged();
+                BrokerLink.get().detach(toStop);
                 toStop.stop();
-                if (wasRunning) {
+                if (wasRunning && !wasBrokerManaged) {
                     // This window ran a server (on the configured port, or on an ephemeral fallback).
                     // Hand the configured port to another open window so swapping EditorKits (e.g.
                     // opening a different ontology) doesn't take the server down; promoteSuccessor is

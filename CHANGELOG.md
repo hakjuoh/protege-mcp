@@ -7,6 +7,29 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
 
 ## [Unreleased]
 
+### Added
+- **Shared MCP broker across Protégé windows AND instances** (default on; Settings ▸ MCP toggle).
+  The configured port now belongs to a tiny standalone broker process (`protege-mcp-broker`,
+  spawned on demand from the plugin's own jar) that outlives any single window: the first Protégé
+  process that finds no live broker starts one; every process registers with it and heartbeats;
+  when the last instance unregisters (or dies — the broker health-checks pids), the broker exits by
+  itself. Each window's MCP server runs on an ephemeral port behind the broker, so **one fixed URL
+  (`http://127.0.0.1:8123/mcp`) always works no matter how many Protégé windows or instances are
+  open** — no more per-instance URLs, no owner hand-off. Routing: a new MCP session goes to the
+  window most recently connected to the broker (with auto-start on, effectively the newest window)
+  and stays **pinned to it for the whole session**; `GET /instances` lists the registered windows
+  and `/instances/{id}/mcp` targets one explicitly. The broker terminates auth itself (the static
+  bearer token of any registered instance + full OAuth authorization server, persisted to
+  `~/.protege-mcp/oauth.json` — the view's Connected-clients table applies to standalone mode; a
+  broker-mode listing/revocation UI is a follow-up) and authenticates to each backend with a
+  per-window secret; its control plane (`/internal/*`) is guarded by an owner-only file secret, and
+  everything remains loopback-only. An idle broker left by a different plugin version is retired and
+  replaced automatically; long-lived SSE streams are kept honest with keep-alive comments so a
+  vanished client can't pin broker threads. If the broker cannot be spawned or reached, the plugin
+  degrades to the previous standalone behavior automatically (a half-attached window server is
+  stopped again, never left as an unreachable zombie). The in-app Ontology Assistant keeps talking
+  to its own window's server directly and is unaffected.
+
 ### Fixed
 - **A second Protégé window or instance no longer loses the MCP server — and with it the Ontology
   Assistant — to `Failed to bind to /127.0.0.1:<port>`.** The MCP server is per-window but the

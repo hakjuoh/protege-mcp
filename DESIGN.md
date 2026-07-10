@@ -214,8 +214,29 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    "Static fallback token last used" label, and a 1500ms refresh timer.
 
 10. **`McpPreferencesPanel`** (`PreferencesPanel`, label `"MCP"`) — port spinner (1–65535) + ephemeral checkbox,
-    auto-start, read-only mode, confirm-each-write. Port and auto-start take effect on restart; read-only and
-    confirm apply live. Persisted via `McpConfig.prefs()`.
+    shared-broker toggle (default on), auto-start, read-only mode, confirm-each-write. Port, broker and
+    auto-start take effect on restart; read-only and confirm apply live. Persisted via `McpConfig.prefs()`.
+
+11. **Shared broker (`broker` package)** — a tiny standalone process that owns the configured port across
+    every Protégé window AND instance, so external clients keep one fixed URL. On-demand lifecycle: a
+    starting Protégé process probes `~/.protege-mcp/broker.json` + `GET /internal/info`; if no live broker
+    answers, it spawns one (`java -cp <this plugin's bundle jar + Protégé's slf4j jars> BrokerMain` —
+    compile-scope deps are inlined into the bundle so the jar is self-sufficient; only provided-scope slf4j
+    is resolved from the running framework's CodeSource); on spawn failure, or when a broker already exists,
+    it simply uses whichever broker is alive. The broker **reference-counts** registered processes (2s
+    heartbeats plus a pid/staleness reaper for crashed instances) and **exits itself** once no instance
+    references it (15s linger; 60s boot grace for orphans). `BrokerServer` reuses `EmbeddedHttpServer`,
+    `AccessTokenFilter` and the OAuth stack, persisting OAuth state to `~/.protege-mcp/oauth.json`;
+    `McpProxyServlet` streams `/mcp` byte-for-byte (flush per chunk → live SSE) to per-window backends,
+    pinning each MCP session to the window that created it (`Mcp-Session-Id`) and defaulting new sessions to
+    the most recently registered window (the registry already orders by a reported focus timestamp; live
+    focus tracking is a follow-up); `GET /instances` lists windows, `/instances/{id}/mcp` targets one. Trust model: clients authenticate to the broker (bearer/OAuth); the broker authenticates to
+    a backend with that window's per-start secret (`X-Protege-Mcp-Broker`, stripped from client requests);
+    the `/internal` control plane requires the owner-only `~/.protege-mcp/secret`. Windows run as
+    broker-managed backends (`startBrokerManaged()`: ephemeral port, no shared-blob OAuth). `McpBoot` is the
+    single boot policy — broker-first, degrading to the standalone election + port-fallback mode when no
+    broker can be reached or spawned. The chat never crosses the broker (it talks to its own window's server
+    directly).
 
 > *Builder/method names verified against [`.recon/01-mcp-server.md`](.recon/01-mcp-server.md),
 > [`.recon/02-mcp-transport.md`](.recon/02-mcp-transport.md), and

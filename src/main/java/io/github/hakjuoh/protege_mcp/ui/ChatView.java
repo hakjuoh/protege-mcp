@@ -913,9 +913,10 @@ public class ChatView extends AbstractOWLViewComponent {
 
         Thread launcher = new Thread(() -> {
             try {
-                if (!controller.isRunning()) {
-                    controller.start();
-                }
+                // Broker-first lazy start; degrades to a standalone start (which itself falls back
+                // to an ephemeral port when the configured port is busy). The chat always talks to
+                // THIS window's server directly — never through the broker.
+                io.github.hakjuoh.protege_mcp.broker.McpBoot.ensureStarted(controller);
                 McpEndpoint endpoint = new McpEndpoint(controller.getEndpointUrl(), controller.getToken());
                 ChatRequest req = new ChatRequest(model, prompt, resume, endpoint, turnAttachments);
                 ChatProcess proc = provider.startTurn(req, uiListener());

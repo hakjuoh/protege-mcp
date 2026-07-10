@@ -43,6 +43,7 @@ class McpServerRegistryCoverageTest {
         private final boolean failing;
         private final int configuredPort;
         private int boundPort;
+        boolean brokerManaged;
         int startAttempts;
 
         CountingServer(boolean initiallyRunning) {
@@ -85,6 +86,11 @@ class McpServerRegistryCoverageTest {
         @Override
         public int getConfiguredPort() {
             return configuredPort;
+        }
+
+        @Override
+        public boolean isBrokerManaged() {
+            return brokerManaged;
         }
     }
 
@@ -377,6 +383,35 @@ class McpServerRegistryCoverageTest {
         assertEquals(0, runningEphemeral.startAttempts);
         assertEquals(0, idle.startAttempts, "ephemeral-by-choice: a running server ends the hand-off");
         assertFalse(idle.isRunning());
+    }
+
+    @Test
+    void electIgnoresARunningBrokerManagedBackend() throws Exception {
+        // A broker backend runs with configuredPort==0, which must NOT read as "ephemeral-by-choice
+        // owner": with the broker gone (e.g. pref just turned off), a new standalone window must
+        // still claim the configured port instead of deferring forever.
+        CountingServer brokerBackend = new CountingServer(true, false, 0, 54321);
+        brokerBackend.brokerManaged = true;
+        CountingServer candidate = new CountingServer(false);
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(brokerBackend, candidate));
+
+        McpServerRegistry.electAndStartIfNoOwner(registered, candidate);
+
+        assertTrue(candidate.isRunning(), "a broker backend never satisfies the standalone election");
+        assertEquals(8123, candidate.getBoundPort());
+    }
+
+    @Test
+    void promoteIgnoresARunningBrokerManagedBackend() {
+        CountingServer brokerBackend = new CountingServer(true, false, 0, 54321);
+        brokerBackend.brokerManaged = true;
+        CountingServer idle = new CountingServer(false);
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(brokerBackend, idle));
+
+        McpServerRegistry.promoteSuccessor(registered);
+
+        assertTrue(idle.isRunning(), "the hand-off must not be satisfied by a broker backend");
+        assertEquals(0, brokerBackend.startAttempts, "the live backend itself is never restarted");
     }
 
     @Test

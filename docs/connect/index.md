@@ -53,13 +53,30 @@ ready-to-paste connect command.
 > If you set the port to `0`, read the actual bound URL from the **MCP Server** view before configuring
 > a client.
 
+### One endpoint for every window and instance (shared broker)
+
+By default the configured port belongs to a small **shared broker** process rather than to any single
+Protégé window: the first Protégé instance starts it automatically, every window registers its own
+(ephemeral-port) server behind it, and the broker exits by itself once the last Protégé instance
+closes. For you this means `http://127.0.0.1:8123/mcp` **keeps working no matter how many Protégé
+windows or instances are open** — no per-window URLs to chase.
+
+- A **new MCP session** is routed to the window most recently connected to the broker (with
+  auto-start on, effectively the newest window) and then stays pinned to that window for its
+  lifetime.
+- `GET /instances` (same auth) lists every window registered with the broker — all open windows
+  when auto-start is on; connect a client to `/instances/{id}/mcp` to target a specific one.
+- Auth is unchanged (bearer token or OAuth) and everything stays on `127.0.0.1`. The broker keeps its
+  OAuth client registrations in `~/.protege-mcp/oauth.json`; the **MCP Server** view's
+  Connected-clients table applies to standalone mode (a broker-mode client listing/revocation UI is a
+  follow-up — to reset broker clients, delete `oauth.json` while no broker is running).
+- The toggle lives in **Settings ▸ MCP** ("Share one MCP endpoint…"). With it off — or when the broker
+  cannot be spawned — the plugin falls back to the standalone behavior below.
+
 {: .note }
-> **If the configured port is already in use** when the server starts — typically because a second
-> Protégé window or a second Protégé instance already runs the MCP server — the server binds an
-> **ephemeral port instead of failing**. The **MCP Server** view shows the actual URL (and that the
-> configured port was busy). The built-in **Ontology Assistant** always talks to its own window's
-> actual port automatically; only an external client you point at the fixed port needs the URL from
-> the view.
+> **Standalone mode:** if the configured port is already in use when a window's server starts, the
+> server binds an **ephemeral port instead of failing**. The **MCP Server** view shows the actual URL.
+> The built-in **Ontology Assistant** always talks to its own window's server directly, in both modes.
 
 ## Authorization
 

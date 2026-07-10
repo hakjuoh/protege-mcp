@@ -96,7 +96,7 @@ public final class EmbeddedHttpServer {
     }
 
     /** True when {@code t}'s cause chain contains a bind conflict (the port is already in use). */
-    static boolean isBindConflict(Throwable t) {
+    public static boolean isBindConflict(Throwable t) {
         for (int depth = 0; t != null && depth < 16; t = t.getCause(), depth++) {
             if (t instanceof BindException) {
                 return true;

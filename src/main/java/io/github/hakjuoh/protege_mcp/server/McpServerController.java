@@ -36,6 +36,10 @@ public final class McpServerController implements ManagedServer {
     private volatile int boundPort;
     private volatile int configuredPort;
     private volatile String lastError;
+    /** True while running as a broker-managed backend (ephemeral port behind the shared broker). */
+    private volatile boolean brokerManaged;
+    /** Per-start secret the broker presents in place of a bearer token; null in standalone mode. */
+    private volatile String brokerSecret;
 
     private McpServerManager serverManager;
     private EmbeddedHttpServer httpServer;
@@ -62,6 +66,20 @@ public final class McpServerController implements ManagedServer {
     }
 
     public synchronized void start() throws Exception {
+        startInternal(false);
+    }
+
+    /**
+     * Start as a broker-managed backend: always on an ephemeral port (the shared broker owns the
+     * user-facing configured port), with a fresh per-window secret the broker's proxy presents in
+     * place of a bearer token, and with NO shared-blob OAuth hydration/persistence (the broker is
+     * the single OAuth authority in this mode).
+     */
+    public synchronized void startBrokerManaged() throws Exception {
+        startInternal(true);
+    }
+
+    private void startInternal(boolean asBrokerBackend) throws Exception {
         if (running) {
             return;
         }
@@ -79,7 +97,11 @@ public final class McpServerController implements ManagedServer {
             org.apache.jena.sys.JenaSystem.init();
 
             McpConfig config = McpConfig.load();
-            this.configuredPort = config.getPort();
+            // Broker mode is ephemeral by design: the broker owns the configured port, and a
+            // configuredPort of 0 keeps isPortFallback()/the registry election semantics honest.
+            this.configuredPort = asBrokerBackend ? 0 : config.getPort();
+            this.brokerManaged = asBrokerBackend;
+            this.brokerSecret = asBrokerBackend ? mintBrokerSecret() : null;
 
             ToolContext context = new ToolContext(access, this, confirmer);
             this.toolContext = context;
@@ -101,8 +123,10 @@ public final class McpServerController implements ManagedServer {
                     this::persistOAuthState, false);
 
             httpServer = new EmbeddedHttpServer();
-            // Auth gate only on /mcp; the OAuth + discovery endpoints must stay public.
-            httpServer.addFilter(new AccessTokenFilter(oauthStore), "/mcp/*");
+            // Auth gate only on /mcp; the OAuth + discovery endpoints must stay public. In broker
+            // mode the filter additionally accepts this window's broker secret, which the broker's
+            // proxy attaches after IT authenticated the client.
+            httpServer.addFilter(new AccessTokenFilter(oauthStore, this::getBrokerSecret), "/mcp/*");
             httpServer.addServlet(serverManager.getTransportServlet(), "/mcp/*", true);
             httpServer.addServlet(new OAuthMetadataServlet(objectMapper), "/.well-known/*", false);
             httpServer.addServlet(new OAuthServlet(oauthStore, objectMapper), "/oauth/*", false);
@@ -110,7 +134,9 @@ public final class McpServerController implements ManagedServer {
             // instance may already hold it. Chat and the tools need a server bound to THIS window's
             // ontologies, so fall back to an ephemeral port instead of failing the whole start.
             boundPort = httpServer.startWithFallback(configuredPort);
-            if (!isPortFallback()) {
+            if (!asBrokerBackend && !isPortFallback()) {
+                // Standalone configured-port owner only: a broker backend never touches the shared
+                // preferences OAuth blob (the broker process is the OAuth authority in that mode).
                 oauthStore.loadPersisted();
                 oauthPersistAllowed = true;
             }
@@ -138,6 +164,8 @@ public final class McpServerController implements ManagedServer {
         safeStopInternals();
         running = false;
         boundPort = 0;
+        brokerManaged = false;
+        brokerSecret = null;
         log.info("protege-mcp: MCP server stopped");
     }
 
@@ -201,6 +229,22 @@ public final class McpServerController implements ManagedServer {
      */
     public boolean isPortFallback() {
         return boundPort != 0 && configuredPort != 0 && boundPort != configuredPort;
+    }
+
+    /** True while running as a broker-managed backend behind the shared broker. */
+    public boolean isBrokerManaged() {
+        return brokerManaged;
+    }
+
+    /** The per-start secret the broker's proxy authenticates with; null in standalone mode. */
+    public String getBrokerSecret() {
+        return brokerSecret;
+    }
+
+    private static String mintBrokerSecret() {
+        byte[] bytes = new byte[32];
+        new java.security.SecureRandom().nextBytes(bytes);
+        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     /**

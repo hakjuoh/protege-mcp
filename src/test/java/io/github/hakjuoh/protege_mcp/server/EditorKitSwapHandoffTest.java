@@ -69,6 +69,11 @@ class EditorKitSwapHandoffTest {
             return CONFIGURED_PORT;
         }
 
+        @Override
+        public boolean isBrokerManaged() {
+            return false; // this file models the standalone (non-broker) mode
+        }
+
         void stop() {
             if (port.owner == this) {
                 port.owner = null;

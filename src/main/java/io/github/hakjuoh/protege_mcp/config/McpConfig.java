@@ -20,6 +20,8 @@ public final class McpConfig {
 
     public static final String KEY_PORT = "port";
     public static final String KEY_AUTOSTART = "autoStart";
+    /** Share one broker process (and the configured port) across all Protégé windows/instances. */
+    public static final String KEY_SHARED_BROKER = "sharedBroker";
     public static final String KEY_READ_ONLY = "readOnly";
     public static final String KEY_CONFIRM_WRITES = "confirmWrites";
     public static final String KEY_TOKEN = "bearerToken";
@@ -53,13 +55,16 @@ public final class McpConfig {
 
     private final int port;
     private final boolean autoStart;
+    private final boolean sharedBroker;
     private final boolean readOnly;
     private final boolean confirmWrites;
     private final String token;
 
-    private McpConfig(int port, boolean autoStart, boolean readOnly, boolean confirmWrites, String token) {
+    private McpConfig(int port, boolean autoStart, boolean sharedBroker, boolean readOnly,
+            boolean confirmWrites, String token) {
         this.port = port;
         this.autoStart = autoStart;
+        this.sharedBroker = sharedBroker;
         this.readOnly = readOnly;
         this.confirmWrites = confirmWrites;
         this.token = token;
@@ -86,6 +91,7 @@ public final class McpConfig {
     static McpConfig load(Preferences p) {
         int port = p.getInt(KEY_PORT, DEFAULT_PORT);
         boolean autoStart = p.getBoolean(KEY_AUTOSTART, true);
+        boolean sharedBroker = p.getBoolean(KEY_SHARED_BROKER, true);
         boolean readOnly = p.getBoolean(KEY_READ_ONLY, false);
         boolean confirmWrites = p.getBoolean(KEY_CONFIRM_WRITES, false);
         String token = p.getString(KEY_TOKEN, "");
@@ -93,7 +99,7 @@ public final class McpConfig {
             token = generateToken();
             p.putString(KEY_TOKEN, token);
         }
-        return new McpConfig(port, autoStart, readOnly, confirmWrites, token);
+        return new McpConfig(port, autoStart, sharedBroker, readOnly, confirmWrites, token);
     }
 
     /** Generate a fresh URL-safe 256-bit bearer token and persist it. */
@@ -120,6 +126,11 @@ public final class McpConfig {
 
     public boolean isAutoStart() {
         return autoStart;
+    }
+
+    /** Whether MCP access is shared through the cross-process broker (default) or per-window. */
+    public boolean isSharedBroker() {
+        return sharedBroker;
     }
 
     public boolean isReadOnly() {
