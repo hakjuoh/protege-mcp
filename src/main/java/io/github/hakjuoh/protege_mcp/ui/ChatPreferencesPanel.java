@@ -38,9 +38,10 @@ public class ChatPreferencesPanel extends PreferencesPanel {
         PreferencesLayoutPanel panel = new PreferencesLayoutPanel();
 
         panel.addGroup("Coding-agent CLIs");
-        panel.addHelpText("The chat drives a locally-installed coding-agent CLI, which connects back to "
+        panel.addHelpText(PreferencesText.wrapped(
+                "The chat drives a locally-installed coding-agent CLI, which connects back to "
                 + "Protégé's MCP server to edit the live ontology. Install and log in to Claude Code "
-                + "(claude) and/or Codex (codex). No API key is stored here — each CLI uses your own login.");
+                + "(claude) and/or Codex (codex). No API key is stored here — each CLI uses your own login."));
 
         claudePath = new JTextField(p.getString(McpConfig.KEY_CHAT_CLAUDE_PATH, ""), 30);
         panel.addLabelledGroupComponent("claude path (optional):", claudePath);
@@ -52,13 +53,15 @@ public class ChatPreferencesPanel extends PreferencesPanel {
         codexStatus = new JLabel();
         panel.addGroupComponent(codexStatus);
 
-        panel.addHelpText("Leave blank to auto-detect on PATH and common install dirs. Set the full path "
-                + "to the executable if Protégé (launched from Finder/Dock) cannot find it.");
+        panel.addHelpText(PreferencesText.wrapped(
+                "Leave blank to auto-detect on PATH and common install dirs. Set the full path "
+                + "to the executable if Protégé (launched from Finder/Dock) cannot find it."));
 
         panel.addGroup("Privacy");
-        panel.addHelpText("The chat sends your prompts, any attachments or pasted content you include, and the "
+        panel.addHelpText(PreferencesText.wrapped(
+                "The chat sends your prompts, any attachments or pasted content you include, and the "
                 + "ontology content the assistant reads to your model provider via the CLI. Edits obey the MCP "
-                + "server's read-only / confirm-write settings (Preferences ▸ MCP).");
+                + "server's read-only / confirm-write settings (Preferences ▸ MCP)."));
         JButton resetConsent = new JButton("Reset egress consent prompt");
         resetConsent.addActionListener(e -> {
             McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_CONSENTED, false);

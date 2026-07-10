@@ -54,11 +54,12 @@ public class McpPreferencesPanel extends PreferencesPanel {
         panel.addLabelledGroupComponent("Port:", portSpinner);
         panel.addGroupComponent(ephemeralCheck);
         panel.addGroupComponent(sharedBrokerCheck);
-        panel.addHelpText("The server binds to 127.0.0.1 only. With the shared broker on, the port "
+        panel.addHelpText(PreferencesText.wrapped(
+                "The server binds to 127.0.0.1 only. With the shared broker on, the port "
                 + "belongs to a small broker process that outlives any single window and routes MCP "
                 + "clients to the right window; each window's own server uses an ephemeral port behind "
                 + "it. Port and broker changes apply the next time a server (or the broker) starts — "
-                + "for a clean switch, close all Protégé windows and reopen.");
+                + "for a clean switch, close all Protégé windows and reopen."));
         panel.addSeparator();
         panel.addGroup("Startup");
         panel.addGroupComponent(autoStartCheck);
@@ -66,7 +67,8 @@ public class McpPreferencesPanel extends PreferencesPanel {
         panel.addGroup("Safety");
         panel.addGroupComponent(readOnlyCheck);
         panel.addGroupComponent(confirmWritesCheck);
-        panel.addHelpText("Read-only and confirmation apply immediately, without a restart.");
+        panel.addHelpText(PreferencesText.wrapped(
+                "Read-only and confirmation apply immediately, without a restart."));
         add(panel);
     }
 
