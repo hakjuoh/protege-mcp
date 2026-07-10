@@ -99,4 +99,4 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 - [**Axiom types**](axiom-types.html) — the structured `axiom_type` operand catalog used by
   `add_axiom`, `remove_axiom`, `preview_changes`, `apply_changes`, `explain_entailment`, and
   `get_explanations`.
-- [**Guided workflows (prompts)**](prompts.html) — the 6 MCP prompts.
+- [**Guided workflows (prompts)**](prompts.html) — the 11 MCP prompts.

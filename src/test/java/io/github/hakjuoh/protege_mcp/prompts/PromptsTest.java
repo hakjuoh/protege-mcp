@@ -119,13 +119,18 @@ class PromptsTest {
             "add_subclass_safely",
             "find_and_fix_unsatisfiable",
             "author_sparql_query",
-            "model_domain");
+            "model_domain",
+            "author_competency_question",
+            "author_swrl_rule",
+            "refactor_entity_safely",
+            "bootstrap_ontology",
+            "release_readiness_check");
 
     // ------------------------------------------------------------------ register(): structure
 
     @Test
-    void registerContributesExactlySixPrompts() {
-        assertEquals(6, all().size(), "expected 6 built-in prompts");
+    void registerContributesExactlyElevenPrompts() {
+        assertEquals(11, all().size(), "expected 11 built-in prompts");
     }
 
     @Test
@@ -223,17 +228,67 @@ class PromptsTest {
     }
 
     @Test
-    void everyDeclaredArgumentIsRequiredAndDescribed() {
+    void everyDeclaredArgumentIsFlaggedAndDescribed() {
         for (SyncPromptSpecification s : all()) {
             for (PromptArgument a : s.prompt().arguments()) {
-                assertEquals(Boolean.TRUE, a.required(),
-                        "arg " + a.name() + " of " + s.prompt().name() + " should be required");
+                assertNotNull(a.required(),
+                        "arg " + a.name() + " of " + s.prompt().name() + " should declare required");
                 assertNotNull(a.description(),
                         "arg " + a.name() + " of " + s.prompt().name() + " should have a description");
                 assertFalse(a.description().isBlank(),
                         "arg " + a.name() + " of " + s.prompt().name() + " description blank");
             }
         }
+    }
+
+    @Test
+    void authorCompetencyQuestionHasRequiredQuestionAndOptionalExpected() {
+        List<PromptArgument> a = specNamed("author_competency_question").prompt().arguments();
+        assertEquals(2, a.size(), "arg count");
+        assertEquals("question", a.get(0).name(), "first arg name");
+        assertEquals(Boolean.TRUE, a.get(0).required(), "question required");
+        assertEquals("expected", a.get(1).name(), "second arg name");
+        assertEquals(Boolean.FALSE, a.get(1).required(), "expected optional");
+    }
+
+    @Test
+    void authorSwrlRuleHasSingleRequiredRuleArgument() {
+        List<PromptArgument> a = specNamed("author_swrl_rule").prompt().arguments();
+        assertEquals(1, a.size(), "arg count");
+        assertEquals("rule", a.get(0).name(), "arg name");
+        assertEquals(Boolean.TRUE, a.get(0).required(), "arg required");
+    }
+
+    @Test
+    void refactorEntitySafelyHasTwoRequiredArguments() {
+        List<PromptArgument> a = specNamed("refactor_entity_safely").prompt().arguments();
+        assertEquals(2, a.size(), "arg count");
+        assertEquals("entity", a.get(0).name(), "first arg name");
+        assertEquals("goal", a.get(1).name(), "second arg name");
+        assertAll(
+                () -> assertEquals(Boolean.TRUE, a.get(0).required(), "entity required"),
+                () -> assertEquals(Boolean.TRUE, a.get(1).required(), "goal required"));
+    }
+
+    @Test
+    void bootstrapOntologyHasRequiredIriAndOptionalPath() {
+        List<PromptArgument> a = specNamed("bootstrap_ontology").prompt().arguments();
+        assertEquals(2, a.size(), "arg count");
+        assertEquals("ontology_iri", a.get(0).name(), "first arg name");
+        assertEquals(Boolean.TRUE, a.get(0).required(), "ontology_iri required");
+        assertEquals("path", a.get(1).name(), "second arg name");
+        assertEquals(Boolean.FALSE, a.get(1).required(), "path optional");
+    }
+
+    @Test
+    void releaseReadinessCheckHasTwoOptionalArguments() {
+        List<PromptArgument> a = specNamed("release_readiness_check").prompt().arguments();
+        assertEquals(2, a.size(), "arg count");
+        assertEquals("profile", a.get(0).name(), "first arg name");
+        assertEquals("namespace", a.get(1).name(), "second arg name");
+        assertAll(
+                () -> assertEquals(Boolean.FALSE, a.get(0).required(), "profile optional"),
+                () -> assertEquals(Boolean.FALSE, a.get(1).required(), "namespace optional"));
     }
 
     // ------------------------------------------------------------------ register(): handler rendering
@@ -267,8 +322,12 @@ class PromptsTest {
         assertAll(
                 () -> assertTrue(text.contains("get_ontology_context"), "mentions get_ontology_context"),
                 () -> assertTrue(text.contains("validate_ontology"), "mentions validate_ontology"),
+                () -> assertTrue(text.contains("validate_governance"), "mentions validate_governance"),
                 () -> assertTrue(text.contains("run_reasoner"), "mentions run_reasoner"),
+                () -> assertTrue(text.contains("explain_inconsistency"), "branches to explain_inconsistency"),
                 () -> assertTrue(text.contains("preview_changes"), "mentions preview_changes"),
+                () -> assertTrue(text.contains("apply_changes"), "names the apply path"),
+                () -> assertTrue(text.contains("verify=\"rollback\""), "uses verify=rollback"),
                 () -> assertTrue(text.contains("DO NOT"), "warns not to modify without approval"));
     }
 
@@ -278,7 +337,10 @@ class PromptsTest {
         assertAll(
                 () -> assertTrue(text.contains("get_unsatisfiable_classes"), "mentions unsatisfiable"),
                 () -> assertTrue(text.contains("get_explanations"), "mentions explanations"),
-                () -> assertTrue(text.contains("owl:Nothing"), "mentions owl:Nothing"));
+                () -> assertTrue(text.contains("owl:Nothing"), "mentions owl:Nothing"),
+                () -> assertTrue(text.contains("explain_inconsistency"), "covers the inconsistent branch"),
+                () -> assertTrue(text.contains("apply_changes"), "applies via apply_changes"),
+                () -> assertTrue(text.contains("verify=\"report\""), "uses verify=report"));
     }
 
     @Test
@@ -308,7 +370,11 @@ class PromptsTest {
                 () -> assertTrue(text.contains("\"Puppy\""), "interpolates child"),
                 () -> assertTrue(text.contains("\"Dog\""), "interpolates parent"),
                 () -> assertTrue(text.contains("subclass_of"), "mentions the subclass axiom type"),
-                () -> assertTrue(text.contains("add_subclass_of"), "mentions the apply tool"));
+                () -> assertTrue(text.contains("apply_changes"), "applies via apply_changes"),
+                () -> assertTrue(text.contains("verify=\"rollback\""), "uses verify=rollback"),
+                () -> assertTrue(text.contains("set_reasoner"), "recovers by selecting a reasoner"),
+                () -> assertTrue(text.contains("UNVERIFIED"), "labels the reasonerless fallback honestly"),
+                () -> assertTrue(text.contains("add_subclass_of"), "keeps the no-reasoner fallback"));
     }
 
     @Test
@@ -346,7 +412,10 @@ class PromptsTest {
         assertAll(
                 () -> assertTrue(text.contains("a coffee shop menu"), "interpolates description"),
                 () -> assertTrue(text.contains("get_ontology_context"), "mentions get_ontology_context"),
-                () -> assertTrue(text.contains("preview_changes"), "mentions preview_changes"));
+                () -> assertTrue(text.contains("create_terms"), "routes classes through create_terms"),
+                () -> assertTrue(text.contains("create_properties"), "routes properties through create_properties"),
+                () -> assertTrue(text.contains("preview_changes"), "mentions preview_changes"),
+                () -> assertTrue(text.contains("run_qc_suite"), "gates with run_qc_suite"));
     }
 
     @Test
@@ -354,6 +423,134 @@ class PromptsTest {
         String text = textOf(render(specNamed("model_domain"), Collections.emptyMap()));
         assertTrue(text.contains("the described domain"),
                 "missing description should fall back to \"the described domain\"");
+    }
+
+    @Test
+    void authorSparqlQueryRenderMentionsDryRun() {
+        String text = textOf(render(specNamed("author_sparql_query"), Collections.emptyMap()));
+        assertTrue(text.contains("dry_run=true"),
+                "sparql_validate's dry_run sample execution should be suggested");
+    }
+
+    @Test
+    void authorCompetencyQuestionRenderContainsCqWorkflow() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("question", "Every batch has a lot number");
+        String text = textOf(render(specNamed("author_competency_question"), args));
+        assertAll(
+                () -> assertTrue(text.contains("Every batch has a lot number"), "interpolates question"),
+                () -> assertTrue(text.contains("list_competency_questions"), "checks the existing store"),
+                () -> assertTrue(text.contains("sparql_schema"), "discovers vocabulary"),
+                () -> assertTrue(text.contains("sparql_validate"), "validates the draft"),
+                () -> assertTrue(text.contains("add_competency_question"), "stores the CQ"),
+                () -> assertTrue(text.contains("include_inferred=false"),
+                        "warns that include_inferred defaults to true"),
+                () -> assertTrue(text.contains("run_competency_questions"), "runs the new CQ"));
+    }
+
+    @Test
+    void authorCompetencyQuestionRendersGivenExpectedCondition() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("question", "q");
+        args.put("expected", "count >= 3");
+        String text = textOf(render(specNamed("author_competency_question"), args));
+        assertTrue(text.contains("count >= 3"), "interpolates the given expected condition");
+    }
+
+    @Test
+    void authorCompetencyQuestionExplainsConditionsWhenExpectedMissing() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("question", "q");
+        String text = textOf(render(specNamed("author_competency_question"), args));
+        assertTrue(text.contains("nonEmpty | empty | 'count OP N'"),
+                "missing expected arg should enumerate the pass-condition choices");
+    }
+
+    @Test
+    void authorSwrlRuleRenderContainsCompatibilityChecks() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("rule", "adjacent rooms share a wall");
+        String text = textOf(render(specNamed("author_swrl_rule"), args));
+        assertAll(
+                () -> assertTrue(text.contains("adjacent rooms share a wall"), "interpolates rule"),
+                () -> assertTrue(text.contains("list_rules"), "checks existing rules"),
+                () -> assertTrue(text.contains("add_rule"), "adds via add_rule"),
+                () -> assertTrue(text.contains("list_reasoners"), "checks reasoner compatibility"),
+                () -> assertTrue(text.contains("ELK"), "warns ELK ignores rules"),
+                () -> assertTrue(text.contains("swrlb:"), "warns about builtin atoms"),
+                () -> assertTrue(text.contains("set_reasoner"), "offers a reasoner switch"),
+                () -> assertTrue(text.contains("include_inferred=true"), "verifies an inference fires"));
+    }
+
+    @Test
+    void refactorEntitySafelyRenderCoversTheFourOperations() {
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("entity", "ObsoleteThing");
+        args.put("goal", "deprecate it");
+        String text = textOf(render(specNamed("refactor_entity_safely"), args));
+        assertAll(
+                () -> assertTrue(text.contains("\"ObsoleteThing\""), "interpolates entity"),
+                () -> assertTrue(text.contains("deprecate it"), "interpolates goal"),
+                () -> assertTrue(text.contains("rename_entity"), "covers rename"),
+                () -> assertTrue(text.contains("deprecate_entity"), "covers deprecate"),
+                () -> assertTrue(text.contains("delete_entity"), "covers delete"),
+                () -> assertTrue(text.contains("move_class"), "covers move"),
+                () -> assertTrue(text.contains("preview=true"), "uses the dry-run previews"),
+                () -> assertTrue(text.contains("new_iri_already_in_signature"), "flags the rename merge"),
+                () -> assertTrue(text.contains("peek=true"), "mentions the undo peek"));
+    }
+
+    @Test
+    void bootstrapOntologyRenderInterpolatesIriAndPath() {
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("ontology_iri", "http://ex.org/onto");
+        args.put("path", "/tmp/onto.rdf");
+        String text = textOf(render(specNamed("bootstrap_ontology"), args));
+        assertAll(
+                () -> assertTrue(text.contains("http://ex.org/onto"), "interpolates ontology_iri"),
+                () -> assertTrue(text.contains("path=\"/tmp/onto.rdf\""), "interpolates path"),
+                () -> assertTrue(text.contains("create_ontology"), "creates the module"),
+                () -> assertTrue(text.contains("set_prefix"), "sets prefixes"),
+                () -> assertTrue(text.contains("add_ontology_annotation"), "adds metadata"),
+                () -> assertTrue(text.contains("add_import"), "adds imports"),
+                () -> assertTrue(text.contains("'resolved' flag"), "checks import resolution"),
+                () -> assertTrue(text.contains("write_catalog"), "writes the catalog"));
+    }
+
+    @Test
+    void bootstrapOntologySuggestsPathWhenPathMissing() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("ontology_iri", "http://ex.org/onto");
+        String text = textOf(render(specNamed("bootstrap_ontology"), args));
+        assertTrue(text.contains("pass 'path' too"),
+                "missing path should still steer toward binding a file");
+    }
+
+    @Test
+    void releaseReadinessCheckRenderContainsTheGateSequence() {
+        String text = textOf(render(specNamed("release_readiness_check"), Collections.emptyMap()));
+        assertAll(
+                () -> assertTrue(text.contains("list_ontologies"), "checks dirty ontologies"),
+                () -> assertTrue(text.contains("run_reasoner"), "classifies first"),
+                () -> assertTrue(text.contains("run_qc_suite"), "runs the QC gate"),
+                () -> assertTrue(text.contains("owl_profile=\"DL\""), "defaults the profile to DL"),
+                () -> assertTrue(text.contains("validate_governance"), "checks governance policy"),
+                () -> assertTrue(text.contains("diff_ontologies"), "diffs against the saved document"),
+                () -> assertTrue(text.contains("save_ontology"), "saves only after approval"),
+                () -> assertTrue(text.contains("write_catalog"), "writes the catalog"),
+                () -> assertTrue(text.contains("DO NOT save"), "gates saving on approval"));
+    }
+
+    @Test
+    void releaseReadinessCheckInterpolatesProfileAndNamespace() {
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("profile", "EL");
+        args.put("namespace", "http://ex.org/terms/");
+        String text = textOf(render(specNamed("release_readiness_check"), args));
+        assertAll(
+                () -> assertTrue(text.contains("owl_profile=\"EL\""), "interpolates profile"),
+                () -> assertTrue(text.contains("required_namespaces=[\"http://ex.org/terms/\"]"),
+                        "interpolates namespace"));
     }
 
     @Test

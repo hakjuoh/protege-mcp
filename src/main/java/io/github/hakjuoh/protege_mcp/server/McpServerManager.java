@@ -51,9 +51,8 @@ public final class McpServerManager {
                     + "To query the ontology, sparql_schema lists the queryable vocabulary (prefixes, "
                     + "classes, properties, example queries) and sparql_validate checks a draft query "
                     + "before sparql_query runs it.\n"
-                    + "The MCP prompts (audit_ontology, explain_class, add_subclass_safely, "
-                    + "find_and_fix_unsatisfiable, author_sparql_query, model_domain) package these "
-                    + "workflows.";
+                    + "The MCP prompts (prompts/list) package these workflows as guided, safe-order "
+                    + "recipes — from audit_ontology and model_domain to release_readiness_check.";
 
     private McpSyncServer server;
     private HttpServletStreamableServerTransportProvider transport;

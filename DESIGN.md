@@ -230,7 +230,7 @@ The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `W
 
 ---
 
-## 5. MCP Tool Catalog (66 tools + 6 prompts)
+## 5. MCP Tool Catalog (66 tools + 11 prompts)
 
 Sixty-six tools — 7 read, 2 context, 20 edit/curation/history/persistence (incl. `preview_changes`,
 `apply_changes`, `set_label`, `create_term`, `create_terms`, `create_property`, `create_properties`, `deprecate_entity`,
@@ -244,7 +244,7 @@ Sixty-six tools — 7 read, 2 context, 20 edit/curation/history/persistence (inc
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
 **Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
 serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results
-programmatically and a human still sees readable JSON. The server also registers **6 MCP prompts**
+programmatically and a human still sees readable JSON. The server also registers **11 MCP prompts**
 (guided workflows) — see the end of this section.
 
 New in `0.2.0` (the natural-language layer): `get_ontology_context` / `get_entity_context`
@@ -417,13 +417,15 @@ a pointed error naming `explain_inconsistency`.
   non-interactive MCP call. A `load_ontology` is not an `applyChange`, so it is **not** on the undo stack.
 - **`Axioms`** (used by `add_axiom` / `remove_axiom` / `explain_entailment` / `get_explanations`) supports the
   full structured `axiom_type` surface (see the README catalog).
-- The server registers **tools and prompts** (no MCP `resources` capability). The six prompts
+- The server registers **tools and prompts** (no MCP `resources` capability). The eleven prompts
   (`audit_ontology`, `explain_class`, `add_subclass_safely`, `find_and_fix_unsatisfiable`,
-  `author_sparql_query`, `model_domain`) are pure templates (`prompts/Prompts.java`; the `prompts`
-  package mirrors the `tools` package's registry pattern — `PromptRegistry`/`PromptSpecs`/
-  `PromptProvider`/`PromptCatalog`): each expands to a single user message that
-  drives the tools in a safe order (orient → preview → confirm/apply → verify). They touch no model
-  state and run on the transport thread.
+  `author_sparql_query`, `model_domain`, `author_competency_question`, `author_swrl_rule`,
+  `refactor_entity_safely`, `bootstrap_ontology`, `release_readiness_check`) are pure templates
+  (`prompts/Prompts.java`; the `prompts` package mirrors the `tools` package's registry pattern —
+  `PromptRegistry`/`PromptSpecs`/`PromptProvider`/`PromptCatalog`, with `PromptTemplate` as the
+  render SAM): each expands to a single user message that drives the tools in a safe order
+  (orient → preview → confirm/apply → verify). They touch no model state and run on the transport
+  thread.
 - **New context/validation/preview tools (`0.2.0`).** `get_ontology_context` (active-ontology
   orientation: counts, asserted roots, sampled properties, reasoner state, prefixes) and
   `get_entity_context` (a one-call "entity card": annotations, deprecation, and the asserted
@@ -946,7 +948,7 @@ model alias already ships, and long-context compaction is owned by the CLI's age
 | `tools/ToolCatalog`, `ToolSpecs`, `ToolContext` | tool aggregation, spec factory, handler context |
 | `tools/ReadTools`, `WriteTools`, `EntityRefactorTools`, `ReasonerTools`, `Axioms` | the §5 tools + structured-axiom support |
 | `tools/Tools`, `tools/ToolArgException` | shared OWLAPI/finder/render helpers; an invalid-argument signal turned into a non-fatal MCP error result |
-| `prompts/PromptCatalog`, `PromptSpecs`, `PromptProvider`, `PromptRegistry` | prompt aggregation, spec factory, provider SAM, fluent sink (mirrors the tools registry pattern) |
+| `prompts/PromptCatalog`, `PromptSpecs`, `PromptProvider`, `PromptRegistry`, `PromptTemplate` | prompt aggregation, spec factory, provider SAM, fluent sink, render SAM (mirrors the tools registry pattern) |
 | `prompts/Prompts` | the guided-workflow prompt templates (§5) |
 | `config/McpConfig` | preferences snapshot (`io.github.hakjuoh.protege_mcp` / `server`); token + OAuth state keys |
 | `ui/McpServerView`, `ui/McpPreferencesPanel` | status view (connected-clients table) + settings panel |

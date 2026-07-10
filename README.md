@@ -22,7 +22,7 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 
 ## Highlights
 
-- **66 structured tools + 6 guided prompts** over the live, active ontology — explore, edit, curate,
+- **66 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
   govern, extract modules, run SWRL rules, SPARQL and SHACL, and reason.
 - **Safe, testable authoring** (`0.4.0`) — `apply_changes verify=report|rollback` classifies the reasoner
   and reverts an edit that makes a class unsatisfiable or the ontology inconsistent; a re-runnable
