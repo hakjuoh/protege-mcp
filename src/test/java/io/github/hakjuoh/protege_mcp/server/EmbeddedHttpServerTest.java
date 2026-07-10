@@ -11,7 +11,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.net.BindException;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.net.URI;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -320,6 +323,82 @@ class EmbeddedHttpServerTest {
         } finally {
             first.stop();
         }
+    }
+
+    // ---- startWithFallback ---------------------------------------------------
+
+    @Test
+    void startWithFallbackUsesPreferredPortWhenFree() throws Exception {
+        // Discover a free loopback port by binding ephemeral and releasing it, then ask for it.
+        EmbeddedHttpServer probe = new EmbeddedHttpServer();
+        int freePort = probe.start(0);
+        probe.stop();
+
+        host = new EmbeddedHttpServer();
+        int bound = host.startWithFallback(freePort);
+        assertEquals(freePort, bound, "a free preferred port must be bound as-is, no fallback");
+        assertTrue(host.isRunning());
+    }
+
+    @Test
+    void startWithFallbackBindsEphemeralWhenPreferredPortBusy() throws Exception {
+        try (ServerSocket occupier = new ServerSocket()) {
+            occupier.bind(new InetSocketAddress("127.0.0.1", 0)); // the "other window/instance"
+            int busyPort = occupier.getLocalPort();
+
+            host = new EmbeddedHttpServer();
+            RecordingServlet s = new RecordingServlet("fallback-alive");
+            host.addServlet(s, "/mcp/*", true);
+            int bound = host.startWithFallback(busyPort);
+
+            assertNotEquals(busyPort, bound, "the busy port cannot be bound — an ephemeral one is");
+            assertTrue(bound > 0, "the fallback port is a real OS-assigned port");
+            assertTrue(host.isRunning(), "the host serves despite the preferred port being busy");
+            HttpResult r = get(bound, "/mcp/ping");
+            assertEquals(200, r.status, "servlets registered before the failed bind survive the rebind");
+            assertEquals("fallback-alive", r.body);
+        }
+    }
+
+    @Test
+    void startWithFallbackZeroPortBindsEphemeralDirectly() throws Exception {
+        host = new EmbeddedHttpServer();
+        int bound = host.startWithFallback(0);
+        assertTrue(bound > 0, "preferred port 0 is ephemeral-by-choice — no fallback involved");
+        assertTrue(host.isRunning());
+    }
+
+    @Test
+    void startWithFallbackRethrowsNonBindFailures() {
+        host = new EmbeddedHttpServer();
+        assertThrows(IllegalArgumentException.class, () -> host.startWithFallback(-1),
+                "a non-bind failure (invalid port) must propagate, not trigger the fallback");
+        assertFalse(host.isRunning(), "the host must not come up after a non-bind failure");
+    }
+
+    // ---- isBindConflict --------------------------------------------------------
+
+    @Test
+    void isBindConflictTrueForDirectBindException() {
+        assertTrue(EmbeddedHttpServer.isBindConflict(new BindException("Address already in use")));
+    }
+
+    @Test
+    void isBindConflictTrueForWrappedBindException() {
+        // The exact shape Jetty raised in the field: IOException("Failed to bind ...") caused by
+        // BindException("Address already in use").
+        IOException jettyShape = new IOException("Failed to bind to /127.0.0.1:8123",
+                new BindException("Address already in use"));
+        assertTrue(EmbeddedHttpServer.isBindConflict(jettyShape));
+        assertTrue(EmbeddedHttpServer.isBindConflict(new RuntimeException(jettyShape)),
+                "a deeper wrapping must still be recognised");
+    }
+
+    @Test
+    void isBindConflictFalseForOtherFailures() {
+        assertFalse(EmbeddedHttpServer.isBindConflict(new IOException("disk full")));
+        assertFalse(EmbeddedHttpServer.isBindConflict(new IllegalArgumentException("port -1")));
+        assertFalse(EmbeddedHttpServer.isBindConflict(null));
     }
 
     // ---- isRunning ----------------------------------------------------------

@@ -1,5 +1,6 @@
 package io.github.hakjuoh.protege_mcp.server;
 
+import java.net.BindException;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -73,6 +74,35 @@ public final class EmbeddedHttpServer {
         server.start();
 
         return connector.getLocalPort();
+    }
+
+    /**
+     * Start on {@code preferredPort}, falling back to an ephemeral port when that port is already in
+     * use — e.g. another Protégé window or a second Protégé instance already runs the MCP server.
+     * Non-bind failures (and any failure when {@code preferredPort} is {@code 0}) propagate as-is.
+     *
+     * @return the actual bound port; differs from {@code preferredPort} exactly when the fallback ran.
+     */
+    public synchronized int startWithFallback(int preferredPort) throws Exception {
+        try {
+            return start(preferredPort);
+        } catch (Exception e) {
+            if (preferredPort == 0 || !isBindConflict(e)) {
+                throw e;
+            }
+            stop(); // release the half-started server before rebinding
+            return start(0);
+        }
+    }
+
+    /** True when {@code t}'s cause chain contains a bind conflict (the port is already in use). */
+    static boolean isBindConflict(Throwable t) {
+        for (int depth = 0; t != null && depth < 16; t = t.getCause(), depth++) {
+            if (t instanceof BindException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public synchronized boolean isRunning() {

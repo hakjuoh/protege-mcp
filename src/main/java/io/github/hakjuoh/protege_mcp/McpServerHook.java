@@ -61,13 +61,15 @@ public class McpServerHook extends EditorKitHook {
         controller = null;
         if (toStop != null) {
             Thread stopper = new Thread(() -> {
-                boolean wasOwner = toStop.isRunning();
+                boolean wasRunning = toStop.isRunning();
                 toStop.stop();
-                if (wasOwner) {
-                    // This window held the single process-wide port. Hand it to another open window so
-                    // swapping EditorKits (e.g. opening a different ontology) doesn't take the server
-                    // down. Promote on its own daemon thread so window-close latency stays bounded by
-                    // stop() and isn't coupled to the successor's Jetty boot.
+                if (wasRunning) {
+                    // This window ran a server (on the configured port, or on an ephemeral fallback).
+                    // Hand the configured port to another open window so swapping EditorKits (e.g.
+                    // opening a different ontology) doesn't take the server down; promoteSuccessor is
+                    // a no-op if a survivor already holds it. Promote on its own daemon thread so
+                    // window-close latency stays bounded by stop() and isn't coupled to the
+                    // successor's Jetty boot.
                     Thread promoter = new Thread(McpServerRegistry::promoteSuccessor, "protege-mcp-promote");
                     promoter.setDaemon(true);
                     promoter.start();

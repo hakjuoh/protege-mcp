@@ -40,6 +40,9 @@ public final class McpServerRegistry {
      * <em>defer</em> to whichever controller already owns the single process-wide port: a freshly
      * opened window stays idle but registered, ready to be promoted by {@link #promoteSuccessor()} if
      * the current owner is later closed — instead of fighting over the bind and being left dead.
+     * A server running on an ephemeral <em>fallback</em> port does not count as the owner: the new
+     * window starts and re-claims the configured port if it has been freed since (and merely falls
+     * back itself if it is still busy, so the candidate can never be left dead).
      *
      * <p>{@code synchronized} so the owner check and the bind are atomic with respect to a concurrent
      * {@link #promoteSuccessor()}; only one controller is ever elected to bind at a time.
@@ -63,21 +66,35 @@ public final class McpServerRegistry {
     static void electAndStartIfNoOwner(Collection<? extends ManagedServer> registered, ManagedServer candidate)
             throws Exception {
         for (ManagedServer other : registered) {
-            if (other != candidate && other.isRunning()) {
-                return; // another window already owns the port — stay idle, ready for hand-off
+            if (other != candidate && other.isRunning()
+                    && (other.getConfiguredPort() == 0 || other.getBoundPort() == other.getConfiguredPort())) {
+                return; // a window already holds the configured port (or ephemeral-by-choice) — stay idle
             }
         }
         candidate.start();
     }
 
-    /** Pure hand-off logic behind {@link #promoteSuccessor()}; unit-tested directly. */
+    /**
+     * Pure hand-off logic behind {@link #promoteSuccessor()}; unit-tested directly.
+     *
+     * <p>A running server only satisfies the hand-off when it holds its <em>configured</em> port (or
+     * the user configured port {@code 0}, ephemeral by choice). A server running on an ephemeral
+     * <em>fallback</em> port — started lazily for the chat while another window owned the configured
+     * port — does not: an idle window is still promoted so the configured port the user gave to
+     * external MCP clients gets re-claimed. Running servers are never restarted onto the freed port,
+     * because an in-flight chat turn may be streaming through them.
+     */
     static void promoteSuccessor(Collection<? extends ManagedServer> registered) {
         for (ManagedServer s : registered) {
-            if (s.isRunning()) {
-                return; // another window already took over
+            if (s.isRunning()
+                    && (s.getConfiguredPort() == 0 || s.getBoundPort() == s.getConfiguredPort())) {
+                return; // the configured port is already served (or ephemeral-by-choice) — done
             }
         }
         for (ManagedServer s : registered) {
+            if (s.isRunning()) {
+                continue; // never restart a live fallback server out from under an active chat
+            }
             try {
                 s.start();
                 return;

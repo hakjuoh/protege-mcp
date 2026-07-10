@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Field;
 import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
@@ -348,5 +349,108 @@ class McpServerControllerTest {
         ManagedServer server = newController();
         assertSame(Boolean.FALSE, Boolean.valueOf(server.isRunning()),
                 "as a ManagedServer, a fresh controller reports not-running");
+    }
+
+    @Test
+    void regeneratedTokenAppliesToEveryControllerImmediately() {
+        // getToken() reads the preferences live: with two servers possibly running at once (a
+        // configured-port owner plus a fallback-port server in another window), a token regenerated
+        // in ANY window must stop the old token everywhere, not just on the regenerating controller.
+        McpServerController a = newController();
+        McpServerController b = newController();
+        String old = b.getToken();
+        String fresh = a.regenerateToken();
+        assertEquals(fresh, b.getToken(),
+                "every controller must serve the regenerated token immediately (live prefs read)");
+        assertNotEquals(old, b.getToken(), "the old token must no longer be reported anywhere");
+    }
+
+    // ---- isPortFallback / persistOAuthState -------------------------------------------------------
+
+    /** start() is runtime-only here (see class javadoc), so the port fields are set reflectively. */
+    private static void setPorts(McpServerController c, int configured, int bound) throws Exception {
+        Field cf = McpServerController.class.getDeclaredField("configuredPort");
+        cf.setAccessible(true);
+        cf.setInt(c, configured);
+        Field bf = McpServerController.class.getDeclaredField("boundPort");
+        bf.setAccessible(true);
+        bf.setInt(c, bound);
+    }
+
+    @Test
+    void isPortFallbackFalseOnFreshController() {
+        assertFalse(newController().isPortFallback(),
+                "no ports are bound before start(), so nothing can be a fallback");
+    }
+
+    @Test
+    void isPortFallbackTruthTable() throws Exception {
+        McpServerController c = newController();
+
+        setPorts(c, 8123, 8123);
+        assertFalse(c.isPortFallback(), "bound == configured is the normal bind, not a fallback");
+
+        setPorts(c, 8123, 54321);
+        assertTrue(c.isPortFallback(), "bound != configured (configured != 0) is the fallback shape");
+
+        setPorts(c, 0, 54321);
+        assertFalse(c.isPortFallback(), "configured 0 is ephemeral by choice, never a fallback");
+
+        setPorts(c, 8123, 0);
+        assertFalse(c.isPortFallback(), "bound 0 means stopped / failed start, not a fallback");
+    }
+
+    /** The persist gate is latched by start() after hydration; latch it directly here (no Jetty). */
+    private static void setPersistAllowed(McpServerController c, boolean allowed) throws Exception {
+        Field f = McpServerController.class.getDeclaredField("oauthPersistAllowed");
+        f.setAccessible(true);
+        f.setBoolean(c, allowed);
+    }
+
+    @Test
+    void persistOAuthStatePersistsOnceHydrationLatchedTheGate() throws Exception {
+        String savedOauth = prefs.getString(McpConfig.KEY_OAUTH_STATE, "");
+        try {
+            McpServerController c = newController();
+            setPersistAllowed(c, true); // as start() does on the configured-port owner post-hydration
+            c.persistOAuthState("{\"clients\":\"owner\"}");
+            assertEquals("{\"clients\":\"owner\"}", prefs.getString(McpConfig.KEY_OAUTH_STATE, ""),
+                    "the hydrated configured-port owner persists the user-global OAuth blob");
+        } finally {
+            prefs.putString(McpConfig.KEY_OAUTH_STATE, savedOauth);
+        }
+    }
+
+    @Test
+    void persistOAuthStateSkipsWriteWhileTheGateIsUnlatched() throws Exception {
+        // The unlatched gate covers every state that must not write the shared blob: a fallback-port
+        // server (never hydrated), an owner-side mutation racing the post-bind hydration, and an
+        // in-flight request that outlives stop().
+        String savedOauth = prefs.getString(McpConfig.KEY_OAUTH_STATE, "");
+        try {
+            prefs.putString(McpConfig.KEY_OAUTH_STATE, "{\"clients\":\"owner\"}");
+            McpServerController c = newController();
+            c.persistOAuthState("{\"clients\":\"fallback\"}");
+            assertEquals("{\"clients\":\"owner\"}", prefs.getString(McpConfig.KEY_OAUTH_STATE, ""),
+                    "an unhydrated server must not clobber the owner's persisted OAuth clients");
+        } finally {
+            prefs.putString(McpConfig.KEY_OAUTH_STATE, savedOauth);
+        }
+    }
+
+    @Test
+    void stopClosesThePersistGate() throws Exception {
+        String savedOauth = prefs.getString(McpConfig.KEY_OAUTH_STATE, "");
+        try {
+            prefs.putString(McpConfig.KEY_OAUTH_STATE, "{\"clients\":\"owner\"}");
+            McpServerController c = newController();
+            setPersistAllowed(c, true);
+            c.stop();
+            c.persistOAuthState("{\"clients\":\"late-request\"}");
+            assertEquals("{\"clients\":\"owner\"}", prefs.getString(McpConfig.KEY_OAUTH_STATE, ""),
+                    "a request outliving stop() must no longer write the shared blob");
+        } finally {
+            prefs.putString(McpConfig.KEY_OAUTH_STATE, savedOauth);
+        }
     }
 }

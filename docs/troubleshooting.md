@@ -100,6 +100,13 @@ If Protégé loads but the MCP server doesn't come up, check the log for a Jetty
 **Settings ▸ MCP** and restart, or free the port. The **MCP Server** view shows the current bound URL
 and status.
 
+Note that a busy port alone no longer stops the server: when the configured port is already in use
+(commonly a second Protégé window or instance already serving MCP), each window's server **falls back
+to an ephemeral port** and keeps working — the log then shows a *configured port … is already in use*
+warning instead of a bind error, and the **MCP Server** view shows the actual URL. The **Ontology
+Assistant** uses the actual port automatically, so chat works in every window; only an external
+client pinned to the fixed port needs the URL from the view of the window that holds it.
+
 ## Still stuck?
 
 Open an issue with the relevant `protege.log` excerpt (the `Java: JVM` banner and any

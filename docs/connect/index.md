@@ -53,6 +53,14 @@ ready-to-paste connect command.
 > If you set the port to `0`, read the actual bound URL from the **MCP Server** view before configuring
 > a client.
 
+{: .note }
+> **If the configured port is already in use** when the server starts — typically because a second
+> Protégé window or a second Protégé instance already runs the MCP server — the server binds an
+> **ephemeral port instead of failing**. The **MCP Server** view shows the actual URL (and that the
+> configured port was busy). The built-in **Ontology Assistant** always talks to its own window's
+> actual port automatically; only an external client you point at the fixed port needs the URL from
+> the view.
+
 ## Authorization
 
 Two auth modes are supported **in parallel** — pick whichever your client makes easiest.

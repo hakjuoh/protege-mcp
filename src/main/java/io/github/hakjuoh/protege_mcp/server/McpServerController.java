@@ -20,9 +20,9 @@ import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 /**
  * Owns the lifecycle and runtime state of the MCP server for one EditorKit (one Protégé window).
  *
- * <p>Read/write helpers ({@link #isReadOnly()}, {@link #isConfirmWrites()}) read live from the
- * preferences so toggling them takes effect without a restart; the bearer token is held in memory
- * and exposed to the {@link AccessTokenFilter} via a supplier so it can be regenerated live.
+ * <p>Read/write helpers ({@link #isReadOnly()}, {@link #isConfirmWrites()}) and the bearer token
+ * ({@link #getToken()}) read live from the preferences, so toggling them — or regenerating the token
+ * in <em>any</em> window — takes effect on every live server in the process without a restart.
  * {@link #start()}/{@link #stop()} touch no Swing state and must be invoked off the EDT by callers.
  */
 public final class McpServerController implements ManagedServer {
@@ -32,7 +32,6 @@ public final class McpServerController implements ManagedServer {
     private final OntologyAccess access;
     private final WriteConfirmer confirmer;
 
-    private volatile String token;
     private volatile boolean running;
     private volatile int boundPort;
     private volatile int configuredPort;
@@ -41,6 +40,8 @@ public final class McpServerController implements ManagedServer {
     private McpServerManager serverManager;
     private EmbeddedHttpServer httpServer;
     private volatile OAuthStore oauthStore;
+    /** Latched true exactly while this server's hydrated OAuth store may write the shared blob. */
+    private volatile boolean oauthPersistAllowed;
     private volatile ToolContext toolContext;
 
     public McpServerController(OntologyAccess access) {
@@ -55,7 +56,9 @@ public final class McpServerController implements ManagedServer {
     public McpServerController(OntologyAccess access, WriteConfirmer confirmer) {
         this.access = access;
         this.confirmer = confirmer;
-        this.token = McpConfig.load().getToken();
+        // Ensure a bearer token exists from the moment the controller is visible in the view
+        // (load() mints and persists one when the stored token is blank).
+        McpConfig.load();
     }
 
     public synchronized void start() throws Exception {
@@ -76,7 +79,6 @@ public final class McpServerController implements ManagedServer {
             org.apache.jena.sys.JenaSystem.init();
 
             McpConfig config = McpConfig.load();
-            this.token = config.getToken();
             this.configuredPort = config.getPort();
 
             ToolContext context = new ToolContext(access, this, confirmer);
@@ -89,12 +91,14 @@ public final class McpServerController implements ManagedServer {
             ObjectMapper objectMapper = new ObjectMapper();
             // Persist OAuth clients + tokens to the preferences store so a client that connected once
             // keeps working across Protégé restarts (instead of failing with "Unknown client").
-            // KEY_OAUTH_STATE is a single user-global blob; with one window successfully binding the
-            // port at a time, that one controller effectively owns it (multiple windows would share
-            // the key, but only the port-binding one accepts mutating requests).
+            // The store starts EMPTY and is hydrated from the user-global persisted blob only after
+            // the bind proves this server holds the configured port: a fallback-port server must
+            // neither accept grants the configured-port owner may later revoke (revocation would
+            // never reach this server's memory) nor persist its own — it serves the static bearer
+            // token and clients registered live with it, in memory only.
             this.oauthStore = new OAuthStore(this::getToken,
                     () -> McpConfig.prefs().getString(McpConfig.KEY_OAUTH_STATE, null),
-                    json -> McpConfig.prefs().putString(McpConfig.KEY_OAUTH_STATE, json));
+                    this::persistOAuthState, false);
 
             httpServer = new EmbeddedHttpServer();
             // Auth gate only on /mcp; the OAuth + discovery endpoints must stay public.
@@ -102,13 +106,26 @@ public final class McpServerController implements ManagedServer {
             httpServer.addServlet(serverManager.getTransportServlet(), "/mcp/*", true);
             httpServer.addServlet(new OAuthMetadataServlet(objectMapper), "/.well-known/*", false);
             httpServer.addServlet(new OAuthServlet(oauthStore, objectMapper), "/oauth/*", false);
-            boundPort = httpServer.start(configuredPort);
+            // The configured port is process-exclusive: another Protégé window or a second Protégé
+            // instance may already hold it. Chat and the tools need a server bound to THIS window's
+            // ontologies, so fall back to an ephemeral port instead of failing the whole start.
+            boundPort = httpServer.startWithFallback(configuredPort);
+            if (!isPortFallback()) {
+                oauthStore.loadPersisted();
+                oauthPersistAllowed = true;
+            }
 
             running = true;
             lastError = null;
+            if (isPortFallback()) {
+                log.warn("protege-mcp: configured port {} is already in use (another Protégé window or "
+                        + "instance, or another app) — this window's MCP server bound ephemeral port {} "
+                        + "instead", configuredPort, boundPort);
+            }
             log.info("protege-mcp: MCP server listening on {}", getEndpointUrl());
         } catch (Exception e) {
             lastError = e.getMessage();
+            boundPort = 0;
             log.error("protege-mcp: failed to start MCP server", e);
             safeStopInternals();
             throw e;
@@ -130,6 +147,9 @@ public final class McpServerController implements ManagedServer {
     }
 
     private void safeStopInternals() {
+        // Close the persist gate before tearing anything down so an in-flight OAuth request that
+        // outlives the bounded Jetty stop can no longer write the shared blob.
+        oauthPersistAllowed = false;
         if (serverManager != null) {
             try {
                 serverManager.close();
@@ -174,18 +194,48 @@ public final class McpServerController implements ManagedServer {
         return configuredPort;
     }
 
+    /**
+     * True while this server runs on an ephemeral fallback port because the configured port was
+     * already in use when it started (typically held by another Protégé window or instance). Always
+     * false when the configured port is {@code 0} — that is ephemeral by choice, not a fallback.
+     */
+    public boolean isPortFallback() {
+        return boundPort != 0 && configuredPort != 0 && boundPort != configuredPort;
+    }
+
+    /**
+     * Save hook for the {@link OAuthStore}. KEY_OAUTH_STATE is a single user-global blob shared by
+     * every Protégé window and process, so only a store known to hold the full persisted state may
+     * write it back. The gate is a fact latched in {@code start()} exactly when
+     * {@link OAuthStore#loadPersisted()} has hydrated this store — i.e. only on the configured-port
+     * owner, only after hydration — and closed again on stop. Gating on the latch rather than on
+     * live port state means neither a mutation racing the post-bind hydration nor an in-flight
+     * request outliving {@code stop()} can clobber the blob with a partial snapshot; a fallback-port
+     * server is never hydrated, so it never persists at all (its OAuth state stays in memory).
+     */
+    void persistOAuthState(String json) {
+        if (!oauthPersistAllowed) {
+            return;
+        }
+        McpConfig.prefs().putString(McpConfig.KEY_OAUTH_STATE, json);
+    }
+
     public String getEndpointUrl() {
         return "http://127.0.0.1:" + boundPort + "/mcp";
     }
 
+    /**
+     * Live read — a token regenerated in any window immediately applies to every live server in the
+     * process (each {@link AccessTokenFilter} authenticates through this supplier per request), so a
+     * leaked token cannot stay valid on a concurrently running fallback-port server.
+     */
     public String getToken() {
-        return token;
+        return McpConfig.load().getToken();
     }
 
     /** Generate, persist, and immediately apply a new bearer token (no restart needed). */
     public String regenerateToken() {
-        this.token = McpConfig.regenerateToken();
-        return this.token;
+        return McpConfig.regenerateToken();
     }
 
     /** Snapshot of OAuth-registered clients (empty when the server is stopped). */

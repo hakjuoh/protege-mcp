@@ -140,19 +140,30 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    resources, and Jetty), loads a fresh `McpConfig` snapshot, builds a `ToolContext` + `ToolCatalog`, builds a
    `McpServerManager`, constructs the `OAuthStore` (wired to `McpConfig` load/save hooks), then on the
    `EmbeddedHttpServer` registers: `AccessTokenFilter` at `/mcp/*`, the MCP transport servlet at `/mcp/*`
-   (async), `OAuthMetadataServlet` at `/.well-known/*`, `OAuthServlet` at `/oauth/*`, and binds the port. It
-   exposes `regenerateToken`, `listClients`, `revokeClient`, `getStaticTokenLastSeen`, live `isReadOnly()` /
-   `isConfirmWrites()` reads, `getEndpointUrl`, and `getLastError`.
+   (async), `OAuthMetadataServlet` at `/.well-known/*`, `OAuthServlet` at `/oauth/*`, and binds the port —
+   **falling back to an ephemeral port when the configured one is already in use** (a second Protégé window's
+   chat, or a second Protégé instance), so the window still gets a working server; `isPortFallback()` reports
+   that state and the view surfaces it. Because two servers can then be live at once, the shared security
+   state is isolated: the `OAuthStore` is constructed empty and hydrated from the user-global persisted blob
+   only after the bind proves the server holds the configured port (a fallback server never sees grants the
+   owner may later revoke) and never persists, and the bearer token is a **live preferences read** so
+   regenerating it in any window applies to every live server. It exposes `regenerateToken`, `listClients`,
+   `revokeClient`, `getStaticTokenLastSeen`, live `isReadOnly()` / `isConfirmWrites()` reads,
+   `getEndpointUrl`, and `getLastError`.
 
 3. **`McpServerRegistry`** — a static `ConcurrentHashMap<EditorKit, McpServerController>` so a window's view and
    preferences panel can reach that window's controller. It also **elects a single owner of the one
    process-wide port** across windows: `startIfNoOwner(...)` lets a new window defer to the current owner, and
    `promoteSuccessor()` hands the port to another open window when the owner stops — so overlapping `EditorKit`
    lifecycles (e.g. Protégé swapping EditorKits to open an ontology) never tear the server down while a window
-   is still open. The election logic is factored into package-private, unit-testable overloads.
+   is still open. A server running on an ephemeral *fallback* port counts as the owner in neither helper:
+   `startIfNoOwner` still starts a newly opened window (which re-claims the configured port if it has freed
+   up, else falls back itself), and `promoteSuccessor` promotes an idle window on owner close — while a live
+   fallback server is never restarted out from under an active chat. The election logic is factored into
+   package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.4.2`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.4.3`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
@@ -173,7 +184,9 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    `127.0.0.1` only, a single `ServletContextHandler` at context path `/`. Filters are registered with
    `REQUEST` + `ASYNC` dispatch and `asyncSupported` (Streamable-HTTP uses `request.startAsync()` for SSE).
    `start(port)` with port `0` picks a free ephemeral port and returns `connector.getLocalPort()`;
-   `stopTimeout` is 2000ms; `stop()` is best-effort and must not run on the EDT.
+   `startWithFallback(port)` retries on port `0` when the failure chain is a `BindException` (port already in
+   use) so a busy configured port degrades to an ephemeral bind instead of a dead server; `stopTimeout` is
+   2000ms; `stop()` is best-effort and must not run on the EDT.
 
 6. **`OntologyAccess`** (the EDT choke point) — **every** model read/write passes through one method:
    ```text

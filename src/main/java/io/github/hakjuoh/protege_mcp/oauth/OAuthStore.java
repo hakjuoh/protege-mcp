@@ -66,10 +66,34 @@ public final class OAuthStore {
      */
     public OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
             Consumer<String> saveState) {
+        this(staticToken, loadState, saveState, true);
+    }
+
+    /**
+     * @param loadPersistedNow whether to rehydrate the persisted clients + tokens immediately. Pass
+     *     {@code false} when the caller cannot yet tell whether this store should see the shared
+     *     persisted state — e.g. before the server's port is bound — and call
+     *     {@link #loadPersisted()} once it can.
+     */
+    public OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
+            Consumer<String> saveState, boolean loadPersistedNow) {
         this.staticToken = staticToken;
         this.loadState = loadState;
         this.saveState = saveState;
-        load();
+        if (loadPersistedNow) {
+            load();
+        }
+    }
+
+    /**
+     * Rehydrate persisted clients + tokens for a store constructed with {@code loadPersistedNow =
+     * false}. Locked against a concurrent {@link #persist()} so a half-loaded state can never be
+     * snapshotted back out.
+     */
+    public void loadPersisted() {
+        synchronized (persistLock) {
+            load();
+        }
     }
 
     // -------------------------------------------------------------- clients (RFC 7591)

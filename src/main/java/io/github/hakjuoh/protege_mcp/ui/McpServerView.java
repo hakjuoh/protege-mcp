@@ -181,6 +181,10 @@ public class McpServerView extends AbstractOWLViewComponent {
         }
         boolean running = c.isRunning();
         statusLabel.setText("MCP server: " + (running ? "RUNNING" : "stopped")
+                + (running && c.isPortFallback()
+                        ? "  (configured port " + c.getConfiguredPort() + " was busy at start — using "
+                                + c.getBoundPort() + ")"
+                        : "")
                 + (c.getLastError() != null && !running ? "  (last error: " + c.getLastError() + ")" : ""));
         urlField.setText(running ? c.getEndpointUrl() : "");
         String token = c.getToken();

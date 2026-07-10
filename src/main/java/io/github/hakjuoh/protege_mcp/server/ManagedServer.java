@@ -11,4 +11,10 @@ interface ManagedServer {
     boolean isRunning();
 
     void start() throws Exception;
+
+    /** The port this server is actually listening on ({@code 0} when stopped). */
+    int getBoundPort();
+
+    /** The port the user configured at the time this server started ({@code 0} = ephemeral by choice). */
+    int getConfiguredPort();
 }

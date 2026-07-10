@@ -5,6 +5,28 @@ All notable changes to **Protégé MCP** are documented here. The format is base
 [Semantic Versioning](https://semver.org/). Each release's section is published verbatim as the body of
 its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the release workflow.
 
+## [Unreleased]
+
+### Fixed
+- **A second Protégé window or instance no longer loses the MCP server — and with it the Ontology
+  Assistant — to `Failed to bind to /127.0.0.1:<port>`.** The MCP server is per-window but the
+  configured port is process-exclusive, so any window that wasn't the port owner (a second window's
+  chat lazily starting its server, or every window of a second Protégé process) died on the bind and
+  the chat reported *"Could not start Claude: Failed to bind …"*. The server now **falls back to an
+  ephemeral port when the configured port is already in use**: the chat always talks to its own
+  window's actual port, the **MCP Server** view shows the actual URL plus a "configured port busy"
+  note, and the log records a warning instead of a bind error. The configured port is re-claimed by
+  the same Protégé instance once it frees up: on window close an idle window is promoted, and a newly
+  opened window no longer defers to a fallback-bound server — while a live fallback server itself is
+  never restarted out from under an active chat session. (If the port was held by a second Protégé
+  instance that has since quit, the re-claim likewise happens on this instance's next window
+  open/close — or immediately via Stop/Start in the **MCP Server** view.) Because two servers can now
+  be live at once, their shared security state is isolated: a fallback-port server starts with an
+  **empty OAuth client registry** (it never hydrates the user-global persisted blob, so a client
+  revoked in the owner window cannot keep authenticating against it) and never persists
+  registrations, and the static **bearer token is read live from preferences**, so *Regenerate token*
+  in any window immediately invalidates the old token on every live server in the process.
+
 ## [0.4.3] - 2026-07-08
 
 **Operational-safety and transparency patch on top of the 0.4.2 reliability release: destructive

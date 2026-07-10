@@ -33,6 +33,9 @@ class EditorKitSwapHandoffTest {
         ManagedServer owner;
     }
 
+    /** The single configured port number every fake in this file is set to. */
+    static final int CONFIGURED_PORT = 8123;
+
     /** Stand-in for {@link McpServerController}: start() collides like Jetty when the port is taken. */
     static final class FakeServer implements ManagedServer {
         private final SharedPort port;
@@ -54,6 +57,16 @@ class EditorKitSwapHandoffTest {
             }
             port.owner = this;
             running = true;
+        }
+
+        @Override
+        public int getBoundPort() {
+            return running ? CONFIGURED_PORT : 0;
+        }
+
+        @Override
+        public int getConfiguredPort() {
+            return CONFIGURED_PORT;
         }
 
         void stop() {

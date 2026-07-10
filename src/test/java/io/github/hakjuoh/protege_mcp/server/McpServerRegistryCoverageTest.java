@@ -31,11 +31,18 @@ class McpServerRegistryCoverageTest {
     /**
      * Minimal {@link ManagedServer} whose {@code start()} either succeeds (records running + counts
      * invocations) or always throws, per the {@code failing} flag. No shared-port coupling here —
-     * these tests probe the election branches directly rather than the OS bind model.
+     * these tests probe the election branches directly rather than the OS bind model. By default a
+     * running server models the common case of holding its configured port; the port-taking
+     * constructor builds the fallback shape (running with {@code bound != configured}) or the
+     * ephemeral-by-choice shape ({@code configured == 0}).
      */
     static final class CountingServer implements ManagedServer {
+        private static final int DEFAULT_CONFIGURED_PORT = 8123;
+
         private boolean running;
         private final boolean failing;
+        private final int configuredPort;
+        private int boundPort;
         int startAttempts;
 
         CountingServer(boolean initiallyRunning) {
@@ -43,8 +50,15 @@ class McpServerRegistryCoverageTest {
         }
 
         CountingServer(boolean initiallyRunning, boolean failing) {
+            this(initiallyRunning, failing, DEFAULT_CONFIGURED_PORT,
+                    initiallyRunning ? DEFAULT_CONFIGURED_PORT : 0);
+        }
+
+        CountingServer(boolean initiallyRunning, boolean failing, int configuredPort, int boundPort) {
             this.running = initiallyRunning;
             this.failing = failing;
+            this.configuredPort = configuredPort;
+            this.boundPort = boundPort;
         }
 
         @Override
@@ -59,6 +73,18 @@ class McpServerRegistryCoverageTest {
                 throw new IOException("cannot bind (test-forced failure)");
             }
             running = true;
+            // A promoted start claims the (now free) configured port, like the real controller.
+            boundPort = configuredPort;
+        }
+
+        @Override
+        public int getBoundPort() {
+            return running ? boundPort : 0;
+        }
+
+        @Override
+        public int getConfiguredPort() {
+            return configuredPort;
         }
     }
 
@@ -266,6 +292,91 @@ class McpServerRegistryCoverageTest {
         assertTrue(healthy.isRunning(), "the first healthy candidate wins the port");
         assertEquals(1, healthy.startAttempts);
         assertEquals(0, failing.startAttempts, "later candidates are not tried once one succeeds");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // electAndStartIfNoOwner(Collection, candidate) — ephemeral-fallback servers
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void electStartsCandidateWhenOnlyAFallbackServerIsRunning() throws Exception {
+        // A fallback-bound server is not the configured-port owner: a newly opened window must start
+        // and re-claim the configured port if it has been freed (it merely falls back itself if not).
+        CountingServer runningFallback = new CountingServer(true, false, 8123, 54321);
+        CountingServer candidate = new CountingServer(false);
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(runningFallback, candidate));
+
+        McpServerRegistry.electAndStartIfNoOwner(registered, candidate);
+
+        assertTrue(candidate.isRunning(), "the new window must not defer to a fallback-bound server");
+        assertEquals(1, candidate.startAttempts);
+        assertEquals(8123, candidate.getBoundPort(), "the new window claims the configured port");
+        assertEquals(0, runningFallback.startAttempts, "the live fallback server is untouched");
+    }
+
+    @Test
+    void electStillDefersToAnEphemeralByChoiceRunningServer() throws Exception {
+        // configured == 0 means every bind is ephemeral by design — a running server IS the owner.
+        CountingServer runningEphemeral = new CountingServer(true, false, 0, 54321);
+        CountingServer candidate = new CountingServer(false, false, 0, 0);
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(runningEphemeral, candidate));
+
+        McpServerRegistry.electAndStartIfNoOwner(registered, candidate);
+
+        assertFalse(candidate.isRunning(), "ephemeral-by-choice: any running server ends the election");
+        assertEquals(0, candidate.startAttempts);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // promoteSuccessor(Collection) — ephemeral-fallback servers (configured port busy at their start)
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void promoteSkipsRunningFallbackServerAndStartsAnIdleWindowToReclaimConfiguredPort() {
+        // Field shape: the chat lazily started this window's server while another window owned the
+        // configured port, so it runs on an ephemeral fallback port. When the owner closes, that
+        // fallback server must NOT satisfy the hand-off — an idle window re-claims the configured
+        // port for external MCP clients, and the live fallback server is left untouched.
+        CountingServer runningFallback = new CountingServer(true, false, 8123, 54321);
+        CountingServer idle = new CountingServer(false);
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(runningFallback, idle));
+
+        McpServerRegistry.promoteSuccessor(registered);
+
+        assertEquals(0, runningFallback.startAttempts, "a live fallback server must never be restarted");
+        assertTrue(runningFallback.isRunning(), "the fallback server keeps serving its window's chat");
+        assertTrue(idle.isRunning(), "an idle window must be promoted to re-claim the configured port");
+        assertEquals(1, idle.startAttempts);
+        assertEquals(8123, idle.getBoundPort(), "the promoted window claims the configured port");
+    }
+
+    @Test
+    void promoteLeavesLoneRunningFallbackServerUntouched() {
+        // Only one window remains and its server runs on a fallback port: nothing idle to promote,
+        // and the live server must not be restarted out from under an active chat session.
+        CountingServer runningFallback = new CountingServer(true, false, 8123, 54321);
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(runningFallback));
+
+        McpServerRegistry.promoteSuccessor(registered);
+
+        assertEquals(0, runningFallback.startAttempts, "no restart of the only (live) server");
+        assertTrue(runningFallback.isRunning());
+        assertEquals(54321, runningFallback.getBoundPort(), "the fallback bind is left as-is");
+    }
+
+    @Test
+    void promoteTreatsEphemeralByChoiceServerAsSatisfyingTheHandoff() {
+        // The user configured port 0 (ephemeral by choice): any running server satisfies the
+        // hand-off — there is no fixed port to re-claim, so no idle window may be started.
+        CountingServer runningEphemeral = new CountingServer(true, false, 0, 54321);
+        CountingServer idle = new CountingServer(false, false, 0, 0);
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(runningEphemeral, idle));
+
+        McpServerRegistry.promoteSuccessor(registered);
+
+        assertEquals(0, runningEphemeral.startAttempts);
+        assertEquals(0, idle.startAttempts, "ephemeral-by-choice: a running server ends the hand-off");
+        assertFalse(idle.isRunning());
     }
 
     @Test

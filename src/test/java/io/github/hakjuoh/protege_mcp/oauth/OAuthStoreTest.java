@@ -124,6 +124,29 @@ class OAuthStoreTest {
     }
 
     @Test
+    void deferredLoadStartsEmptyUntilLoadPersistedIsCalled() {
+        // The controller constructs the store BEFORE the port is bound and hydrates it only when the
+        // bind proves the server holds the configured port: a fallback-port server must never see the
+        // persisted grants (revocation on the owner would not reach its memory).
+        SaveCapture save = new SaveCapture();
+        OAuthStore first = store("tok", save);
+        OAuthStore.Client c = first.registerClient(List.of("http://localhost/cb"), "app");
+        OAuthStore.Tokens t = first.issueTokens(c.clientId, "read", "res");
+        String blob = save.last;
+
+        OAuthStore deferred = new OAuthStore(() -> "tok", () -> blob, x -> {}, false);
+        assertTrue(deferred.listClients().isEmpty(),
+                "with loadPersistedNow=false the persisted clients must not be visible");
+        assertFalse(deferred.isValidAccessToken(t.accessToken),
+                "a persisted grant must not authenticate on a store that was never hydrated");
+
+        deferred.loadPersisted();
+        assertNotNull(deferred.client(c.clientId), "loadPersisted() hydrates the persisted clients");
+        assertTrue(deferred.isValidAccessToken(t.accessToken),
+                "…and the persisted grant authenticates after hydration");
+    }
+
+    @Test
     void loadDropsExpiredAccessTokensButKeepsClientAndRefresh() throws Exception {
         // Hand-craft JSON with an already-expired access token and a live refresh token.
         String json = "{"
