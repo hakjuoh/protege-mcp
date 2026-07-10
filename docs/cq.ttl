@@ -1,0 +1,27 @@
+# The Protégé MCP competency-question annotation vocabulary.
+# Namespace document (HTML): https://hakjuoh.github.io/protege-mcp/cq
+# GitHub Pages cannot content-negotiate, so this Turtle is published alongside the HTML.
+
+@prefix cq:      <https://hakjuoh.github.io/protege-mcp/cq#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix vann:    <http://purl.org/vocab/vann/> .
+
+<https://hakjuoh.github.io/protege-mcp/cq>
+    a owl:Ontology ;
+    dcterms:title "Protégé MCP competency-question annotation vocabulary"@en ;
+    dcterms:description "The tool-internal annotation vocabulary the Protégé MCP plugin uses when a competency question is stored inside the ontology artifact itself (the ontology-annotations storage convention)."@en ;
+    dcterms:license <https://opensource.org/license/bsd-2-clause> ;
+    vann:preferredNamespacePrefix "cq" ;
+    vann:preferredNamespaceUri "https://hakjuoh.github.io/protege-mcp/cq#" ;
+    rdfs:seeAlso <https://github.com/hakjuoh/protege-mcp> .
+
+cq:competencyQuestion
+    a owl:AnnotationProperty ;
+    rdfs:label "competency question"@en ;
+    skos:definition "An ontology-level annotation holding one competency question as a JSON object in an xsd:string literal — fields: id, text, type, query_lang, query, include_inferred, expected, tags — as read and written by the Protégé MCP competency-question tools. An annotation whose literal is not such a JSON object is skipped on load."@en ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://hakjuoh.github.io/protege-mcp/cq> .

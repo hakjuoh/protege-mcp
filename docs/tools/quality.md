@@ -140,8 +140,9 @@ Validate the active ontology's imports-closure RDF against a **SHACL shapes grap
 Add or update (by id) a **competency question** — a SPARQL query plus an expected result that
 `run_competency_questions` later re-checks (a requirement test for the ontology). CQs are stored in one of
 three conventions; omit `convention` to follow an existing store, else it defaults to `robot-sparql-dir`
-(or `ontology-annotations` when the ontology is unsaved). This writes a file (or an ontology annotation)
-and echoes where. Gated by the write-consent preferences.
+(or `ontology-annotations` when the ontology is unsaved). This writes a file (or an ontology annotation
+under the [`cq:competencyQuestion`](../cq.html#competencyQuestion) property — see the
+[CQ vocabulary](../cq.html)) and echoes where. Gated by the write-consent preferences.
 
 **Arguments**
 
