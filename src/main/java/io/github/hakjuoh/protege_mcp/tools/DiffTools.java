@@ -80,7 +80,8 @@ public final class DiffTools {
     private static CallToolResult diff(OWLModelManager mm, String leftRef, String rightRef,
             Set<OWLAxiom> preloadedRight, String rightLabel, boolean includeImports, boolean logicalOnly,
             int limit) {
-        OWLOntology left = leftRef == null ? mm.getActiveOntology() : findLoaded(mm, leftRef);
+        OWLOntology left = leftRef == null ? mm.getActiveOntology()
+                : OntologyDocumentTools.findLoadedOntology(mm, leftRef);
         if (left == null) {
             return Tools.error("No loaded ontology matches left='" + leftRef + "' (see list_ontologies).");
         }
@@ -90,7 +91,7 @@ public final class DiffTools {
         if (preloadedRight != null) {
             rightAxioms = preloadedRight;
         } else {
-            OWLOntology right = findLoaded(mm, rightRef);
+            OWLOntology right = OntologyDocumentTools.findLoadedOntology(mm, rightRef);
             if (right == null) {
                 return Tools.error("No loaded ontology matches right='" + rightRef
                         + "' (see list_ontologies).");
@@ -166,34 +167,7 @@ public final class DiffTools {
         }
     }
 
-    /** Find a loaded ontology by ontology IRI or version IRI (exact string match). */
-    private static OWLOntology findLoaded(OWLModelManager mm, String ref) {
-        if (ref == null) {
-            return null;
-        }
-        for (OWLOntology o : mm.getOntologies()) {
-            OWLOntologyID id = o.getOntologyID();
-            if (id.getOntologyIRI().isPresent() && id.getOntologyIRI().get().toString().equals(ref)) {
-                return o;
-            }
-            if (id.getVersionIRI().isPresent() && id.getVersionIRI().get().toString().equals(ref)) {
-                return o;
-            }
-        }
-        return null;
-    }
-
     private static String labelOf(OWLOntologyID id) {
-        if (id.isAnonymous()) {
-            return "(anonymous ontology)";
-        }
-        StringBuilder sb = new StringBuilder();
-        if (id.getOntologyIRI().isPresent()) {
-            sb.append(id.getOntologyIRI().get());
-        }
-        if (id.getVersionIRI().isPresent()) {
-            sb.append(" version ").append(id.getVersionIRI().get());
-        }
-        return sb.length() == 0 ? id.toString() : sb.toString();
+        return OntologyDocumentTools.ontologyLabel(id);
     }
 }

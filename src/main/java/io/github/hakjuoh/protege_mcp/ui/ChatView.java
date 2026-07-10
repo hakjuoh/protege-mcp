@@ -763,10 +763,6 @@ public class ChatView extends AbstractOWLViewComponent {
         attachments.deleteAllScratch();
     }
 
-    private static void deleteRecursively(File f) {
-        AttachmentFileManager.deleteRecursively(f);
-    }
-
     private static String causeMessage(Exception ex) {
         Throwable t = ex.getCause() != null ? ex.getCause() : ex;
         String m = t.getMessage();

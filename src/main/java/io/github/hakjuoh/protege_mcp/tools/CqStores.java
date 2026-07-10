@@ -33,7 +33,7 @@ final class CqStores {
                 return s;
             }
         }
-        throw new ToolArgException("Unknown convention '" + conventionId + "'. Use one of: " + ids() + ".");
+        throw new ToolArgException("Unknown convention '" + conventionId + "'. Use one of: " + ids(ALL) + ".");
     }
 
     /** The conventions whose CQs are present in {@code ctx}, in registry order. */
@@ -61,7 +61,7 @@ final class CqStores {
             return detected.get(0);
         }
         if (detected.size() > 1) {
-            throw new ToolArgException("Multiple CQ conventions are present (" + names(detected)
+            throw new ToolArgException("Multiple CQ conventions are present (" + ids(detected)
                     + "). Pass convention= to choose which one to write to.");
         }
         // None detected: default to the ROBOT dir, or the ontology-annotations fallback if unsaved.
@@ -75,17 +75,9 @@ final class CqStores {
                 + "convention=" + Cq.CONV_ANNOTATIONS + " to store CQs inside the ontology.";
     }
 
-    private static String names(List<CqStore> stores) {
+    private static String ids(List<CqStore> stores) {
         List<String> out = new ArrayList<>();
         for (CqStore s : stores) {
-            out.add(s.conventionId());
-        }
-        return String.join(", ", out);
-    }
-
-    private static String ids() {
-        List<String> out = new ArrayList<>();
-        for (CqStore s : ALL) {
             out.add(s.conventionId());
         }
         return String.join(", ", out);

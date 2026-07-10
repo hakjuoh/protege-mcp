@@ -300,7 +300,7 @@ public final class RuleTools {
         if (arg2 != null) {
             return dArgValue(mm, df, arg2, varNs);
         }
-        return df.getSWRLLiteralArgument(literal(mm, df, spec));
+        return df.getSWRLLiteralArgument(Axioms.literal(mm, spec));
     }
 
     /** A d-argument from a bare reference: a {@code ?}-variable, else a plain (xsd:string) literal. */
@@ -322,7 +322,7 @@ public final class RuleTools {
     private static SWRLDArgument builtinArg(OWLModelManager mm, OWLDataFactory df, Object raw,
             String varNs) {
         if (raw instanceof Map) {
-            return df.getSWRLLiteralArgument(literal(mm, df, (Map<String, Object>) raw));
+            return df.getSWRLLiteralArgument(Axioms.literal(mm, (Map<String, Object>) raw));
         }
         return dArgValue(mm, df, String.valueOf(raw), varNs);
     }
@@ -341,19 +341,6 @@ public final class RuleTools {
             out.add(v);
         }
         return out;
-    }
-
-    private static OWLLiteral literal(OWLModelManager mm, OWLDataFactory df, Map<String, Object> spec) {
-        String value = Tools.reqString(spec, "value");
-        String datatype = Tools.optString(spec, "datatype");
-        String lang = Tools.optString(spec, "lang");
-        if (datatype != null) {
-            return df.getOWLLiteral(value, Tools.resolveDatatype(mm, datatype));
-        }
-        if (lang != null) {
-            return df.getOWLLiteral(value, lang);
-        }
-        return df.getOWLLiteral(value);
     }
 
     /**

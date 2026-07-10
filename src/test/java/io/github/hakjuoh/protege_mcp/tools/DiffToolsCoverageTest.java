@@ -368,10 +368,10 @@ class DiffToolsCoverageTest {
     }
 
     // Note: the {@code leftRef != null} / {@code rightRef != null} branches route through
-    // {@code findLoaded(mm, ...)} which calls {@code mm.getOntologies()} — a method the headless
-    // FakeModelManager intentionally does not implement (it needs the live Protégé runtime). So the
-    // reference-resolution + not-found error branches are runtime-only; the covered cases below drive
-    // the active-left + preloaded-right path, which is fully headless.
+    // {@code OntologyDocumentTools.findLoadedOntology(mm, ...)} which calls {@code mm.getOntologies()}
+    // — a method the headless FakeModelManager intentionally does not implement (it needs the live
+    // Protégé runtime). So the reference-resolution + not-found error branches are runtime-only; the
+    // covered cases below drive the active-left + preloaded-right path, which is fully headless.
 
     @Test
     void diffMmIdenticalRoundTripReportsIdenticalTrue() throws Exception {

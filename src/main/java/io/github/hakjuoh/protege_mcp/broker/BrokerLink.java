@@ -45,7 +45,7 @@ public final class BrokerLink {
     private static final BrokerLink INSTANCE = new BrokerLink(BrokerHome.defaultHome());
 
     private final BrokerHome home;
-    private final Map<McpServerController, BrokerClient.WindowReg> windows = new ConcurrentHashMap<>();
+    private final Map<McpServerController, InstanceRegistry.Window> windows = new ConcurrentHashMap<>();
 
     private String dirSecret;
     private BrokerClient client;
@@ -93,7 +93,7 @@ public final class BrokerLink {
                 return false;
             }
             long now = System.currentTimeMillis();
-            windows.put(controller, new BrokerClient.WindowReg(
+            windows.put(controller, new InstanceRegistry.Window(
                     UUID.randomUUID().toString(), controller.getBoundPort(), secret,
                     "Protégé window " + (windows.size() + 1), now, now));
             windowAdded = true;
@@ -262,7 +262,7 @@ public final class BrokerLink {
         if (windows.isEmpty()) {
             return;
         }
-        List<BrokerClient.WindowReg> regs = new ArrayList<>(windows.values());
+        List<InstanceRegistry.Window> regs = new ArrayList<>(windows.values());
         String token = McpConfig.load().getToken();
         try {
             if (processId != null && client != null && client.heartbeat(processId, token, regs)) {

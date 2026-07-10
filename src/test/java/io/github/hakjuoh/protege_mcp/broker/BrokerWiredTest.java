@@ -127,9 +127,9 @@ class BrokerWiredTest {
         return new BrokerClient("http://127.0.0.1:" + brokerPort, dirSecret);
     }
 
-    private static BrokerClient.WindowReg reg(FakeBackend b, String windowId, long focusedAt) {
+    private static InstanceRegistry.Window reg(FakeBackend b, String windowId, long focusedAt) {
         int port = Integer.parseInt(b.lastHeaders.get("_port"));
-        return new BrokerClient.WindowReg(windowId, port, "win-secret-" + windowId,
+        return new InstanceRegistry.Window(windowId, port, "win-secret-" + windowId,
                 "win " + windowId, focusedAt, focusedAt);
     }
 

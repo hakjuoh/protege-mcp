@@ -35,7 +35,7 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
  * Method-level tests for the Protégé-free helper cores of {@link EntityRefactorTools}: the private
- * statics ({@code typeKey}, {@code byIri}, {@code resolveTargets}, {@code describe}, invoked
+ * statics ({@code typeKey}, {@code byTypeThenIri}, {@code resolveTargets}, {@code describe}, invoked
  * reflectively) and the package-private tool cores {@code renameEntity}/{@code deleteEntity} (called
  * directly), in both preview and apply mode. Entity resolution and rendering are driven through the
  * shared {@link FakeModelManager} harness over hand-built in-memory ontologies; the fake's
@@ -80,9 +80,9 @@ class EntityRefactorToolsTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static Comparator<OWLEntity> byIri() {
+    private static Comparator<OWLEntity> byTypeThenIri() {
         try {
-            return (Comparator<OWLEntity>) priv("byIri").invoke(null);
+            return (Comparator<OWLEntity>) priv("byTypeThenIri").invoke(null);
         } catch (ReflectiveOperationException e) {
             throw new AssertionError(e.getCause() != null ? e.getCause() : e);
         }
@@ -218,12 +218,12 @@ class EntityRefactorToolsTest {
         assertEquals("datatype", typeKey(f.getOWLDatatype(IRI.create(NS + "myType"))));
     }
 
-    // ------------------------------------------------------------------ byIri
+    // ------------------------------------------------------------------ byTypeThenIri
 
     @Test
-    void byIriOrdersByEntityTypeNameThenIri() {
+    void byTypeThenIriOrdersByEntityTypeNameThenIri() {
         OWLDataFactory f = OWLManager.createOWLOntologyManager().getOWLDataFactory();
-        Comparator<OWLEntity> cmp = byIri();
+        Comparator<OWLEntity> cmp = byTypeThenIri();
         OWLClass a = f.getOWLClass(IRI.create(NS + "Aaa"));
         OWLClass b = f.getOWLClass(IRI.create(NS + "Bbb"));
         // Same entity type (Class): ordering falls through to the IRI, Aaa < Bbb.
@@ -232,20 +232,20 @@ class EntityRefactorToolsTest {
     }
 
     @Test
-    void byIriIsReflexiveOnEqualEntities() {
+    void byTypeThenIriIsReflexiveOnEqualEntities() {
         OWLDataFactory f = OWLManager.createOWLOntologyManager().getOWLDataFactory();
-        Comparator<OWLEntity> cmp = byIri();
+        Comparator<OWLEntity> cmp = byTypeThenIri();
         OWLClass a = f.getOWLClass(IRI.create(NS + "Aaa"));
         assertEquals(0, cmp.compare(a, a), "an entity compares equal to itself");
     }
 
     @Test
-    void byIriDedupesInTreeSetAndSortsMixedTypes() {
+    void byTypeThenIriDedupesInTreeSetAndSortsMixedTypes() {
         OWLDataFactory f = OWLManager.createOWLOntologyManager().getOWLDataFactory();
         OWLClass cls = f.getOWLClass(IRI.create(NS + "Z"));
         OWLObjectProperty op = f.getOWLObjectProperty(IRI.create(NS + "A"));
         OWLNamedIndividual ind = f.getOWLNamedIndividual(IRI.create(NS + "M"));
-        TreeSet<OWLEntity> set = new TreeSet<>(byIri());
+        TreeSet<OWLEntity> set = new TreeSet<>(byTypeThenIri());
         set.add(cls);
         set.add(op);
         set.add(ind);
@@ -420,7 +420,7 @@ class EntityRefactorToolsTest {
         OWLModelManager mm = FakeModelManager.over(o);
 
         // Use the sorted TreeSet so the "first" element's IRI is deterministic.
-        Set<OWLEntity> two = new TreeSet<>(byIri());
+        Set<OWLEntity> two = new TreeSet<>(byTypeThenIri());
         two.add(cls);
         two.add(op);
         String d = describe(mm, two);

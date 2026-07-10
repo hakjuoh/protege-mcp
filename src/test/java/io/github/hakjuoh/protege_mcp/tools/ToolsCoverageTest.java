@@ -411,6 +411,15 @@ class ToolsCoverageTest {
     }
 
     @Test
+    void intPropertyWithAndWithoutDescription() {
+        Map<String, Object> withDesc = Tools.intProperty("how many");
+        assertEquals("integer", withDesc.get("type"));
+        assertEquals("how many", withDesc.get("description"));
+        assertFalse(Tools.intProperty(null).containsKey("description"),
+                "null description is omitted");
+    }
+
+    @Test
     void schemaReturnsFreshBuilders() {
         assertNotSame(Tools.schema(), Tools.schema());
     }

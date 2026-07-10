@@ -602,7 +602,7 @@ public final class CurationTools {
         return schema;
     }
 
-    /** The shared verify=/timeout_ms schema wording (mirrors apply_changes). */
+    /** The shared verify=/timeout_ms schema wording (shared with apply_changes). */
     static final String VERIFY_DESC = "none (default) | report | rollback. With report or rollback, "
             + "classify the reasoner after applying and flag a regression (newly unsatisfiable class, "
             + "or newly inconsistent ontology); rollback undoes the whole batch on a regression. "

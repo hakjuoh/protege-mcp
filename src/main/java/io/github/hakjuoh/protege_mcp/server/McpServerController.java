@@ -101,7 +101,7 @@ public final class McpServerController implements ManagedServer {
             // configuredPort of 0 keeps isPortFallback()/the registry election semantics honest.
             this.configuredPort = asBrokerBackend ? 0 : config.getPort();
             this.brokerManaged = asBrokerBackend;
-            this.brokerSecret = asBrokerBackend ? mintBrokerSecret() : null;
+            this.brokerSecret = asBrokerBackend ? McpConfig.generateToken() : null;
 
             ToolContext context = new ToolContext(access, this, confirmer);
             this.toolContext = context;
@@ -239,12 +239,6 @@ public final class McpServerController implements ManagedServer {
     /** The per-start secret the broker's proxy authenticates with; null in standalone mode. */
     public String getBrokerSecret() {
         return brokerSecret;
-    }
-
-    private static String mintBrokerSecret() {
-        byte[] bytes = new byte[32];
-        new java.security.SecureRandom().nextBytes(bytes);
-        return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     /**

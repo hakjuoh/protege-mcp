@@ -2,7 +2,6 @@ package io.github.hakjuoh.protege_mcp.tools;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,7 +28,7 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 /**
  * Supplementary, method-level coverage for {@link ReasonerTools}. There is no pre-existing test for
  * this class, so this file targets the pure / data-transforming {@code private static} helpers that do
- * NOT need the live Protégé reasoner runtime: {@code explanationsSchema}, {@code intProp},
+ * NOT need the live Protégé reasoner runtime: {@code explanationsSchema},
  * {@code isolatedClosure}, {@code explanationsJson}, {@code structuralExplanation} and
  * {@code relatedAssertedAxioms}. Reasoner-dependent paths ({@code specs}, {@code requireReasoner})
  * are out of scope (they need a live reasoner/Protégé session).
@@ -69,37 +68,6 @@ class ReasonerToolsCoverageTest {
     private static OWLOntology ontology(OWLOntologyManager m, String iri)
             throws OWLOntologyCreationException {
         return m.createOntology(IRI.create(iri));
-    }
-
-    // ================================================================ intProp
-
-    @Test
-    void intPropBuildsIntegerTypedPropertyMap() throws Throwable {
-        Map<String, Object> p = invoke("intProp", new Class<?>[] { String.class }, "how many");
-        assertEquals("integer", p.get("type"), "type is 'integer'");
-        assertEquals("how many", p.get("description"), "description is echoed verbatim");
-        assertEquals(2, p.size(), "only type + description keys");
-    }
-
-    @Test
-    void intPropAcceptsNullDescription() throws Throwable {
-        Map<String, Object> p = invoke("intProp", new Class<?>[] { String.class }, (Object) null);
-        assertEquals("integer", p.get("type"), "type still integer with null desc");
-        assertTrue(p.containsKey("description"), "description key present even when null");
-        assertNull(p.get("description"), "null description stored as null");
-    }
-
-    @Test
-    void intPropAcceptsEmptyDescription() throws Throwable {
-        Map<String, Object> p = invoke("intProp", new Class<?>[] { String.class }, "");
-        assertEquals("", p.get("description"), "empty description preserved");
-    }
-
-    @Test
-    void intPropPreservesSpecialCharacters() throws Throwable {
-        String desc = "límite ≤ 3 — \"quoted\" & <tag>\n";
-        Map<String, Object> p = invoke("intProp", new Class<?>[] { String.class }, desc);
-        assertEquals(desc, p.get("description"), "special chars preserved");
     }
 
     // ================================================================ explanationsSchema

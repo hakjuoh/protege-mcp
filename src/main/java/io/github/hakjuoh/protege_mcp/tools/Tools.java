@@ -190,13 +190,13 @@ public final class Tools {
          */
         public SchemaBuilder annotationArray(String name, String desc) {
             Map<String, Object> itemProps = new LinkedHashMap<>();
-            itemProps.put("property", strProp("Annotation property: 'rdfs:label', 'rdfs:comment', "
+            itemProps.put("property", stringProperty("Annotation property: 'rdfs:label', 'rdfs:comment', "
                     + "or an IRI/name (default rdfs:label)."));
-            itemProps.put("value", strProp("Literal text value (omit if value_iri is given)."));
-            itemProps.put("value_iri", strProp("IRI-valued annotation: an entity name/IRI or absolute "
+            itemProps.put("value", stringProperty("Literal text value (omit if value_iri is given)."));
+            itemProps.put("value_iri", stringProperty("IRI-valued annotation: an entity name/IRI or absolute "
                     + "IRI (alternative to value)."));
-            itemProps.put("lang", strProp("Optional language tag for a literal value, e.g. 'en'."));
-            itemProps.put("datatype", strProp("Optional datatype IRI/name for a typed literal value."));
+            itemProps.put("lang", stringProperty("Optional language tag for a literal value, e.g. 'en'."));
+            itemProps.put("datatype", stringProperty("Optional datatype IRI/name for a typed literal value."));
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("type", "object");
             item.put("properties", itemProps);
@@ -209,15 +209,6 @@ public final class Tools {
             }
             properties.put(name, p);
             return this;
-        }
-
-        private static Map<String, Object> strProp(String desc) {
-            Map<String, Object> p = new LinkedHashMap<>();
-            p.put("type", "string");
-            if (desc != null) {
-                p.put("description", desc);
-            }
-            return p;
         }
 
         private SchemaBuilder arrayProp(String name, String desc, boolean req) {

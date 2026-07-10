@@ -21,25 +21,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  */
 public final class BrokerClient {
 
-    /** One registered window as reported by the instance. */
-    public static final class WindowReg {
-        public final String id;
-        public final int port;
-        public final String secret;
-        public final String title;
-        public final long focusedAt;
-        public final long registeredAt;
-
-        public WindowReg(String id, int port, String secret, String title, long focusedAt, long registeredAt) {
-            this.id = id;
-            this.port = port;
-            this.secret = secret;
-            this.title = title;
-            this.focusedAt = focusedAt;
-            this.registeredAt = registeredAt;
-        }
-    }
-
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Duration TIMEOUT = Duration.ofSeconds(2);
 
@@ -86,7 +67,7 @@ public final class BrokerClient {
     }
 
     /** @return the broker-assigned process id used in every subsequent heartbeat/unregister. */
-    public String register(long pid, String version, String token, List<WindowReg> windows)
+    public String register(long pid, String version, String token, List<InstanceRegistry.Window> windows)
             throws IOException, InterruptedException {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("pid", pid);
@@ -106,7 +87,7 @@ public final class BrokerClient {
     }
 
     /** @return false when the broker does not know the process (restarted) — re-register then. */
-    public boolean heartbeat(String processId, String token, List<WindowReg> windows)
+    public boolean heartbeat(String processId, String token, List<InstanceRegistry.Window> windows)
             throws IOException, InterruptedException {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("processId", processId);
@@ -132,9 +113,9 @@ public final class BrokerClient {
         send("POST", "/internal/shutdown", "{}");
     }
 
-    private static ArrayNode windowsJson(List<WindowReg> windows) {
+    private static ArrayNode windowsJson(List<InstanceRegistry.Window> windows) {
         ArrayNode arr = MAPPER.createArrayNode();
-        for (WindowReg w : windows) {
+        for (InstanceRegistry.Window w : windows) {
             ObjectNode node = arr.addObject();
             node.put("id", w.id);
             node.put("port", w.port);

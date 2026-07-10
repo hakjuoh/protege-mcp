@@ -81,7 +81,7 @@ final class EntitySearch {
      */
     static Map<String, Object> enrichedSearch(OWLModelManager mm, String query,
             Set<? extends OWLEntity> matches, int offset, int limit) {
-        return build(mm, query, matches, offset, limit, true, null);
+        return enrichedSearch(mm, query, matches, offset, limit, null);
     }
 
     /**

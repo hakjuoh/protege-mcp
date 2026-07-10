@@ -637,14 +637,8 @@ public final class WriteTools {
         @SuppressWarnings("unchecked")
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");
         props.put("strict", Tools.boolProperty(STRICT_DESC));
-        props.put("verify", Tools.stringProperty("none (default) | report | rollback. With report or "
-                + "rollback, classify the reasoner after applying and flag a regression (newly "
-                + "unsatisfiable class, or newly inconsistent ontology); rollback undoes the whole batch "
-                + "on a regression. Requires a reasoner selected in Protégé; rollback additionally "
-                + "refuses up front (applying nothing) when no pre-apply baseline classification can "
-                + "be established."));
-        props.put("timeout_ms", Tools.intProperty("Max wait in ms for EACH classification the verify "
-                + "pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000."));
+        props.put("verify", Tools.stringProperty(CurationTools.VERIFY_DESC));
+        props.put("timeout_ms", Tools.intProperty(CurationTools.VERIFY_TIMEOUT_DESC));
         return schema;
     }
 

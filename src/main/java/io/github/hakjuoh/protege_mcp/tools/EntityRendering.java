@@ -23,17 +23,9 @@ public final class EntityRendering {
         return mm.getRendering(e) + "  <" + e.getIRI() + ">";
     }
 
+    /** Render an axiom via Protégé, falling back to toString; equivalent to {@link #renderObject}. */
     public static String renderAxiom(OWLModelManager mm, OWLAxiom ax) {
-        String r = null;
-        try {
-            r = mm.getRendering(ax);
-        } catch (RuntimeException ignored) {
-            // some renderers only handle entities; fall back to toString
-        }
-        if (r == null || r.isEmpty()) {
-            r = ax.toString();
-        }
-        return r;
+        return renderObject(mm, ax);
     }
 
     /**

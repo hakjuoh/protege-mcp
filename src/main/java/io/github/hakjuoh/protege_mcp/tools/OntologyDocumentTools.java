@@ -239,8 +239,11 @@ public final class OntologyDocumentTools {
                 .result();
     }
 
-    /** Find a loaded ontology by ontology IRI or version IRI string (exact match). */
-    private static OWLOntology findLoadedOntology(OWLModelManager mm, String ref) {
+    /** Find a loaded ontology by ontology IRI or version IRI string (exact match); null matches nothing. */
+    static OWLOntology findLoadedOntology(OWLModelManager mm, String ref) {
+        if (ref == null) {
+            return null;
+        }
         for (OWLOntology o : mm.getOntologies()) {
             OWLOntologyID id = o.getOntologyID();
             if (id.getOntologyIRI().isPresent() && id.getOntologyIRI().get().toString().equals(ref)) {
@@ -643,7 +646,7 @@ public final class OntologyDocumentTools {
         return json.result();
     }
 
-    private static String ontologyLabel(OWLOntologyID id) {
+    static String ontologyLabel(OWLOntologyID id) {
         if (id.isAnonymous()) {
             return "(anonymous ontology)";
         }

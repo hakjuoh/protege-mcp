@@ -23,7 +23,7 @@ import org.protege.editor.core.prefs.Preferences;
  * <p>{@link McpConfig#prefs()} is backed by Protégé's {@code PreferencesManager}, which in a headless
  * JVM resolves to a real {@code java.util.prefs} store shared across the process. To stay deterministic
  * and side-effect-free, each test snapshots and restores every preference key it may touch. The
- * private {@code generateToken()} helper is exercised via reflection so its RFC-4648-url-safe token
+ * {@code generateToken()} helper is exercised via reflection so its RFC-4648-url-safe token
  * shape can be asserted directly.
  */
 class McpConfigTest {
@@ -57,7 +57,7 @@ class McpConfigTest {
         prefs.putBoolean(McpConfig.KEY_CONFIRM_WRITES, savedConfirm);
     }
 
-    /** Invoke the private static {@code generateToken()} reflectively. */
+    /** Invoke the static {@code generateToken()} reflectively. */
     private static String generateToken() throws Exception {
         Method m = McpConfig.class.getDeclaredMethod("generateToken");
         m.setAccessible(true);
@@ -126,7 +126,7 @@ class McpConfigTest {
         p.putString("__mcpconfig_test_probe__", "");
     }
 
-    // ---- generateToken() (private, via reflection) ----------------------------------------------
+    // ---- generateToken() (via reflection) --------------------------------------------------------
 
     @Test
     void generateTokenIsNonNull() throws Exception {

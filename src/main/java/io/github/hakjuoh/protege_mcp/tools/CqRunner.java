@@ -180,10 +180,6 @@ final class CqRunner {
     // ================================================================== result predicates
 
     private static boolean notEmpty(Map<String, Object> exec) {
-        String type = String.valueOf(exec.get("query_type"));
-        if ("ASK".equals(type)) {
-            return Boolean.TRUE.equals(exec.get("boolean"));
-        }
         return count(exec) > 0;
     }
 

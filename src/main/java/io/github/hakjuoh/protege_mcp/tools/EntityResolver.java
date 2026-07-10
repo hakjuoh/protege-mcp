@@ -99,19 +99,8 @@ public final class EntityResolver {
 
     /** Resolve a single entity by IRI (preferred) or by Protégé display rendering. Null if none. */
     public static OWLEntity findEntity(OWLModelManager mm, String ref) {
-        OWLEntityFinder finder = mm.getOWLEntityFinder();
-        IRI iri = iriFor(mm, ref);
-        if (iri != null) {
-            Set<OWLEntity> es = finder.getEntities(iri);
-            if (es != null && !es.isEmpty()) {
-                return es.iterator().next();
-            }
-        }
-        OWLEntity byRendering = finder.getOWLEntity(ref);
-        if (byRendering != null) {
-            return byRendering;
-        }
-        return null;
+        Set<OWLEntity> es = findEntities(mm, ref);
+        return es.isEmpty() ? null : es.iterator().next();
     }
 
     /** All entities matching {@code ref} (IRI may be "punned" across several entity types). */

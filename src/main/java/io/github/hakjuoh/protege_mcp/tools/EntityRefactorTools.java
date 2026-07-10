@@ -205,7 +205,7 @@ public final class EntityRefactorTools {
             return all;
         }
         String want = entityType.toLowerCase();
-        Set<OWLEntity> filtered = new TreeSet<>(byIri());
+        Set<OWLEntity> filtered = new TreeSet<>(byTypeThenIri());
         for (OWLEntity e : all) {
             if (typeKey(e).equals(want)) {
                 filtered.add(e);
@@ -236,7 +236,7 @@ public final class EntityRefactorTools {
         return e.getEntityType().getName().toLowerCase();
     }
 
-    private static java.util.Comparator<OWLEntity> byIri() {
+    private static java.util.Comparator<OWLEntity> byTypeThenIri() {
         return java.util.Comparator.comparing(e -> e.getEntityType().getName() + " " + e.getIRI());
     }
 

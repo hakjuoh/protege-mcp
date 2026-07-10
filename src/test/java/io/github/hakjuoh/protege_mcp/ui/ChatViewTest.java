@@ -608,37 +608,6 @@ class ChatViewTest {
         assertTrue(result.isEmpty(), "placeholder matching is case-sensitive");
     }
 
-    // ------------------------------------------------------------------ deleteRecursively
-
-    @Test
-    void deleteRecursivelyNullIsNoOp() throws Exception {
-        Method m = staticMethod("deleteRecursively", File.class);
-        m.invoke(null, (Object) null);   // must not throw
-    }
-
-    @Test
-    void deleteRecursivelyRemovesLeafFile() throws Exception {
-        Method m = staticMethod("deleteRecursively", File.class);
-        Path leaf = Files.createTempFile("cvtest", ".tmp");
-        assertTrue(Files.exists(leaf), "precondition: leaf exists");
-        m.invoke(null, leaf.toFile());
-        assertFalse(Files.exists(leaf), "leaf file is deleted");
-    }
-
-    @Test
-    void deleteRecursivelyRemovesDirectoryTree() throws Exception {
-        Method m = staticMethod("deleteRecursively", File.class);
-        Path root = Files.createTempDirectory("cvtree");
-        Path sub = Files.createDirectory(root.resolve("sub"));
-        Path f1 = Files.createFile(root.resolve("a.txt"));
-        Path f2 = Files.createFile(sub.resolve("b.txt"));
-        assertTrue(Files.exists(f1) && Files.exists(f2), "precondition: tree populated");
-        m.invoke(null, root.toFile());
-        assertFalse(Files.exists(root), "root and all descendants are deleted");
-        assertFalse(Files.exists(sub), "nested subdir gone");
-        assertFalse(Files.exists(f2), "nested file gone");
-    }
-
     // ------------------------------------------------------------------ restrict
 
     @Test

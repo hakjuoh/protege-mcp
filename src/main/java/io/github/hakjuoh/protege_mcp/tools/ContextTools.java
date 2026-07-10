@@ -228,10 +228,7 @@ public final class ContextTools {
 
     private static Map<String, Object> entityCard(OWLModelManager mm, OWLEntity e, OWLOntology active,
             Set<OWLOntology> scope, int limit) {
-        Map<String, Object> card = new LinkedHashMap<>();
-        card.put("iri", e.getIRI().toString());
-        card.put("display", mm.getRendering(e));
-        card.put("type", e.getEntityType().getName());
+        Map<String, Object> card = Tools.entityJson(mm, e);
         card.put("deprecated", isDeprecated(e, scope));
         card.put("annotations", annotations(mm, e, scope));
         card.put("referencing_axioms", active.getReferencingAxioms(e).size());
@@ -435,13 +432,11 @@ public final class ContextTools {
             if (out.size() >= Math.max(0, limit)) {
                 break;
             }
-            Map<String, Object> m = new LinkedHashMap<>();
+            Map<String, Object> m;
             if (o instanceof OWLEntity) {
-                OWLEntity ent = (OWLEntity) o;
-                m.put("iri", ent.getIRI().toString());
-                m.put("display", mm.getRendering(ent));
-                m.put("type", ent.getEntityType().getName());
+                m = Tools.entityJson(mm, (OWLEntity) o);
             } else {
+                m = new LinkedHashMap<>();
                 m.put("expression", Tools.renderObject(mm, o));
                 m.put("anonymous", true);
             }

@@ -335,16 +335,11 @@ public final class ReasonerTools {
         Map<String, Object> schema = Axioms.schema();
         @SuppressWarnings("unchecked")
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        props.put("max", intProp("Maximum number of justifications to compute (default 3; 0 = all)."));
-        props.put("timeout_ms", intProp("Max wait in ms for the explanation search (default 60000)."));
+        props.put("max", Tools.intProperty("Maximum number of justifications to compute "
+                + "(default 3; 0 = all)."));
+        props.put("timeout_ms", Tools.intProperty("Max wait in ms for the explanation search "
+                + "(default 60000)."));
         return schema;
-    }
-
-    private static Map<String, Object> intProp(String desc) {
-        Map<String, Object> p = new LinkedHashMap<>();
-        p.put("type", "integer");
-        p.put("description", desc);
-        return p;
     }
 
     /**

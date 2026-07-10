@@ -114,7 +114,11 @@ public final class McpConfig {
         return token;
     }
 
-    private static String generateToken() {
+    /**
+     * Mints a fresh URL-safe 256-bit random secret (32 {@link SecureRandom} bytes, base64url,
+     * no padding). Does NOT persist it — callers decide whether/where it is stored.
+     */
+    public static String generateToken() {
         byte[] bytes = new byte[32];
         new SecureRandom().nextBytes(bytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
