@@ -44,12 +44,12 @@ public class ChatPreferencesPanel extends PreferencesPanel {
                 + "(claude) and/or Codex (codex). No API key is stored here — each CLI uses your own login."));
 
         claudePath = new JTextField(p.getString(McpConfig.KEY_CHAT_CLAUDE_PATH, ""), 30);
-        panel.addLabelledGroupComponent("claude path (optional):", claudePath);
+        panel.addGroupComponent(PreferencesRows.labelled("claude path (optional):", claudePath));
         claudeStatus = new JLabel();
         panel.addGroupComponent(claudeStatus);
 
         codexPath = new JTextField(p.getString(McpConfig.KEY_CHAT_CODEX_PATH, ""), 30);
-        panel.addLabelledGroupComponent("codex path (optional):", codexPath);
+        panel.addGroupComponent(PreferencesRows.labelled("codex path (optional):", codexPath));
         codexStatus = new JLabel();
         panel.addGroupComponent(codexStatus);
 

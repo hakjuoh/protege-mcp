@@ -51,7 +51,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
 
         PreferencesLayoutPanel panel = new PreferencesLayoutPanel();
         panel.addGroup("Connection");
-        panel.addLabelledGroupComponent("Port:", portSpinner);
+        panel.addGroupComponent(PreferencesRows.labelled("Port:", portSpinner));
         panel.addGroupComponent(ephemeralCheck);
         panel.addGroupComponent(sharedBrokerCheck);
         panel.addHelpText(PreferencesText.wrapped(
