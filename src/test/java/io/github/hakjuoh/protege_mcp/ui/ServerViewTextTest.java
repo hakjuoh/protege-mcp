@@ -125,4 +125,116 @@ class ServerViewTextTest {
         assertEquals(prefix + url, cmd);
         assertEquals(url, cmd.substring(prefix.length()));
     }
+
+    // ---- statusLine -----------------------------------------------------------------------------
+
+    @Test
+    void statusLineRunningIsPlainRegardlessOfLatchAndError() {
+        // While running, neither the latch nor a previous error belongs in the status: a latch seen
+        // alongside running is the transient Stop-in-flight shape (latched first, stop about to
+        // land), and lastError describes why the server is NOT running.
+        assertEquals("MCP server: RUNNING", ServerViewText.statusLine(true, false, null));
+        assertEquals("MCP server: RUNNING", ServerViewText.statusLine(true, true, "old failure"));
+    }
+
+    @Test
+    void statusLineStoppedIsPlainWithoutLatchOrError() {
+        assertEquals("MCP server: stopped", ServerViewText.statusLine(false, false, null));
+    }
+
+    @Test
+    void statusLineUserStoppedNamesTheLatchAndTheWayBack() {
+        String line = ServerViewText.statusLine(false, true, null);
+        assertTrue(line.contains("stopped by Stop"), "must attribute the stop to the user: " + line);
+        assertTrue(line.contains("Ontology Assistant will not restart it"),
+                "must say the chat respects the stop: " + line);
+        assertTrue(line.contains("press Start"), "must point at the way back: " + line);
+    }
+
+    @Test
+    void statusLineStoppedAppendsLastError() {
+        assertEquals("MCP server: stopped  (last error: bind failed)",
+                ServerViewText.statusLine(false, false, "bind failed"));
+    }
+
+    @Test
+    void statusLineUserStoppedAndErrorShowsBoth() {
+        // Rare shape (Start cleared the latch is the normal path), but nothing may be swallowed.
+        String line = ServerViewText.statusLine(false, true, "bind failed");
+        assertTrue(line.contains("stopped by Stop"), line);
+        assertTrue(line.contains("(last error: bind failed)"), line);
+    }
+
+    // ---- connectionLine -------------------------------------------------------------------------
+
+    private static final String DIRECT = "http://127.0.0.1:54321/mcp";
+
+    @Test
+    void connectionLineEmptyWhileStopped() {
+        assertEquals("", ServerViewText.connectionLine(false, true, "http://x/mcp", true,
+                DIRECT, false, 8123));
+        assertEquals("", ServerViewText.connectionLine(false, false, null, false, DIRECT, true, 8123));
+    }
+
+    @Test
+    void connectionLineBrokerConnectedNamesTheDirectEndpoint() {
+        // In broker mode the Endpoint URL field shows the broker's URL, so this line is the only
+        // place the window's own (direct) URL is visible.
+        assertEquals("Shared broker: connected — this window direct: " + DIRECT,
+                ServerViewText.connectionLine(true, true, "http://127.0.0.1:8123/mcp", true,
+                        DIRECT, false, 0));
+    }
+
+    @Test
+    void connectionLineBrokerUnreachableSaysReconnectingAndStillServing() {
+        String line = ServerViewText.connectionLine(true, true, null, true, DIRECT, false, 0);
+        assertTrue(line.contains("UNREACHABLE"), "the outage must be unmissable: " + line);
+        assertTrue(line.contains("reconnecting automatically"),
+                "must say the self-healing needs no user action: " + line);
+        assertTrue(line.contains(DIRECT), "must say this window keeps serving directly: " + line);
+    }
+
+    @Test
+    void connectionLineStandaloneWhenBrokerPreferredNamesTheDetachment() {
+        assertEquals("Standalone (not attached to the shared broker)",
+                ServerViewText.connectionLine(true, false, null, true, DIRECT, false, 8123));
+    }
+
+    @Test
+    void connectionLineStandaloneWhenBrokerNotPreferredIsPlain() {
+        assertEquals("Standalone",
+                ServerViewText.connectionLine(true, false, null, false, DIRECT, false, 8123));
+    }
+
+    @Test
+    void connectionLineStandaloneNamesThePortFallback() {
+        String line = ServerViewText.connectionLine(true, false, null, false, DIRECT, true, 8123);
+        assertEquals("Standalone — configured port 8123 was busy; bound an ephemeral port instead",
+                line);
+    }
+
+    @Test
+    void connectionLineStandaloneBrokerPreferredWithPortFallbackShowsBoth() {
+        String line = ServerViewText.connectionLine(true, false, null, true, DIRECT, true, 8123);
+        assertTrue(line.contains("not attached to the shared broker"), line);
+        assertTrue(line.contains("configured port 8123 was busy"), line);
+    }
+
+    @Test
+    void connectionLineBrokerModeIgnoresThePortFallbackFlag() {
+        // A broker backend is ephemeral by design (configuredPort 0), so a fallback note would be
+        // noise even if the flag were ever set in that mode.
+        String line = ServerViewText.connectionLine(true, true, "http://127.0.0.1:8123/mcp", true,
+                DIRECT, true, 8123);
+        assertEquals("Shared broker: connected — this window direct: " + DIRECT, line);
+    }
+
+    @Test
+    void connectionLineBrokerUrlIrrelevantInStandaloneMode() {
+        // brokerBaseUrl is process-wide state: another window may be attached while this one runs
+        // standalone — the line must describe THIS window's mode only.
+        assertEquals("Standalone",
+                ServerViewText.connectionLine(true, false, "http://127.0.0.1:8123/mcp", false,
+                        DIRECT, false, 8123));
+    }
 }

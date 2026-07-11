@@ -44,6 +44,7 @@ class McpServerRegistryCoverageTest {
         private final int configuredPort;
         private int boundPort;
         boolean brokerManaged;
+        boolean userStopped;
         int startAttempts;
 
         CountingServer(boolean initiallyRunning) {
@@ -91,6 +92,11 @@ class McpServerRegistryCoverageTest {
         @Override
         public boolean isBrokerManaged() {
             return brokerManaged;
+        }
+
+        @Override
+        public boolean isUserStopped() {
+            return userStopped;
         }
     }
 
@@ -412,6 +418,59 @@ class McpServerRegistryCoverageTest {
 
         assertTrue(idle.isRunning(), "the hand-off must not be satisfied by a broker backend");
         assertEquals(0, brokerBackend.startAttempts, "the live backend itself is never restarted");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // promoteSuccessor(Collection) — servers the user explicitly stopped (Stop button latch)
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void promoteSkipsUserStoppedServerAndStartsTheNextCandidate() {
+        // The user pressed Stop on the first window's server, then the port owner closed: promotion
+        // is an auto-start, so the explicit Stop outranks it — the next idle window takes the port.
+        CountingServer stoppedByUser = new CountingServer(false);
+        stoppedByUser.userStopped = true;
+        CountingServer idle = new CountingServer(false);
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(stoppedByUser, idle));
+
+        McpServerRegistry.promoteSuccessor(registered);
+
+        assertEquals(0, stoppedByUser.startAttempts, "a user-stopped server must never be promoted");
+        assertFalse(stoppedByUser.isRunning());
+        assertTrue(idle.isRunning(), "promotion falls through to the next non-latched candidate");
+        assertEquals(1, idle.startAttempts);
+    }
+
+    @Test
+    void promoteStartsNothingWhenEveryCandidateIsUserStopped() {
+        // Respecting the latch can leave the configured port unserved — that is the point: the user
+        // said no, and only an explicit Start may bring a latched server back.
+        CountingServer stoppedA = new CountingServer(false);
+        stoppedA.userStopped = true;
+        CountingServer stoppedB = new CountingServer(false);
+        stoppedB.userStopped = true;
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(stoppedA, stoppedB));
+
+        McpServerRegistry.promoteSuccessor(registered);
+
+        assertEquals(0, stoppedA.startAttempts, "no latched candidate may be auto-started");
+        assertEquals(0, stoppedB.startAttempts, "no latched candidate may be auto-started");
+        assertFalse(stoppedA.isRunning());
+        assertFalse(stoppedB.isRunning());
+    }
+
+    @Test
+    void promoteStillDefersToARunningOwnerEvenWhenItIsAlsoLatched() {
+        // Degenerate shape (a latched server cannot normally be running, since starting clears the
+        // latch): the first loop's "someone already serves" check must win — no start attempts.
+        CountingServer runningOwner = new CountingServer(true);
+        runningOwner.userStopped = true;
+        CountingServer idle = new CountingServer(false);
+        List<ManagedServer> registered = new ArrayList<>(Arrays.asList(runningOwner, idle));
+
+        McpServerRegistry.promoteSuccessor(registered);
+
+        assertEquals(0, idle.startAttempts, "a running owner ends the hand-off before the latch matters");
     }
 
     @Test

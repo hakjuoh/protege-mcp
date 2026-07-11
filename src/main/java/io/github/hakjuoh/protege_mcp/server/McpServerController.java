@@ -38,6 +38,8 @@ public final class McpServerController implements ManagedServer {
     private volatile String lastError;
     /** True while running as a broker-managed backend (ephemeral port behind the shared broker). */
     private volatile boolean brokerManaged;
+    /** Latched by the view's Stop button; every start refuses until the view's Start clears it. */
+    private volatile boolean userStopped;
     /** Per-start secret the broker presents in place of a bearer token; null in standalone mode. */
     private volatile String brokerSecret;
 
@@ -82,6 +84,15 @@ public final class McpServerController implements ManagedServer {
     private void startInternal(boolean asBrokerBackend) throws Exception {
         if (running) {
             return;
+        }
+        // The last line of defense for the user's explicit Stop: the auto-start paths check the
+        // latch up front, but a Stop can land while one of them is already past its check (e.g.
+        // while a broker attach is failing over to a standalone start). Refusing HERE, under the
+        // same monitor stop() takes, resolves any such race to stopped-and-latched instead of
+        // silently overriding the user. Before the try, so a refusal never touches lastError.
+        if (userStopped) {
+            throw new IllegalStateException("the user stopped this window's MCP server with its Stop "
+                    + "button — press Start in the MCP Server view to run it again");
         }
         // Pin the thread context classloader to this bundle while building the MCP server and
         // starting Jetty. The MCP SDK (ServiceLoader), networknt json-schema-validator (meta-schema
@@ -234,6 +245,21 @@ public final class McpServerController implements ManagedServer {
     /** True while running as a broker-managed backend behind the shared broker. */
     public boolean isBrokerManaged() {
         return brokerManaged;
+    }
+
+    /** See {@link ManagedServer#isUserStopped()}: an explicit Stop that no auto-start may override. */
+    @Override
+    public boolean isUserStopped() {
+        return userStopped;
+    }
+
+    /**
+     * Record ({@code true}, the view's Stop button) or withdraw ({@code false}, its Start button) the
+     * user's explicit stop. Start clears the latch even when the subsequent start attempt fails: the
+     * user has said "run", so the lazy/auto starts may try again on their next occasion.
+     */
+    public void setUserStopped(boolean stopped) {
+        userStopped = stopped;
     }
 
     /** The per-start secret the broker's proxy authenticates with; null in standalone mode. */

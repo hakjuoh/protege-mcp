@@ -44,6 +44,7 @@ public class McpServerView extends AbstractOWLViewComponent {
     private static final int COL_CLIENT_ID = 1;
 
     private JLabel statusLabel;
+    private JLabel connectionLabel;
     private JTextField urlField;
     private JTextField tokenField;
     private JCheckBox showToken;
@@ -67,6 +68,7 @@ public class McpServerView extends AbstractOWLViewComponent {
         form.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
         statusLabel = new JLabel();
+        connectionLabel = new JLabel();
         readOnlyLabel = new JLabel();
 
         urlField = new JTextField();
@@ -78,6 +80,7 @@ public class McpServerView extends AbstractOWLViewComponent {
         showToken.addActionListener(e -> refresh());
 
         form.add(statusLabel);
+        form.add(connectionLabel);
         form.add(labelled("Endpoint URL:", urlField));
         form.add(new JLabel("Auth: OAuth (a browser opens to authorize on first connect)."));
         form.add(labelled("Token (manual fallback):", tokenField));
@@ -171,6 +174,9 @@ public class McpServerView extends AbstractOWLViewComponent {
         McpServerController c = controller();
         if (c == null) {
             statusLabel.setText("MCP server: not available in this window.");
+            statusLabel.setToolTipText(null);
+            connectionLabel.setText(" ");
+            connectionLabel.setToolTipText(null);
             urlField.setText("");
             tokenField.setText("");
             readOnlyLabel.setText("");
@@ -183,19 +189,18 @@ public class McpServerView extends AbstractOWLViewComponent {
             return;
         }
         boolean running = c.isRunning();
-        String brokerNote = "";
-        if (running && c.isBrokerManaged()) {
-            brokerNote = io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().brokerMcpUrl() != null
-                    ? "  (via shared broker — this window direct: " + c.getEndpointUrl() + ")"
-                    : "  (shared broker unreachable, re-connecting — direct: " + c.getEndpointUrl() + ")";
-        }
-        statusLabel.setText("MCP server: " + (running ? "RUNNING" : "stopped")
-                + brokerNote
-                + (running && c.isPortFallback()
-                        ? "  (configured port " + c.getConfiguredPort() + " was busy at start — using "
-                                + c.getBoundPort() + ")"
-                        : "")
-                + (c.getLastError() != null && !running ? "  (last error: " + c.getLastError() + ")" : ""));
+        // Two lines instead of one crammed label (which truncated away the broker state): run state
+        // first, connection mode second — each with a tooltip carrying its full text, so nothing is
+        // lost when the view is narrow.
+        String status = ServerViewText.statusLine(running, c.isUserStopped(), c.getLastError());
+        statusLabel.setText(status);
+        statusLabel.setToolTipText(status);
+        String connection = ServerViewText.connectionLine(running, c.isBrokerManaged(),
+                io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().brokerMcpUrl(),
+                io.github.hakjuoh.protege_mcp.config.McpConfig.load().isSharedBroker(),
+                c.getEndpointUrl(), c.isPortFallback(), c.getConfiguredPort());
+        connectionLabel.setText(connection.isEmpty() ? " " : connection);
+        connectionLabel.setToolTipText(connection.isEmpty() ? null : connection);
         urlField.setText(running ? clientFacingUrl(c) : "");
         String token = c.getToken();
         tokenField.setText(showToken.isSelected() ? token : mask(token));
@@ -208,8 +213,9 @@ public class McpServerView extends AbstractOWLViewComponent {
             // OAuth clients live in the broker process in this mode; this window's store is empty by
             // design. Don't render an empty table as "no clients connected".
             clientsModel.setRowCount(0);
-            clientsLabel.setText("Connected clients: managed by the shared broker "
-                    + "(state in ~/.protege-mcp/oauth.json)");
+            clientsLabel.setText("Connected clients: managed by the shared broker");
+            clientsLabel.setToolTipText("In shared-broker mode, OAuth clients register with the "
+                    + "broker process; their state lives in ~/.protege-mcp/oauth.json");
             staticUseLabel.setText("");
             updateRevokeEnabled();
         } else {
@@ -220,6 +226,7 @@ public class McpServerView extends AbstractOWLViewComponent {
     private void updateClientsTable(McpServerController c) {
         List<OAuthStore.ClientInfo> clients = c.listClients();
         clientsLabel.setText("Connected clients (" + clients.size() + "):");
+        clientsLabel.setToolTipText(null);
 
         String selectedId = selectedClientId();
         clientsModel.setRowCount(0);
@@ -293,9 +300,15 @@ public class McpServerView extends AbstractOWLViewComponent {
         Thread worker = new Thread(() -> {
             try {
                 if (start) {
+                    // An explicit Start withdraws the user's Stop before anything else — even if
+                    // this start attempt then fails, the auto-starts are allowed to try again.
+                    c.setUserStopped(false);
                     // Same broker-first policy as auto-start and the chat's lazy start.
                     io.github.hakjuoh.protege_mcp.broker.McpBoot.ensureStarted(c);
                 } else {
+                    // Latch BEFORE stopping so a chat turn racing this Stop cannot lazily restart
+                    // the server the user is in the middle of taking down.
+                    c.setUserStopped(true);
                     io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().detach(c);
                     c.stop();
                 }

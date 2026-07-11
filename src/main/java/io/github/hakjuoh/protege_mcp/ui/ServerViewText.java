@@ -34,4 +34,50 @@ final class ServerViewText {
     static String connectCommand(String endpointUrl) {
         return "claude mcp add --transport http protege " + endpointUrl;
     }
+
+    /**
+     * First status line: the run state of this window's server. A user-initiated stop is named as
+     * such — including that the Ontology Assistant will respect it — so the state never looks like a
+     * failure; {@code lastError} (only ever shown while stopped) covers the actual failures.
+     */
+    static String statusLine(boolean running, boolean userStopped, String lastError) {
+        if (running) {
+            return "MCP server: RUNNING";
+        }
+        StringBuilder line = new StringBuilder("MCP server: stopped");
+        if (userStopped) {
+            line.append(" by Stop — the Ontology Assistant will not restart it; press Start to serve again");
+        }
+        if (lastError != null) {
+            line.append("  (last error: ").append(lastError).append(")");
+        }
+        return line.toString();
+    }
+
+    /**
+     * Second status line: how a running server is exposed — attached to the shared broker (healthy or
+     * reconnecting), or standalone. Empty when stopped. The broker states carry this window's direct
+     * URL because the Endpoint URL field shows the broker's URL in that mode; the standalone state
+     * doesn't repeat the URL (the field already shows it) but names the port fallback when one is in
+     * effect.
+     */
+    static String connectionLine(boolean running, boolean brokerManaged, String brokerUrl,
+            boolean brokerPreferred, String directUrl, boolean portFallback, int configuredPort) {
+        if (!running) {
+            return "";
+        }
+        if (brokerManaged) {
+            return brokerUrl != null
+                    ? "Shared broker: connected — this window direct: " + directUrl
+                    : "Shared broker: UNREACHABLE, reconnecting automatically — this window still "
+                            + "serves at " + directUrl;
+        }
+        String line = brokerPreferred
+                ? "Standalone (not attached to the shared broker)"
+                : "Standalone";
+        if (portFallback) {
+            line += " — configured port " + configuredPort + " was busy; bound an ephemeral port instead";
+        }
+        return line;
+    }
 }

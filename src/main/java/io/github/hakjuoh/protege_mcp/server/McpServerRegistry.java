@@ -82,7 +82,9 @@ public final class McpServerRegistry {
      * <em>fallback</em> port — started lazily for the chat while another window owned the configured
      * port — does not: an idle window is still promoted so the configured port the user gave to
      * external MCP clients gets re-claimed. Running servers are never restarted onto the freed port,
-     * because an in-flight chat turn may be streaming through them.
+     * because an in-flight chat turn may be streaming through them. A server the user explicitly
+     * stopped ({@link ManagedServer#isUserStopped()}) is never promoted: the hand-off is an
+     * auto-start, and an explicit Stop outranks it.
      */
     static void promoteSuccessor(Collection<? extends ManagedServer> registered) {
         for (ManagedServer s : registered) {
@@ -94,6 +96,9 @@ public final class McpServerRegistry {
         for (ManagedServer s : registered) {
             if (s.isRunning()) {
                 continue; // never restart a live fallback server out from under an active chat
+            }
+            if (s.isUserStopped()) {
+                continue; // the user pressed Stop on this window — promotion must not undo that
             }
             try {
                 s.start();

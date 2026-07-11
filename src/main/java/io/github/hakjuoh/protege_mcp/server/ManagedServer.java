@@ -24,4 +24,14 @@ interface ManagedServer {
      * close-time hand-off — otherwise a broker backend would suppress the standalone fallback.
      */
     boolean isBrokerManaged();
+
+    /**
+     * True while the user has explicitly stopped this server (the view's Stop button) and has not
+     * started it again. A latched server must never be started on the user's behalf — not by the
+     * close-time hand-off and not by the chat's lazy start; only an explicit Start clears the latch.
+     * Default false: only the production controller carries the latch.
+     */
+    default boolean isUserStopped() {
+        return false;
+    }
 }

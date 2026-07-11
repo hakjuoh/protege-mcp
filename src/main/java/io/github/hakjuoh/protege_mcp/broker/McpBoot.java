@@ -29,10 +29,18 @@ public final class McpBoot {
      * Broker-first for consistency; the standalone start below falls back to an ephemeral port by
      * itself when the configured port is busy, so this never leaves the chat without a server for
      * a merely-busy port.
+     *
+     * <p>Except when the user said no: a server the user explicitly stopped (the view's Stop button)
+     * is never restarted behind their back — this throws instead, with a message that names the way
+     * back (Start). Broker failures never take this branch; they degrade to the standalone start.
      */
     public static void ensureStarted(McpServerController controller) throws Exception {
         if (controller.isRunning()) {
             return;
+        }
+        if (controller.isUserStopped()) {
+            throw new IllegalStateException("the MCP server in this window was stopped with its Stop "
+                    + "button — press Start in the MCP Server view to use the assistant again");
         }
         if (McpConfig.load().isSharedBroker() && BrokerLink.get().attach(controller)) {
             return;

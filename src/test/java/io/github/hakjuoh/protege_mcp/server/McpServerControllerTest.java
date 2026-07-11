@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
@@ -140,6 +141,71 @@ class McpServerControllerTest {
         assertDoesNotThrow(c::stop, "stop() after stop() must remain a no-op");
         assertFalse(c.isRunning());
         assertEquals(0, c.getBoundPort(), "bound port stays 0 across repeated stop() calls");
+    }
+
+    // ---- isUserStopped / setUserStopped ----------------------------------------------------------
+
+    @Test
+    void isUserStoppedFalseInitially() {
+        assertFalse(newController().isUserStopped(),
+                "a fresh controller carries no user-stop latch — auto-start must be allowed");
+    }
+
+    @Test
+    void setUserStoppedLatchesAndClears() {
+        McpServerController c = newController();
+        c.setUserStopped(true);
+        assertTrue(c.isUserStopped(), "the view's Stop must latch");
+        c.setUserStopped(false);
+        assertFalse(c.isUserStopped(), "the view's Start must clear the latch");
+    }
+
+    @Test
+    void programmaticStopDoesNotLatchUserStopped() {
+        // Only the view's Stop button represents the user; hook dispose and the broker's attach
+        // rollback also call stop() and must NOT block later auto-starts.
+        McpServerController c = newController();
+        c.stop();
+        assertFalse(c.isUserStopped(), "stop() itself is not a user decision — no latch");
+    }
+
+    @Test
+    void stopLeavesAnExistingLatchInPlace() {
+        // Stop-latch-then-stop is the view's actual call order; the latch must survive the stop.
+        McpServerController c = newController();
+        c.setUserStopped(true);
+        c.stop();
+        assertTrue(c.isUserStopped(), "stop() must not clear a latch the user just set");
+    }
+
+    @Test
+    void startRefusesWhileUserStopped() {
+        // The only start() call in this file: the latch refusal precedes ALL runtime machinery
+        // (TCCL pinning, Jena init, Jetty), so this is headless-safe and boots nothing. It pins the
+        // latch's last line of defense — an auto-start path that raced past its own up-front check
+        // (e.g. a broker attach failing over to a standalone start) must be refused here, under the
+        // same monitor stop() takes, instead of silently overriding the user's Stop.
+        McpServerController c = newController();
+        c.setUserStopped(true);
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class, c::start,
+                "start() must refuse while the user-stop latch is set");
+        assertTrue(thrown.getMessage().contains("Stop"), thrown.getMessage());
+        assertFalse(c.isRunning(), "a refused start must leave the server stopped");
+        assertTrue(c.isUserStopped(), "the latch must survive the refusal");
+        assertNull(c.getLastError(), "a latch refusal is not a failure — lastError must stay clear");
+    }
+
+    @Test
+    void startBrokerManagedRefusesWhileUserStopped() {
+        // Same guard on the broker-backend path (BrokerLink.attach), same headless safety.
+        McpServerController c = newController();
+        c.setUserStopped(true);
+
+        assertThrows(IllegalStateException.class, c::startBrokerManaged,
+                "startBrokerManaged() must refuse while the user-stop latch is set");
+        assertFalse(c.isRunning());
+        assertTrue(c.isUserStopped());
     }
 
     // ---- getBoundPort ---------------------------------------------------------------------------

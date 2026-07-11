@@ -890,6 +890,14 @@ public class ChatView extends AbstractOWLViewComponent {
             append(Kind.ERROR, "MCP server is not available in this window; cannot reach the ontology.\n");
             return;
         }
+        if (!controller.isRunning() && controller.isUserStopped()) {
+            // The user pressed Stop in the MCP Server view: the lazy start below must not override
+            // that, so refuse here — before the prompt is consumed — with the way back spelled out.
+            // (McpBoot.ensureStarted enforces the same latch for a Stop racing this check.)
+            append(Kind.ERROR, "The MCP server in this window was stopped with its Stop button. "
+                    + "Press Start in the MCP Server view to use the assistant again.\n");
+            return;
+        }
 
         input.setText("");
         // Any pending attachment whose placeholder the user edited away is NOT sent — surface that and reclaim
