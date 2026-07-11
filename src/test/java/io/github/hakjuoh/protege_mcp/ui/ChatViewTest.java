@@ -524,7 +524,11 @@ class ChatViewTest {
         Object chunk = queueOf(v).peek();
         assertNotNull(chunk, "error is enqueued");
         assertEquals("ERROR", chunkKind(chunk), "error chunk uses Kind.ERROR");
-        assertTrue(chunkText(chunk).contains("[error] boom"), "error text is bracketed");
+        String t = chunkText(chunk);
+        assertTrue(t.contains("boom"), "error message is carried, got: " + t);
+        assertFalse(t.contains("[error]"), "no [error] prefix: the ERROR kind's color already marks it");
+        assertTrue(t.startsWith("\n"), "error starts on a fresh line");
+        assertTrue(t.endsWith("\n"), "error ends with a newline");
     }
 
     @Test

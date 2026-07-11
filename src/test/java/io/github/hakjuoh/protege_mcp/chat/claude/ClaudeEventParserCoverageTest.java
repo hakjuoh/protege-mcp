@@ -398,6 +398,20 @@ class ClaudeEventParserCoverageTest {
         assertTrue(listener.errors.isEmpty(), "missing is_error defaults to false");
     }
 
+    @Test
+    void errorReportedFlagSetOnlyByAnIsErrorResult() {
+        // The provider's completion handler reads this flag to keep the generic
+        // "claude exited with code N" line out of a transcript that already shows the stream's
+        // own error (e.g. an API/policy refusal) — while still reporting it when the CLI died
+        // without emitting one.
+        newParser();
+        assertFalse(parser.errorReported(), "fresh parser has surfaced no error");
+        parser.accept("{\"type\":\"result\",\"is_error\":false,\"result\":\"ok\",\"session_id\":\"s\"}");
+        assertFalse(parser.errorReported(), "a clean result must not set the flag");
+        parser.accept("{\"type\":\"result\",\"is_error\":true,\"result\":\"API Error: refused\",\"session_id\":\"s\"}");
+        assertTrue(parser.errorReported(), "an is_error result marks the error as already shown");
+    }
+
     // ---------------------------------------------------------------- stripToolPrefix
 
     @Test

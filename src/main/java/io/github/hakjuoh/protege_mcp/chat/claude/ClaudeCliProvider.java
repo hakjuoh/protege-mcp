@@ -77,19 +77,33 @@ public final class ClaudeCliProvider implements ChatProvider {
         }
         mcpConfig.deleteOnExit();
         List<String> command = buildCommand(exe, request, mcpConfig.getAbsolutePath());
+        ClaudeEventParser parser = new ClaudeEventParser(listener);
         return CliSupport.spawn(command, Collections.emptyMap(), CliSupport.neutralWorkingDir(),
-                new ClaudeEventParser(listener),
+                parser,
                 (exit, stderr) -> {
                     try {
                         Files.deleteIfExists(mcpConfig.toPath());
                     } catch (IOException ignored) {
                         // best-effort cleanup; deleteOnExit is the backstop
                     }
-                    if (exit != 0) {
-                        listener.onError(failureMessage(exit, stderr, request.showReasoning()));
-                    }
-                    listener.onComplete(exit);
+                    finishTurn(exit, stderr, parser.errorReported(), request.showReasoning(), listener);
                 });
+    }
+
+    /**
+     * Report the process exit to the listener. A non-zero exit adds the generic failure line only
+     * when the stream did not already surface its own error (an {@code is_error} result — e.g. an
+     * API or policy refusal): repeating it would only add noise. For a CLI that died without one
+     * (unknown option, not logged in), the exit line is the only diagnostic — including the
+     * Show-reasoning hint, whose unknown-option rejection happens at argv parse, before any
+     * stream-json exists. Package-private for unit testing.
+     */
+    static void finishTurn(int exit, String stderr, boolean streamErrorSeen, boolean showReasoning,
+            ChatListener listener) {
+        if (exit != 0 && !streamErrorSeen) {
+            listener.onError(failureMessage(exit, stderr, showReasoning));
+        }
+        listener.onComplete(exit);
     }
 
     /**

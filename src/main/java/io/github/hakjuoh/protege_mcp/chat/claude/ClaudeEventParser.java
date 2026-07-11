@@ -33,6 +33,11 @@ final class ClaudeEventParser implements Consumer<String> {
     private int liveCacheRead = -1;
     private int liveOutput = -1;
 
+    // Whether the stream itself surfaced an error (an is_error result, e.g. an API/policy refusal).
+    // Read by the provider's completion handler to decide if the generic exit-code line would be a
+    // duplicate. Plain field: line parsing and process completion run on the same worker thread.
+    private boolean errorReported;
+
     ClaudeEventParser(ChatListener listener) {
         this.listener = listener;
     }
@@ -127,9 +132,15 @@ final class ClaudeEventParser implements Consumer<String> {
                 usage.path("cache_read_input_tokens").asInt(-1),
                 null));
         if (node.path("is_error").asBoolean(false)) {
+            errorReported = true;
             String msg = node.path("result").asText("");
             listener.onError(msg.isEmpty() ? "Claude reported an error." : msg);
         }
+    }
+
+    /** Whether an error already reached the listener via the stream (see {@link #errorReported}). */
+    boolean errorReported() {
+        return errorReported;
     }
 
     private void emitSessionId(String id) {

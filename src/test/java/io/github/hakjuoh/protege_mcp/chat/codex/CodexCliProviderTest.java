@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.chat.codex;
 import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
 import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
 import io.github.hakjuoh.protege_mcp.chat.McpEndpoint;
+import io.github.hakjuoh.protege_mcp.chat.RecordingChatListener;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -50,6 +51,34 @@ class CodexCliProviderTest {
         assertTrue(exec >= 0);
         assertEquals("resume", cmd.get(exec + 1));
         assertEquals("thread-7", cmd.get(exec + 2));
+    }
+
+    @Test
+    void exitLineSuppressedWhenStreamAlreadyReportedTheError() {
+        // A turn.failed/error the parser already showed; the generic "codex exited with code N"
+        // line after it would only repeat the failure.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexCliProvider.finishTurn(1, "", true, l);
+        assertTrue(l.errors.isEmpty(), "the stream's own error already told the user");
+        assertEquals(1, l.exit, "onComplete still reports the exit code");
+    }
+
+    @Test
+    void exitLineStillReportedWhenTheCliDiedWithoutAStreamError() {
+        RecordingChatListener l = new RecordingChatListener();
+        CodexCliProvider.finishTurn(101, "panic: something broke", false, l);
+        assertEquals(1, l.errors.size(), "with no stream error, the exit line is the only diagnostic");
+        assertTrue(l.errors.get(0).contains("codex exited with code 101"));
+        assertTrue(l.errors.get(0).contains("panic: something broke"), "stderr tail must survive");
+        assertEquals(101, l.exit);
+    }
+
+    @Test
+    void cleanExitReportsNoErrorLine() {
+        RecordingChatListener l = new RecordingChatListener();
+        CodexCliProvider.finishTurn(0, "", false, l);
+        assertTrue(l.errors.isEmpty());
+        assertEquals(0, l.exit);
     }
 
     @Test

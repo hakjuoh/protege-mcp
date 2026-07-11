@@ -32,6 +32,11 @@ final class CodexEventParser implements Consumer<String> {
     /** Per agent_message item id: how many chars already emitted (avoids re-printing on completion). */
     private final Map<String, Integer> emitted = new HashMap<>();
 
+    // Whether the stream itself surfaced an error (a turn.failed/error event or an error item).
+    // Read by the provider's completion handler to decide if the generic exit-code line would be a
+    // duplicate. Plain field: line parsing and process completion run on the same worker thread.
+    private boolean errorReported;
+
     CodexEventParser(ChatListener listener) {
         this.listener = listener;
     }
@@ -71,6 +76,7 @@ final class CodexEventParser implements Consumer<String> {
                         node.path("message").asText(""),
                         node.path("error").asText(""));
                 if (!msg.isEmpty()) {
+                    errorReported = true;
                     listener.onError(msg);
                 }
             }
@@ -136,6 +142,7 @@ final class CodexEventParser implements Consumer<String> {
             case "error" -> {
                 String msg = item.path("message").asText("");
                 if (!msg.isEmpty()) {
+                    errorReported = true;
                     listener.onError(msg);
                 }
             }
@@ -143,6 +150,11 @@ final class CodexEventParser implements Consumer<String> {
                 // ignore unknown item types
             }
         }
+    }
+
+    /** Whether an error already reached the listener via the stream (see {@link #errorReported}). */
+    boolean errorReported() {
+        return errorReported;
     }
 
     /** Emit only the not-yet-seen suffix of {@code fullText} for item {@code id}. */

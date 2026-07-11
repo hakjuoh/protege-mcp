@@ -591,7 +591,7 @@ public class ChatView extends AbstractOWLViewComponent {
                     return true;
                 }
             } catch (UnsupportedFlavorException | IOException | RuntimeException ex) {
-                append(Kind.ERROR, "\n[error] Could not attach pasted or dropped content: "
+                append(Kind.ERROR, "\nCould not attach pasted or dropped content: "
                         + ex.getMessage() + "\n");
                 return false;
             }
@@ -631,7 +631,7 @@ public class ChatView extends AbstractOWLViewComponent {
             } catch (IOException ex) {
                 // Re-inlining a body this large would just reintroduce the command-line overflow the temp file
                 // exists to prevent, so drop it back into the visible input for the user to see and trim.
-                append(Kind.ERROR, "\n[error] Could not buffer large pasted text; left it in the input box "
+                append(Kind.ERROR, "\nCould not buffer large pasted text; left it in the input box "
                         + "instead: " + ex.getMessage() + "\n");
                 deleteScratchDir(dir);
                 nextPastedTextIndex--;
@@ -678,7 +678,7 @@ public class ChatView extends AbstractOWLViewComponent {
                     pendingAttachments.add(attachment);
                     insertAttachmentPlaceholder(attachment);
                 } catch (Exception ex) {
-                    append(Kind.ERROR, "\n[error] Could not attach pasted image: " + causeMessage(ex) + "\n");
+                    append(Kind.ERROR, "\nCould not attach pasted image: " + causeMessage(ex) + "\n");
                     deleteScratchDir(dir);
                 }
             }
@@ -697,11 +697,11 @@ public class ChatView extends AbstractOWLViewComponent {
             }
             File source = f.getAbsoluteFile();
             if (!source.isFile()) {
-                append(Kind.ERROR, "\n[error] Cannot attach non-file path: " + source + "\n");
+                append(Kind.ERROR, "\nCannot attach non-file path: " + source + "\n");
                 continue;
             }
             if (source.length() > MAX_ATTACHMENT_BYTES) {
-                append(Kind.ERROR, "\n[error] Attachment too large (" + (source.length() / (1024 * 1024))
+                append(Kind.ERROR, "\nAttachment too large (" + (source.length() / (1024 * 1024))
                         + " MB, max " + (MAX_ATTACHMENT_BYTES / (1024 * 1024)) + " MB): " + source.getName()
                         + "\n");
                 continue;
@@ -725,7 +725,7 @@ public class ChatView extends AbstractOWLViewComponent {
                 insertAttachmentPlaceholder(attachment);
                 attached = true;
             } catch (IOException ex) {
-                append(Kind.ERROR, "\n[error] Could not attach " + source.getName() + ": "
+                append(Kind.ERROR, "\nCould not attach " + source.getName() + ": "
                         + ex.getMessage() + "\n");
                 deleteScratchDir(dir);   // null-safe: reclaim the just-created dir on a failed copy
             }
@@ -1084,7 +1084,8 @@ public class ChatView extends AbstractOWLViewComponent {
 
             @Override
             public void onError(String message) {
-                enqueue(Kind.ERROR, "\n[error] " + message + "\n");
+                // No "[error]" prefix: the ERROR kind already renders in the error color.
+                enqueue(Kind.ERROR, "\n" + message + "\n");
             }
 
             @Override
@@ -1342,7 +1343,7 @@ public class ChatView extends AbstractOWLViewComponent {
                 Desktop.getDesktop().browse(URI.create(url));
             }
         } catch (Exception ex) {
-            append(Kind.ERROR, "\n[error] Could not open link: " + url + "\n");
+            append(Kind.ERROR, "\nCould not open link: " + url + "\n");
         }
     }
 

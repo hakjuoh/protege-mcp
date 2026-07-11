@@ -63,14 +63,23 @@ public final class CodexCliProvider implements ChatProvider {
         }
         List<String> command = buildCommand(exe, request);
         Map<String, String> env = Map.of(TOKEN_ENV_VAR, request.endpoint().token());
+        CodexEventParser parser = new CodexEventParser(listener);
         return CliSupport.spawn(command, env, CliSupport.neutralWorkingDir(),
-                new CodexEventParser(listener),
-                (exit, stderr) -> {
-                    if (exit != 0) {
-                        listener.onError(CliSupport.describeFailure("codex", exit, stderr));
-                    }
-                    listener.onComplete(exit);
-                });
+                parser,
+                (exit, stderr) -> finishTurn(exit, stderr, parser.errorReported(), listener));
+    }
+
+    /**
+     * Report the process exit to the listener. A non-zero exit adds the generic failure line only
+     * when the stream did not already surface its own error (a turn.failed/error event or an error
+     * item): repeating it would only add noise. For a CLI that died without one, the exit line is
+     * the only diagnostic. Package-private for unit testing.
+     */
+    static void finishTurn(int exit, String stderr, boolean streamErrorSeen, ChatListener listener) {
+        if (exit != 0 && !streamErrorSeen) {
+            listener.onError(CliSupport.describeFailure("codex", exit, stderr));
+        }
+        listener.onComplete(exit);
     }
 
     private String resolveExecutable() {

@@ -166,6 +166,29 @@ class CodexEventParserCoverageTest {
         assertTrue(l.errors.isEmpty(), "empty error message must not fire onError");
     }
 
+    @Test
+    void errorReportedFlagTracksStreamSurfacedErrors() {
+        // The provider's completion handler reads this flag to keep the generic
+        // "codex exited with code N" line out of a transcript that already shows the stream's
+        // own error — while still reporting it when the CLI died without emitting one.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        assertFalse(p.errorReported(), "fresh parser has surfaced no error");
+        p.accept("{\"type\":\"error\",\"error\":{}}");
+        assertFalse(p.errorReported(), "a skipped (empty-message) error must not set the flag");
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"boom\"}}");
+        assertTrue(p.errorReported(), "a turn.failed error marks the error as already shown");
+    }
+
+    @Test
+    void errorReportedFlagAlsoSetByAnErrorItem() {
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        p.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"error\",\"message\":\"item boom\"}}");
+        assertEquals(1, l.errors.size());
+        assertTrue(p.errorReported(), "an error item marks the error as already shown");
+    }
+
     // ---- unknown top-level type --------------------------------------------------------------
 
     @Test

@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.chat.claude;
 import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
 import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
 import io.github.hakjuoh.protege_mcp.chat.McpEndpoint;
+import io.github.hakjuoh.protege_mcp.chat.RecordingChatListener;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -89,6 +90,44 @@ class ClaudeCliProviderTest {
                 "error: unknown option '--thinking-display'", true);
         assertTrue(msg.contains("claude exited with code 1"));
         assertTrue(msg.contains("Show reasoning"));
+    }
+
+    @Test
+    void exitLineSuppressedWhenStreamAlreadyReportedTheError() {
+        // An API/policy refusal arrives as an is_error result the parser already showed; the generic
+        // "claude exited with code 1" line after it would only repeat the failure.
+        RecordingChatListener l = new RecordingChatListener();
+        ClaudeCliProvider.finishTurn(1, "", true, false, l);
+        assertTrue(l.errors.isEmpty(), "the stream's own error already told the user");
+        assertEquals(1, l.exit, "onComplete still reports the exit code");
+    }
+
+    @Test
+    void exitLineStillReportedWhenTheCliDiedWithoutAStreamError() {
+        RecordingChatListener l = new RecordingChatListener();
+        ClaudeCliProvider.finishTurn(1, "boom on stderr", false, false, l);
+        assertEquals(1, l.errors.size(), "with no stream error, the exit line is the only diagnostic");
+        assertTrue(l.errors.get(0).contains("claude exited with code 1"));
+        assertTrue(l.errors.get(0).contains("boom on stderr"), "stderr tail must survive");
+        assertEquals(1, l.exit);
+    }
+
+    @Test
+    void reasoningHintSurvivesTheSuppressionGate() {
+        // The unknown-option rejection happens at argv parse, before any stream-json exists — so
+        // streamErrorSeen is false on that path and the checkbox hint still reaches the transcript.
+        RecordingChatListener l = new RecordingChatListener();
+        ClaudeCliProvider.finishTurn(1, "error: unknown option '--thinking-display'", false, true, l);
+        assertEquals(1, l.errors.size());
+        assertTrue(l.errors.get(0).contains("Show reasoning"));
+    }
+
+    @Test
+    void cleanExitReportsNoErrorLine() {
+        RecordingChatListener l = new RecordingChatListener();
+        ClaudeCliProvider.finishTurn(0, "", false, false, l);
+        assertTrue(l.errors.isEmpty());
+        assertEquals(0, l.exit);
     }
 
     @Test
