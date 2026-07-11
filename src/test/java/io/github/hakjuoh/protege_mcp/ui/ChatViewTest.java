@@ -282,9 +282,12 @@ class ChatViewTest {
     }
 
     @Test
-    void styleForAssistantIsBlack() throws Exception {
+    void styleForAssistantHasNoOverrides() throws Exception {
+        // ASSISTANT text never reaches styleFor: append() routes it to appendAssistant(), and
+        // ChatMarkdown owns the assistant styling (pinned in ChatMarkdownTest). The switch case was
+        // removed as dead code; this pins that it stays gone.
         SimpleAttributeSet a = styleFor("ASSISTANT");
-        assertEquals(Color.BLACK, StyleConstants.getForeground(a), "ASSISTANT is black");
+        assertFalse(a.isDefined(StyleConstants.Foreground), "ASSISTANT styling lives in ChatMarkdown");
         assertFalse(StyleConstants.isBold(a), "ASSISTANT is not bold");
     }
 

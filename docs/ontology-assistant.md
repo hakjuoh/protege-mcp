@@ -52,7 +52,9 @@ Only CLIs that are actually detected on your system are offered as providers.
    edit:
    - *"What classes are in this ontology?"*
    - *"Create a class FooBar under Thing with label 'Foo Bar'."*
-4. Watch the reply **stream** in. **Stop** cancels mid-turn. **Edit ▸ Undo** reverts any edit it made.
+4. Watch the reply **stream** in. Replies render as **Markdown** while they stream (added in `0.5.0`) —
+   headings, bold/italic, lists, quotes, inline code and code blocks, tables, and links (`http(s)` links
+   are clickable). **Stop** cancels mid-turn. **Edit ▸ Undo** reverts any edit it made.
 
 ### Attachments and long pastes
 

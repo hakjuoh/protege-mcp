@@ -51,6 +51,9 @@
 
         <!-- embedded SPARQL engine (Apache Jena ARQ) for the sparql_query tool -->
         <jena.version>4.10.0</jena.version>
+
+        <!-- Markdown renderer for the Ontology Assistant transcript (zero-dependency, BSD-2-Clause) -->
+        <commonmark.version>0.29.0</commonmark.version>
     </properties>
 
     <dependencyManagement>
@@ -188,6 +191,21 @@
             <version>${jena.version}</version>
         </dependency>
 
+        <!-- Markdown parser for the Ontology Assistant transcript: assistant replies stream in as
+             Markdown, and ChatMarkdown walks the commonmark AST to emit styled runs into the chat's
+             StyledDocument. Core is zero-dependency (~211 KB); the GFM tables extension (~23 KB)
+             depends only on the core. Both are inlined like the rest of the compile scope. -->
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <version>${commonmark.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark-ext-gfm-tables</artifactId>
+            <version>${commonmark.version}</version>
+        </dependency>
+
         <!-- ===================================================================== -->
         <!-- test-only (scope=test, so never embedded into the bundle)              -->
         <!-- ===================================================================== -->
@@ -273,6 +291,7 @@
                             !org.yaml.snakeyaml.*,
                             !org.eclipse.jetty.*,
                             !jakarta.servlet.*,
+                            !org.commonmark.*,
                             org.protege.editor.core.*,
                             org.protege.editor.owl.*,
                             org.semanticweb.owlapi.*,

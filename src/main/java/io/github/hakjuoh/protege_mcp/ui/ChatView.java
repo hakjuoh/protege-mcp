@@ -5,6 +5,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
+import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -12,9 +13,13 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Insets;
+import java.awt.Point;
 import java.awt.RenderingHints;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
+import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.Transferable;
@@ -22,6 +27,7 @@ import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -54,18 +60,21 @@ import javax.swing.SwingWorker;
 import javax.swing.Timer;
 import javax.swing.TransferHandler;
 import javax.swing.text.BadLocationException;
+import javax.swing.text.Element;
 import javax.swing.text.JTextComponent;
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
 import javax.swing.text.StyledDocument;
 
 import org.protege.editor.owl.ui.view.AbstractOWLViewComponent;
+import io.github.hakjuoh.protege_mcp.chat.AssistantSegment;
 import io.github.hakjuoh.protege_mcp.chat.AttachmentFileManager;
 import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
 import io.github.hakjuoh.protege_mcp.chat.ChatComposer;
 import io.github.hakjuoh.protege_mcp.chat.ChatModels;
 import io.github.hakjuoh.protege_mcp.chat.CliSupport;
 import io.github.hakjuoh.protege_mcp.chat.ChatListener;
+import io.github.hakjuoh.protege_mcp.chat.ChatMarkdown;
 import io.github.hakjuoh.protege_mcp.chat.ChatProcess;
 import io.github.hakjuoh.protege_mcp.chat.ChatProvider;
 import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
@@ -84,8 +93,10 @@ import io.github.hakjuoh.protege_mcp.server.McpServerRegistry;
  * and the read-only / confirm-write gates all inherited unchanged.
  *
  * <p>All subprocess I/O runs on a daemon worker; streamed output is coalesced onto the EDT via a queue
- * drained by a Swing {@link Timer}. The plugin stores no provider API key — each CLI uses the user's
- * existing login.
+ * drained by a Swing {@link Timer}. Assistant replies are Markdown and render styled
+ * ({@link ChatMarkdown}): the in-flight message is re-rendered from its accumulated source once per
+ * drain tick, so formatting converges while the reply streams. The plugin stores no provider API key —
+ * each CLI uses the user's existing login.
  */
 public class ChatView extends AbstractOWLViewComponent {
 
@@ -138,6 +149,11 @@ public class ChatView extends AbstractOWLViewComponent {
     private volatile ChatUsage liveUsage;
     private boolean atTurnStartOfLine = true;
 
+    // The currently-streaming assistant message, kept as Markdown source and re-rendered in place on
+    // each drain tick (unclosed markers render literally and converge as their closers stream in).
+    // Invariants (suffix segment, close-before-other-kinds) live in AssistantSegment, headless-tested.
+    private final AssistantSegment assistantSegment = new AssistantSegment();
+
     // Turn bookkeeping (EDT-only). The CLI handle is spawned off-EDT and published back on the EDT, so a
     // per-turn id lets a late publish tell whether its turn is still in flight, and a Stop pressed before
     // the handle exists is remembered until it can be honoured.
@@ -175,6 +191,11 @@ public class ChatView extends AbstractOWLViewComponent {
 
         transcript = new JTextPane();
         transcript.setEditable(false);
+        // Auto-scroll to the bottom of the stream is driven by setCaretPosition(end) after each
+        // batch, under the caret's default update policy (same as before Markdown rendering). The
+        // streaming re-render's remove + insert run inside one EDT event, so no intermediate caret
+        // position or partial render is ever painted.
+        installLinkHandlers();
         JScrollPane scroll = new JScrollPane(transcript);
         scroll.setPreferredSize(new Dimension(560, 360));
         add(scroll, BorderLayout.CENTER);
@@ -832,6 +853,7 @@ public class ChatView extends AbstractOWLViewComponent {
         sessionId = null;
         if (clearTranscript) {
             transcript.setText("");
+            closeAssistantSegment();   // its offsets were reset along with the document
             atTurnStartOfLine = true;
             liveUsage = null;
             usageLabel.setText(" ");
@@ -1061,9 +1083,30 @@ public class ChatView extends AbstractOWLViewComponent {
 
     /** EDT: drain queued chunks, refresh the live token count, then finalize once the process exits. */
     private void drainQueue() {
+        // Consecutive assistant deltas are batched so the Markdown segment re-renders once per tick,
+        // not once per token. Hidden reasoning is dropped here (before batching) so it can neither
+        // split the batch nor close the assistant segment while the toggle is off.
+        StringBuilder assistantBatch = null;
         Chunk c;
         while ((c = poll()) != null) {
+            if (c.kind() == Kind.ASSISTANT) {
+                if (assistantBatch == null) {
+                    assistantBatch = new StringBuilder();
+                }
+                assistantBatch.append(c.text());
+                continue;
+            }
+            if (c.kind() == Kind.THINKING && (showThinking == null || !showThinking.isSelected())) {
+                continue;
+            }
+            if (assistantBatch != null) {
+                append(Kind.ASSISTANT, assistantBatch.toString());
+                assistantBatch = null;
+            }
             append(c.kind(), c.text());
+        }
+        if (assistantBatch != null) {
+            append(Kind.ASSISTANT, assistantBatch.toString());
         }
         ChatUsage lu = liveUsage;
         if (lu != null) {
@@ -1089,6 +1132,7 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     private void finalizeTurn(int exit) {
+        closeAssistantSegment();   // the reply is complete; later assistant text is a new message
         currentProcess = null;
         activeTurn = 0;
         cancelRequested = false;
@@ -1127,6 +1171,11 @@ public class ChatView extends AbstractOWLViewComponent {
         if (kind == Kind.THINKING && (showThinking == null || !showThinking.isSelected())) {
             return;
         }
+        if (kind == Kind.ASSISTANT) {
+            appendAssistant(text);
+            return;
+        }
+        closeAssistantSegment();
         StyledDocument doc = transcript.getStyledDocument();
         try {
             doc.insertString(doc.getLength(), text, styleFor(kind));
@@ -1137,6 +1186,119 @@ public class ChatView extends AbstractOWLViewComponent {
         transcript.setCaretPosition(doc.getLength());
     }
 
+    /**
+     * Assistant text is Markdown: extend the in-flight message's source and re-render it in place
+     * (see {@link AssistantSegment}). A marker that closes late (a fence, a {@code **})
+     * retroactively restyles the text it spans.
+     */
+    private void appendAssistant(String text) {
+        StyledDocument doc = transcript.getStyledDocument();
+        Boolean endsWithBreak = assistantSegment.appendAndRender(doc, text, transcriptFontSize());
+        if (endsWithBreak != null) {
+            atTurnStartOfLine = endsWithBreak;
+        }
+        transcript.setCaretPosition(doc.getLength());
+    }
+
+    /** Ends the in-flight assistant message; later assistant text starts a fresh Markdown context. */
+    private void closeAssistantSegment() {
+        assistantSegment.close();
+    }
+
+    private int transcriptFontSize() {
+        Font f = transcript.getFont();
+        return f != null ? f.getSize() : 13;
+    }
+
+    // ------------------------------------------------------------------ transcript links
+
+    /** Click opens a rendered Markdown link; the cursor becomes a hand over one. */
+    private void installLinkHandlers() {
+        transcript.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 1) {
+                    String url = linkAt(e.getPoint());
+                    if (url != null) {
+                        openLink(url);
+                    }
+                }
+            }
+        });
+        transcript.addMouseMotionListener(new MouseAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                String url = linkAt(e.getPoint());
+                // The tooltip discloses the REAL destination — the visible link text is
+                // model-chosen and can differ from where the link actually goes.
+                transcript.setToolTipText(url);
+                transcript.setCursor(Cursor.getPredefinedCursor(
+                        url != null ? Cursor.HAND_CURSOR : Cursor.TEXT_CURSOR));
+            }
+        });
+    }
+
+    /**
+     * The URL under the given point, or null. viewToModel2D clamps points outside the text to the
+     * nearest character, so the hit only counts when the point really falls inside that character's
+     * box — otherwise clicking the empty area past a line-ending link would open it.
+     */
+    private String linkAt(Point p) {
+        int pos = transcript.viewToModel2D(p);
+        StyledDocument doc = transcript.getStyledDocument();
+        if (pos < 0 || pos >= doc.getLength()) {
+            return null;
+        }
+        Element el = doc.getCharacterElement(pos);
+        Object url = el.getAttributes().getAttribute(ChatMarkdown.LINK_URL);
+        if (!(url instanceof String s)) {
+            return null;
+        }
+        try {
+            Rectangle2D r = transcript.modelToView2D(pos);
+            Rectangle2D next = transcript.modelToView2D(pos + 1);
+            if (r == null || next == null) {
+                return null;
+            }
+            double x1 = Math.min(r.getX(), next.getX()) - 1;
+            double x2 = Math.max(r.getX(), next.getX()) + 1;
+            if (p.getY() < r.getY() || p.getY() > r.getY() + r.getHeight()
+                    || p.getX() < x1 || p.getX() > x2) {
+                return null;
+            }
+        } catch (BadLocationException ex) {
+            return null;
+        }
+        return s;
+    }
+
+    /**
+     * Opens a transcript link after showing the user the REAL destination. The link text is
+     * model-chosen and can look like anything (including a different URL), so navigation is an
+     * informed action, consistent with the plugin's other egress confirmations.
+     */
+    private void openLink(String url) {
+        // Defense in depth: ChatMarkdown only attaches http(s) URLs, but never trust the attribute.
+        String lower = url.toLowerCase(java.util.Locale.ROOT);
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+            return;
+        }
+        String shown = url.length() > 300 ? url.substring(0, 300) + "…" : url;
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Open this link in your browser?\n\n" + shown,
+                "Open link", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) {
+            return;
+        }
+        try {
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                Desktop.getDesktop().browse(URI.create(url));
+            }
+        } catch (Exception ex) {
+            append(Kind.ERROR, "\n[error] Could not open link: " + url + "\n");
+        }
+    }
+
     private static SimpleAttributeSet styleFor(Kind kind) {
         SimpleAttributeSet a = new SimpleAttributeSet();
         switch (kind) {
@@ -1144,7 +1306,8 @@ public class ChatView extends AbstractOWLViewComponent {
                 StyleConstants.setBold(a, true);
                 StyleConstants.setForeground(a, new Color(0x1A4F8B));
             }
-            case ASSISTANT -> StyleConstants.setForeground(a, Color.BLACK);
+            // ASSISTANT never reaches here: append() routes it to appendAssistant(), and
+            // ChatMarkdown owns the assistant styling.
             case TOOL -> {
                 StyleConstants.setItalic(a, true);
                 StyleConstants.setForeground(a, new Color(0x507030));
