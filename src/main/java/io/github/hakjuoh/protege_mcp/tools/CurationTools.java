@@ -61,7 +61,11 @@ public final class CurationTools {
     private CurationTools() {
     }
 
-    /** Default annotation property for a definition when the caller does not name one. */
+    /**
+     * Default "term replaced by" annotation property for {@code deprecate_entity} when the caller
+     * does not name one via {@code replaced_by_property}. IAO_0100001 is not a W3C standard but the
+     * de-facto OBO Foundry convention for the obsolescence pattern.
+     */
     static final IRI TERM_REPLACED_BY = IRI.create("http://purl.obolibrary.org/obo/IAO_0100001");
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
@@ -85,7 +89,8 @@ public final class CurationTools {
                         .bool("no_label", "Do not add any rdfs:label (default false).")
                         .str("definition", "Definition text (optional).")
                         .str("definition_property", "Annotation property for the definition (default "
-                                + "rdfs:comment; e.g. skos:definition or an IOF *Definition property).")
+                                + "rdfs:comment; e.g. skos:definition, or your ontology's own definition "
+                                + "property).")
                         .str("definition_lang", "Language tag for the definition literal (optional).")
                         .strArray("parents", "Superclasses: each a class name, IRI or Manchester class "
                                 + "expression (optional).")
@@ -253,16 +258,20 @@ public final class CurationTools {
 
         tools.tool("deprecate_entity",
                 "Deprecate a term (the standard obsolescence pattern) in one undoable step: asserts "
-                        + "owl:deprecated true, and — when 'replaced_by' is given — a 'term replaced by' "
-                        + "pointer (IAO_0100001 by default; override with 'replaced_by_property') to the "
-                        + "replacement term, plus any extra 'annotations' (e.g. a skos:changeNote). The "
-                        + "term and its axioms are kept (existing usages are NOT rewritten — repoint them "
-                        + "with rename_entity or edit each axiom if a full merge is intended).",
+                        + "owl:deprecated true (the W3C OWL 2 deprecation flag), and — when 'replaced_by' "
+                        + "is given — a 'term replaced by' pointer (default IAO_0100001, the de-facto OBO "
+                        + "Foundry obsolescence convention — NOT a W3C standard; override with "
+                        + "'replaced_by_property') to the replacement term, plus any extra 'annotations' "
+                        + "(e.g. a skos:changeNote). The term and its axioms are kept (existing usages are "
+                        + "NOT rewritten — repoint them with rename_entity or edit each axiom if a full "
+                        + "merge is intended).",
                 Tools.schema()
                         .strReq("entity", "Term to deprecate: an IRI or display name.")
                         .str("replaced_by", "Replacement term: an IRI or display name (optional).")
-                        .str("replaced_by_property", "Annotation property for the replacement pointer "
-                                + "(default IAO_0100001 'term replaced by').")
+                        .str("replaced_by_property", "Annotation property for the replacement pointer. "
+                                + "Default IAO_0100001 'term replaced by' — the de-facto OBO Foundry "
+                                + "obsolescence convention, not a W3C standard; pass e.g. "
+                                + "dcterms:isReplacedBy for a vocabulary-neutral alternative.")
                         .annotationArray("annotations", "Extra annotations to add (e.g. a change note; "
                                 + "array of {property, value | value_iri, lang, datatype}).")
                         .build(),

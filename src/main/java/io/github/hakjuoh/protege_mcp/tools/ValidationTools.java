@@ -225,8 +225,8 @@ public final class ValidationTools {
         Finding f = new Finding("missing_definition", "info",
                 "Classes/properties (incl. annotation properties) with no definition annotation "
                         + "(rdfs:comment, skos:definition, or a *Definition annotation property)",
-                "Add an rdfs:comment, skos:definition, or e.g. iof-av:naturalLanguageDefinition "
-                        + "with add_annotation.");
+                "Add an rdfs:comment, skos:definition, or your ontology's own *Definition "
+                        + "annotation property with add_annotation.");
         for (OWLEntity e : sig.definable) {
             if (!hasDefinition(e, scope)) {
                 f.entities.add(e);

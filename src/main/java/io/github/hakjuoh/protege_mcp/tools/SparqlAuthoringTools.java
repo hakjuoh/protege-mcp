@@ -83,7 +83,7 @@ public final class SparqlAuthoringTools {
                         + "(its imports closure by default — the same graph sparql_query sees). Returns the "
                         + "prefix map (plus a ready-to-paste PREFIX block), and capped, sorted lists of "
                         + "classes, object/data properties (with their domains and ranges), named "
-                        + "individuals and datatypes — each with a CURIE (e.g. iof:MaterialArtifact) and "
+                        + "individuals and datatypes — each with a CURIE (e.g. ex:Widget) and "
                         + "full IRI — and a set of ready-to-run example queries built from the ontology's "
                         + "own terms. Use 'keyword' to focus on a sub-topic. sparql_query auto-prepends "
                         + "these prefixes, so you can use the CURIEs directly. This is asserted structure; "

@@ -126,14 +126,14 @@ public final class OntologyMetadataTools {
                 }));
 
         tools.tool("set_prefix",
-                "Register or update a prefix in the active ontology's prefix map (e.g. prefix 'iof-av' "
-                        + "→ 'https://spec.industrialontologies.org/ontology/annotation/'), so CURIEs "
-                        + "like 'iof-av:maturity' render and parse and the document serializes with the "
+                "Register or update a prefix in the active ontology's prefix map (e.g. prefix 'ex' "
+                        + "→ 'http://example.org/ns#'), so CURIEs "
+                        + "like 'ex:myTerm' render and parse and the document serializes with the "
                         + "prefix. The prefix map lives in the ontology's document format — this changes "
                         + "no axioms and is NOT on the undo stack.",
                 Tools.schema()
-                        .strReq("prefix", "Prefix name, with or without a trailing ':' (e.g. 'iof-av' or "
-                                + "'iof-av:'); use ':' for the default namespace.")
+                        .strReq("prefix", "Prefix name, with or without a trailing ':' (e.g. 'ex' or "
+                                + "'ex:'); use ':' for the default namespace.")
                         .strReq("namespace", "Namespace IRI the prefix expands to.")
                         .build(),
                 (ex, req) -> Tools.guard(() -> {

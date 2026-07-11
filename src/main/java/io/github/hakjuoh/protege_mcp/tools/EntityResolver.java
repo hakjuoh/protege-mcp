@@ -63,9 +63,9 @@ public final class EntityResolver {
     /**
      * Expand a registered-prefix CURIE ({@code prefix:local}) to its full IRI using the active ontology's
      * prefix map, or return null when {@code ref} is not a CURIE against a known prefix. This is what makes
-     * {@code bfo:BFO_0000031} resolve to the imported BFO class instead of being (mis)read by {@link #asIri}
-     * as an absolute IRI whose scheme happens to be {@code bfo} — which would silently mint a junk entity
-     * whose IRI is the literal string "bfo:BFO_0000031". Guards: a real hierarchical IRI ({@code scheme://…})
+     * {@code ex:Thing_0001} resolve to the imported class instead of being (mis)read by {@link #asIri}
+     * as an absolute IRI whose scheme happens to be {@code ex} — which would silently mint a junk entity
+     * whose IRI is the literal string "ex:Thing_0001". Guards: a real hierarchical IRI ({@code scheme://…})
      * and an empty or whitespace-bearing local part are never treated as CURIEs, so full IRIs and display
      * phrases keep their existing behaviour.
      */
@@ -196,7 +196,7 @@ public final class EntityResolver {
      * A Manchester entity checker that resolves a token first as a registered-prefix CURIE or full IRI
      * (via {@link #iriFor}, looked up in the signature), then as an unambiguous bare IRI local name
      * (fragment), and finally delegates to Protégé's rendering/label checker. This lets COMPOUND
-     * Manchester expressions accept {@code iof-core:X} CURIEs and bare fragments — matching what
+     * Manchester expressions accept {@code ex:X} CURIEs and bare fragments — matching what
      * single-entity operands (sub, chain items, create_* parents) already accept — while quoted-label,
      * single-word-label and {@code <IRI>} forms keep working through the delegate. Returns null for
      * unknowns (never mints inside a compound), preserving the "typo → parse error" behaviour.
@@ -300,11 +300,11 @@ public final class EntityResolver {
     }
 
     /**
-     * Rewrite every registered-prefix CURIE ({@code iof-core:Agent}) in a Manchester string to a full
+     * Rewrite every registered-prefix CURIE ({@code ex:Agent}) in a Manchester string to a full
      * {@code <IRI>}, which the OWL API Manchester parser handles natively. The parser resolves prefixed
      * names through its own prefix manager (defaults only: owl/rdf/rdfs/xsd) and does NOT consult the
      * entity checker for them — so a custom checker can add bare-fragment support but not CURIE support;
-     * pre-expansion is what makes {@code iof-core:X} work inside a COMPOUND expression, matching what a
+     * pre-expansion is what makes {@code ex:X} work inside a COMPOUND expression, matching what a
      * single-entity operand already accepts. Content inside {@code <…>} is untouched (a full IRI's only
      * colon is {@code http:}/{@code https:}, whose local part starts with '/', so it never matches).
      */

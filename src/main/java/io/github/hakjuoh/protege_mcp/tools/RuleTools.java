@@ -40,7 +40,7 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
  * SWRL rules but has no standalone rule-text parser, and the structured add_axiom tool has no rule
  * type — so these tools build rules from a structured body/head atom representation rather than from
  * free text. The structured form is the faithful primitive for rule reconstruction: a rule variable
- * is identified by its IRI (e.g. {@code iof-var:process1}), which the conventional {@code ?x} text
+ * is identified by its IRI (e.g. {@code ex:process1}), which the conventional {@code ?x} text
  * syntax cannot preserve, and rule-level annotations (rdfs:label, dcterms:description, …) are carried
  * via the same {@code annotations} operand as the other write tools.
  *

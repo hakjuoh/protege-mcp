@@ -278,7 +278,7 @@ public final class Axioms {
 
     /** A chain link: a named object property, or an inverse expression inverse(P) / "inverse P" /
      * ObjectInverseOf(P) → OWLObjectInverseOf (a SubPropertyChainOf link may be any object property
-     * expression, so inverse links are legal — real IOF temporal chains rely on them). */
+     * expression, so inverse links are legal — some ontologies' temporal chains rely on them). */
     private static OWLObjectPropertyExpression chainLink(OWLModelManager mm, String ref) {
         String inner = inverseOperand(ref);
         if (inner != null) {
