@@ -15,13 +15,16 @@ import java.awt.Image;
 import java.awt.Insets;
 import java.awt.Point;
 import java.awt.RenderingHints;
+import java.awt.Toolkit;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
+import java.awt.geom.Path2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.datatransfer.DataFlavor;
+import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Transferable;
 import java.awt.datatransfer.UnsupportedFlavorException;
 import java.awt.image.BufferedImage;
@@ -49,8 +52,10 @@ import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextPane;
@@ -95,8 +100,11 @@ import io.github.hakjuoh.protege_mcp.server.McpServerRegistry;
  * <p>All subprocess I/O runs on a daemon worker; streamed output is coalesced onto the EDT via a queue
  * drained by a Swing {@link Timer}. Assistant replies are Markdown and render styled
  * ({@link ChatMarkdown}): the in-flight message is re-rendered from its accumulated source once per
- * drain tick, so formatting converges while the reply streams. The plugin stores no provider API key —
- * each CLI uses the user's existing login.
+ * drain tick, so formatting converges while the reply streams. Because that rendering is lossy
+ * (selecting and copying yields the styled plain text), each finished message keeps its original
+ * Markdown source ({@link AssistantSegment#SOURCE_MD}): a copy button under the turn's final reply and
+ * a "Copy message as Markdown" context-menu item put the untouched markup on the clipboard. The plugin
+ * stores no provider API key — each CLI uses the user's existing login.
  */
 public class ChatView extends AbstractOWLViewComponent {
 
@@ -119,6 +127,9 @@ public class ChatView extends AbstractOWLViewComponent {
     private static final int PASTED_TEXT_INLINE_MAX = 8000;
     /** Files larger than this are refused (avoids copying huge files and oversized provider arguments). */
     private static final long MAX_ATTACHMENT_BYTES = 25L * 1024 * 1024;
+
+    private static final boolean IS_MAC =
+            System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac");
 
     private enum Kind { USER, ASSISTANT, TOOL, THINKING, ERROR, SYSTEM }
 
@@ -164,6 +175,9 @@ public class ChatView extends AbstractOWLViewComponent {
     private int turnSeq;
     private int activeTurn;            // id of the turn in flight, 0 when idle
     private boolean cancelRequested;   // Stop pressed during the launch window, before a handle exists
+    // Stop was pressed for the turn in flight: deltas drained after the [stopped] marker form a tail
+    // fragment, so the turn's final message must not be offered as "the reply" to copy.
+    private boolean turnStopped;
 
     private long turnStartMillis;
 
@@ -200,6 +214,7 @@ public class ChatView extends AbstractOWLViewComponent {
         // streaming re-render's remove + insert run inside one EDT event, so no intermediate caret
         // position or partial render is ever painted.
         installLinkHandlers();
+        installContextMenu();
         JScrollPane scroll = new JScrollPane(transcript);
         scroll.setPreferredSize(new Dimension(560, 360));
         add(scroll, BorderLayout.CENTER);
@@ -439,9 +454,10 @@ public class ChatView extends AbstractOWLViewComponent {
         return b;
     }
 
-    private enum Glyph { PLUS, SEND, STOP }
+    private enum Glyph { PLUS, SEND, STOP, COPY, CHECK }
 
-    /** A small flat-drawn composer icon: a plus, an up-arrow send (filled circle), or a stop square. */
+    /** A small flat-drawn icon: plus, up-arrow send (filled circle), stop square, copy (two
+     *  overlapping sheets, like Codex's per-message copy button), or a confirmation check mark. */
     private static Icon icon(Glyph glyph, int size, Color fg, Color bg) {
         return new Icon() {
             @Override
@@ -488,6 +504,38 @@ public class ChatView extends AbstractOWLViewComponent {
                         case STOP -> {
                             float m = s * 0.34f;
                             g2.fill(new RoundRectangle2D.Float(m, m, s - 2 * m, s - 2 * m, s * 0.08f, s * 0.08f));
+                        }
+                        case COPY -> {
+                            g2.setStroke(new BasicStroke(Math.max(1.2f, s * 0.09f),
+                                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                            float side = s * 0.50f;
+                            float arc = s * 0.14f;
+                            float frontX = s * 0.16f;
+                            float frontY = s - s * 0.16f - side;
+                            float backX = frontX + s * 0.19f;
+                            float backY = frontY - s * 0.19f;
+                            // Back sheet: drawn only where the front sheet doesn't cover it — from
+                            // the front's top edge up over the two rounded top corners and down to
+                            // its bottom-right, stopping at the front's right edge.
+                            Path2D.Float back = new Path2D.Float();
+                            back.moveTo(backX, frontY);
+                            back.lineTo(backX, backY + arc);
+                            back.quadTo(backX, backY, backX + arc, backY);
+                            back.lineTo(backX + side - arc, backY);
+                            back.quadTo(backX + side, backY, backX + side, backY + arc);
+                            back.lineTo(backX + side, backY + side);
+                            back.lineTo(frontX + side, backY + side);
+                            g2.draw(back);
+                            g2.draw(new RoundRectangle2D.Float(frontX, frontY, side, side, arc, arc));
+                        }
+                        case CHECK -> {
+                            g2.setStroke(new BasicStroke(Math.max(1.6f, s * 0.12f),
+                                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                            Path2D.Float check = new Path2D.Float();
+                            check.moveTo(s * 0.24f, s * 0.54f);
+                            check.lineTo(s * 0.43f, s * 0.72f);
+                            check.lineTo(s * 0.78f, s * 0.30f);
+                            g2.draw(check);
                         }
                         default -> {
                         }
@@ -859,7 +907,7 @@ public class ChatView extends AbstractOWLViewComponent {
         sessionId = null;
         if (clearTranscript) {
             transcript.setText("");
-            closeAssistantSegment();   // its offsets were reset along with the document
+            closeAssistantSegment(false);   // its offsets were reset along with the document
             atTurnStartOfLine = true;
             lastRenderedKind = null;
             liveUsage = null;
@@ -934,6 +982,7 @@ public class ChatView extends AbstractOWLViewComponent {
         final int turn = ++turnSeq;   // identifies this turn so a late handle-publish can't bleed across turns
         activeTurn = turn;
         cancelRequested = false;
+        turnStopped = false;
         usageLabel.setText("tokens: …");
         setInputEnabled(false);
         showStop(true);
@@ -990,6 +1039,7 @@ public class ChatView extends AbstractOWLViewComponent {
         if (activeTurn == 0) {
             return;   // nothing in flight
         }
+        turnStopped = true;
         ChatProcess p = currentProcess;
         if (p != null) {
             enqueue(Kind.SYSTEM, "\n[stopped]\n");
@@ -1152,7 +1202,11 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     private void finalizeTurn(int exit) {
-        closeAssistantSegment();   // the reply is complete; later assistant text is a new message
+        // The reply is complete; later assistant text is a new message. The final reply gets the
+        // copy-as-Markdown button (interim messages already carry their source for the context menu) —
+        // unless the user stopped the turn: deltas drained past the [stopped] marker are a tail
+        // fragment, not "the reply", so they stay button-less (still right-click copyable).
+        closeAssistantSegment(!turnStopped);
         currentProcess = null;
         activeTurn = 0;
         cancelRequested = false;
@@ -1195,7 +1249,7 @@ public class ChatView extends AbstractOWLViewComponent {
             appendAssistant(text);
             return;
         }
-        closeAssistantSegment();
+        closeAssistantSegment(false);   // interrupted mid-turn: tag the source, no button row
         if (needsReasoningBoundaryBreak(kind, text)) {
             text = "\n" + text;
         }
@@ -1248,9 +1302,95 @@ public class ChatView extends AbstractOWLViewComponent {
         transcript.setCaretPosition(doc.getLength());
     }
 
-    /** Ends the in-flight assistant message; later assistant text starts a fresh Markdown context. */
-    private void closeAssistantSegment() {
-        assistantSegment.close();
+    /**
+     * Ends the in-flight assistant message; later assistant text starts a fresh Markdown context.
+     * The finished message's rendered range is tagged with its original Markdown source (feeding the
+     * context menu's "Copy message as Markdown"); {@code offerCopy} additionally drops a copy button
+     * under the message — used for the turn's final reply only, so tool-interrupted interim messages
+     * don't stack up button rows.
+     */
+    private void closeAssistantSegment(boolean offerCopy) {
+        String source = assistantSegment.close(transcript.getStyledDocument());
+        if (offerCopy && source != null) {
+            insertCopyAffordance(source);
+        }
+    }
+
+    /** A left-aligned copy button on its own line under the message it copies (cf. Codex's ⧉). */
+    private void insertCopyAffordance(String markdown) {
+        StyledDocument doc = transcript.getStyledDocument();
+        SimpleAttributeSet attrs = new SimpleAttributeSet();
+        StyleConstants.setComponent(attrs, copyMessageButton(markdown));
+        // The whole affordance line — newlines included — answers "Copy message as Markdown" for
+        // the message above it, so right-clicks that clamp to the line's whitespace still hit it.
+        // The newlines get a SOURCE_MD-only set: sharing attrs would embed the one button 3 times.
+        attrs.addAttribute(AssistantSegment.SOURCE_MD, markdown);
+        SimpleAttributeSet sourceOnly = new SimpleAttributeSet();
+        sourceOnly.addAttribute(AssistantSegment.SOURCE_MD, markdown);
+        try {
+            if (!atTurnStartOfLine) {
+                doc.insertString(doc.getLength(), "\n", sourceOnly);
+            }
+            doc.insertString(doc.getLength(), " ", attrs);   // the embedded component's one character
+            doc.insertString(doc.getLength(), "\n", sourceOnly);
+        } catch (BadLocationException ignored) {
+            return;   // the message is still intact; only the affordance is lost
+        }
+        atTurnStartOfLine = true;
+        transcript.setCaretPosition(doc.getLength());
+    }
+
+    /** Copies the message's original Markdown; flips to a check mark for a moment as feedback. */
+    private JButton copyMessageButton(String markdown) {
+        Icon copyIcon = icon(Glyph.COPY, 16, new Color(0x777777), null);
+        Icon copiedIcon = icon(Glyph.CHECK, 16, new Color(0x1E8E3E), null);
+        String tip = "Copy message (original Markdown)";
+        JButton b = iconButton(copyIcon, tip);
+        b.setFocusable(false);
+        b.setAlignmentY(0.8f);
+        // One shared revert timer: a re-click inside the feedback window restarts the countdown
+        // instead of letting the first click's timer cut the second click's feedback short.
+        Timer revert = new Timer(1500, ev -> {
+            b.setIcon(copyIcon);
+            b.setToolTipText(tip);
+        });
+        revert.setRepeats(false);
+        b.addActionListener(e -> {
+            if (!copyToClipboard(markdown)) {
+                return;
+            }
+            b.setIcon(copiedIcon);
+            b.setToolTipText("Copied");
+            revert.restart();
+        });
+        return b;
+    }
+
+    /** Puts {@code text} on the system clipboard; false (with feedback) when unavailable. */
+    private boolean copyToClipboard(String text) {
+        try {
+            Toolkit.getDefaultToolkit().getSystemClipboard()
+                    .setContents(new StringSelection(text), null);
+            return true;
+        } catch (IllegalStateException ex) {
+            // The system clipboard can be transiently unavailable (held by another app on Windows).
+            reportTransientUiError("\nCould not access the system clipboard — try again.\n");
+            return false;
+        }
+    }
+
+    /**
+     * Reports a failure of a transcript-embedded control (copy button, context menu, link). These
+     * stay clickable while a turn streams, but append() closes the in-flight assistant segment —
+     * splitting the live reply around an error line and truncating its recorded Markdown source —
+     * so mid-turn this degrades to a beep instead of writing into the transcript.
+     */
+    private void reportTransientUiError(String message) {
+        if (activeTurn != 0) {
+            Toolkit.getDefaultToolkit().beep();
+        } else {
+            append(Kind.ERROR, message);
+        }
     }
 
     private int transcriptFontSize() {
@@ -1265,7 +1405,13 @@ public class ChatView extends AbstractOWLViewComponent {
         transcript.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 1) {
+                // On macOS only, Ctrl+click is the context-menu gesture: the press already opened
+                // the popup, so the click that follows must not also open the link's confirmation
+                // dialog. Elsewhere Ctrl+click stays a normal click (Windows AltGr even reports
+                // Ctrl down, so a platform-wide guard would swallow legitimate opens).
+                boolean macPopupGesture = e.isControlDown() && IS_MAC;
+                if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 1
+                        && !macPopupGesture) {
                     String url = linkAt(e.getPoint());
                     if (url != null) {
                         openLink(url);
@@ -1321,6 +1467,61 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     /**
+     * Right-click menu: "Copy" (the selection, as displayed) and "Copy message as Markdown" (the
+     * original source of the assistant message under the pointer — the styled rendering is lossy, so
+     * this is the only way selection-copy can't provide the markup back).
+     */
+    private void installContextMenu() {
+        transcript.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                maybeShowContextMenu(e);   // macOS triggers on press …
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                maybeShowContextMenu(e);   // … Windows/Linux on release
+            }
+        });
+    }
+
+    private void maybeShowContextMenu(MouseEvent e) {
+        if (!e.isPopupTrigger()) {
+            return;
+        }
+        JPopupMenu menu = new JPopupMenu();
+        // Snapshot the selection now: the popup gesture itself can clear it (macOS Ctrl+click moves
+        // the caret) and a streaming re-render can collapse it before the item is clicked.
+        String selected = transcript.getSelectedText();
+        JMenuItem copySelection = new JMenuItem("Copy");
+        copySelection.setEnabled(selected != null && !selected.isEmpty());
+        copySelection.addActionListener(ev -> {
+            if (selected != null && !selected.isEmpty()) {
+                copyToClipboard(selected);
+            }
+        });
+        menu.add(copySelection);
+        // viewToModel2D clamps to the nearest character, so a right-click in the whitespace around a
+        // message still offers that message — friendlier than linkAt's strict hit box, and safe
+        // because a menu item states what it copies before anything happens. A click past a line's
+        // end clamps to its terminating newline, which for a message's LAST line lies just outside
+        // the tagged range — hence the one-position fallback.
+        int pos = transcript.viewToModel2D(e.getPoint());
+        String atPos = AssistantSegment.sourceAt(transcript.getStyledDocument(), pos);
+        String source = atPos != null ? atPos
+                : AssistantSegment.sourceAt(transcript.getStyledDocument(), pos - 1);
+        JMenuItem copyMessage = new JMenuItem("Copy message as Markdown");
+        copyMessage.setEnabled(source != null);
+        copyMessage.addActionListener(ev -> {
+            if (source != null) {
+                copyToClipboard(source);
+            }
+        });
+        menu.add(copyMessage);
+        menu.show(transcript, e.getX(), e.getY());
+    }
+
+    /**
      * Opens a transcript link after showing the user the REAL destination. The link text is
      * model-chosen and can look like anything (including a different URL), so navigation is an
      * informed action, consistent with the plugin's other egress confirmations.
@@ -1343,7 +1544,7 @@ public class ChatView extends AbstractOWLViewComponent {
                 Desktop.getDesktop().browse(URI.create(url));
             }
         } catch (Exception ex) {
-            append(Kind.ERROR, "\nCould not open link: " + url + "\n");
+            reportTransientUiError("\nCould not open link: " + url + "\n");
         }
     }
 

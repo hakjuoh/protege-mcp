@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.chat;
 import java.util.List;
 
 import javax.swing.text.BadLocationException;
+import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyledDocument;
 
 /**
@@ -17,8 +18,17 @@ import javax.swing.text.StyledDocument;
  * accumulated Markdown source: unclosed markers render literally and converge when their closers
  * stream in. Rendering happens <em>before</em> the document is touched, so a rendering failure of
  * any kind leaves the transcript intact.
+ *
+ * <p>Rendering is lossy (a copied selection yields the styled plain text, not the markup), so
+ * {@link #close(StyledDocument)} tags the finished message's rendered range with {@link #SOURCE_MD}
+ * — a character attribute carrying the original Markdown source — and hands that source back. The
+ * view uses it for its copy-message affordances; {@link #sourceAt} looks it up again later at any
+ * document position.
  */
 public final class AssistantSegment {
+
+    /** Character-attribute key whose value is the original Markdown source of a closed message. */
+    public static final String SOURCE_MD = "io.github.hakjuoh.protege_mcp.chat.source-md";
 
     private final StringBuilder markdown = new StringBuilder();
     private int start = -1;
@@ -58,5 +68,39 @@ public final class AssistantSegment {
     public void close() {
         start = -1;
         markdown.setLength(0);
+    }
+
+    /**
+     * Ends the in-flight message and tags its rendered range in {@code doc} with {@link #SOURCE_MD}
+     * so the original markup stays recoverable after the source buffer is reset.
+     *
+     * @return the message's Markdown source, or {@code null} when there was nothing to keep (no
+     *         open segment, a whitespace-only source, or a document cleared out from under the
+     *         segment)
+     */
+    public String close(StyledDocument doc) {
+        if (start < 0) {
+            return null;
+        }
+        String source = markdown.toString();
+        int from = start;
+        int end = doc.getLength();   // suffix invariant: the open segment always ends the document
+        close();
+        if (source.isBlank() || from >= end) {
+            return null;
+        }
+        SimpleAttributeSet tag = new SimpleAttributeSet();
+        tag.addAttribute(SOURCE_MD, source);
+        doc.setCharacterAttributes(from, end - from, tag, false);
+        return source;
+    }
+
+    /** The original Markdown source of the closed message rendered at {@code pos}, or {@code null}. */
+    public static String sourceAt(StyledDocument doc, int pos) {
+        if (pos < 0 || pos >= doc.getLength()) {
+            return null;
+        }
+        Object source = doc.getCharacterElement(pos).getAttributes().getAttribute(SOURCE_MD);
+        return source instanceof String s ? s : null;
     }
 }

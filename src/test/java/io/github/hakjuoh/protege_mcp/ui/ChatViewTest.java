@@ -44,8 +44,9 @@ import io.github.hakjuoh.protege_mcp.config.McpConfig;
  * set of instance methods that touch only plain collection fields ({@code queue},
  * {@code pendingAttachments}, and the streaming {@code volatile} fields). For those, an instance is
  * created WITHOUT running any Swing constructor (via {@code sun.misc.Unsafe.allocateInstance}), and only
- * the specific fields the method under test reads/writes are populated by reflection — no AWT component
- * is ever constructed.
+ * the specific fields the method under test reads/writes are populated by reflection — no top-level AWT
+ * component is ever constructed. (Peerless lightweights — {@code JTextPane}, {@code JButton} — are fine
+ * headless and are used by the copy-affordance tests; only windows/toolkit resources are off-limits.)
  */
 class ChatViewTest {
 
@@ -714,5 +715,90 @@ class ChatViewTest {
     void nonReasoningTransitionsGetNoBreak() throws Exception {
         assertFalse(boundaryBreak(renderState(false, "USER"), "SYSTEM", "x"));
         assertFalse(boundaryBreak(renderState(false, "SYSTEM"), "ERROR", "boom"));
+    }
+
+    // ------------------------------------------------------------------ copy-as-Markdown affordance
+
+    /** A bare view wired with just the transcript + segment state the affordance path touches. */
+    private static ChatView affordanceInstance(javax.swing.JTextPane pane,
+            io.github.hakjuoh.protege_mcp.chat.AssistantSegment segment) throws Exception {
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment", segment);
+        setField(v, "atTurnStartOfLine", false);
+        return v;
+    }
+
+    private static void closeSegment(ChatView v, boolean offerCopy) throws Exception {
+        Method m = ChatView.class.getDeclaredMethod("closeAssistantSegment", boolean.class);
+        m.setAccessible(true);
+        m.invoke(v, offerCopy);
+    }
+
+    @Test
+    void finalReplyCloseInsertsTheCopyButtonLine() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        io.github.hakjuoh.protege_mcp.chat.AssistantSegment segment =
+                new io.github.hakjuoh.protege_mcp.chat.AssistantSegment();
+        ChatView v = affordanceInstance(pane, segment);
+        segment.appendAndRender(pane.getStyledDocument(), "**reply**", 13);
+
+        closeSegment(v, true);
+
+        javax.swing.text.StyledDocument doc = pane.getStyledDocument();
+        String text = doc.getText(0, doc.getLength());
+        assertTrue(text.startsWith("reply\n"), "the button sits on its own line, got: " + text);
+        assertTrue(text.endsWith("\n"), "the affordance line ends with a newline");
+        int buttonPos = text.length() - 2;   // the embedded component's single character
+        Object component = StyleConstants.getComponent(
+                doc.getCharacterElement(buttonPos).getAttributes());
+        assertTrue(component instanceof javax.swing.JButton,
+                "the affordance char embeds the copy button");
+        assertEquals("**reply**", io.github.hakjuoh.protege_mcp.chat.AssistantSegment.sourceAt(
+                doc, buttonPos), "the affordance line itself answers copy-message-as-Markdown");
+        assertEquals(Boolean.TRUE, getField(v, "atTurnStartOfLine"),
+                "bookkeeping: the affordance leaves the transcript at a line start");
+    }
+
+    @Test
+    void midTurnCloseTagsTheSourceButAddsNoButton() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        io.github.hakjuoh.protege_mcp.chat.AssistantSegment segment =
+                new io.github.hakjuoh.protege_mcp.chat.AssistantSegment();
+        ChatView v = affordanceInstance(pane, segment);
+        segment.appendAndRender(pane.getStyledDocument(), "interim", 13);
+
+        closeSegment(v, false);
+
+        javax.swing.text.StyledDocument doc = pane.getStyledDocument();
+        assertEquals("interim", doc.getText(0, doc.getLength()),
+                "no button row for a tool-interrupted interim message");
+        assertEquals("interim", io.github.hakjuoh.protege_mcp.chat.AssistantSegment.sourceAt(doc, 0),
+                "…but its source is still tagged for the context menu");
+    }
+
+    @Test
+    void closeWithNothingToKeepInsertsNothing() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        io.github.hakjuoh.protege_mcp.chat.AssistantSegment segment =
+                new io.github.hakjuoh.protege_mcp.chat.AssistantSegment();
+        ChatView v = affordanceInstance(pane, segment);
+
+        closeSegment(v, true);   // no open segment at all
+
+        assertEquals(0, pane.getStyledDocument().getLength(),
+                "offerCopy with no message leaves the transcript untouched");
+    }
+
+    @Test
+    void copyMessageButtonIsANonFocusStealingIconButton() throws Exception {
+        ChatView v = bareInstance();   // construction touches no instance fields until clicked
+        Method m = ChatView.class.getDeclaredMethod("copyMessageButton", String.class);
+        m.setAccessible(true);
+        javax.swing.JButton b = (javax.swing.JButton) m.invoke(v, "# md");
+        assertFalse(b.isFocusable(), "the button must not steal focus from the transcript");
+        assertNotNull(b.getIcon(), "flat icon button");
+        assertTrue(b.getToolTipText().contains("Markdown"),
+                "the tooltip says what is copied, got: " + b.getToolTipText());
     }
 }

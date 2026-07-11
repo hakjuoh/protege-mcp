@@ -124,4 +124,95 @@ class AssistantSegmentTest {
         assertTrue(text(doc).startsWith("intro\n"), "prior transcript survives");
         assertTrue(text(doc).contains("x"), "the reply text is not lost");
     }
+
+    // ------------------------------------------------------------------ close(doc): source tagging
+
+    @Test
+    void closeWithDocTagsTheRenderedRangeAndReturnsTheSource() throws Exception {
+        StyledDocument doc = docWith("intro\n");
+        AssistantSegment seg = new AssistantSegment();
+        seg.appendAndRender(doc, "**bold** and `code`", BASE);
+        String source = seg.close(doc);
+        assertEquals("**bold** and `code`", source, "close hands back the original markup");
+        assertFalse(seg.isOpen());
+        assertEquals(source, AssistantSegment.sourceAt(doc, 6), "first rendered char is tagged");
+        assertEquals(source, AssistantSegment.sourceAt(doc, doc.getLength() - 1),
+                "last rendered char is tagged");
+        assertNull(AssistantSegment.sourceAt(doc, 0), "the prefix before the message is untagged");
+        assertNull(AssistantSegment.sourceAt(doc, 5),
+                "the character immediately before the message is untagged (exact start boundary)");
+    }
+
+    @Test
+    void closeWithDocMergesTheTagWithoutStrippingStyling() throws Exception {
+        StyledDocument doc = docWith("");
+        AssistantSegment seg = new AssistantSegment();
+        seg.appendAndRender(doc, "**bold**", BASE);
+        assertTrue(boldAt(doc, 0), "precondition: rendered bold");
+        seg.close(doc);
+        assertTrue(boldAt(doc, 0), "the tag merges into existing attributes; styling survives");
+        assertEquals("**bold**", AssistantSegment.sourceAt(doc, 0));
+    }
+
+    @Test
+    void closeWithDocOnUnopenedSegmentReturnsNull() throws Exception {
+        StyledDocument doc = docWith("x");
+        AssistantSegment seg = new AssistantSegment();
+        assertNull(seg.close(doc));
+        assertNull(seg.close(doc), "idempotent: a second close still reports nothing to keep");
+    }
+
+    @Test
+    void closeWithDocWhitespaceOnlySourceTagsNothing() throws Exception {
+        StyledDocument doc = docWith("x");
+        AssistantSegment seg = new AssistantSegment();
+        seg.appendAndRender(doc, "\n\n", BASE);
+        assertNull(seg.close(doc), "a whitespace-only message has no copyable source");
+        assertNull(AssistantSegment.sourceAt(doc, 0));
+        assertFalse(seg.isOpen());
+    }
+
+    @Test
+    void closeWithDocSurvivesADocumentClearedUnderneath() throws Exception {
+        // ChatView's New chat clears the document BEFORE closing the segment; the stale start
+        // offset must not corrupt or throw.
+        StyledDocument doc = docWith("intro\n");
+        AssistantSegment seg = new AssistantSegment();
+        seg.appendAndRender(doc, "reply", BASE);
+        doc.remove(0, doc.getLength());
+        assertNull(assertDoesNotThrow(() -> seg.close(doc)),
+                "nothing to keep once the document is gone");
+        assertFalse(seg.isOpen());
+    }
+
+    @Test
+    void textAppendedAfterCloseIsNotTagged() throws Exception {
+        StyledDocument doc = docWith("");
+        AssistantSegment seg = new AssistantSegment();
+        seg.appendAndRender(doc, "message", BASE);
+        seg.close(doc);
+        int end = doc.getLength();
+        doc.insertString(end, "\n  ⚙ tool\n", new SimpleAttributeSet());
+        assertNull(AssistantSegment.sourceAt(doc, end + 3), "later foreign text carries no source");
+    }
+
+    @Test
+    void consecutiveMessagesCarryTheirOwnSources() throws Exception {
+        StyledDocument doc = docWith("");
+        AssistantSegment seg = new AssistantSegment();
+        seg.appendAndRender(doc, "*first*", BASE);
+        seg.close(doc);
+        int secondStart = doc.getLength();
+        seg.appendAndRender(doc, "**second**", BASE);
+        seg.close(doc);
+        assertEquals("*first*", AssistantSegment.sourceAt(doc, 0));
+        assertEquals("**second**", AssistantSegment.sourceAt(doc, secondStart));
+    }
+
+    @Test
+    void sourceAtOutOfRangeIsNull() throws Exception {
+        StyledDocument doc = docWith("abc");
+        assertNull(AssistantSegment.sourceAt(doc, -1));
+        assertNull(AssistantSegment.sourceAt(doc, doc.getLength()), "end offset is out of range");
+    }
 }
