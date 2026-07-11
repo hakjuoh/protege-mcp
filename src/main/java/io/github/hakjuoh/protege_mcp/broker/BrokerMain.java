@@ -22,7 +22,8 @@ import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
  * {@code ~/.protege-mcp/broker.log}.
  *
  * <p>Singleton discipline, in two layers. First a cross-process {@link FileLock} on
- * {@code broker.lock}, taken before binding and held until this process dies: it is what makes the
+ * {@code broker.lock}, taken before binding and held until this broker stops serving (released
+ * right after the server stops; the OS drops it with the process on a crash): it is what makes the
  * singleton hold even when the configured port is {@code 0} (the ephemeral-port preference) or when
  * a foreign app owns the configured port — in both of those shapes every racing sibling binds
  * successfully, so a port-based mutex alone would let two brokers serve. Second, the configured
@@ -70,20 +71,50 @@ public final class BrokerMain {
             return;
         }
 
-        if (!acquireSingletonLock(home)) {
-            // A sibling holds the lock (it may still be booting): defer to it once discoverable.
-            for (int attempt = 0; attempt < 25; attempt++) {
-                Thread.sleep(200);
-                if (findLiveBroker(home, dirSecret).isPresent()) {
-                    System.out.println("protege-mcp-broker: lost the singleton lock to a sibling — exiting");
+        FileChannel lockChannel = null;
+        try {
+            lockChannel = FileChannel.open(home.lockFile(),
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            boolean locked = tryLockSingleton(lockChannel);
+            if (!locked) {
+                // A sibling holds the lock (it may still be booting): defer to it once it becomes
+                // discoverable — but keep retrying the lock too. A RETIRING or idle-exiting broker
+                // stops answering probes and deletes broker.json BEFORE its process dies, so the
+                // lock can free up mid-poll with nothing left to discover; without the retry that
+                // shape ends in a give-up and the spawning instance falls back to standalone.
+                for (int attempt = 0; attempt < 25 && !locked; attempt++) {
+                    Thread.sleep(200);
+                    if (findLiveBroker(home, dirSecret).isPresent()) {
+                        System.out.println("protege-mcp-broker: lost the singleton lock to a sibling — exiting");
+                        closeQuietly(lockChannel);
+                        return;
+                    }
+                    try {
+                        locked = tryLockSingleton(lockChannel);
+                    } catch (IOException retryFailed) {
+                        // The lock has been OBSERVED held: an I/O hiccup on a retry must not flip
+                        // us to lockless serving next to a live holder. Keep polling — the give-up
+                        // below stays the safe exit.
+                    }
+                }
+                if (!locked) {
+                    // The holder stayed locked yet undiscoverable for the whole poll: genuinely
+                    // wedged. Exiting is the safe side — serving anyway could produce two brokers;
+                    // recovery is a fresh spawn (the window's Start button, or the next instance).
+                    System.out.println("protege-mcp-broker: singleton lock is held but no broker became "
+                            + "discoverable — exiting");
+                    closeQuietly(lockChannel);
                     return;
                 }
             }
-            // The holder never published (wedged or dying). Exiting is the safe side: serving
-            // anyway could produce two brokers; the instances' heartbeats retry the spawn later.
-            System.out.println("protege-mcp-broker: singleton lock is held but no broker became "
-                    + "discoverable — exiting");
-            return;
+            singletonLockChannel = lockChannel;
+        } catch (IOException lockingUnavailable) {
+            // e.g. an NFS home without lockd: file locking itself is broken there, so nobody can
+            // hold the lock. Pre-lock plugin versions served such setups fine — degrade to the
+            // strict-bind mutex instead of refusing to serve at all.
+            System.out.println("protege-mcp-broker: cannot use the singleton lock at "
+                    + home.lockFile() + " (" + lockingUnavailable + ") — continuing without it");
+            closeQuietly(lockChannel);
         }
         // Re-probe under the lock: a broker from a plugin version without the lock file could have
         // come up between the fast-path probe above and the lock acquisition.
@@ -134,9 +165,16 @@ public final class BrokerMain {
                 + (EmbeddedHttpServer.isWildcard(bind) ? " (all interfaces)" : "")
                 + " (pid " + ProcessHandle.current().pid() + ")");
 
-        Runtime.getRuntime().addShutdownHook(new Thread(server::stop, "protege-mcp-broker-cleanup"));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            server.stop();
+            releaseSingletonLock();
+        }, "protege-mcp-broker-cleanup"));
         exit.await();
         server.stop();
+        // Release the lock the moment we stop serving: a successor spawned by a version takeover
+        // (or racing this idle exit) retries the lock right away, while this JVM can take a while
+        // longer to die — see the HttpClient note below.
+        releaseSingletonLock();
         System.out.println("protege-mcp-broker: stopped");
         // The JDK HttpClient inside the proxy may keep non-daemon worker threads alive briefly;
         // this is a single-purpose daemon process, so end it deterministically.
@@ -144,39 +182,26 @@ public final class BrokerMain {
     }
 
     /**
-     * Held (never closed, never released) for the whole broker life; the OS drops it with the
-     * process. Static so the channel stays strongly reachable — a GC'd channel would release the
-     * lock while the broker still serves.
+     * Held while this broker serves; released explicitly once it stops (the OS drops it with the
+     * process on a crash). Static so the channel stays strongly reachable — a GC'd channel would
+     * release the lock while the broker still serves.
      */
     private static FileChannel singletonLockChannel;
 
-    /** Try to take the cross-process singleton lock; false when another broker holds it. */
-    private static boolean acquireSingletonLock(BrokerHome home) {
-        FileChannel channel = null;
-        FileLock lock = null;
+    /** One {@code tryLock} attempt on the open lock channel; false when another broker holds it. */
+    private static boolean tryLockSingleton(FileChannel channel) throws IOException {
         try {
-            channel = FileChannel.open(home.lockFile(),
-                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-            try {
-                lock = channel.tryLock();
-            } catch (OverlappingFileLockException heldInThisJvm) {
-                // lock stays null — held by this JVM, defer below
-            }
-        } catch (IOException lockingUnavailable) {
-            // e.g. an NFS home without lockd: file locking itself is broken there, so nobody can
-            // hold the lock. Pre-lock plugin versions served such setups fine — degrade to the
-            // strict-bind mutex instead of refusing to serve at all.
-            System.out.println("protege-mcp-broker: cannot use the singleton lock at "
-                    + home.lockFile() + " (" + lockingUnavailable + ") — continuing without it");
-            closeQuietly(channel);
-            return true;
-        }
-        if (lock == null) {
-            closeQuietly(channel);
+            return channel.tryLock() != null;
+        } catch (OverlappingFileLockException heldInThisJvm) {
             return false;
         }
-        singletonLockChannel = channel;
-        return true;
+    }
+
+    /** Closing the channel releases the {@link FileLock}; safe to call more than once. */
+    private static void releaseSingletonLock() {
+        FileChannel channel = singletonLockChannel;
+        singletonLockChannel = null;
+        closeQuietly(channel);
     }
 
     private static void closeQuietly(FileChannel channel) {

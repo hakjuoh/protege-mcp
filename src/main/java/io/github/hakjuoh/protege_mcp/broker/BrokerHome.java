@@ -20,7 +20,7 @@ import java.util.Set;
  * <p>Everything lives under one owner-only directory (default {@code ~/.protege-mcp}, {@code 0700}):
  * {@code secret} (the same-user trust anchor for the {@code /internal} API and never sent to MCP
  * clients), {@code broker.json} (the live broker's pid/port/version, written atomically), {@code
- * broker.lock} (the singleton {@link java.nio.channels.FileLock} a broker holds for its whole life —
+ * broker.lock} (the singleton {@link java.nio.channels.FileLock} a broker holds while it serves —
  * see {@link BrokerMain}), {@code oauth.json} (the broker's persisted OAuth clients + tokens),
  * {@code broker.log} (the spawned process's stdout/stderr) and {@code jars/} (content-named
  * classpath copies the broker runs from — see {@link BrokerSpawner}). Same-user trust comes from the
@@ -67,8 +67,9 @@ public final class BrokerHome {
     }
 
     /**
-     * The singleton lock file: a booting broker {@code tryLock}s it and keeps the lock until the
-     * process dies (the OS releases it even on a crash — no stale-lock handling needed). The file
+     * The singleton lock file: a booting broker {@code tryLock}s it (retrying while a dying holder
+     * finishes exiting) and keeps the lock until it stops serving, releasing it explicitly on a
+     * graceful stop (the OS releases it even on a crash — no stale-lock handling needed). The file
      * itself is never deleted; only the lock matters.
      */
     public Path lockFile() {
