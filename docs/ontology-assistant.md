@@ -55,6 +55,14 @@ Only CLIs that are actually detected on your system are offered as providers.
 4. Watch the reply **stream** in. Replies render as **Markdown** while they stream (added in `0.5.0`) —
    headings, bold/italic, lists, quotes, inline code and code blocks, tables, and links (`http(s)` links
    are clickable). **Stop** cancels mid-turn. **Edit ▸ Undo** reverts any edit it made.
+5. Two checkboxes sit next to **New chat** in the panel:
+   - **Confirm each edit** — require a confirmation dialog before any edit applies (this is the MCP
+     server's confirm-writes setting, toggled live).
+   - **Show reasoning** — ask the CLI for the model's reasoning and show it in the transcript (gray
+     italics). Takes effect from your next message. Current CLIs send no reasoning unless asked, so
+     turning this on adds the provider's own opt-in flag to the run; on a much older Claude CLI that
+     doesn't know the flag, the turn fails with an "unknown option" error — untick the box to send
+     without it.
 
 ### Attachments and long pastes
 
@@ -89,7 +97,9 @@ The chat input accepts more than plain text (added in `0.3.1`):
   your shell `PATH`, so a CLI can fail to resolve. Set an explicit path to the `claude` / `codex`
   executable here. The panel shows what was detected.
 - **Reset egress consent** — re-arm the one-time disclosure banner.
-- **Show thinking** — optionally include the model's reasoning in the transcript.
+
+(The **Show reasoning** and **Confirm each edit** toggles live in the chat panel itself, next to
+**New chat** — not in this settings page.)
 
 ## Troubleshooting
 

@@ -31,6 +31,16 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
   to its own window's server directly and is unaffected.
 
 ### Fixed
+- **The Ontology Assistant's "Show reasoning" toggle now actually shows reasoning.** Current CLIs
+  send no reasoning text unless explicitly asked — the claude CLI ships an empty thinking block in
+  its stream output (Claude 5-era models default their thinking display to "omitted"), and codex
+  emits no reasoning items at all — so the checkbox filtered a stream that never contained anything.
+  With the box ticked, each turn now opts in on the CLI side (claude: `--thinking-display
+  summarized`; codex: `model_reasoning_summary="detailed"`), and reasoning streams into the
+  transcript in gray italics from the next message. Alongside: reasoning gets its own line instead
+  of gluing onto the reply, codex reasoning summaries shaped as a list of parts are read instead of
+  silently dropped, the checkbox gained a tooltip, and the manual's description of the toggle
+  (previously "Show thinking", listed under Settings) now matches the real name and location.
 - **A second Protégé window or instance no longer loses the MCP server — and with it the Ontology
   Assistant — to `Failed to bind to /127.0.0.1:<port>`.** The MCP server is per-window but the
   configured port is process-exclusive, so any window that wasn't the port owner (a second window's

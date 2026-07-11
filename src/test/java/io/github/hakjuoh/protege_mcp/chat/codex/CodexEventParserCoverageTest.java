@@ -265,7 +265,7 @@ class CodexEventParserCoverageTest {
         RecordingChatListener l = new RecordingChatListener();
         parser(l).accept("{\"type\":\"item.completed\","
                 + "\"item\":{\"type\":\"reasoning\",\"text\":\"deep thought\"}}");
-        assertEquals("deep thought", l.thinking.toString());
+        assertEquals("deep thought\n", l.thinking.toString());
     }
 
     @Test
@@ -273,7 +273,7 @@ class CodexEventParserCoverageTest {
         RecordingChatListener l = new RecordingChatListener();
         parser(l).accept("{\"type\":\"item.completed\","
                 + "\"item\":{\"type\":\"reasoning\",\"summary\":\"summary text\"}}");
-        assertEquals("summary text", l.thinking.toString());
+        assertEquals("summary text\n", l.thinking.toString());
     }
 
     @Test
@@ -281,7 +281,7 @@ class CodexEventParserCoverageTest {
         RecordingChatListener l = new RecordingChatListener();
         parser(l).accept("{\"type\":\"item.completed\","
                 + "\"item\":{\"type\":\"reasoning\",\"text\":\"T\",\"summary\":\"S\"}}");
-        assertEquals("T", l.thinking.toString(), "text is first in firstNonEmpty");
+        assertEquals("T\n", l.thinking.toString(), "text is first in firstNonEmpty");
     }
 
     @Test
@@ -289,6 +289,41 @@ class CodexEventParserCoverageTest {
         RecordingChatListener l = new RecordingChatListener();
         parser(l).accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"reasoning\"}}");
         assertEquals(0, l.thinking.length());
+    }
+
+    @Test
+    void reasoningSummaryAsSummaryTextArrayIsJoined() {
+        // The Responses API shapes summaries as an array of summary_text parts; asText("") on an
+        // array is "" and used to drop the whole summary silently.
+        RecordingChatListener l = new RecordingChatListener();
+        parser(l).accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"reasoning\","
+                + "\"summary\":[{\"type\":\"summary_text\",\"text\":\"part one\"},"
+                + "{\"type\":\"summary_text\",\"text\":\"part two\"}]}}");
+        assertEquals("part one\n\npart two\n", l.thinking.toString());
+    }
+
+    @Test
+    void reasoningSummaryAsStringArrayIsJoined() {
+        RecordingChatListener l = new RecordingChatListener();
+        parser(l).accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"reasoning\","
+                + "\"summary\":[\"alpha\",\"beta\"]}}");
+        assertEquals("alpha\n\nbeta\n", l.thinking.toString());
+    }
+
+    @Test
+    void reasoningSummaryAsObjectReadsItsTextField() {
+        RecordingChatListener l = new RecordingChatListener();
+        parser(l).accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"reasoning\","
+                + "\"summary\":{\"type\":\"summary_text\",\"text\":\"whole\"}}}");
+        assertEquals("whole\n", l.thinking.toString());
+    }
+
+    @Test
+    void reasoningSummaryArrayWithNoTextPartsIsSkipped() {
+        RecordingChatListener l = new RecordingChatListener();
+        parser(l).accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"reasoning\","
+                + "\"summary\":[{\"type\":\"summary_text\"},{},42]}}");
+        assertEquals(0, l.thinking.length(), "no readable part -> no onThinking call");
     }
 
     // ---- item: mcp_tool_call -----------------------------------------------------------------

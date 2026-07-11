@@ -148,6 +148,10 @@ public class ChatView extends AbstractOWLViewComponent {
     private volatile ChatUsage lastUsage;
     private volatile ChatUsage liveUsage;
     private boolean atTurnStartOfLine = true;
+    // Kind of the last rendered transcript chunk (EDT-only). Reasoning streams as many small deltas
+    // that virtually never end with a newline, so line breaks are inserted at the RUN boundaries —
+    // entering and leaving a reasoning run — never between the deltas inside one.
+    private Kind lastRenderedKind;
 
     // The currently-streaming assistant message, kept as Markdown source and re-rendered in place on
     // each drain tick (unclosed markers render literally and converge as their closers stream in).
@@ -281,6 +285,8 @@ public class ChatView extends AbstractOWLViewComponent {
 
         showThinking = new JCheckBox("Show reasoning",
                 McpConfig.prefs().getBoolean(McpConfig.KEY_CHAT_SHOW_THINKING, false));
+        showThinking.setToolTipText("Ask the CLI for the model's reasoning and show it in the transcript "
+                + "(gray italics). Takes effect from the next message.");
         showThinking.addActionListener(e ->
                 McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_SHOW_THINKING, showThinking.isSelected()));
 
@@ -855,6 +861,7 @@ public class ChatView extends AbstractOWLViewComponent {
             transcript.setText("");
             closeAssistantSegment();   // its offsets were reset along with the document
             atTurnStartOfLine = true;
+            lastRenderedKind = null;
             liveUsage = null;
             usageLabel.setText(" ");
             pendingAttachments.clear();
@@ -936,6 +943,9 @@ public class ChatView extends AbstractOWLViewComponent {
         ChatProvider provider = currentProvider;
         String model = selectedModel();
         String resume = sessionId;
+        // Read the toggle here, on the EDT: the providers add their CLI-side opt-in flag from it
+        // (no CLI sends reasoning text unless asked), so it snapshots per turn like the model does.
+        boolean reasoningOn = showThinking != null && showThinking.isSelected();
 
         Thread launcher = new Thread(() -> {
             try {
@@ -944,7 +954,8 @@ public class ChatView extends AbstractOWLViewComponent {
                 // THIS window's server directly — never through the broker.
                 io.github.hakjuoh.protege_mcp.broker.McpBoot.ensureStarted(controller);
                 McpEndpoint endpoint = new McpEndpoint(controller.getEndpointUrl(), controller.getToken());
-                ChatRequest req = new ChatRequest(model, prompt, resume, endpoint, turnAttachments);
+                ChatRequest req = new ChatRequest(model, prompt, resume, endpoint, turnAttachments,
+                        reasoningOn);
                 ChatProcess proc = provider.startTurn(req, uiListener());
                 // Publish on the EDT: if this turn already finalized (a fast turn) or the user hit Stop during
                 // the launch window, publishProcess cancels the freshly-spawned process instead of leaking it.
@@ -1184,6 +1195,9 @@ public class ChatView extends AbstractOWLViewComponent {
             return;
         }
         closeAssistantSegment();
+        if (needsReasoningBoundaryBreak(kind, text)) {
+            text = "\n" + text;
+        }
         StyledDocument doc = transcript.getStyledDocument();
         try {
             doc.insertString(doc.getLength(), text, styleFor(kind));
@@ -1191,7 +1205,21 @@ public class ChatView extends AbstractOWLViewComponent {
             return;
         }
         atTurnStartOfLine = text.endsWith("\n");
+        lastRenderedKind = kind;
         transcript.setCaretPosition(doc.getLength());
+    }
+
+    /**
+     * True when this chunk starts or ends a reasoning run mid-line: the first reasoning delta must
+     * not glue onto earlier text, and the first non-reasoning chunk after a run must not glue onto
+     * the reasoning's last line. Chunks that bring their own leading newline (tool/error lines) and
+     * deltas inside one reasoning run get nothing.
+     */
+    private boolean needsReasoningBoundaryBreak(Kind kind, String text) {
+        if (atTurnStartOfLine || text.startsWith("\n")) {
+            return false;
+        }
+        return (kind == Kind.THINKING) != (lastRenderedKind == Kind.THINKING);
     }
 
     /**
@@ -1201,10 +1229,21 @@ public class ChatView extends AbstractOWLViewComponent {
      */
     private void appendAssistant(String text) {
         StyledDocument doc = transcript.getStyledDocument();
+        if (lastRenderedKind == Kind.THINKING && !atTurnStartOfLine) {
+            // A reasoning run just ended (rendering it closed the segment, so no segment offsets can
+            // move here); give the reply its own line rather than gluing it onto the reasoning's last.
+            try {
+                doc.insertString(doc.getLength(), "\n", null);
+                atTurnStartOfLine = true;
+            } catch (BadLocationException ignored) {
+                // worst case the reply starts on the reasoning's line
+            }
+        }
         Boolean endsWithBreak = assistantSegment.appendAndRender(doc, text, transcriptFontSize());
         if (endsWithBreak != null) {
             atTurnStartOfLine = endsWithBreak;
         }
+        lastRenderedKind = Kind.ASSISTANT;
         transcript.setCaretPosition(doc.getLength());
     }
 

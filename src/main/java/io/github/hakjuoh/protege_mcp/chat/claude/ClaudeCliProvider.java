@@ -86,10 +86,25 @@ public final class ClaudeCliProvider implements ChatProvider {
                         // best-effort cleanup; deleteOnExit is the backstop
                     }
                     if (exit != 0) {
-                        listener.onError(CliSupport.describeFailure("claude", exit, stderr));
+                        listener.onError(failureMessage(exit, stderr, request.showReasoning()));
                     }
                     listener.onComplete(exit);
                 });
+    }
+
+    /**
+     * The transcript error for a failed run. When the failure is the reasoning opt-in flag itself —
+     * a claude CLI too old to know {@code --thinking-display} rejects the whole invocation — the raw
+     * "unknown option" alone gives the user no way to connect it to the checkbox, and the persisted
+     * preference would fail every following turn too; name the way out. Package-private for testing.
+     */
+    static String failureMessage(int exit, String stderr, boolean showReasoning) {
+        String msg = CliSupport.describeFailure("claude", exit, stderr);
+        if (showReasoning && stderr != null && stderr.contains("--thinking-display")) {
+            msg += " This claude CLI does not support the reasoning opt-in — untick 'Show reasoning' "
+                    + "and resend, or update the CLI.";
+        }
+        return msg;
     }
 
     private String resolveExecutable() {
@@ -102,9 +117,10 @@ public final class ClaudeCliProvider implements ChatProvider {
      * means the run sees exactly Protégé's server and nothing else; {@code --allowedTools mcp__protege}
      * pre-approves the whole server so the non-interactive run never blocks on a permission prompt
      * (server-side read-only / confirm-write gates still apply). A non-blank session id resumes the
-     * conversation. {@code mcpConfigPath} is the path to the owner-only MCP-config file written by
-     * {@link #startTurn}, passed by PATH so the bearer token it carries never reaches the argv.
-     * Package-private for unit testing.
+     * conversation. When the user opted into reasoning display, {@code --thinking-display summarized}
+     * asks the CLI to stream real thinking text. {@code mcpConfigPath} is the path to the owner-only
+     * MCP-config file written by {@link #startTurn}, passed by PATH so the bearer token it carries
+     * never reaches the argv. Package-private for unit testing.
      */
     static List<String> buildCommand(String exe, ChatRequest req, String mcpConfigPath) {
         List<String> cmd = new ArrayList<>();
@@ -119,6 +135,16 @@ public final class ClaudeCliProvider implements ChatProvider {
         cmd.add(mcpConfigPath);
         cmd.add("--allowedTools");
         cmd.add("mcp__" + McpEndpoint.SERVER_NAME);
+        if (req.showReasoning()) {
+            // Without this, current CLIs put an EMPTY thinking block (encrypted signature only) in
+            // stream-json — Claude 5-era models default their thinking display to "omitted" — so the
+            // Show-reasoning toggle would have nothing to render. "summarized" restores real
+            // thinking_delta text. The flag is accepted but undocumented on current CLIs and only
+            // passed when the user opted in; a CLI too old to know it fails the turn with a clear
+            // "unknown option" error rather than silently showing nothing.
+            cmd.add("--thinking-display");
+            cmd.add("summarized");
+        }
         List<java.io.File> attachmentDirs = req.attachmentDirectories();
         if (!attachmentDirs.isEmpty()) {
             cmd.add("--add-dir");

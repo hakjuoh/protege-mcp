@@ -25,7 +25,7 @@ class CodexEventParserTest {
 
         assertEquals("thread-codex-1", listener.sessionId);
         assertEquals("There are 3 classes.", listener.text.toString());
-        assertEquals("Looking at the ontology.", listener.thinking.toString());
+        assertEquals("Looking at the ontology.\n", listener.thinking.toString());
         assertTrue(listener.tools.contains("list_classes"));
         assertTrue(listener.errors.contains("Skill descriptions were shortened."));
 

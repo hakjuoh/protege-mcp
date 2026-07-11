@@ -102,6 +102,13 @@ public final class CodexCliProvider implements ChatProvider {
         // AppToolApproval value). Server-side read-only / confirm-write gates still apply to actual edits.
         cmd.add("-c");
         cmd.add("mcp_servers." + server + ".default_tools_approval_mode=" + toml("approve"));
+        if (req.showReasoning()) {
+            // Codex spends reasoning tokens but emits no "reasoning" items in exec --json unless a
+            // summary mode is set; "detailed" makes it stream reasoning summaries the parser already
+            // understands. Only requested when the user opted in.
+            cmd.add("-c");
+            cmd.add("model_reasoning_summary=" + toml("detailed"));
+        }
         cmd.add("exec");
         if (req.sessionId() != null && !req.sessionId().isBlank()) {
             cmd.add("resume");

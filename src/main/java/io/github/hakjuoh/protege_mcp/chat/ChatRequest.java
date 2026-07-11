@@ -13,12 +13,22 @@ import java.util.Set;
  * @param sessionId the provider session/thread id to resume, or {@code null} to start a new one
  * @param endpoint  the loopback MCP server the CLI should attach to
  * @param attachments hidden prompt context represented by placeholders in {@code prompt}
+ * @param showReasoning ask the CLI to emit the model's reasoning so the transcript can show it.
+ *        Current CLIs send no reasoning text unless explicitly asked (Claude 5-era models default
+ *        their thinking display to "omitted"; Codex defaults its summary off), so each provider
+ *        adds its opt-in flag only when this is set — display-side filtering alone would never
+ *        see any reasoning.
  */
 public record ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
-        List<ChatAttachment> attachments) {
+        List<ChatAttachment> attachments, boolean showReasoning) {
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint) {
-        this(model, prompt, sessionId, endpoint, List.of());
+        this(model, prompt, sessionId, endpoint, List.of(), false);
+    }
+
+    public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
+            List<ChatAttachment> attachments) {
+        this(model, prompt, sessionId, endpoint, attachments, false);
     }
 
     public ChatRequest {

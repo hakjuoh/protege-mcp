@@ -665,4 +665,50 @@ class ChatViewTest {
         // setPosixFilePermissions on a missing path throws IOException, which restrict() must swallow.
         m.invoke(null, missing, false);   // must not throw
     }
+
+    // ------------------------------------------------------------------ reasoning boundary breaks
+
+    /** A bare view with only the two render-state fields the boundary decision reads. */
+    private ChatView renderState(boolean atLineStart, String lastKind) throws Exception {
+        ChatView v = bareInstance();
+        setField(v, "atTurnStartOfLine", atLineStart);
+        setField(v, "lastRenderedKind", lastKind == null ? null : kind(lastKind));
+        return v;
+    }
+
+    private boolean boundaryBreak(ChatView v, String kindName, String text) throws Exception {
+        Class<?> k = Class.forName("io.github.hakjuoh.protege_mcp.ui.ChatView$Kind");
+        Method m = ChatView.class.getDeclaredMethod("needsReasoningBoundaryBreak", k, String.class);
+        m.setAccessible(true);
+        return (boolean) m.invoke(v, kind(kindName), text);
+    }
+
+    @Test
+    void reasoningEnteringMidLineGetsABreak() throws Exception {
+        assertTrue(boundaryBreak(renderState(false, "ASSISTANT"), "THINKING", "pondering"));
+        assertTrue(boundaryBreak(renderState(false, null), "THINKING", "pondering"));
+    }
+
+    @Test
+    void reasoningLeavingMidLineGetsABreak() throws Exception {
+        assertTrue(boundaryBreak(renderState(false, "THINKING"), "SYSTEM", "[note] x"));
+    }
+
+    @Test
+    void deltasInsideOneReasoningRunGetNoBreak() throws Exception {
+        // Claude streams a block as many small deltas; a break between them would shred the text.
+        assertFalse(boundaryBreak(renderState(false, "THINKING"), "THINKING", "more of the same"));
+    }
+
+    @Test
+    void lineStartOrOwnLeadingNewlineNeedsNoBreak() throws Exception {
+        assertFalse(boundaryBreak(renderState(true, "ASSISTANT"), "THINKING", "pondering"));
+        assertFalse(boundaryBreak(renderState(false, "THINKING"), "TOOL", "\n  tool line\n"));
+    }
+
+    @Test
+    void nonReasoningTransitionsGetNoBreak() throws Exception {
+        assertFalse(boundaryBreak(renderState(false, "USER"), "SYSTEM", "x"));
+        assertFalse(boundaryBreak(renderState(false, "SYSTEM"), "ERROR", "boom"));
+    }
 }

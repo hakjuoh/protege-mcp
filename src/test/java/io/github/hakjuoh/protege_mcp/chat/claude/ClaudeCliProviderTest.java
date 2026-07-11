@@ -64,6 +64,43 @@ class ClaudeCliProviderTest {
     }
 
     @Test
+    void showReasoningAsksForSummarizedThinking() {
+        // Claude 5-era models default thinking display to "omitted" (empty thinking text in
+        // stream-json), so the opt-in must translate into the CLI-side flag.
+        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+                new ChatRequest("", "hi", null, ENDPOINT, List.of(), true), CONFIG_PATH);
+        assertAdjacent(cmd, "--thinking-display", "summarized");
+    }
+
+    @Test
+    void noThinkingDisplayFlagWhenReasoningOff() {
+        // The flag is undocumented on current CLIs; a run that didn't opt in must not risk an
+        // "unknown option" failure on an older CLI.
+        List<String> cmd = ClaudeCliProvider.buildCommand("claude",
+                new ChatRequest("", "hi", null, ENDPOINT), CONFIG_PATH);
+        assertFalse(cmd.contains("--thinking-display"));
+    }
+
+    @Test
+    void reasoningFlagRejectionNamesTheCheckbox() {
+        // A CLI predating the flag fails every opted-in turn; the raw "unknown option" alone gives
+        // no way to connect the failure to the persisted checkbox.
+        String msg = ClaudeCliProvider.failureMessage(1,
+                "error: unknown option '--thinking-display'", true);
+        assertTrue(msg.contains("claude exited with code 1"));
+        assertTrue(msg.contains("Show reasoning"));
+    }
+
+    @Test
+    void ordinaryFailuresCarryNoReasoningHint() {
+        assertFalse(ClaudeCliProvider.failureMessage(1, "some other error", true)
+                .contains("Show reasoning"));
+        // Same stderr without the opt-in: the flag cannot have been passed, so no hint.
+        assertFalse(ClaudeCliProvider.failureMessage(1,
+                "error: unknown option '--thinking-display'", false).contains("Show reasoning"));
+    }
+
+    @Test
     void attachmentDirectoriesAreAllowedForClaudeReads(@TempDir Path dir) throws Exception {
         Path image = Files.writeString(dir.resolve("screen.png"), "fake");
         ChatRequest req = new ChatRequest("", "look at [Image #1]", null, ENDPOINT,

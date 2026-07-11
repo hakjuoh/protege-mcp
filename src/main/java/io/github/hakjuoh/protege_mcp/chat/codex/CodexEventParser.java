@@ -99,9 +99,14 @@ final class CodexEventParser implements Consumer<String> {
             }
             case "reasoning" -> {
                 if (completed) {
-                    String t = firstNonEmpty(item.path("text").asText(""), item.path("summary").asText(""));
+                    String t = firstNonEmpty(item.path("text").asText(""),
+                            summaryText(item.path("summary")));
                     if (!t.isEmpty()) {
-                        listener.onThinking(t);
+                        // Each completed item is a whole reasoning block (codex itself joins a
+                        // block's sections), so terminate the line: two blocks rendered back to
+                        // back — possible when a parser-ignored item sits between them — must not
+                        // glue mid-sentence. Claude's within-block deltas stay unterminated.
+                        listener.onThinking(t + "\n");
                     }
                 }
             }
@@ -150,6 +155,35 @@ final class CodexEventParser implements Consumer<String> {
             listener.onAssistantText(fullText.substring(prev));
             emitted.put(id, fullText.length());
         }
+    }
+
+    /**
+     * A reasoning item's {@code summary} as text. The captured run carries a plain string, but the
+     * Responses API this rides on also shapes summaries as an array of {@code summary_text} parts
+     * (or a single object) — {@code asText("")} would silently swallow those, so each shape is read
+     * explicitly and array parts are joined with blank lines.
+     */
+    static String summaryText(JsonNode summary) {
+        if (summary.isTextual()) {
+            return summary.asText();
+        }
+        if (summary.isArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode part : summary) {
+                String t = part.isTextual() ? part.asText() : part.path("text").asText("");
+                if (!t.isEmpty()) {
+                    if (sb.length() > 0) {
+                        sb.append("\n\n");
+                    }
+                    sb.append(t);
+                }
+            }
+            return sb.toString();
+        }
+        if (summary.isObject()) {
+            return summary.path("text").asText("");
+        }
+        return "";
     }
 
     private static String firstNonEmpty(String... values) {

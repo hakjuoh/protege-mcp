@@ -53,6 +53,24 @@ class CodexCliProviderTest {
     }
 
     @Test
+    void showReasoningRequestsDetailedSummaries() {
+        List<String> cmd = CodexCliProvider.buildCommand("codex",
+                new ChatRequest("", "hi", "", ENDPOINT, List.of(), true));
+        int override = cmd.indexOf("model_reasoning_summary=\"detailed\"");
+        assertTrue(override >= 0, "reasoning opt-in must set a summary mode: " + cmd);
+        // A global -c override: must precede the exec subcommand so exec resume gets it too.
+        assertTrue(override < cmd.indexOf("exec"));
+    }
+
+    @Test
+    void noReasoningSummaryOverrideWhenOff() {
+        List<String> cmd = CodexCliProvider.buildCommand("codex",
+                new ChatRequest("", "hi", "", ENDPOINT));
+        assertTrue(cmd.stream().noneMatch(a -> a.contains("model_reasoning_summary")),
+                "no summary override without the opt-in: " + cmd);
+    }
+
+    @Test
     void neverPutsTheBearerTokenOnTheCommandLine() {
         List<String> cmd = CodexCliProvider.buildCommand("codex",
                 new ChatRequest("gpt-5.5", "hi", "", ENDPOINT));
