@@ -1,18 +1,27 @@
 package io.github.hakjuoh.protege_mcp.ui;
 
+import java.awt.Color;
+
 import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JLabel;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.text.JTextComponent;
 
 import org.protege.editor.core.prefs.Preferences;
 import org.protege.editor.core.ui.preferences.PreferencesLayoutPanel;
 import org.protege.editor.core.ui.preferences.PreferencesPanel;
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
+import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
 
 /**
- * Preferences tab for the MCP server: listen port (or ephemeral), auto-start, read-only mode and
- * write confirmation. Values are persisted via the Protégé {@link Preferences} store; the server
- * reads a fresh snapshot when it (re)starts, while read-only / confirm toggles apply live.
+ * Preferences tab for the MCP server: listen port (or ephemeral), bind address, auto-start,
+ * read-only mode and write confirmation. Values are persisted via the Protégé {@link Preferences}
+ * store; the server reads a fresh snapshot when it (re)starts, while read-only / confirm toggles
+ * apply live.
  */
 public class McpPreferencesPanel extends PreferencesPanel {
 
@@ -20,6 +29,8 @@ public class McpPreferencesPanel extends PreferencesPanel {
 
     private JSpinner portSpinner;
     private JCheckBox ephemeralCheck;
+    private JComboBox<String> bindCombo;
+    private JLabel bindWarning;
     private JCheckBox sharedBrokerCheck;
     private JCheckBox autoStartCheck;
     private JCheckBox readOnlyCheck;
@@ -39,6 +50,41 @@ public class McpPreferencesPanel extends PreferencesPanel {
         ephemeralCheck = new JCheckBox("Use an ephemeral (auto-assigned) port", ephemeral);
         ephemeralCheck.addActionListener(e -> portSpinner.setEnabled(!ephemeralCheck.isSelected()));
 
+        bindCombo = new JComboBox<>(new String[] {
+                McpConfig.DEFAULT_BIND_ADDRESS, "::1", "0.0.0.0"});
+        bindCombo.setEditable(true);
+        bindCombo.setSelectedItem(McpConfig.sanitizeBindAddress(
+                p.getString(McpConfig.KEY_BIND_ADDRESS, McpConfig.DEFAULT_BIND_ADDRESS)));
+        bindCombo.setPrototypeDisplayValue("255.255.255.255.255");
+
+        bindWarning = new JLabel(PreferencesText.wrapped(
+                "Warning: a non-loopback bind address exposes the MCP endpoint (and the shared "
+                + "broker) to the network over plain, unencrypted HTTP — the static bearer token "
+                + "transits in clear text, and anyone who captures it gets full MCP access (OAuth "
+                + "authorization itself stays same-machine only). Prefer keeping 127.0.0.1 and "
+                + "tunnelling instead (ssh -L 8123:127.0.0.1:8123 <this-machine>); bind other "
+                + "addresses only on networks you trust."));
+        bindWarning.setForeground(new Color(0xB0, 0x20, 0x20));
+        bindCombo.addActionListener(e -> updateBindWarning());
+        ((JTextComponent) bindCombo.getEditor().getEditorComponent()).getDocument()
+                .addDocumentListener(new DocumentListener() {
+                    @Override
+                    public void insertUpdate(DocumentEvent e) {
+                        updateBindWarning();
+                    }
+
+                    @Override
+                    public void removeUpdate(DocumentEvent e) {
+                        updateBindWarning();
+                    }
+
+                    @Override
+                    public void changedUpdate(DocumentEvent e) {
+                        updateBindWarning();
+                    }
+                });
+        updateBindWarning();
+
         sharedBrokerCheck = new JCheckBox("Share one MCP endpoint across all Protégé windows and "
                 + "instances (broker process)", p.getBoolean(McpConfig.KEY_SHARED_BROKER, true));
 
@@ -53,13 +99,21 @@ public class McpPreferencesPanel extends PreferencesPanel {
         panel.addGroup("Connection");
         panel.addGroupComponent(PreferencesRows.labelled("Port:", portSpinner));
         panel.addGroupComponent(ephemeralCheck);
+        panel.addGroupComponent(PreferencesRows.labelled("Bind address:", bindCombo));
+        panel.addGroupComponent(bindWarning);
         panel.addGroupComponent(sharedBrokerCheck);
         panel.addHelpText(PreferencesText.wrapped(
-                "The server binds to 127.0.0.1 only. With the shared broker on, the port "
-                + "belongs to a small broker process that outlives any single window and routes MCP "
-                + "clients to the right window; each window's own server uses an ephemeral port behind "
-                + "it. Port and broker changes apply the next time a server (or the broker) starts — "
-                + "for a clean switch, close all Protégé windows and reopen."));
+                "The server binds the address above — 127.0.0.1 (this machine only) by default; "
+                + "IPv6-preferring clients connect fine over IPv4 loopback, so ::1 is only for a "
+                + "client hard-wired to the IPv6 loopback. 0.0.0.0 serves every interface, but "
+                + "handed-out URLs still say 127.0.0.1 — on another machine, replace that host "
+                + "with this machine's address, and authenticate with the static token (OAuth "
+                + "authorization is same-machine only). With the shared broker on, the port "
+                + "belongs to a small broker process that outlives any single window and routes "
+                + "MCP clients to the right window; each window's own server uses an ephemeral "
+                + "loopback port behind it. Port, bind-address and broker changes apply the next "
+                + "time a server (or the broker) starts — for a clean switch, close all Protégé "
+                + "windows and reopen."));
         panel.addSeparator();
         panel.addGroup("Startup");
         panel.addGroupComponent(autoStartCheck);
@@ -72,11 +126,23 @@ public class McpPreferencesPanel extends PreferencesPanel {
         add(panel);
     }
 
+    /** Show the exposure warning exactly while the (possibly still uncommitted) text is non-loopback. */
+    private void updateBindWarning() {
+        bindWarning.setVisible(!EmbeddedHttpServer.isLoopback(
+                McpConfig.sanitizeBindAddress(editedBindAddress())));
+    }
+
+    /** The bind editor's current text — getSelectedItem() lags behind an uncommitted edit. */
+    private String editedBindAddress() {
+        return String.valueOf(bindCombo.getEditor().getItem());
+    }
+
     @Override
     public void applyChanges() {
         Preferences p = McpConfig.prefs();
         int port = ephemeralCheck.isSelected() ? 0 : (Integer) portSpinner.getValue();
         p.putInt(McpConfig.KEY_PORT, port);
+        p.putString(McpConfig.KEY_BIND_ADDRESS, McpConfig.sanitizeBindAddress(editedBindAddress()));
         p.putBoolean(McpConfig.KEY_SHARED_BROKER, sharedBrokerCheck.isSelected());
         p.putBoolean(McpConfig.KEY_AUTOSTART, autoStartCheck.isSelected());
         p.putBoolean(McpConfig.KEY_READ_ONLY, readOnlyCheck.isSelected());

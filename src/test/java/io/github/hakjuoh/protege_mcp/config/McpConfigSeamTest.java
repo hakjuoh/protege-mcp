@@ -149,6 +149,44 @@ class McpConfigSeamTest {
         assertEquals(0, cfg.getPort());
     }
 
+    // ---- bind address -----------------------------------------------------------------------------
+
+    @Test
+    void loadDefaultsBindAddressToIpv4Loopback() {
+        assertEquals("127.0.0.1", McpConfig.DEFAULT_BIND_ADDRESS);
+        assertEquals("127.0.0.1", McpConfig.load(proxyFor(newHandler())).getBindAddress());
+    }
+
+    @Test
+    void loadReadsBackStoredBindAddress() {
+        FakePrefsHandler h = newHandler();
+        h.store.put(McpConfig.KEY_BIND_ADDRESS, "0.0.0.0");
+        assertEquals("0.0.0.0", McpConfig.load(proxyFor(h)).getBindAddress());
+    }
+
+    @Test
+    void loadSanitizesStoredBindAddress() {
+        FakePrefsHandler h = newHandler();
+        h.store.put(McpConfig.KEY_BIND_ADDRESS, "  [::1] ");
+        assertEquals("::1", McpConfig.load(proxyFor(h)).getBindAddress(),
+                "brackets and whitespace must not reach the Jetty connector");
+    }
+
+    @Test
+    void sanitizeBindAddressNormalizes() {
+        assertEquals("127.0.0.1", McpConfig.sanitizeBindAddress(null));
+        assertEquals("127.0.0.1", McpConfig.sanitizeBindAddress(""));
+        assertEquals("127.0.0.1", McpConfig.sanitizeBindAddress("   "));
+        assertEquals("127.0.0.1", McpConfig.sanitizeBindAddress("[]"),
+                "empty brackets are as blank as blank");
+        assertEquals("::1", McpConfig.sanitizeBindAddress("[::1]"));
+        assertEquals("::1", McpConfig.sanitizeBindAddress(" ::1 "));
+        assertEquals("0.0.0.0", McpConfig.sanitizeBindAddress("0.0.0.0"));
+        assertEquals("192.168.0.7", McpConfig.sanitizeBindAddress("192.168.0.7"));
+        // Only the *surrounding* URL brackets are stripped; the inside passes through verbatim.
+        assertEquals("fe80::1%en0", McpConfig.sanitizeBindAddress("[fe80::1%en0]"));
+    }
+
     // ---- load() token handling --------------------------------------------------------------------
 
     @Test

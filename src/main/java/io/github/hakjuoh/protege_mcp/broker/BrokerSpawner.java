@@ -49,7 +49,7 @@ public final class BrokerSpawner {
     }
 
     /** Spawn a broker for {@code home}; returns false when the environment makes that impossible. */
-    public static boolean spawn(BrokerHome home, int port, String version) {
+    public static boolean spawn(BrokerHome home, int port, String bindAddress, String version) {
         Path pluginJar = jarOf(BrokerMain.class);
         Path slf4jJar = jarOf(Logger.class);
         if (pluginJar == null || slf4jJar == null) {
@@ -82,6 +82,7 @@ public final class BrokerSpawner {
                     BrokerMain.class.getName(),
                     "--home", home.dir().toString(),
                     "--port", String.valueOf(port),
+                    "--bind", bindAddress,
                     "--version", version);
             pb.redirectErrorStream(true);
             pb.redirectOutput(ProcessBuilder.Redirect.appendTo(home.logFile().toFile()));
@@ -263,12 +264,12 @@ public final class BrokerSpawner {
 
     /** Discover-or-spawn: returns a client for a live broker, waiting for a fresh spawn to boot. */
     public static Optional<BrokerClient> ensureBroker(BrokerHome home, String dirSecret, int port,
-            String version) throws InterruptedException {
+            String bindAddress, String version) throws InterruptedException {
         Optional<BrokerState> live = BrokerMain.findLiveBroker(home, dirSecret);
         if (live.isPresent()) {
             return Optional.of(new BrokerClient(live.get().baseUrl(), dirSecret));
         }
-        if (!spawn(home, port, version)) {
+        if (!spawn(home, port, bindAddress, version)) {
             return Optional.empty();
         }
         // The broker writes broker.json once bound; poll briefly for it to come up.

@@ -29,6 +29,8 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.AfterEach;
@@ -463,6 +465,118 @@ class EmbeddedHttpServerTest {
             assertEquals(port, rebound, "the port should be reusable once the first server has stopped");
         } finally {
             rebind.stop();
+        }
+    }
+
+    // ---- bind address helpers (pure statics — no sockets involved) ----------
+
+    @Test
+    void isWildcardRecognisesBothFamilies() {
+        assertTrue(EmbeddedHttpServer.isWildcard("0.0.0.0"));
+        assertTrue(EmbeddedHttpServer.isWildcard("::"));
+        assertFalse(EmbeddedHttpServer.isWildcard("127.0.0.1"));
+        assertFalse(EmbeddedHttpServer.isWildcard("::1"));
+        assertFalse(EmbeddedHttpServer.isWildcard("192.168.0.7"));
+    }
+
+    @Test
+    void connectHostMapsWildcardToLoopback() {
+        // A URL can't say "every interface"; loopback is the one host a wildcard bind always serves.
+        assertEquals("127.0.0.1", EmbeddedHttpServer.connectHost("0.0.0.0"));
+        assertEquals("127.0.0.1", EmbeddedHttpServer.connectHost("::"));
+    }
+
+    @Test
+    void connectHostBracketsIpv6Literals() {
+        assertEquals("[::1]", EmbeddedHttpServer.connectHost("::1"));
+        assertEquals("[fe80::1%en0]", EmbeddedHttpServer.connectHost("fe80::1%en0"));
+    }
+
+    @Test
+    void connectHostPassesIpv4AndHostnamesThrough() {
+        assertEquals("127.0.0.1", EmbeddedHttpServer.connectHost("127.0.0.1"));
+        assertEquals("192.168.0.7", EmbeddedHttpServer.connectHost("192.168.0.7"));
+        assertEquals("localhost", EmbeddedHttpServer.connectHost("localhost"));
+    }
+
+    @Test
+    void isLoopbackIsLiteralOnly() {
+        assertTrue(EmbeddedHttpServer.isLoopback("127.0.0.1"));
+        assertTrue(EmbeddedHttpServer.isLoopback("127.0.0.53"), "the whole 127/8 block is loopback");
+        assertTrue(EmbeddedHttpServer.isLoopback("::1"));
+        assertTrue(EmbeddedHttpServer.isLoopback("localhost"));
+        assertFalse(EmbeddedHttpServer.isLoopback("0.0.0.0"), "a wildcard bind exposes the network");
+        assertFalse(EmbeddedHttpServer.isLoopback("::"));
+        assertFalse(EmbeddedHttpServer.isLoopback("192.168.0.7"));
+        assertFalse(EmbeddedHttpServer.isLoopback(null));
+    }
+
+    @Test
+    void bindToChangesTheConnectorHost() throws Exception {
+        host = new EmbeddedHttpServer();
+        host.bindTo("127.0.0.1"); // an explicit loopback bind keeps the test environment-neutral
+        host.start(0);
+        ServerConnector c = (ServerConnector) field(host, "connector");
+        assertEquals("127.0.0.1", c.getHost());
+    }
+
+    @Test
+    void ipv6LoopbackBindAlsoServesTheIpv4LoopbackAlias() throws Exception {
+        assumeTrue(canBindIpv6Loopback(), "no IPv6 loopback on this machine");
+        // ::1 stands in for "a specific address that is not 127.0.0.1" without needing a LAN
+        // interface: older plugin versions and long-standing client configs dial 127.0.0.1, so a
+        // non-IPv4-loopback bind must alias the same port there.
+        host = new EmbeddedHttpServer();
+        RecordingServlet servlet = new RecordingServlet("pong");
+        host.addServlet(servlet, "/ping", false);
+        host.bindTo("::1");
+        int port = host.start(0);
+
+        HttpResult viaAlias = get(port, "/ping"); // helper dials 127.0.0.1
+        assertEquals(200, viaAlias.status, "the IPv4-loopback alias must serve the same app");
+        assertEquals("pong", viaAlias.body);
+    }
+
+    @Test
+    void wildcardBindOverALoopbackHolderIsABindConflict() throws Exception {
+        // BSD/macOS lets 0.0.0.0:P coexist with a foreign 127.0.0.1:P listener (SO_REUSEADDR) —
+        // and the loopback holder then receives all loopback traffic, i.e. every URL this server
+        // hands out. The pre-bind probe must surface that as an ordinary bind conflict.
+        EmbeddedHttpServer loopbackHolder = new EmbeddedHttpServer();
+        int port = loopbackHolder.start(0);
+        try {
+            host = new EmbeddedHttpServer();
+            host.bindTo("0.0.0.0");
+            EmbeddedHttpServer wildcard = host;
+            Exception thrown = assertThrows(Exception.class, () -> wildcard.start(port));
+            assertTrue(EmbeddedHttpServer.isBindConflict(thrown),
+                    "coexistence must be reported as a bind conflict: " + thrown);
+        } finally {
+            loopbackHolder.stop();
+        }
+    }
+
+    @Test
+    void wildcardStartWithFallbackFallsBackPastALoopbackHolder() throws Exception {
+        EmbeddedHttpServer loopbackHolder = new EmbeddedHttpServer();
+        int port = loopbackHolder.start(0);
+        try {
+            host = new EmbeddedHttpServer();
+            host.bindTo("0.0.0.0");
+            int bound = host.startWithFallback(port);
+            assertNotEquals(port, bound, "the held port must be abandoned for an ephemeral one");
+            assertTrue(host.isRunning());
+        } finally {
+            loopbackHolder.stop();
+        }
+    }
+
+    private static boolean canBindIpv6Loopback() {
+        try (java.net.ServerSocket probe = new java.net.ServerSocket()) {
+            probe.bind(new InetSocketAddress("::1", 0));
+            return true;
+        } catch (IOException e) {
+            return false;
         }
     }
 }

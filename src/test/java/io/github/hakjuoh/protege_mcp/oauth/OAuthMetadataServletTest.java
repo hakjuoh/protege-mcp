@@ -44,6 +44,12 @@ class OAuthMetadataServletTest {
 
     private static HttpServletRequest fakeRequest(
             String requestUri, String hostHeader, String scheme, String serverName, int serverPort) {
+        return fakeRequest(requestUri, hostHeader, scheme, serverName, serverPort, "127.0.0.1");
+    }
+
+    private static HttpServletRequest fakeRequest(
+            String requestUri, String hostHeader, String scheme, String serverName, int serverPort,
+            String remoteAddr) {
         InvocationHandler h = (proxy, method, args) -> {
             switch (method.getName()) {
                 case "getRequestURI":
@@ -59,6 +65,8 @@ class OAuthMetadataServletTest {
                     return serverName;
                 case "getServerPort":
                     return serverPort;
+                case "getRemoteAddr":
+                    return remoteAddr;
                 case "toString":
                     return "FakeHttpServletRequest[" + requestUri + "]";
                 case "hashCode":
@@ -565,5 +573,34 @@ class OAuthMetadataServletTest {
                 "doGet output must be deterministic for identical requests");
         // Sanity: the two RecordingResponse instances are distinct objects.
         assertSame(a, a, "self-identity sanity check");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Same-machine gate: discovery is withheld from remote peers (they use the static token)
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    void remotePeerGets403WithoutADocument() throws IOException {
+        OAuthMetadataServlet servlet = new OAuthMetadataServlet(JSON);
+        RecordingResponse resp = new RecordingResponse();
+        // 203.0.113.9 (TEST-NET-3) is never a local interface address.
+        servlet.doGet(fakeRequest("/.well-known/oauth-authorization-server", "h:1",
+                "http", "ignored", 9999, "203.0.113.9"), resp.proxy());
+
+        assertEquals(403, resp.status);
+        Map<String, Object> body = JSON.readValue(resp.body(), new TypeReference<>() { });
+        assertEquals("access_denied", body.get("error"));
+    }
+
+    @Test
+    void ipv6LoopbackPeerIsServed() throws IOException {
+        OAuthMetadataServlet servlet = new OAuthMetadataServlet(JSON);
+        RecordingResponse resp = new RecordingResponse();
+        servlet.doGet(fakeRequest("/.well-known/oauth-authorization-server", "h:1",
+                "http", "ignored", 9999, "::1"), resp.proxy());
+
+        assertEquals(200, resp.status);
+        Map<String, Object> body = JSON.readValue(resp.body(), new TypeReference<>() { });
+        assertNotNull(body.get("issuer"));
     }
 }

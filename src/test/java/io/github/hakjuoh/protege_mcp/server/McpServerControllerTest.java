@@ -190,7 +190,7 @@ class McpServerControllerTest {
 
         IllegalStateException thrown = assertThrows(IllegalStateException.class, c::start,
                 "start() must refuse while the user-stop latch is set");
-        assertTrue(thrown.getMessage().contains("Stop"), thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("press Start"), thrown.getMessage());
         assertFalse(c.isRunning(), "a refused start must leave the server stopped");
         assertTrue(c.isUserStopped(), "the latch must survive the refusal");
         assertNull(c.getLastError(), "a latch refusal is not a failure — lastError must stay clear");

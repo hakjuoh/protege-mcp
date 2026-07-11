@@ -19,6 +19,13 @@ public final class McpConfig {
     public static final String PREFS_GROUP = "server";
 
     public static final String KEY_PORT = "port";
+    /**
+     * Address the client-facing server (standalone window server, and the shared broker) binds.
+     * Loopback by default; anything else exposes the plain-HTTP endpoint to the network — the
+     * Preferences panel warns about that. Broker-managed window backends always stay on loopback
+     * regardless of this setting (they are internal, reached only through the broker's proxy).
+     */
+    public static final String KEY_BIND_ADDRESS = "bindAddress";
     public static final String KEY_AUTOSTART = "autoStart";
     /** Share one broker process (and the configured port) across all Protégé windows/instances. */
     public static final String KEY_SHARED_BROKER = "sharedBroker";
@@ -53,16 +60,21 @@ public final class McpConfig {
     /** Default listen port. A configured port of {@code 0} means "pick an ephemeral port". */
     public static final int DEFAULT_PORT = 8123;
 
+    /** Default bind address: IPv4 loopback, reachable from this machine only. */
+    public static final String DEFAULT_BIND_ADDRESS = "127.0.0.1";
+
     private final int port;
+    private final String bindAddress;
     private final boolean autoStart;
     private final boolean sharedBroker;
     private final boolean readOnly;
     private final boolean confirmWrites;
     private final String token;
 
-    private McpConfig(int port, boolean autoStart, boolean sharedBroker, boolean readOnly,
-            boolean confirmWrites, String token) {
+    private McpConfig(int port, String bindAddress, boolean autoStart, boolean sharedBroker,
+            boolean readOnly, boolean confirmWrites, String token) {
         this.port = port;
+        this.bindAddress = bindAddress;
         this.autoStart = autoStart;
         this.sharedBroker = sharedBroker;
         this.readOnly = readOnly;
@@ -90,6 +102,7 @@ public final class McpConfig {
      */
     static McpConfig load(Preferences p) {
         int port = p.getInt(KEY_PORT, DEFAULT_PORT);
+        String bindAddress = sanitizeBindAddress(p.getString(KEY_BIND_ADDRESS, DEFAULT_BIND_ADDRESS));
         boolean autoStart = p.getBoolean(KEY_AUTOSTART, true);
         boolean sharedBroker = p.getBoolean(KEY_SHARED_BROKER, true);
         boolean readOnly = p.getBoolean(KEY_READ_ONLY, false);
@@ -99,7 +112,21 @@ public final class McpConfig {
             token = generateToken();
             p.putString(KEY_TOKEN, token);
         }
-        return new McpConfig(port, autoStart, sharedBroker, readOnly, confirmWrites, token);
+        return new McpConfig(port, bindAddress, autoStart, sharedBroker, readOnly, confirmWrites, token);
+    }
+
+    /**
+     * Normalize a stored/typed bind address: trim, strip the URL-style brackets off an IPv6 literal
+     * ({@code [::1]} → {@code ::1} — Jetty wants the bare form), and fall back to the loopback
+     * default when blank. No resolution or reachability check happens here; an address the OS
+     * refuses to bind surfaces as the server's start error.
+     */
+    public static String sanitizeBindAddress(String raw) {
+        String address = raw == null ? "" : raw.trim();
+        if (address.length() >= 2 && address.charAt(0) == '[' && address.endsWith("]")) {
+            address = address.substring(1, address.length() - 1).trim();
+        }
+        return address.isEmpty() ? DEFAULT_BIND_ADDRESS : address;
     }
 
     /** Generate a fresh URL-safe 256-bit bearer token and persist it. */
@@ -126,6 +153,11 @@ public final class McpConfig {
 
     public int getPort() {
         return port;
+    }
+
+    /** See {@link #KEY_BIND_ADDRESS}; already sanitized, never blank. */
+    public String getBindAddress() {
+        return bindAddress;
     }
 
     public boolean isAutoStart() {

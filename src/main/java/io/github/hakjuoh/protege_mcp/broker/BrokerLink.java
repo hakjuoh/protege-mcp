@@ -162,6 +162,19 @@ public final class BrokerLink {
         }
     }
 
+    /**
+     * User-initiated recovery (the view's Start while the broker is down): run the heartbeat's
+     * re-discovery/re-spawn immediately, dropping the {@link #ENSURE_THROTTLE_MS} backoff that
+     * paces the automatic retries. Safe when the broker is actually fine — the beat then just
+     * heartbeats as usual.
+     */
+    public void reconnectNow() {
+        synchronized (this) {
+            lastEnsureAttemptAt = 0;
+        }
+        pokeHeartbeat();
+    }
+
     // ------------------------------------------------------------------ internals
 
     /** Ensure a live BrokerClient; when {@code spawnIfMissing}, discovery may spawn the broker. */
@@ -188,8 +201,9 @@ public final class BrokerLink {
         if (!spawnIfMissing) {
             return false;
         }
+        McpConfig config = McpConfig.load();
         client = BrokerSpawner.ensureBroker(home, dirSecret,
-                McpConfig.load().getPort(), McpServerManager.SERVER_VERSION).orElse(null);
+                config.getPort(), config.getBindAddress(), McpServerManager.SERVER_VERSION).orElse(null);
         brokerBaseUrl = client == null ? null : client.baseUrl();
         return client != null;
     }

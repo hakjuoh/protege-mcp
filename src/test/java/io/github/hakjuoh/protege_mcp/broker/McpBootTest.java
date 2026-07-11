@@ -67,10 +67,10 @@ class McpBootTest {
         IllegalStateException thrown = assertThrows(IllegalStateException.class,
                 () -> McpBoot.ensureStarted(c));
         // The message surfaces verbatim in the chat transcript ("Could not start <provider>: …"),
-        // so it must say both what happened (Stop) and how to undo it (Start).
-        assertTrue(thrown.getMessage().contains("Stop"),
-                "message must name the user's Stop as the cause: " + thrown.getMessage());
-        assertTrue(thrown.getMessage().contains("Start"),
+        // so it must say the state plainly (stopped — no "by Stop" attribution) and how to undo it.
+        assertTrue(thrown.getMessage().contains("is stopped"),
+                "message must state the server is stopped: " + thrown.getMessage());
+        assertTrue(thrown.getMessage().contains("press Start"),
                 "message must point at the Start button as the way back: " + thrown.getMessage());
     }
 

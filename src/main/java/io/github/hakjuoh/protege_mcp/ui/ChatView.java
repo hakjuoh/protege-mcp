@@ -901,7 +901,7 @@ public class ChatView extends AbstractOWLViewComponent {
             // The user pressed Stop in the MCP Server view: the lazy start below must not override
             // that, so refuse here — before the prompt is consumed — with the way back spelled out.
             // (McpBoot.ensureStarted enforces the same latch for a Stop racing this check.)
-            append(Kind.ERROR, "The MCP server in this window was stopped with its Stop button. "
+            append(Kind.ERROR, "The MCP server in this window is stopped. "
                     + "Press Start in the MCP Server view to use the assistant again.\n");
             return;
         }

@@ -189,27 +189,34 @@ public class McpServerView extends AbstractOWLViewComponent {
             return;
         }
         boolean running = c.isRunning();
+        String brokerUrl = io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().brokerMcpUrl();
+        boolean brokerDown = ServerViewText.brokerDown(running, c.isBrokerManaged(), brokerUrl);
         // Two lines instead of one crammed label (which truncated away the broker state): run state
         // first, connection mode second — each with a tooltip carrying its full text, so nothing is
         // lost when the view is narrow.
-        String status = ServerViewText.statusLine(running, c.isUserStopped(), c.getLastError());
+        String status = ServerViewText.statusLine(running, c.getLastError());
         statusLabel.setText(status);
         statusLabel.setToolTipText(status);
-        String connection = ServerViewText.connectionLine(running, c.isBrokerManaged(),
-                io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().brokerMcpUrl(),
+        String connection = ServerViewText.connectionLine(running, c.isBrokerManaged(), brokerUrl,
                 io.github.hakjuoh.protege_mcp.config.McpConfig.load().isSharedBroker(),
                 c.getEndpointUrl(), c.isPortFallback(), c.getConfiguredPort());
         connectionLabel.setText(connection.isEmpty() ? " " : connection);
         connectionLabel.setToolTipText(connection.isEmpty() ? null : connection);
-        urlField.setText(running ? clientFacingUrl(c) : "");
+        // Reuse the frame's brokerUrl snapshot: a second read could see the heartbeat flip the
+        // broker state mid-refresh and render a URL contradicting the status line above it.
+        urlField.setText(running ? clientFacingUrl(c, brokerUrl) : "");
         String token = c.getToken();
         tokenField.setText(showToken.isSelected() ? token : mask(token));
         readOnlyLabel.setText("Mode: " + (c.isReadOnly() ? "READ-ONLY" : "writable")
                 + (c.isConfirmWrites() ? ", writes require confirmation" : ""));
-        startButton.setEnabled(!running);
-        stopButton.setEnabled(running);
+        // While the shared broker is down, this window's server keeps serving directly, but the
+        // client-facing endpoint is gone — so the actionable button is Start (relaunch the broker),
+        // not Stop.
+        startButton.setEnabled(!running || brokerDown);
+        startButton.setToolTipText(brokerDown ? "Relaunch the shared broker" : null);
+        stopButton.setEnabled(running && !brokerDown);
 
-        if (running && c.isBrokerManaged()) {
+        if (running && c.isBrokerManaged() && !brokerDown) {
             // OAuth clients live in the broker process in this mode; this window's store is empty by
             // design. Don't render an empty table as "no clients connected".
             clientsModel.setRowCount(0);
@@ -219,6 +226,10 @@ public class McpServerView extends AbstractOWLViewComponent {
             staticUseLabel.setText("");
             updateRevokeEnabled();
         } else {
+            // Includes the broker-down shape: the view advertises this window's direct URL then,
+            // so a client that connects (and OAuth-registers) during the outage lands in THIS
+            // window's in-memory store — it must be visible and revocable here, not hidden behind
+            // a "managed by the shared broker" claim about a dead process.
             updateClientsTable(c);
         }
     }
@@ -303,8 +314,16 @@ public class McpServerView extends AbstractOWLViewComponent {
                     // An explicit Start withdraws the user's Stop before anything else — even if
                     // this start attempt then fails, the auto-starts are allowed to try again.
                     c.setUserStopped(false);
-                    // Same broker-first policy as auto-start and the chat's lazy start.
-                    io.github.hakjuoh.protege_mcp.broker.McpBoot.ensureStarted(c);
+                    if (c.isRunning() && c.isBrokerManaged()) {
+                        // Start is only enabled while running when the broker is down: relaunch
+                        // it now, bypassing the heartbeat's re-spawn throttle. (If several
+                        // instances press Start at once, the first bind wins and the others'
+                        // heartbeats reconnect to the winner.)
+                        io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().reconnectNow();
+                    } else {
+                        // Same broker-first policy as auto-start and the chat's lazy start.
+                        io.github.hakjuoh.protege_mcp.broker.McpBoot.ensureStarted(c);
+                    }
                 } else {
                     // Latch BEFORE stopping so a chat turn racing this Stop cannot lazily restart
                     // the server the user is in the middle of taking down.
@@ -329,16 +348,14 @@ public class McpServerView extends AbstractOWLViewComponent {
         }
         // OAuth: no header needed — Claude opens a browser to authorize on first connect. The
         // static token below remains a manual fallback for clients without OAuth support.
-        return ServerViewText.connectCommand(clientFacingUrl(c));
+        return ServerViewText.connectCommand(clientFacingUrl(c,
+                io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().brokerMcpUrl()));
     }
 
     /** What external clients should connect to: the shared broker when attached, else this window. */
-    private String clientFacingUrl(McpServerController c) {
-        if (c.isBrokerManaged()) {
-            String brokerUrl = io.github.hakjuoh.protege_mcp.broker.BrokerLink.get().brokerMcpUrl();
-            if (brokerUrl != null) {
-                return brokerUrl;
-            }
+    private String clientFacingUrl(McpServerController c, String brokerUrl) {
+        if (c.isBrokerManaged() && brokerUrl != null) {
+            return brokerUrl;
         }
         return c.getEndpointUrl();
     }

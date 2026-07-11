@@ -38,6 +38,8 @@ public final class McpServerController implements ManagedServer {
     private volatile String lastError;
     /** True while running as a broker-managed backend (ephemeral port behind the shared broker). */
     private volatile boolean brokerManaged;
+    /** URL host for {@link #getEndpointUrl()}, derived from the bind address at start. */
+    private volatile String advertisedHost = McpConfig.DEFAULT_BIND_ADDRESS;
     /** Latched by the view's Stop button; every start refuses until the view's Start clears it. */
     private volatile boolean userStopped;
     /** Per-start secret the broker presents in place of a bearer token; null in standalone mode. */
@@ -91,8 +93,8 @@ public final class McpServerController implements ManagedServer {
         // same monitor stop() takes, resolves any such race to stopped-and-latched instead of
         // silently overriding the user. Before the try, so a refusal never touches lastError.
         if (userStopped) {
-            throw new IllegalStateException("the user stopped this window's MCP server with its Stop "
-                    + "button — press Start in the MCP Server view to run it again");
+            throw new IllegalStateException("the MCP server in this window is stopped — press Start "
+                    + "in the MCP Server view to run it again");
         }
         // Pin the thread context classloader to this bundle while building the MCP server and
         // starting Jetty. The MCP SDK (ServiceLoader), networknt json-schema-validator (meta-schema
@@ -113,6 +115,13 @@ public final class McpServerController implements ManagedServer {
             this.configuredPort = asBrokerBackend ? 0 : config.getPort();
             this.brokerManaged = asBrokerBackend;
             this.brokerSecret = asBrokerBackend ? McpConfig.generateToken() : null;
+            // Broker backends always stay on loopback whatever the bind preference says: they are
+            // internal, reached only through the broker's proxy, and their per-window secret must
+            // not be exposed to the network. Only the client-facing standalone server binds the
+            // configured address.
+            String bindAddress = asBrokerBackend ? McpConfig.DEFAULT_BIND_ADDRESS
+                    : config.getBindAddress();
+            this.advertisedHost = EmbeddedHttpServer.connectHost(bindAddress);
 
             ToolContext context = new ToolContext(access, this, confirmer);
             this.toolContext = context;
@@ -134,6 +143,7 @@ public final class McpServerController implements ManagedServer {
                     this::persistOAuthState, false);
 
             httpServer = new EmbeddedHttpServer();
+            httpServer.bindTo(bindAddress);
             // Auth gate only on /mcp; the OAuth + discovery endpoints must stay public. In broker
             // mode the filter additionally accepts this window's broker secret, which the broker's
             // proxy attaches after IT authenticated the client.
@@ -284,8 +294,13 @@ public final class McpServerController implements ManagedServer {
         McpConfig.prefs().putString(McpConfig.KEY_OAUTH_STATE, json);
     }
 
+    /**
+     * This server's own MCP URL. The host is derived from the bind address of the last start
+     * (wildcard binds advertise loopback — locally always correct; remote clients substitute the
+     * machine's address); before any start it is the loopback default.
+     */
     public String getEndpointUrl() {
-        return "http://127.0.0.1:" + boundPort + "/mcp";
+        return "http://" + advertisedHost + ":" + boundPort + "/mcp";
     }
 
     /**

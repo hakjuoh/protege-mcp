@@ -33,6 +33,12 @@ public class OAuthMetadataServlet extends HttpServlet {
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        // Same-machine only, like /oauth/* itself: a remote client that cannot use the flow should
+        // not discover it either — its 401 handling then falls straight through to the static
+        // bearer token instead of dead-ending in a forbidden authorization attempt.
+        if (!OAuthSupport.requireLocal(req, resp, mapper)) {
+            return;
+        }
         String base = OAuthSupport.baseUrl(req);
         String uri = req.getRequestURI();
         Map<String, Object> doc = new LinkedHashMap<>();

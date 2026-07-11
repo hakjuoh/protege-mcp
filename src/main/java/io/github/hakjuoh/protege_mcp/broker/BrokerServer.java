@@ -75,15 +75,26 @@ public final class BrokerServer {
     }
 
     /**
+     * Bind the loopback default. See {@link #start(String, int)}.
+     */
+    public synchronized int start(int port) throws Exception {
+        return start(BrokerState.DEFAULT_HOST, port);
+    }
+
+    /**
      * Bind (strictly — no ephemeral fallback here; {@link BrokerMain} decides what a bind conflict
      * means for a singleton broker), publish {@code broker.json}, and start the maintenance loop.
      *
+     * @param bindAddress address to bind — the user's bind preference travels here via the
+     *     spawner's {@code --bind}; {@code broker.json} advertises its connect form so instances
+     *     and clients can reach a non-loopback or wildcard bind.
      * @return the bound port.
      */
-    public synchronized int start(int port) throws Exception {
+    public synchronized int start(String bindAddress, int port) throws Exception {
         OAuthStore oauthStore = new OAuthStore(registry::latestToken, this::readOauthState, this::writeOauthState);
 
         http = new EmbeddedHttpServer();
+        http.bindTo(bindAddress);
         // Same auth gate as a window server — OAuth access token or a static bearer token — except
         // the static check accepts ANY registered process's current token (regeneration propagates
         // per heartbeat). /internal is deliberately NOT behind it: its auth is the directory secret.
@@ -97,7 +108,9 @@ public final class BrokerServer {
                 "/internal/*", false);
 
         int bound = http.start(port);
-        identity = new BrokerState(ProcessHandle.current().pid(), bound, version, System.currentTimeMillis());
+        identity = new BrokerState(ProcessHandle.current().pid(),
+                EmbeddedHttpServer.connectHost(bindAddress), bound, version,
+                System.currentTimeMillis());
         home.writeState(identity);
 
         maintenance = Executors.newSingleThreadScheduledExecutor(r -> {

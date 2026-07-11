@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.ui;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.LocalDateTime;
@@ -126,43 +127,35 @@ class ServerViewTextTest {
         assertEquals(url, cmd.substring(prefix.length()));
     }
 
+    @Test
+    void connectCommandQuotesBracketedIpv6Urls() {
+        // zsh (macOS default) treats [::1] as a glob character class and aborts the pasted
+        // command with "no matches found" unless the URL is quoted.
+        assertEquals("claude mcp add --transport http protege \"http://[::1]:8123/mcp\"",
+                ServerViewText.connectCommand("http://[::1]:8123/mcp"));
+    }
+
     // ---- statusLine -----------------------------------------------------------------------------
 
     @Test
-    void statusLineRunningIsPlainRegardlessOfLatchAndError() {
-        // While running, neither the latch nor a previous error belongs in the status: a latch seen
-        // alongside running is the transient Stop-in-flight shape (latched first, stop about to
-        // land), and lastError describes why the server is NOT running.
-        assertEquals("MCP server: RUNNING", ServerViewText.statusLine(true, false, null));
-        assertEquals("MCP server: RUNNING", ServerViewText.statusLine(true, true, "old failure"));
+    void statusLineRunningIsPlainRegardlessOfError() {
+        // While running, a previous error does not belong in the status: lastError describes why
+        // the server is NOT running.
+        assertEquals("MCP server: RUNNING", ServerViewText.statusLine(true, null));
+        assertEquals("MCP server: RUNNING", ServerViewText.statusLine(true, "old failure"));
     }
 
     @Test
-    void statusLineStoppedIsPlainWithoutLatchOrError() {
-        assertEquals("MCP server: stopped", ServerViewText.statusLine(false, false, null));
-    }
-
-    @Test
-    void statusLineUserStoppedNamesTheLatchAndTheWayBack() {
-        String line = ServerViewText.statusLine(false, true, null);
-        assertTrue(line.contains("stopped by Stop"), "must attribute the stop to the user: " + line);
-        assertTrue(line.contains("Ontology Assistant will not restart it"),
-                "must say the chat respects the stop: " + line);
-        assertTrue(line.contains("press Start"), "must point at the way back: " + line);
+    void statusLineStoppedIsPlain() {
+        // A user-initiated stop reads exactly the same: no "by Stop" attribution, no lecture —
+        // the state is simply "stopped".
+        assertEquals("MCP server: stopped", ServerViewText.statusLine(false, null));
     }
 
     @Test
     void statusLineStoppedAppendsLastError() {
         assertEquals("MCP server: stopped  (last error: bind failed)",
-                ServerViewText.statusLine(false, false, "bind failed"));
-    }
-
-    @Test
-    void statusLineUserStoppedAndErrorShowsBoth() {
-        // Rare shape (Start cleared the latch is the normal path), but nothing may be swallowed.
-        String line = ServerViewText.statusLine(false, true, "bind failed");
-        assertTrue(line.contains("stopped by Stop"), line);
-        assertTrue(line.contains("(last error: bind failed)"), line);
+                ServerViewText.statusLine(false, "bind failed"));
     }
 
     // ---- connectionLine -------------------------------------------------------------------------
@@ -186,12 +179,24 @@ class ServerViewTextTest {
     }
 
     @Test
-    void connectionLineBrokerUnreachableSaysReconnectingAndStillServing() {
+    void connectionLineBrokerDownNamesTheOutageAndTheWayBack() {
         String line = ServerViewText.connectionLine(true, true, null, true, DIRECT, false, 0);
-        assertTrue(line.contains("UNREACHABLE"), "the outage must be unmissable: " + line);
-        assertTrue(line.contains("reconnecting automatically"),
-                "must say the self-healing needs no user action: " + line);
+        assertTrue(line.contains("Broker is down"), "the outage must be unmissable: " + line);
+        assertTrue(line.contains("press Start"), "must point at the relaunch action: " + line);
         assertTrue(line.contains(DIRECT), "must say this window keeps serving directly: " + line);
+    }
+
+    // ---- brokerDown -----------------------------------------------------------------------------
+
+    @Test
+    void brokerDownOnlyWhileRunningBrokerManagedWithoutAUrl() {
+        assertTrue(ServerViewText.brokerDown(true, true, null));
+        assertFalse(ServerViewText.brokerDown(true, true, "http://127.0.0.1:8123/mcp"),
+                "a reachable broker is not an outage");
+        assertFalse(ServerViewText.brokerDown(true, false, null),
+                "a standalone window has no broker to lose");
+        assertFalse(ServerViewText.brokerDown(false, true, null),
+                "a stopped window shows the plain stopped state, not a broker outage");
     }
 
     @Test

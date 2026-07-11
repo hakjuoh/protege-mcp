@@ -62,9 +62,15 @@ class OAuthServletTest {
         final Map<String, String> params = new LinkedHashMap<>();
         byte[] body = new byte[0];
         boolean throwOnGetInputStream = false;
+        String remoteAddr = "127.0.0.1";
 
         FakeRequest path(String p) {
             this.pathInfo = p;
+            return this;
+        }
+
+        FakeRequest from(String addr) {
+            this.remoteAddr = addr;
             return this;
         }
 
@@ -156,7 +162,7 @@ class OAuthServletTest {
         @Override public long getContentLengthLong() { throw new UnsupportedOperationException(); }
         @Override public String getContentType() { throw new UnsupportedOperationException(); }
         @Override public java.io.BufferedReader getReader() { throw new UnsupportedOperationException(); }
-        @Override public String getRemoteAddr() { throw new UnsupportedOperationException(); }
+        @Override public String getRemoteAddr() { return remoteAddr; }
         @Override public String getRemoteHost() { throw new UnsupportedOperationException(); }
         @Override public void setAttribute(String name, Object o) { throw new UnsupportedOperationException(); }
         @Override public void removeAttribute(String name) { throw new UnsupportedOperationException(); }
@@ -1144,5 +1150,70 @@ class OAuthServletTest {
         servlet(store).doPost(req, resp);
 
         assertTrue(resp.redirect.contains("code=mcpa_"), "generated auth code present in redirect");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Same-machine gate: the consent-less flow must not be drivable from another host
+    // ---------------------------------------------------------------------------------------------
+
+    /** 203.0.113.x (TEST-NET-3) is reserved for documentation — never a local interface address. */
+    private static final String REMOTE_ADDR = "203.0.113.9";
+
+    @Test
+    void remotePeerCannotRegister() throws IOException {
+        FakeRequest req = new FakeRequest().path("/register").from(REMOTE_ADDR)
+                .jsonBody("{\"redirect_uris\":[\"http://127.0.0.1/cb\"]}");
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doPost(req, resp);
+
+        assertEquals(403, resp.status);
+        assertTrue(resp.body().contains("access_denied"), resp.body());
+        assertTrue(resp.body().contains("static bearer token"),
+                "the 403 must point remote clients at the supported auth path: " + resp.body());
+    }
+
+    @Test
+    void remotePeerCannotDriveTheAuthorizeDecision() throws IOException {
+        // The Allow decision is bound to nothing but reachability, so a remote POST
+        // decision=allow would mint a code with zero user involvement — the exact hole the
+        // gate closes for non-loopback binds.
+        OAuthStore store = emptyStore();
+        OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
+        FakeRequest req = new FakeRequest().path("/authorize").from(REMOTE_ADDR)
+                .param("client_id", c.clientId)
+                .param("redirect_uri", "http://127.0.0.1/cb")
+                .param("decision", "allow")
+                .param("code_challenge", s256("v"));
+        FakeResponse resp = new FakeResponse();
+        servlet(store).doPost(req, resp);
+
+        assertEquals(403, resp.status);
+        assertNull(resp.redirect, "no authorization code may be minted for a remote peer");
+    }
+
+    @Test
+    void remotePeerCannotRenderTheConsentPage() throws IOException {
+        FakeRequest req = new FakeRequest().path("/authorize").from(REMOTE_ADDR);
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doGet(req, resp);
+        assertEquals(403, resp.status);
+    }
+
+    @Test
+    void ipv6LoopbackPeerPassesTheGate() throws IOException {
+        FakeRequest req = new FakeRequest().path("/register").from("::1")
+                .jsonBody("{\"redirect_uris\":[\"http://127.0.0.1/cb\"]}");
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doPost(req, resp);
+        assertEquals(201, resp.status, "IPv6 loopback is as local as 127.0.0.1: " + resp.body());
+    }
+
+    @Test
+    void unparseablePeerAddressFailsClosed() throws IOException {
+        FakeRequest req = new FakeRequest().path("/register").from("not-an-address")
+                .jsonBody("{\"redirect_uris\":[\"http://127.0.0.1/cb\"]}");
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doPost(req, resp);
+        assertEquals(403, resp.status);
     }
 }

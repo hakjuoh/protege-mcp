@@ -30,24 +30,26 @@ final class ServerViewText {
                 .toLocalDateTime().format(TS_FORMAT);
     }
 
-    /** The ready-to-paste {@code claude mcp add} command for a running server at {@code endpointUrl}. */
+    /**
+     * The ready-to-paste {@code claude mcp add} command for a running server at {@code endpointUrl}.
+     * A bracketed IPv6 URL is quoted: zsh (the macOS default shell) treats {@code [::1]} as a glob
+     * character class and kills the whole command with "no matches found" when left bare.
+     */
     static String connectCommand(String endpointUrl) {
-        return "claude mcp add --transport http protege " + endpointUrl;
+        String url = endpointUrl.indexOf('[') >= 0 ? "\"" + endpointUrl + "\"" : endpointUrl;
+        return "claude mcp add --transport http protege " + url;
     }
 
     /**
-     * First status line: the run state of this window's server. A user-initiated stop is named as
-     * such — including that the Ontology Assistant will respect it — so the state never looks like a
-     * failure; {@code lastError} (only ever shown while stopped) covers the actual failures.
+     * First status line: the run state of this window's server. A user-initiated stop is a normal
+     * state, not an event to attribute — it reads plainly as "stopped"; {@code lastError} (only ever
+     * shown while stopped) covers the actual failures.
      */
-    static String statusLine(boolean running, boolean userStopped, String lastError) {
+    static String statusLine(boolean running, String lastError) {
         if (running) {
             return "MCP server: RUNNING";
         }
         StringBuilder line = new StringBuilder("MCP server: stopped");
-        if (userStopped) {
-            line.append(" by Stop — the Ontology Assistant will not restart it; press Start to serve again");
-        }
         if (lastError != null) {
             line.append("  (last error: ").append(lastError).append(")");
         }
@@ -55,8 +57,18 @@ final class ServerViewText {
     }
 
     /**
+     * True when the heartbeat lost the shared broker while this window still serves as one of its
+     * backends: the view then swaps Stop for Start (Start relaunches the broker). {@code brokerUrl}
+     * is {@link io.github.hakjuoh.protege_mcp.broker.BrokerLink#brokerMcpUrl()} — null exactly while
+     * the broker is unreachable.
+     */
+    static boolean brokerDown(boolean running, boolean brokerManaged, String brokerUrl) {
+        return running && brokerManaged && brokerUrl == null;
+    }
+
+    /**
      * Second status line: how a running server is exposed — attached to the shared broker (healthy or
-     * reconnecting), or standalone. Empty when stopped. The broker states carry this window's direct
+     * down), or standalone. Empty when stopped. The broker states carry this window's direct
      * URL because the Endpoint URL field shows the broker's URL in that mode; the standalone state
      * doesn't repeat the URL (the field already shows it) but names the port fallback when one is in
      * effect.
@@ -69,8 +81,8 @@ final class ServerViewText {
         if (brokerManaged) {
             return brokerUrl != null
                     ? "Shared broker: connected — this window direct: " + directUrl
-                    : "Shared broker: UNREACHABLE, reconnecting automatically — this window still "
-                            + "serves at " + directUrl;
+                    : "Broker is down — press Start to relaunch it; this window still serves at "
+                            + directUrl;
         }
         String line = brokerPreferred
                 ? "Standalone (not attached to the shared broker)"

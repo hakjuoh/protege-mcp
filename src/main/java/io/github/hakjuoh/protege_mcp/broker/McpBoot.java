@@ -39,8 +39,8 @@ public final class McpBoot {
             return;
         }
         if (controller.isUserStopped()) {
-            throw new IllegalStateException("the MCP server in this window was stopped with its Stop "
-                    + "button — press Start in the MCP Server view to use the assistant again");
+            throw new IllegalStateException("the MCP server in this window is stopped — press Start "
+                    + "in the MCP Server view to use the assistant again");
         }
         if (McpConfig.load().isSharedBroker() && BrokerLink.get().attach(controller)) {
             return;

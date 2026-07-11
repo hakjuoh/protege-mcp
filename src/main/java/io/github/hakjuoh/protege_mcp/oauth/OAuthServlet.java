@@ -39,6 +39,9 @@ public class OAuthServlet extends HttpServlet {
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        if (!OAuthSupport.requireLocal(req, resp, mapper)) {
+            return;
+        }
         if ("/authorize".equals(req.getPathInfo())) {
             handleAuthorizeGet(req, resp);
         } else {
@@ -48,6 +51,9 @@ public class OAuthServlet extends HttpServlet {
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        if (!OAuthSupport.requireLocal(req, resp, mapper)) {
+            return;
+        }
         String path = req.getPathInfo();
         if ("/register".equals(path)) {
             handleRegister(req, resp);
