@@ -50,6 +50,80 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h3>Version information</h3>
 
+<h4>v0.5.0</h4>
+<ul>
+    <li>Shared MCP broker across Prot&#233;g&#233; windows and instances (default on; Settings &gt; MCP
+        toggle) &#8212; the configured port now belongs to a small broker process spawned on demand
+        from the plugin jar, so <b>one fixed URL (<code>http://127.0.0.1:8123/mcp</code>) works no
+        matter how many windows or instances are open</b>. Each MCP session stays pinned to one
+        window; <code>GET /instances</code> lists the registered windows and
+        <code>/instances/{id}/mcp</code> targets one explicitly. The broker exits by itself with the
+        last instance, stays loopback-only by default (see the bind-address preference below), is
+        kept a singleton by a cross-process file lock even when the configured port is ephemeral or
+        held by a foreign app, and the plugin degrades to the previous standalone behavior
+        automatically if the broker cannot be spawned or reached. The broker also runs from a staged
+        copy of the plugin jar (<code>~/.protege-mcp/jars/</code>), so plugin updates never collide
+        with a jar a live broker holds open.</li>
+    <li>New bind-address preference (Settings &gt; MCP; default <code>127.0.0.1</code>, presets
+        <code>::1</code> and <code>0.0.0.0</code>) for the client-facing server and broker; a red
+        warning appears for non-loopback addresses (plain HTTP on your network), and OAuth
+        authorization stays same-machine only whatever the bind &#8212; remote clients authenticate
+        with the static bearer token.</li>
+    <li>The MCP Server view now surfaces a broker outage as <code>Broker is down &#8212; press Start
+        to relaunch it</code> (Stop disables, Start relaunches the broker immediately); a stop made
+        with the Stop button stays stopped &#8212; no auto-start overrides it &#8212; and reads as a
+        plain <code>stopped</code>, never as an error.</li>
+    <li>A replacement broker no longer loses its takeover to the broker it just retired: a booting
+        broker keeps retrying the singleton lock while the old one finishes dying, and a stopping
+        broker releases the lock the moment it stops serving &#8212; previously the window could
+        fall back to a standalone server on the configured port and split later instances onto an
+        ephemeral broker.</li>
+    <li>The broker's idle linger is configurable (Settings &gt; MCP, "Broker idle linger (seconds)";
+        default 15, range 0&#8211;3600) &#8212; how long the broker outlives the last
+        Prot&#233;g&#233; instance so a quick restart reuses it and its port. A change reaches a
+        running broker within a heartbeat while a window is attached; <code>0</code> makes the
+        broker exit immediately with the last instance, so every quit-and-relaunch respawns it
+        (MCP clients briefly see connection errors during that gap).</li>
+    <li>Dead MCP client registrations clean themselves up &#8212; no more revoking rows by hand
+        after a client reconnects: a re-registered client's completed authorization drops the
+        same-name registrations it replaced, abandoned registrations disappear after an hour, and
+        clients silent for 60 days are removed with their tokens &#8212; in standalone mode and in
+        the shared broker alike. Refreshing a token whose client record is gone now fails closed,
+        so the client re-registers instead of looping on 401 errors.</li>
+    <li>The Ontology Assistant renders replies as Markdown (headings, lists, code, GFM tables;
+        <code>http(s)</code> links open in the browser after a confirmation naming the real
+        destination), and its "Show reasoning" toggle now actually streams the model's reasoning
+        (the CLIs only send it when asked; each turn now asks).</li>
+    <li>Assistant replies can be copied as their original Markdown (styled rendering is lossy, so
+        selecting and copying yields plain text): a copy button under each turn's closing reply puts
+        the untouched markup on the clipboard, and a right-click menu offers "Copy" and "Copy
+        message as Markdown" for any assistant message under the pointer.</li>
+    <li>Failed Ontology Assistant turns read cleaner: transcript error lines drop the
+        <code>[error]</code> prefix (the red styling already marks them), and the generic
+        <code>claude exited with code 1</code> line no longer repeats a failure the stream already
+        surfaced (e.g. a provider-side safeguard refusal) &#8212; it still appears when the CLI dies
+        without emitting its own error, where it is the only diagnostic.</li>
+    <li>A second Prot&#233;g&#233; window or instance no longer loses the MCP server &#8212; and with
+        it the Ontology Assistant &#8212; to <code>Failed to bind</code>: the server falls back to an
+        ephemeral port when the configured port is busy, re-claims the configured port once it frees
+        up, and concurrent live servers keep their OAuth / bearer-token state isolated (regenerating
+        the token invalidates it on every live server immediately).</li>
+    <li>Guided prompts 6 &#8594; 11: new <code>author_competency_question</code>,
+        <code>author_swrl_rule</code>, <code>refactor_entity_safely</code>,
+        <code>bootstrap_ontology</code>, and <code>release_readiness_check</code>; the existing six
+        are refreshed against the 0.4.x tool surface.</li>
+    <li>The competency-question annotation vocabulary (<code>cq#competencyQuestion</code>) is now
+        published at its namespace IRI (vocabulary page + machine-readable <code>cq.ttl</code>).</li>
+    <li>Long help texts under Preferences &gt; MCP and Preferences &gt; Ontology Assistant now wrap
+        instead of stretching the Preferences dialog into horizontal scrolling, and the Port /
+        CLI-path labels sit next to their fields instead of floating at the dialog's right edge.</li>
+    <li>Tool descriptions are ontology-neutral: the MCP tool and parameter text illustrates its
+        examples with neutral <code>ex:</code> / <code>example.org</code> placeholders instead of one
+        ontology family's vocabulary, and <code>deprecate_entity</code> documents its default "term
+        replaced by" property (<code>IAO_0100001</code>) as the de-facto OBO Foundry obsolescence
+        convention rather than a standard.</li>
+</ul>
+
 <h4>v0.4.3</h4>
 <ul>
     <li>Operational-safety and transparency patch &#8212; 65 &#8594; 66 tools. New

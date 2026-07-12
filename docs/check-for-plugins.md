@@ -23,7 +23,7 @@ the official registry with nothing to fill in:
   (`id` / `name` / `version` / `download` / `readme` / `author`), served from
   `https://raw.githubusercontent.com/hakjuoh/protege-mcp/main/update.properties`. Its `download` URL
   is the jar attached to the matching [GitHub Release](https://github.com/hakjuoh/protege-mcp/releases/latest)
-  (currently `v0.4.2`).
+  (currently `v0.5.0`).
 
 > This is **Distribution Path B** (how the jar is delivered), the counterpart to the manual-copy
 > [install](../README.md#install) (Distribution Path A). It is unrelated to **Architecture Approach B**
@@ -44,7 +44,7 @@ the official registry with nothing to fill in:
 2. **Discover it.** **File ▸ Check for plugins** → **"Protege MCP Server"** appears in the list
    (together with the official plugins, since this registry nests Protégé's default one).
 3. **Install it.** Select it and confirm. Protégé downloads the jar named in `update.properties`
-   (`download=…/releases/download/v<version>/protege-mcp-<version>.jar`, currently `v0.4.2`) straight
+   (`download=…/releases/download/v<version>/protege-mcp-<version>.jar`, currently `v0.5.0`) straight
    from the GitHub Release and drops it into your plugins directory.
 4. **Restart Protégé** on a **Java 17+** JVM (see [Requirements](../README.md#requirements)). On
    reload you get the **MCP Server** view and the **Settings ▸ MCP** tab.
@@ -52,14 +52,14 @@ the official registry with nothing to fill in:
 > **How the discovery chain is wired (all on GitHub).** The registry URL you paste serves
 > `protege-mcp.repository`; its single line points Protégé at the raw `update.properties` on `main`;
 > that descriptor's `download` points at the `protege-mcp-<version>.jar` asset on the matching
-> **GitHub Release** (currently the **v0.4.2 Release**).
+> **GitHub Release** (currently the **v0.5.0 Release**).
 > Registry list → update descriptor → release asset — three hops, all hosted by this repo, nothing
 > to host yourself.
 
 > If **Check for plugins** shows an **empty** list, the registry or `download` URL was unreachable:
 > an unresolvable URL is logged at `info` level and **silently skipped**, not shown as an error.
 > Confirm the registry URL above resolves (open it in a browser) and that the current Release asset
-> (e.g. the `v0.4.2` jar) exists.
+> (e.g. the `v0.5.0` jar) exists.
 
 ## Use your own fork
 

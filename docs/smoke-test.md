@@ -10,11 +10,11 @@ The unit tests (`mvn test`) cover the tool cores in isolation, and `ToolPipeline
 end-to-end **headlessly** (load → edit → validate → govern → diff → SPARQL) so a cross-tool regression
 fails in CI. What they cannot cover is the live stack: the OSGi bundle loading in a real Protégé, the
 HTTP/OAuth transport, the EDT marshalling, and a real reasoner. This checklist is the manual
-counterpart — run it against the built `v0.4.3` jar before publishing a release.
+counterpart — run it against the built `v0.5.0` jar before publishing a release.
 
 ## Setup
 
-1. `mvn clean package` and copy `target/protege-mcp-0.4.3.jar` into
+1. `mvn clean package` and copy `target/protege-mcp-0.5.0.jar` into
    `/Applications/Protégé.app/Contents/plugins/` (replace the older versioned jar — keep exactly one).
 2. Launch Protégé on a **Java 17+** JVM (`PROTEGE_JAVA_HOME`), open the **MCP Server** view, and
    **Start** the server. Note the bound URL and bearer token.
@@ -68,6 +68,16 @@ counterpart — run it against the built `v0.4.3` jar before publishing a releas
 | 31 | `run_reasoner` with **ELK** selected and a SWRL rule present | classification succeeds but the result carries `warning` (ELK silently ignores rules); `run_qc_suite`'s `reasoner` stage `findings_summary` shows the same `warning` without gating |
 | 32 | `explain_inconsistency` on a deliberately inconsistent scratch ontology (e.g. an individual asserted into two disjoint classes) | `inconsistent=true`, a small `justification` with `minimal=true`; **UI stays responsive** (search runs off-EDT over a private copy); `get_explanations`/`execute_dl_query` etc. over the same ontology return a pointed error naming `explain_inconsistency` |
 | 33 | `create_terms` `verify=rollback` with a term whose `parents` are two disjoint classes | `verify.regression=true`, `verify.rolled_back=true`, `newly_unsatisfiable` names the term; no terms remain (one undo entry reverted) |
+
+### 0.5.0 — shared broker / multi-window / multi-instance
+
+| # | Step | Expect |
+| --- | --- | --- |
+| 34 | Start the server, then open a **second window** and a **second Protégé instance** (macOS: `open -n -a Protégé`) | no `Failed to bind` in any window's log; a single broker `java` process is running (`pgrep -f broker.BrokerMain`; its log is `~/.protege-mcp/broker.log`) and every window registers with it |
+| 35 | Point an MCP client at `http://127.0.0.1:8123/mcp` (any registered window's bearer token works) | tools respond; the whole MCP session stays **pinned to one window** (`get_active_ontology` is stable across calls while other windows change ontologies) |
+| 36 | `GET http://127.0.0.1:8123/instances` (authenticated) | every registered window/instance is listed; `/instances/{id}/mcp` reaches the chosen one |
+| 37 | Quit the Protégé instances one by one, then check again after the **last** one exits | `pgrep -f broker.BrokerMain` finds nothing within ~20 s (the broker lingers briefly before self-exit) and port 8123 is free |
+| 38 | Kill the broker process while Protégé runs, then **Stop/Start** in the MCP Server view | a fresh broker is spawned (or the server degrades to standalone with the view showing the actual URL); the in-app Ontology Assistant keeps working throughout |
 
 Any step that errors, freezes the UI, or does not appear in Protégé's editor/undo stack is a release
 blocker — capture the JSON error and the Protégé log. Steps 16–18 must **never** undo an unrelated edit:

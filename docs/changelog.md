@@ -21,6 +21,219 @@ each section is also published as the body of its
 
 ---
 
+## [0.5.0] - 2026-07-12
+
+**One MCP endpoint, however many Protégés: a shared broker now owns the configured port and routes
+every MCP session to a live window, and the bind failure that silenced a second window's server —
+and its Ontology Assistant — is fixed underneath it. The guided prompt set nearly doubles (6 → 11)
+on a new prompts registry, the broker's idle linger is a preference, and the MCP client list now
+cleans up after reconnects by itself.** Tool count is unchanged at **66**.
+
+### Added
+- **Shared MCP broker across Protégé windows AND instances** (default on; Settings ▸ MCP toggle).
+  The configured port now belongs to a tiny standalone broker process (service id
+  `protege-mcp-broker`; a plain `java` process spawned on demand from the plugin's own jar) that outlives any single window: the first Protégé
+  process that finds no live broker starts one; every process registers with it and heartbeats;
+  when the last instance unregisters (or dies — the broker health-checks pids), the broker exits by
+  itself. Each window's MCP server runs on an ephemeral port behind the broker, so **one fixed URL
+  (`http://127.0.0.1:8123/mcp`) always works no matter how many Protégé windows or instances are
+  open** — no more per-instance URLs, no owner hand-off. Routing: a new MCP session goes to the
+  window most recently connected to the broker (with auto-start on, effectively the newest window)
+  and stays **pinned to it for the whole session**; `GET /instances` lists the registered windows
+  and `/instances/{id}/mcp` targets one explicitly. The broker terminates auth itself (the static
+  bearer token of any registered instance + full OAuth authorization server, persisted to
+  `~/.protege-mcp/oauth.json` — the view's Connected-clients table applies to standalone mode; a
+  broker-mode listing/revocation UI is a follow-up) and authenticates to each backend with a
+  per-window secret; its control plane (`/internal/*`) is guarded by an owner-only file secret, and
+  everything stays loopback-only unless the new bind-address preference says otherwise (the
+  per-window backends stay on loopback regardless). An idle broker left by a different plugin
+  version is retired and replaced automatically; long-lived SSE streams are kept honest with
+  keep-alive comments so a vanished client can't pin broker threads. A cross-process file lock
+  (`~/.protege-mcp/broker.lock`, held for the broker's life) keeps the broker a **singleton even
+  when the configured port is ephemeral (`0`) or held by a foreign app** — shapes where the port
+  bind itself can no longer arbitrate a spawn race — and a broker whose bind address turns out
+  unbindable (a stale LAN IP, `::1` with IPv6 off) exits with a one-line explanation instead of
+  crash-looping under the automatic respawns. If the broker cannot be spawned or reached, the
+  plugin degrades to the previous standalone behavior automatically (a half-attached window server
+  is stopped again, never left as an unreachable zombie). The in-app Ontology Assistant keeps
+  talking to its own window's server directly and is unaffected.
+- **The broker runs from a staged copy of the plugin jar**, so upgrading or removing the plugin no
+  longer collides with a broker still holding the old jar open. The plugin and MCP jars are copied
+  to `~/.protege-mcp/jars/<name>-<sha256/12>.jar` and the broker process is spawned from the copies,
+  never from Protégé's plugins directory — a JVM holds its classpath jars open, and a broker
+  outliving Protégé (linger/grace) would otherwise block replacing the plugin jar on Windows during
+  an update. Content-hash names make a rebuilt same-version jar a fresh copy and keep concurrent
+  spawns race-free; unused copies are swept (age-gated, best-effort) on later spawns; if staging
+  fails the broker falls back to the original jars and logs a warning.
+- **The Ontology Assistant renders replies as Markdown.** Assistant messages — which the CLIs return
+  as Markdown — now display styled instead of as raw markup: headings, bold/italic, inline code and
+  code blocks, bullet/numbered lists, block quotes, horizontal rules, GFM tables (monospace-aligned
+  columns), and links. `http(s)` links are clickable and open in the browser after a confirmation
+  dialog that shows the real destination (the link text is model-chosen); nothing else is ever
+  clickable. Rendering is live — the in-flight message re-renders as it streams, so a code fence or
+  `**` that closes late restyles the text it spans. User, tool, status, and reasoning lines are
+  unchanged, and a rendering failure falls back to plain text rather than losing the reply.
+- **Copy an assistant reply as its original Markdown.** Styled rendering is lossy — selecting and
+  copying transcript text yields plain text — so each finished assistant message now keeps its
+  original Markdown source: when a turn ends with assistant text (the usual case), a small copy
+  button under that closing reply puts the untouched markup on the clipboard (flipping to a check
+  mark as feedback), and a new right-click menu on the transcript offers "Copy" (the selection, as
+  displayed) and "Copy message as Markdown" for **any** assistant message under the pointer —
+  interim messages between tool calls, replies that a stray trailing tool/error line separated from
+  the turn's end, and partial replies of stopped turns included, though none of those get their own
+  button.
+- **5 new guided prompts — the MCP prompt set grows 6 → 11**: `author_competency_question`,
+  `author_swrl_rule`, `refactor_entity_safely`, `bootstrap_ontology`, and `release_readiness_check`;
+  the six existing prompts are refreshed against the 0.4.x tool surface (orient with context first,
+  preview destructive edits, apply with `verify=rollback`, diagnose with `explain_inconsistency`).
+  Internally, prompts moved out of the tools package into a dedicated `prompts` package mirroring
+  the tools registry pattern.
+- **The competency-question annotation vocabulary now dereferences.** An ontology annotated through
+  `add_competency_question`'s in-ontology convention points at
+  `https://hakjuoh.github.io/protege-mcp/cq#competencyQuestion`; that namespace now serves a
+  vocabulary page (with per-term anchors) plus a machine-readable `cq.ttl` instead of a 404.
+- **Bind-address preference** (Settings ▸ MCP; default `127.0.0.1`, presets `::1` and `0.0.0.0`,
+  any interface address accepted). The standalone window server and the shared broker bind the
+  chosen address; the broker-managed per-window backends always stay on loopback (they are
+  internal, reached only through the broker's proxy). Handed-out URLs always name a concrete host:
+  the address itself for loopback and specific binds (IPv6 literals are bracketed, and the copied
+  `claude mcp add` command quotes them — zsh would otherwise glob `[::1]`), and `127.0.0.1` for a
+  wildcard bind — on another machine, replace that host with this machine's address. A specific
+  non-IPv4-loopback bind (`::1`, a LAN IP) additionally aliases the same port on `127.0.0.1`, so
+  older plugin versions and long-standing loopback client configs keep reaching the same broker.
+  Choosing a non-loopback address shows a red warning in Preferences: the endpoint is then plain
+  unencrypted HTTP on your network. **OAuth authorization stays same-machine only** whatever the
+  bind address — the embedded flow's Allow decision is bound to nothing but reachability, so remote
+  peers get a 403 pointing them at the static bearer token instead of a consent-less token mint.
+- **The MCP Server view recovers a broker outage with one click.** While a broker-managed window's
+  heartbeat cannot reach the shared broker, the view says
+  `Broker is down — press Start to relaunch it; this window still serves at <direct URL>`:
+  Stop disables, Start enables, and Start relaunches the broker immediately (bypassing the
+  automatic retry throttle — if several instances press Start at once, one broker wins the bind
+  and the rest reconnect to it). The clients panel stops attributing clients to the dead broker
+  during the outage: a client that connects (and OAuth-registers) directly to the window is
+  visible and revocable there.
+- **The broker's idle linger is configurable** (Settings ▸ MCP, "Broker idle linger (seconds)";
+  default 15, range 0–3600). After the last Protégé instance disconnects, the broker keeps running
+  this many seconds so a quick restart — or a second instance arriving moments later — reuses the
+  live broker and its port instead of paying a respawn. A change reaches a running broker with the
+  next heartbeat (a few seconds) while a window is attached to it — no broker restart needed — and
+  is also handed to a freshly spawned broker on its command line. `0` makes the broker exit the
+  moment the last instance disconnects: every quit-and-relaunch then spawns a fresh broker, MCP
+  clients briefly see connection errors during that gap, and a relaunch racing the dying broker's
+  lock handover can delay startup by a few seconds.
+- **Dead MCP client registrations clean themselves up** — no more revoking rows by hand after a
+  client reconnects. An MCP client that lost or discarded its credentials re-registers under the
+  same name with a fresh `client_id`; once that new registration completes authorization, the
+  registrations it replaced are dropped together with their tokens. A same-name client seen since
+  the newcomer registered is demonstrably alive and kept, and one mid-authorization (pending code)
+  is never touched. Two background sweeps handle the rest: registrations that never finished
+  authorizing disappear after an hour of inactivity (viewing the consent page counts as activity),
+  and a client silent for 60 days is removed tokens and all — it would have to re-authorize anyway.
+  The cleanup clocks restart on every plugin/broker start, so a stale persisted "last seen" can
+  never trigger an early reap. Applies in standalone mode (the Connected-clients table) and inside
+  the shared broker (`~/.protege-mcp/oauth.json`) alike. Alongside: refreshing a token whose client
+  record is gone now fails closed with `invalid_grant` (the client re-registers instead of looping
+  on 401s), and a brand-new registration can no longer evict itself when the persisted client store
+  hits its size cap.
+
+### Changed
+- **Tool descriptions are ontology-neutral.** The MCP tool and parameter descriptions no longer use
+  one ontology family's vocabulary in their examples: `set_prefix` and `sparql_schema` illustrate
+  prefixes and CURIEs with neutral `ex:` / `example.org` placeholders, and `create_term`,
+  `validate_ontology`, and `deprecate_entity` no longer name a specific family's definition or
+  replacement property. `deprecate_entity` now documents its default "term replaced by" property
+  (`IAO_0100001`) as the de-facto OBO Foundry obsolescence convention rather than a standard, noting
+  `dcterms:isReplacedBy` as a vocabulary-neutral alternative. Descriptions also no longer hard-code the
+  current version: `add_competency_question`'s `query_lang` parameter (and its rejection message) states
+  the "only `sparql`" constraint version-neutrally instead of naming a release.
+
+### Fixed
+- **Provider and model switches no longer silently lose the Ontology Assistant conversation.** The
+  transcript stays as one continuous conversation while Claude and Codex retain independent native
+  CLI session IDs. Switching back resumes that provider's original session and hands it only the
+  user/assistant turns produced while it was inactive (bounded to the newest 64k characters for an
+  unusually large handoff); changing models continues the same provider session, and reselecting the
+  active model is a no-op. **New chat** clears the shared transcript and every provider session. The
+  provider picker reports whether it will resume or join, while the long first-send egress modal has
+  been removed; the same privacy details remain non-blocking in Settings and the manual.
+- **The broker's file-backed OAuth registry no longer evicts active clients at the standalone
+  preference store's 8k limit.** The shared broker persists OAuth state in
+  `~/.protege-mcp/oauth.json`, which has no `java.util.prefs` single-value ceiling; it now keeps the
+  complete active registry while standalone configured-port servers retain the defensive 8k cap.
+- **A failed MCP session DELETE no longer breaks the session's broker route.** Session pins are
+  removed only after the backend accepts the close with a 2xx response, so a transient 4xx/5xx can
+  be retried against the same Protégé window instead of turning every follow-up into
+  `session_window_closed`.
+- **"Show reasoning" is fixed for the duration of each turn.** The checkbox already selected the
+  CLI reasoning mode only when a message started; transcript filtering now uses that same snapshot,
+  so changing the option mid-stream applies to the next message without dropping the current
+  reasoning tail.
+- **The Ontology Assistant's "Show reasoning" toggle now actually shows reasoning.** Current CLIs
+  send no reasoning text unless explicitly asked — the claude CLI ships an empty thinking block in
+  its stream output (Claude 5-era models default their thinking display to "omitted"), and codex
+  emits no reasoning items at all — so the checkbox filtered a stream that never contained anything.
+  With the box ticked, each turn now opts in on the CLI side (claude: `--thinking-display
+  summarized`; codex: `model_reasoning_summary="detailed"`), and reasoning streams into the
+  transcript in gray italics from the next message. Alongside: reasoning gets its own line instead
+  of gluing onto the reply, codex reasoning summaries shaped as a list of parts are read instead of
+  silently dropped, the checkbox gained a tooltip, and the manual's description of the toggle
+  (previously "Show thinking", listed under Settings) now matches the real name and location.
+- **A second Protégé window or instance no longer loses the MCP server — and with it the Ontology
+  Assistant — to `Failed to bind to /127.0.0.1:<port>`.** The MCP server is per-window but the
+  configured port is process-exclusive, so any window that wasn't the port owner (a second window's
+  chat lazily starting its server, or every window of a second Protégé process) died on the bind and
+  the chat reported *"Could not start Claude: Failed to bind …"*. The server now **falls back to an
+  ephemeral port when the configured port is already in use**: the chat always talks to its own
+  window's actual port, the **MCP Server** view shows the actual URL plus a "configured port busy"
+  note, and the log records a warning instead of a bind error. The configured port is re-claimed by
+  the same Protégé instance once it frees up: on window close an idle window is promoted, and a newly
+  opened window no longer defers to a fallback-bound server — while a live fallback server itself is
+  never restarted out from under an active chat session. (If the port was held by a second Protégé
+  instance that has since quit, the re-claim likewise happens on this instance's next window
+  open/close — or immediately via Stop/Start in the **MCP Server** view.) Because two servers can now
+  be live at once, their shared security state is isolated: a fallback-port server starts with an
+  **empty OAuth client registry** (it never hydrates the user-global persisted blob, so a client
+  revoked in the owner window cannot keep authenticating against it) and never persists
+  registrations, and the static **bearer token is read live from preferences**, so *Regenerate token*
+  in any window immediately invalidates the old token on every live server in the process.
+- **A server stopped with the MCP Server view's Stop button stays stopped.** An explicit Stop could
+  previously be silently undone by an auto-start — the chat's lazy start, a broker-attach failover
+  to a standalone start, or the close-time promotion that re-claims the configured port — so the
+  server (and the Ontology Assistant with it) came back on its own. A stop now **latches** until you
+  press Start: every auto-start path refuses a latched server (the refusal is enforced under the same
+  lock `stop()` takes, so a Stop racing a start wins), and only Start clears the latch. The state
+  reads as the plain fact it is — the view says `stopped`, the assistant says
+  `The MCP server in this window is stopped. Press Start in the MCP Server view…` — never as an
+  error, and never with the stop narrated back at you.
+- **Long help texts in Preferences no longer stretch the dialog into horizontal scrolling, and
+  field labels stay next to their fields.** The shared-broker note under Preferences ▸ MCP (and the
+  CLI and privacy notes under Preferences ▸ Ontology Assistant) rendered as one unwrapped line,
+  forcing a horizontal scrollbar on the whole Preferences window; help texts now soft-wrap to the
+  width of the controls above them. The labelled rows on the same tabs (`Port:`, the claude/codex
+  path fields) put the label and its field at opposite ends of one stretched grid cell, so each
+  label floated at the far right edge of the dialog; those rows are now composed left-aligned,
+  label first.
+- **A replacement shared broker no longer loses its takeover to the broker it just retired.** A
+  stopping broker — an idle broker from another plugin version asked to retire, or one exiting on
+  its own — stops answering probes and removes `broker.json` before its process actually dies, but
+  kept the `broker.lock` file lock to the very end; the replacement tried the lock exactly once,
+  found nothing left to defer to, and gave up. The spawning window then fell back to a standalone
+  server on the configured port permanently, and every instance launched afterwards put its broker
+  on an ephemeral port (`configured port … is held by a foreign process`) — clients of the fixed
+  URL were split away from all newer windows. Both ends of the handover are fixed: a booting broker
+  now keeps retrying the lock while it polls for a discoverable sibling (a genuinely wedged holder
+  still ends in the safe give-up, never a second serving broker), and a stopping broker releases
+  its lock the moment it stops serving instead of at process death.
+- **Failed Ontology Assistant turns read cleaner.** Transcript error lines drop the literal
+  `[error]` prefix (the red error styling already marks them — attachment and link failures
+  included), and the generic `claude exited with code 1` line no longer repeats a failure the
+  stream already surfaced, such as a provider-side safeguard/policy refusal shown verbatim. The
+  exit line still appears when the CLI dies without emitting its own error (an unknown option,
+  not logged in), where the exit code and stderr tail are the only diagnostic — including the
+  hint that names the "Show reasoning" checkbox on an older CLI. Applies to both the claude and
+  codex providers.
+
 ## [0.4.3] - 2026-07-08
 
 **Operational-safety and transparency patch on top of the 0.4.2 reliability release: destructive

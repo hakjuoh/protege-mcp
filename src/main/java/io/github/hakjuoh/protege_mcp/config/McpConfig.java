@@ -53,14 +53,6 @@ public final class McpConfig {
     public static final String KEY_CHAT_CLAUDE_PATH = "chatClaudePath";
     /** Optional absolute path / dir override when the {@code codex} CLI is not on the GUI's PATH. */
     public static final String KEY_CHAT_CODEX_PATH = "chatCodexPath";
-    /** Whether the user has acknowledged the one-time chat egress disclosure. */
-    public static final String KEY_CHAT_CONSENTED = "chatEgressConsented";
-    /**
-     * Re-versioned egress consent. The disclosure's scope materially changed (it now covers attachments and
-     * pasted content sent to the provider), so a new key forces existing users to acknowledge once more rather
-     * than silently inheriting consent for something they were never told about.
-     */
-    public static final String KEY_CHAT_CONSENTED_V2 = "chatEgressConsentedV2";
     /** Whether the chat should show the model's reasoning ("thinking") in the transcript. */
     public static final String KEY_CHAT_SHOW_THINKING = "chatShowThinking";
 

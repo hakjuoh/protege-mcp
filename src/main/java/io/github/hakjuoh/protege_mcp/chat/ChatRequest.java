@@ -18,22 +18,29 @@ import java.util.Set;
  *        their thinking display to "omitted"; Codex defaults its summary off), so each provider
  *        adds its opt-in flag only when this is set — display-side filtering alone would never
  *        see any reasoning.
+ * @param handoffContext provider-neutral conversation turns this CLI session has not seen
  */
 public record ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
-        List<ChatAttachment> attachments, boolean showReasoning) {
+        List<ChatAttachment> attachments, boolean showReasoning, String handoffContext) {
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint) {
-        this(model, prompt, sessionId, endpoint, List.of(), false);
+        this(model, prompt, sessionId, endpoint, List.of(), false, "");
     }
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
             List<ChatAttachment> attachments) {
-        this(model, prompt, sessionId, endpoint, attachments, false);
+        this(model, prompt, sessionId, endpoint, attachments, false, "");
+    }
+
+    public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
+            List<ChatAttachment> attachments, boolean showReasoning) {
+        this(model, prompt, sessionId, endpoint, attachments, showReasoning, "");
     }
 
     public ChatRequest {
         prompt = prompt == null ? "" : prompt;
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
+        handoffContext = handoffContext == null ? "" : handoffContext;
     }
 
     /**
@@ -42,10 +49,17 @@ public record ChatRequest(String model, String prompt, String sessionId, McpEndp
      * placeholders it sees in the user's message.
      */
     public String providerPrompt() {
-        if (attachments.isEmpty()) {
+        if (attachments.isEmpty() && handoffContext.isBlank()) {
             return prompt;
         }
-        StringBuilder sb = new StringBuilder(prompt);
+        StringBuilder sb = new StringBuilder();
+        if (!handoffContext.isBlank()) {
+            sb.append(handoffContext).append("\n\n");
+        }
+        sb.append(prompt);
+        if (attachments.isEmpty()) {
+            return sb.toString();
+        }
         sb.append("\n\nAttached context follows. The user's message above may refer to these placeholders; ")
                 .append("use the full pasted text or local file paths below when answering.\n");
         for (ChatAttachment a : attachments) {

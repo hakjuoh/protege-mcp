@@ -39,6 +39,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.List;
+import java.util.Objects;
 
 import javax.imageio.ImageIO;
 import javax.swing.Action;
@@ -76,6 +77,7 @@ import io.github.hakjuoh.protege_mcp.chat.AssistantSegment;
 import io.github.hakjuoh.protege_mcp.chat.AttachmentFileManager;
 import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
 import io.github.hakjuoh.protege_mcp.chat.ChatComposer;
+import io.github.hakjuoh.protege_mcp.chat.ChatHistory;
 import io.github.hakjuoh.protege_mcp.chat.ChatModels;
 import io.github.hakjuoh.protege_mcp.chat.CliSupport;
 import io.github.hakjuoh.protege_mcp.chat.ChatListener;
@@ -152,6 +154,11 @@ public class ChatView extends AbstractOWLViewComponent {
     private JPanel providerBar;
 
     private ChatProvider currentProvider;
+    /** One visible conversation; each native CLI session tracks how far through it it has seen. */
+    private final ChatHistory conversationHistory = new ChatHistory();
+    private String activeModel;
+    /** Model items are rebuilt programmatically during provider changes; those events are not user changes. */
+    private boolean suppressModelEvents;
 
     private volatile ChatProcess currentProcess;
     private volatile String sessionId;
@@ -180,6 +187,9 @@ public class ChatView extends AbstractOWLViewComponent {
     private boolean turnStopped;
     /** Reasoning visibility snapshotted with the provider flags at the start of the active turn. */
     private boolean showReasoningForTurn;
+    /** Provider and assistant text captured for the turn currently in flight. */
+    private String activeTurnProviderId;
+    private final StringBuilder activeTurnAssistant = new StringBuilder();
 
     private long turnStartMillis;
 
@@ -243,7 +253,7 @@ public class ChatView extends AbstractOWLViewComponent {
         if (!available.isEmpty()) {
             String savedProvider = McpConfig.prefs().getString(McpConfig.KEY_CHAT_PROVIDER, "");
             providerCombo = new JComboBox<>();
-            providerCombo.setToolTipText("Provider");
+            providerCombo.setToolTipText("Provider (switching keeps this conversation and hands off new turns)");
             providerCombo.setRenderer(new DefaultListCellRenderer() {
                 private static final long serialVersionUID = 1L;
 
@@ -284,6 +294,7 @@ public class ChatView extends AbstractOWLViewComponent {
         modelCombo.addActionListener(e -> onModelChanged());
         if (currentProvider != null) {
             populateModels(currentProvider);
+            activeModel = selectedModel();
         }
         Dimension mc = modelCombo.getPreferredSize();
         modelCombo.setPreferredSize(new Dimension(132, mc.height));
@@ -869,26 +880,43 @@ public class ChatView extends AbstractOWLViewComponent {
         currentProvider = p;
         McpConfig.prefs().putString(McpConfig.KEY_CHAT_PROVIDER, p.id());
         populateModels(p);
-        startNewConversation(false);
-        append(Kind.SYSTEM, "Provider: " + p.displayName() + ".\n");
+        activeModel = selectedModel();
+        sessionId = conversationHistory.sessionId(p.id());
+        append(Kind.SYSTEM, "Provider: " + p.displayName()
+                + (sessionId != null && !sessionId.isBlank()
+                        ? " — its CLI session will resume; missed turns will be handed off.\n"
+                        : " — joining the shared conversation; prior turns will be handed off.\n"));
     }
 
     private void populateModels(ChatProvider p) {
-        modelCombo.removeAllItems();
-        for (String m : p.listModels()) {
-            modelCombo.addItem(m.isEmpty() ? MODEL_DEFAULT_LABEL : m);
+        boolean previousSuppression = suppressModelEvents;
+        suppressModelEvents = true;
+        try {
+            modelCombo.removeAllItems();
+            for (String m : p.listModels()) {
+                modelCombo.addItem(m.isEmpty() ? MODEL_DEFAULT_LABEL : m);
+            }
+            String saved = McpConfig.prefs().getString(modelPrefKey(p), "");
+            modelCombo.setSelectedItem(saved.isEmpty() ? MODEL_DEFAULT_LABEL : saved);
+        } finally {
+            suppressModelEvents = previousSuppression;
         }
-        String saved = McpConfig.prefs().getString(modelPrefKey(p), "");
-        modelCombo.setSelectedItem(saved.isEmpty() ? MODEL_DEFAULT_LABEL : saved);
     }
 
     private void onModelChanged() {
-        if (currentProvider == null) {
+        if (suppressModelEvents || currentProvider == null) {
             return;
         }
-        McpConfig.prefs().putString(modelPrefKey(currentProvider), selectedModel());
-        // A model switch starts a fresh provider session (caches/threads are per model).
-        sessionId = null;
+        String selected = selectedModel();
+        if (Objects.equals(activeModel, selected)) {
+            return;   // JComboBox may fire even when the already-selected item is chosen again.
+        }
+        activeModel = selected;
+        McpConfig.prefs().putString(modelPrefKey(currentProvider), selected);
+        append(Kind.SYSTEM, "Model: " + (selected.isEmpty() ? MODEL_DEFAULT_LABEL : selected)
+                + (sessionId == null || sessionId.isBlank()
+                        ? ".\n"
+                        : " — continuing this provider's conversation.\n"));
     }
 
     private static String modelPrefKey(ChatProvider p) {
@@ -906,6 +934,7 @@ public class ChatView extends AbstractOWLViewComponent {
         if (currentProcess != null && currentProcess.isAlive()) {
             return;
         }
+        conversationHistory.clear();
         sessionId = null;
         if (clearTranscript) {
             transcript.setText("");
@@ -913,6 +942,7 @@ public class ChatView extends AbstractOWLViewComponent {
             atTurnStartOfLine = true;
             lastRenderedKind = null;
             liveUsage = null;
+            lastUsage = null;
             usageLabel.setText(" ");
             pendingAttachments.clear();
             attachGeneration++;   // invalidate any in-flight clipboard-image worker for the old conversation
@@ -921,6 +951,10 @@ public class ChatView extends AbstractOWLViewComponent {
             nextImageIndex = 1;
             nextFileIndex = 1;
             showIntro();
+            if (currentProvider != null) {
+                append(Kind.SYSTEM, "Provider: " + currentProvider.displayName()
+                        + " — new shared conversation.\n");
+            }
         }
     }
 
@@ -937,9 +971,6 @@ public class ChatView extends AbstractOWLViewComponent {
         }
         if (currentProvider == null) {
             append(Kind.ERROR, "Select a provider first.\n");
-            return;
-        }
-        if (!confirmEgress()) {
             return;
         }
         McpServerController controller = controller();
@@ -967,6 +998,9 @@ public class ChatView extends AbstractOWLViewComponent {
         }
         pendingAttachments.clear();
         inFlightAttachments = turnAttachments;
+        String providerId = currentProvider.id();
+        String handoffContext = conversationHistory.handoffFor(providerId);
+        conversationHistory.addUser(providerId, prompt);
         if (!atTurnStartOfLine) {
             append(Kind.SYSTEM, "\n");
         }
@@ -983,6 +1017,8 @@ public class ChatView extends AbstractOWLViewComponent {
         currentProcess = null;
         final int turn = ++turnSeq;   // identifies this turn so a late handle-publish can't bleed across turns
         activeTurn = turn;
+        activeTurnProviderId = providerId;
+        activeTurnAssistant.setLength(0);
         cancelRequested = false;
         turnStopped = false;
         usageLabel.setText("tokens: …");
@@ -993,7 +1029,7 @@ public class ChatView extends AbstractOWLViewComponent {
 
         ChatProvider provider = currentProvider;
         String model = selectedModel();
-        String resume = sessionId;
+        String resume = conversationHistory.sessionId(providerId);
         // Read the toggle here, on the EDT: the providers add their CLI-side opt-in flag from it
         // (no CLI sends reasoning text unless asked), so it snapshots per turn like the model does.
         boolean reasoningOn = showThinking != null && showThinking.isSelected();
@@ -1007,8 +1043,8 @@ public class ChatView extends AbstractOWLViewComponent {
                 io.github.hakjuoh.protege_mcp.broker.McpBoot.ensureStarted(controller);
                 McpEndpoint endpoint = new McpEndpoint(controller.getEndpointUrl(), controller.getToken());
                 ChatRequest req = new ChatRequest(model, prompt, resume, endpoint, turnAttachments,
-                        reasoningOn);
-                ChatProcess proc = provider.startTurn(req, uiListener());
+                        reasoningOn, handoffContext);
+                ChatProcess proc = provider.startTurn(req, uiListener(providerId));
                 // Publish on the EDT: if this turn already finalized (a fast turn) or the user hit Stop during
                 // the launch window, publishProcess cancels the freshly-spawned process instead of leaking it.
                 SwingUtilities.invokeLater(() -> publishProcess(turn, proc));
@@ -1054,27 +1090,6 @@ public class ChatView extends AbstractOWLViewComponent {
         }
     }
 
-    private boolean confirmEgress() {
-        if (McpConfig.prefs().getBoolean(McpConfig.KEY_CHAT_CONSENTED_V2, false)) {
-            return true;
-        }
-        int choice = JOptionPane.showConfirmDialog(this,
-                "The chat runs your local '" + currentProvider.id() + "' CLI, which sends your prompts, any "
-                        + "attachments or pasted content you include, and the ontology content the assistant "
-                        + "reads (entity names, labels, axioms) to the model provider.\n\nAttached files and "
-                        + "images are made available to the CLI; for Claude, it is granted read access to a "
-                        + "per-attachment temporary copy of each one.\n\nProtégé stores no API key — the CLI "
-                        + "uses your existing login. Edits still obey the MCP server's read-only / confirm-write "
-                        + "settings.\n\nContinue?",
-                "Chat sends data to your model provider", JOptionPane.OK_CANCEL_OPTION,
-                JOptionPane.INFORMATION_MESSAGE);
-        if (choice == JOptionPane.OK_OPTION) {
-            McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_CONSENTED_V2, true);
-            return true;
-        }
-        return false;
-    }
-
     // ------------------------------------------------------------------ working indicator (EDT timer)
 
     private void startWorking() {
@@ -1101,14 +1116,22 @@ public class ChatView extends AbstractOWLViewComponent {
     // ------------------------------------------------------------------ streaming listener (off-EDT)
 
     private ChatListener uiListener() {
+        return uiListener(currentProvider == null ? "" : currentProvider.id());
+    }
+
+    private ChatListener uiListener(String providerId) {
         return new ChatListener() {
             @Override
             public void onSessionId(String id) {
-                sessionId = id;
+                conversationHistory.setSessionId(providerId, id);
+                if (currentProvider == null || providerId.equals(currentProvider.id())) {
+                    sessionId = id;
+                }
             }
 
             @Override
             public void onAssistantText(String text) {
+                activeTurnAssistant.append(text);
                 enqueue(Kind.ASSISTANT, text);
             }
 
@@ -1210,6 +1233,12 @@ public class ChatView extends AbstractOWLViewComponent {
         // unless the user stopped the turn: deltas drained past the [stopped] marker are a tail
         // fragment, not "the reply", so they stay button-less (still right-click copyable).
         closeAssistantSegment(!turnStopped);
+        if (exit == 0 && !turnStopped && activeTurnProviderId != null) {
+            conversationHistory.addAssistant(activeTurnProviderId, activeTurnAssistant.toString());
+            conversationHistory.markSynced(activeTurnProviderId);
+        }
+        activeTurnProviderId = null;
+        activeTurnAssistant.setLength(0);
         currentProcess = null;
         activeTurn = 0;
         cancelRequested = false;
@@ -1593,8 +1622,8 @@ public class ChatView extends AbstractOWLViewComponent {
 
     private void refreshStatus() {
         McpServerController c = controller();
-        // Kept compact: the strip now shares the composer's bottom row with the Provider/Model pickers. The
-        // egress note lives in the one-time consent banner + Preferences, so it isn't repeated here.
+        // Kept compact: the strip now shares the composer's bottom row with the Provider/Model pickers.
+        // Provider data-egress details live in Preferences and the manual rather than a blocking dialog.
         String server;
         if (c == null) {
             server = "server: n/a";

@@ -103,15 +103,7 @@ class McpConfigTest {
         assertEquals("chatModelCodex", McpConfig.KEY_CHAT_MODEL_CODEX);
         assertEquals("chatClaudePath", McpConfig.KEY_CHAT_CLAUDE_PATH);
         assertEquals("chatCodexPath", McpConfig.KEY_CHAT_CODEX_PATH);
-        assertEquals("chatEgressConsented", McpConfig.KEY_CHAT_CONSENTED);
-        assertEquals("chatEgressConsentedV2", McpConfig.KEY_CHAT_CONSENTED_V2);
         assertEquals("chatShowThinking", McpConfig.KEY_CHAT_SHOW_THINKING);
-    }
-
-    @Test
-    void consentV2KeyDiffersFromV1() {
-        assertNotEquals(McpConfig.KEY_CHAT_CONSENTED, McpConfig.KEY_CHAT_CONSENTED_V2,
-                "the re-versioned consent key must differ so users must re-acknowledge");
     }
 
     // ---- prefs() --------------------------------------------------------------------------------

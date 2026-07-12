@@ -2,9 +2,7 @@ package io.github.hakjuoh.protege_mcp.ui;
 
 import java.awt.BorderLayout;
 
-import javax.swing.JButton;
 import javax.swing.JLabel;
-import javax.swing.JPanel;
 import javax.swing.JTextField;
 
 import org.protege.editor.core.prefs.Preferences;
@@ -18,8 +16,8 @@ import io.github.hakjuoh.protege_mcp.config.McpConfig;
 /**
  * Preferences for the in-Protégé chat (Architecture Approach B): optional CLI path overrides (a
  * Finder/Dock-launched Protégé often has a minimal {@code PATH}, so {@code claude}/{@code codex} may
- * not auto-resolve) and a reset for the one-time egress consent. There is deliberately no API-key
- * field — each CLI uses the user's existing login.
+ * not auto-resolve) and a non-blocking privacy disclosure. There is deliberately no API-key field —
+ * each CLI uses the user's existing login.
  */
 public class ChatPreferencesPanel extends PreferencesPanel {
 
@@ -60,18 +58,9 @@ public class ChatPreferencesPanel extends PreferencesPanel {
         panel.addGroup("Privacy");
         panel.addHelpText(PreferencesText.wrapped(
                 "The chat sends your prompts, any attachments or pasted content you include, and the "
-                + "ontology content the assistant reads to your model provider via the CLI. Edits obey the MCP "
+                + "ontology content the assistant reads to your model provider via the CLI. Switching providers "
+                + "also sends the conversation turns the newly active provider missed. Edits obey the MCP "
                 + "server's read-only / confirm-write settings (Preferences ▸ MCP)."));
-        JButton resetConsent = new JButton("Reset egress consent prompt");
-        resetConsent.addActionListener(e -> {
-            McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_CONSENTED, false);
-            McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_CONSENTED_V2, false);
-            resetConsent.setText("Egress consent will be asked again");
-            resetConsent.setEnabled(false);
-        });
-        JPanel resetRow = new JPanel(new BorderLayout());
-        resetRow.add(resetConsent, BorderLayout.WEST);
-        panel.addGroupComponent(resetRow);
 
         add(panel, BorderLayout.NORTH);
         refreshDetection();

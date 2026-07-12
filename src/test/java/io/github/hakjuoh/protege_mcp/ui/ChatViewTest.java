@@ -85,6 +85,8 @@ class ChatViewTest {
         ChatView v = bareInstance();
         setField(v, "queue", new ArrayDeque<>());
         setField(v, "pendingAttachments", new ArrayList<ChatAttachment>());
+        setField(v, "conversationHistory", new io.github.hakjuoh.protege_mcp.chat.ChatHistory());
+        setField(v, "activeTurnAssistant", new StringBuilder());
         return v;
     }
 
@@ -559,6 +561,43 @@ class ChatViewTest {
         Method k = chunk.getClass().getDeclaredMethod("kind");
         k.setAccessible(true);
         return k.invoke(chunk).toString();
+    }
+
+    // ------------------------------------------------------------------ model-switch session continuity
+
+    @Test
+    void reselectingTheActiveModelDoesNotResetItsSession() throws Exception {
+        ChatView v = bareInstance();
+        javax.swing.JComboBox<String> models = new javax.swing.JComboBox<>(new String[] { "gpt-5.4" });
+        setField(v, "currentProvider", provider("codex"));
+        setField(v, "modelCombo", models);
+        setField(v, "activeModel", "gpt-5.4");
+        setField(v, "sessionId", "keep-me");
+
+        Method changed = ChatView.class.getDeclaredMethod("onModelChanged");
+        changed.setAccessible(true);
+        changed.invoke(v);
+
+        assertEquals("keep-me", getField(v, "sessionId"));
+        assertEquals("gpt-5.4", getField(v, "activeModel"));
+    }
+
+    @Test
+    void programmaticModelPopulationIsNotTreatedAsAUserSwitch() throws Exception {
+        ChatView v = bareInstance();
+        javax.swing.JComboBox<String> models = new javax.swing.JComboBox<>(new String[] { "sonnet" });
+        setField(v, "currentProvider", provider("claude"));
+        setField(v, "modelCombo", models);
+        setField(v, "activeModel", "opus");
+        setField(v, "sessionId", "keep-me-too");
+        setField(v, "suppressModelEvents", true);
+
+        Method changed = ChatView.class.getDeclaredMethod("onModelChanged");
+        changed.setAccessible(true);
+        changed.invoke(v);
+
+        assertEquals("keep-me-too", getField(v, "sessionId"));
+        assertEquals("opus", getField(v, "activeModel"));
     }
 
     // ------------------------------------------------------------------ activeAttachments

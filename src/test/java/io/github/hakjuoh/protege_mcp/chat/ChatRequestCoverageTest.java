@@ -128,6 +128,21 @@ class ChatRequestCoverageTest {
     }
 
     @Test
+    void providerPromptPlacesHiddenHandoffBeforeTheVisiblePrompt() {
+        ChatRequest req = new ChatRequest("m", "new question", "s", ENDPOINT, List.of(), false,
+                "missing cross-provider turns");
+        assertEquals("missing cross-provider turns\n\nnew question", req.providerPrompt());
+        assertEquals("new question", req.prompt(), "the visible prompt remains unchanged");
+    }
+
+    @Test
+    void nullHandoffNormalizesToEmpty() {
+        ChatRequest req = new ChatRequest("m", "question", "s", ENDPOINT, List.of(), false, null);
+        assertEquals("", req.handoffContext());
+        assertEquals("question", req.providerPrompt());
+    }
+
+    @Test
     void providerPromptImageWithNullMediaTypeAppendsNoSuffix(@TempDir Path dir) throws Exception {
         Path image = Files.writeString(dir.resolve("m.png"), "img");
         // image(...) coerces a null mediaType to "image/*"; construct the record directly to get a true null.

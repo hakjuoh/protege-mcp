@@ -49,7 +49,11 @@ Only CLIs that are actually detected on your system are offered as providers.
 1. Open the **Ontology Assistant** tab (a top-level tab), or add the **Ontology Assistant** view to any
    tab via **Window ▸ Views**.
 2. **Pick a provider** — *Use Claude* / *Use Codex* (only installed CLIs appear) — and optionally a
-   **model** (blank uses the CLI's own default).
+   **model** (blank uses the CLI's own default). The transcript is one continuous conversation across
+   providers. Each provider keeps its own native CLI session ID; when you switch, turns that session
+   missed are handed off with your next message. Switching Codex → Claude → Codex therefore resumes
+   the original Codex thread and catches it up with the Claude exchange. Changing models also keeps
+   the current session; selecting the already-active model again has no effect.
 3. Type a request and press **Enter** (**Shift+Enter** inserts a newline). Start with a read, then an
    edit:
    - *"What classes are in this ontology?"*
@@ -70,6 +74,11 @@ Only CLIs that are actually detected on your system are offered as providers.
      doesn't know the flag, the turn fails with an "unknown option" error — untick the box to send
      without it.
 
+**New chat** clears the shared transcript and all provider session IDs for this view. Conversation
+state is currently kept in memory; closing the view or restarting Protégé starts with an empty
+transcript rather than silently resuming hidden CLI history. Cross-provider handoff is bounded and
+keeps the newest missing turns if an unusually large exchange must be compacted.
+
 ### Attachments and long pastes
 
 The chat input accepts more than plain text (added in `0.3.1`):
@@ -87,8 +96,9 @@ The chat input accepts more than plain text (added in `0.3.1`):
 
 {: .warning }
 > The chat sends your prompts, any attachments/pasted content, **and the ontology content the assistant
-> reads** to your model provider **via the CLI**. A one-time banner discloses this before the first
-> send.
+> reads** to your model provider **via the CLI**. When you switch providers, the conversation turns
+> that the newly active provider missed are sent to it as handoff context. This disclosure is also
+> available under **Settings ▸ Ontology Assistant ▸ Privacy**; sending does not open a modal dialog.
 
 - Each attached file or image is copied into its **own private temp folder**, and only that single-file
   copy is exposed to the CLI — never the rest of its containing folder. The temp copies are deleted when
@@ -102,7 +112,7 @@ The chat input accepts more than plain text (added in `0.3.1`):
 - **CLI path overrides** — if Protégé was launched from the macOS **Dock/Finder**, it may not inherit
   your shell `PATH`, so a CLI can fail to resolve. Set an explicit path to the `claude` / `codex`
   executable here. The panel shows what was detected.
-- **Reset egress consent** — re-arm the one-time disclosure banner.
+- **Privacy** — a non-blocking summary of what is sent to the selected model provider.
 
 (The **Show reasoning** and **Confirm each edit** toggles live in the chat panel itself, next to
 **New chat** — not in this settings page.)
