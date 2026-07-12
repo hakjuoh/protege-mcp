@@ -48,8 +48,14 @@ public final class BrokerSpawner {
     private BrokerSpawner() {
     }
 
-    /** Spawn a broker for {@code home}; returns false when the environment makes that impossible. */
-    public static boolean spawn(BrokerHome home, int port, String bindAddress, String version) {
+    /**
+     * Spawn a broker for {@code home}; returns false when the environment makes that impossible.
+     *
+     * @param lingerMs initial idle linger (the user's preference at spawn time); negative uses the
+     *     built-in default. Register/heartbeat payloads keep it current after boot either way.
+     */
+    public static boolean spawn(BrokerHome home, int port, String bindAddress, String version,
+            long lingerMs) {
         Path pluginJar = jarOf(BrokerMain.class);
         Path slf4jJar = jarOf(Logger.class);
         if (pluginJar == null || slf4jJar == null) {
@@ -76,14 +82,8 @@ public final class BrokerSpawner {
                 cp.append(p);
             }
             rotateLog(home);
-            ProcessBuilder pb = new ProcessBuilder(javaBin,
-                    "-Xmx128m",
-                    "-cp", cp.toString(),
-                    BrokerMain.class.getName(),
-                    "--home", home.dir().toString(),
-                    "--port", String.valueOf(port),
-                    "--bind", bindAddress,
-                    "--version", version);
+            ProcessBuilder pb = new ProcessBuilder(
+                    brokerCommand(javaBin, cp.toString(), home, port, bindAddress, version, lingerMs));
             pb.redirectErrorStream(true);
             pb.redirectOutput(ProcessBuilder.Redirect.appendTo(home.logFile().toFile()));
             Process process = pb.start();
@@ -93,6 +93,24 @@ public final class BrokerSpawner {
             log.warn("protege-mcp: failed to spawn the shared broker", e);
             return false;
         }
+    }
+
+    /** The broker's full command line; split out so the argument shape is unit-testable. */
+    static List<String> brokerCommand(String javaBin, String classpath, BrokerHome home, int port,
+            String bindAddress, String version, long lingerMs) {
+        List<String> command = new ArrayList<>(List.of(javaBin,
+                "-Xmx128m",
+                "-cp", classpath,
+                BrokerMain.class.getName(),
+                "--home", home.dir().toString(),
+                "--port", String.valueOf(port),
+                "--bind", bindAddress,
+                "--version", version));
+        if (lingerMs >= 0) {
+            command.add("--linger-ms");
+            command.add(String.valueOf(lingerMs));
+        }
+        return command;
     }
 
     /** Copies younger than this survive a sweep — a concurrent sibling spawn may be about to exec them. */
@@ -264,12 +282,12 @@ public final class BrokerSpawner {
 
     /** Discover-or-spawn: returns a client for a live broker, waiting for a fresh spawn to boot. */
     public static Optional<BrokerClient> ensureBroker(BrokerHome home, String dirSecret, int port,
-            String bindAddress, String version) throws InterruptedException {
+            String bindAddress, String version, long lingerMs) throws InterruptedException {
         Optional<BrokerState> live = BrokerMain.findLiveBroker(home, dirSecret);
         if (live.isPresent()) {
             return Optional.of(new BrokerClient(live.get().baseUrl(), dirSecret));
         }
-        if (!spawn(home, port, bindAddress, version)) {
+        if (!spawn(home, port, bindAddress, version, lingerMs)) {
             return Optional.empty();
         }
         // The broker writes broker.json once bound; poll briefly for it to come up.

@@ -22,7 +22,8 @@ import io.github.hakjuoh.protege_mcp.server.McpServerManager;
 /**
  * This Protégé process's connection to the shared broker: one registration for the whole JVM,
  * carrying every attached window's backend (ephemeral port + per-window broker secret), refreshed by
- * a heartbeat that also propagates the current bearer token. Windows attach/detach as EditorKits
+ * a heartbeat that also propagates the current bearer token and the user's broker idle-linger
+ * preference. Windows attach/detach as EditorKits
  * come and go; when the last one detaches (or the JVM exits — a shutdown hook backs this up), the
  * process unregisters, dropping the broker's reference count toward its self-shutdown.
  *
@@ -203,7 +204,8 @@ public final class BrokerLink {
         }
         McpConfig config = McpConfig.load();
         client = BrokerSpawner.ensureBroker(home, dirSecret,
-                config.getPort(), config.getBindAddress(), McpServerManager.SERVER_VERSION).orElse(null);
+                config.getPort(), config.getBindAddress(), McpServerManager.SERVER_VERSION,
+                config.getBrokerLingerMs()).orElse(null);
         brokerBaseUrl = client == null ? null : client.baseUrl();
         return client != null;
     }
@@ -242,10 +244,12 @@ public final class BrokerLink {
 
     /** (Re-)register this process with the full current window list. */
     private void syncRegistration() throws IOException, InterruptedException {
+        McpConfig config = McpConfig.load();
         if (processId == null) {
             processId = client.register(ProcessHandle.current().pid(), McpServerManager.SERVER_VERSION,
-                    McpConfig.load().getToken(), new ArrayList<>(windows.values()));
-        } else if (!client.heartbeat(processId, McpConfig.load().getToken(), new ArrayList<>(windows.values()))) {
+                    config.getToken(), config.getBrokerLingerMs(), new ArrayList<>(windows.values()));
+        } else if (!client.heartbeat(processId, config.getToken(), config.getBrokerLingerMs(),
+                new ArrayList<>(windows.values()))) {
             processId = null;
             syncRegistration();
         }
@@ -277,9 +281,10 @@ public final class BrokerLink {
             return;
         }
         List<InstanceRegistry.Window> regs = new ArrayList<>(windows.values());
-        String token = McpConfig.load().getToken();
+        McpConfig config = McpConfig.load();
         try {
-            if (processId != null && client != null && client.heartbeat(processId, token, regs)) {
+            if (processId != null && client != null
+                    && client.heartbeat(processId, config.getToken(), config.getBrokerLingerMs(), regs)) {
                 return;
             }
             // 404: the broker is alive but restarted — it lost us; fall through and re-register.

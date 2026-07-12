@@ -32,6 +32,7 @@ import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
 public final class BrokerServer {
 
     static final long HEARTBEAT_STALE_MS = 8_000;
+    /** Fallback idle linger; the user's preference arrives per register/heartbeat and overrides. */
     static final long IDLE_LINGER_MS = 15_000;
     static final long BOOT_GRACE_MS = 60_000;
 
@@ -49,6 +50,7 @@ public final class BrokerServer {
     private EmbeddedHttpServer http;
     private ScheduledExecutorService maintenance;
     private volatile BrokerState identity;
+    private volatile OAuthStore oauthStore;
 
     public BrokerServer(BrokerHome home, String dirSecret, String version, Runnable shutdown) {
         this(home, dirSecret, version, shutdown, HEARTBEAT_STALE_MS, IDLE_LINGER_MS, BOOT_GRACE_MS);
@@ -74,6 +76,11 @@ public final class BrokerServer {
         return identity;
     }
 
+    /** Test seam: the OAuth store the maintenance loop sweeps (null before {@code start}). */
+    OAuthStore oauthStore() {
+        return oauthStore;
+    }
+
     /**
      * Bind the loopback default. See {@link #start(String, int)}.
      */
@@ -92,6 +99,7 @@ public final class BrokerServer {
      */
     public synchronized int start(String bindAddress, int port) throws Exception {
         OAuthStore oauthStore = new OAuthStore(registry::latestToken, this::readOauthState, this::writeOauthState);
+        this.oauthStore = oauthStore;
 
         http = new EmbeddedHttpServer();
         http.bindTo(bindAddress);
@@ -140,7 +148,15 @@ public final class BrokerServer {
     private void maintain() {
         try {
             registry.reap(staleMs, pid -> ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
-            if (registry.shouldExit(lingerMs, bootGraceMs)) {
+            OAuthStore store = oauthStore;
+            if (store != null) {
+                // The broker has no clients view; time-based cleanup of dead OAuth registrations
+                // (abandoned re-connects, long-gone clients) happens here instead.
+                store.sweepInactiveClients();
+            }
+            // The linger is the user's preference, delivered with every register/heartbeat — the
+            // spawn-time value only covers the window before the first registration.
+            if (registry.shouldExit(registry.effectiveLingerMs(lingerMs), bootGraceMs)) {
                 System.out.println("protege-mcp-broker: no registered instances — exiting");
                 shutdown.run();
             }

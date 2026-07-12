@@ -29,6 +29,13 @@ public final class McpConfig {
     public static final String KEY_AUTOSTART = "autoStart";
     /** Share one broker process (and the configured port) across all Protégé windows/instances. */
     public static final String KEY_SHARED_BROKER = "sharedBroker";
+    /**
+     * How long (seconds) the shared broker keeps running after the last Protégé instance
+     * disconnects, so a quick restart reuses the live broker instead of respawning one. {@code 0}
+     * means the broker exits as soon as the reference count reaches zero. Propagated to a running
+     * broker with every register/heartbeat, so a change applies without a broker restart.
+     */
+    public static final String KEY_BROKER_LINGER_SECONDS = "brokerLingerSeconds";
     public static final String KEY_READ_ONLY = "readOnly";
     public static final String KEY_CONFIRM_WRITES = "confirmWrites";
     public static final String KEY_TOKEN = "bearerToken";
@@ -63,20 +70,28 @@ public final class McpConfig {
     /** Default bind address: IPv4 loopback, reachable from this machine only. */
     public static final String DEFAULT_BIND_ADDRESS = "127.0.0.1";
 
+    /** Default broker idle linger: long enough to bridge a normal Protégé restart. */
+    public static final int DEFAULT_BROKER_LINGER_SECONDS = 15;
+
+    /** Upper bound for the linger (one hour) — a corrupt value must not pin the broker forever. */
+    public static final int MAX_BROKER_LINGER_SECONDS = 3600;
+
     private final int port;
     private final String bindAddress;
     private final boolean autoStart;
     private final boolean sharedBroker;
+    private final int brokerLingerSeconds;
     private final boolean readOnly;
     private final boolean confirmWrites;
     private final String token;
 
     private McpConfig(int port, String bindAddress, boolean autoStart, boolean sharedBroker,
-            boolean readOnly, boolean confirmWrites, String token) {
+            int brokerLingerSeconds, boolean readOnly, boolean confirmWrites, String token) {
         this.port = port;
         this.bindAddress = bindAddress;
         this.autoStart = autoStart;
         this.sharedBroker = sharedBroker;
+        this.brokerLingerSeconds = brokerLingerSeconds;
         this.readOnly = readOnly;
         this.confirmWrites = confirmWrites;
         this.token = token;
@@ -105,6 +120,8 @@ public final class McpConfig {
         String bindAddress = sanitizeBindAddress(p.getString(KEY_BIND_ADDRESS, DEFAULT_BIND_ADDRESS));
         boolean autoStart = p.getBoolean(KEY_AUTOSTART, true);
         boolean sharedBroker = p.getBoolean(KEY_SHARED_BROKER, true);
+        int brokerLingerSeconds = clampBrokerLingerSeconds(
+                p.getInt(KEY_BROKER_LINGER_SECONDS, DEFAULT_BROKER_LINGER_SECONDS));
         boolean readOnly = p.getBoolean(KEY_READ_ONLY, false);
         boolean confirmWrites = p.getBoolean(KEY_CONFIRM_WRITES, false);
         String token = p.getString(KEY_TOKEN, "");
@@ -112,7 +129,13 @@ public final class McpConfig {
             token = generateToken();
             p.putString(KEY_TOKEN, token);
         }
-        return new McpConfig(port, bindAddress, autoStart, sharedBroker, readOnly, confirmWrites, token);
+        return new McpConfig(port, bindAddress, autoStart, sharedBroker, brokerLingerSeconds,
+                readOnly, confirmWrites, token);
+    }
+
+    /** Clamp a stored/typed linger into {@code 0..}{@value #MAX_BROKER_LINGER_SECONDS} seconds. */
+    public static int clampBrokerLingerSeconds(int raw) {
+        return Math.max(0, Math.min(raw, MAX_BROKER_LINGER_SECONDS));
     }
 
     /**
@@ -167,6 +190,16 @@ public final class McpConfig {
     /** Whether MCP access is shared through the cross-process broker (default) or per-window. */
     public boolean isSharedBroker() {
         return sharedBroker;
+    }
+
+    /** See {@link #KEY_BROKER_LINGER_SECONDS}; already clamped to {@code 0..3600}. */
+    public int getBrokerLingerSeconds() {
+        return brokerLingerSeconds;
+    }
+
+    /** The linger in the milliseconds the broker protocol speaks. */
+    public long getBrokerLingerMs() {
+        return brokerLingerSeconds * 1000L;
     }
 
     public boolean isReadOnly() {

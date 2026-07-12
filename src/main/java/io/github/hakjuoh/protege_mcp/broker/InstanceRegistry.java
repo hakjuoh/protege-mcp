@@ -29,6 +29,10 @@ public final class InstanceRegistry {
     /** Sessions to remember; beyond this the least recently used pin is dropped (client re-inits). */
     private static final int MAX_SESSIONS = 500;
 
+    /** Cap for an instance-requested linger — mirrors the preference's one-hour bound, so a
+     * corrupt or malicious registration payload cannot pin the broker process forever. */
+    static final long MAX_REQUESTED_LINGER_MS = 3_600_000L;
+
     public static final class Window {
         public final String id;
         public final int port;
@@ -76,6 +80,12 @@ public final class InstanceRegistry {
     private volatile long emptySince;
     /** True once anything has ever registered (distinguishes "idle again" from "never used"). */
     private volatile boolean everRegistered;
+    /**
+     * Idle linger most recently requested by an instance (the user's preference, carried on every
+     * register/heartbeat), or -1 while none has reported one. Deliberately retained after the
+     * registry empties — the linger matters exactly then, after the last unregister.
+     */
+    private volatile long requestedLingerMs = -1;
 
     public InstanceRegistry(LongSupplier clock) {
         this.clock = clock;
@@ -151,6 +161,23 @@ public final class InstanceRegistry {
             n += p.windows.size();
         }
         return n;
+    }
+
+    /**
+     * Record the idle linger an instance asked for (ignored when negative, capped at
+     * {@link #MAX_REQUESTED_LINGER_MS}). Instances on one machine share the preference store, so
+     * last-writer-wins converges to the user's current setting within one heartbeat.
+     */
+    public void noteRequestedLinger(long lingerMs) {
+        if (lingerMs >= 0) {
+            requestedLingerMs = Math.min(lingerMs, MAX_REQUESTED_LINGER_MS);
+        }
+    }
+
+    /** The linger to apply: the last instance-reported value, or {@code defaultMs} before any. */
+    public long effectiveLingerMs(long defaultMs) {
+        long requested = requestedLingerMs;
+        return requested >= 0 ? requested : defaultMs;
     }
 
     /**

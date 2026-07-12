@@ -50,7 +50,7 @@ class BrokerProcessLifecycleTest {
             assertTrue(live.isPresent(), "spawned broker must become discoverable via broker.json");
 
             BrokerClient client = new BrokerClient(live.get().baseUrl(), dirSecret);
-            String processId = client.register(ProcessHandle.current().pid(), "it", "tok", List.of());
+            String processId = client.register(ProcessHandle.current().pid(), "it", "tok", -1, List.of());
             assertTrue(broker.isAlive(), "a registered instance keeps the broker alive");
 
             client.unregister(processId);

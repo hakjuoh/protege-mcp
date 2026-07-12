@@ -22,7 +22,9 @@ import jakarta.servlet.http.HttpServletResponse;
  *
  * <ul>
  *   <li>{@code GET  /internal/info} — liveness/identity probe used by discovery.
- *   <li>{@code POST /internal/register} — {@code {pid, version, token, windows[]}} → {@code {processId}}.
+ *   <li>{@code POST /internal/register} — {@code {pid, version, token, lingerMs?, windows[]}}
+ *       → {@code {processId}}. {@code lingerMs} carries the user's idle-linger preference; a
+ *       payload without it (older plugin) leaves the broker's current linger untouched.
  *   <li>{@code POST /internal/heartbeat} — same body plus {@code processId}; 404 = re-register.
  *   <li>{@code POST /internal/unregister} — {@code {processId}}; may drop the refcount to zero.
  *   <li>{@code POST /internal/shutdown} — graceful exit (used by tests and version takeover).
@@ -92,6 +94,7 @@ public final class InternalApiServlet extends HttpServlet {
                 body.path("version").asText(""),
                 body.path("token").asText(null),
                 parseWindows(body));
+        registry.noteRequestedLinger(body.path("lingerMs").asLong(-1));
         ObjectNode node = mapper.createObjectNode();
         node.put("processId", processId);
         writeJson(resp, 200, node);
@@ -104,6 +107,7 @@ public final class InternalApiServlet extends HttpServlet {
                 body.path("token").asText(null),
                 parseWindows(body));
         if (known) {
+            registry.noteRequestedLinger(body.path("lingerMs").asLong(-1));
             writeJson(resp, 200, mapper.createObjectNode().put("ok", true));
         } else {
             // 404 tells the instance the broker lost it (e.g. broker restart) — re-register.

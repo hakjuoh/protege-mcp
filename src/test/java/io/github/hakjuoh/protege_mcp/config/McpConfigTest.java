@@ -37,6 +37,7 @@ class McpConfigTest {
     private boolean savedAutoStart;
     private boolean savedReadOnly;
     private boolean savedConfirm;
+    private int savedLinger;
 
     @BeforeEach
     void snapshotPrefs() {
@@ -46,6 +47,8 @@ class McpConfigTest {
         savedAutoStart = prefs.getBoolean(McpConfig.KEY_AUTOSTART, true);
         savedReadOnly = prefs.getBoolean(McpConfig.KEY_READ_ONLY, false);
         savedConfirm = prefs.getBoolean(McpConfig.KEY_CONFIRM_WRITES, false);
+        savedLinger = prefs.getInt(McpConfig.KEY_BROKER_LINGER_SECONDS,
+                McpConfig.DEFAULT_BROKER_LINGER_SECONDS);
     }
 
     @AfterEach
@@ -55,6 +58,7 @@ class McpConfigTest {
         prefs.putBoolean(McpConfig.KEY_AUTOSTART, savedAutoStart);
         prefs.putBoolean(McpConfig.KEY_READ_ONLY, savedReadOnly);
         prefs.putBoolean(McpConfig.KEY_CONFIRM_WRITES, savedConfirm);
+        prefs.putInt(McpConfig.KEY_BROKER_LINGER_SECONDS, savedLinger);
     }
 
     /** Invoke the static {@code generateToken()} reflectively. */
@@ -308,6 +312,59 @@ class McpConfigTest {
         assertTrue(c.isReadOnly());
         assertTrue(c.isConfirmWrites());
         assertEquals("combo-token", c.getToken());
+    }
+
+    // ---- broker idle linger ---------------------------------------------------------------------
+
+    @Test
+    void lingerKeyConstantHasExpectedValue() {
+        assertEquals("brokerLingerSeconds", McpConfig.KEY_BROKER_LINGER_SECONDS);
+    }
+
+    @Test
+    void lingerDefaultConstantIsFifteenSeconds() {
+        // The shared prefs store cannot guarantee an absent key here, so the absent-key branch is
+        // pinned through its constant: load() passes DEFAULT_BROKER_LINGER_SECONDS as getInt's
+        // fallback, and the clamp must pass that default through unchanged.
+        assertEquals(15, McpConfig.DEFAULT_BROKER_LINGER_SECONDS,
+                "the broker idle linger default is 15 seconds");
+        assertEquals(McpConfig.DEFAULT_BROKER_LINGER_SECONDS,
+                McpConfig.clampBrokerLingerSeconds(McpConfig.DEFAULT_BROKER_LINGER_SECONDS),
+                "the default must survive the clamp unchanged");
+    }
+
+    @Test
+    void lingerReadsConfiguredValueIncludingZero() {
+        prefs.putInt(McpConfig.KEY_BROKER_LINGER_SECONDS, 0);
+        assertEquals(0, McpConfig.load().getBrokerLingerSeconds(),
+                "0 (exit immediately on last disconnect) is a legitimate stored value");
+        prefs.putInt(McpConfig.KEY_BROKER_LINGER_SECONDS, 120);
+        assertEquals(120, McpConfig.load().getBrokerLingerSeconds());
+    }
+
+    @Test
+    void lingerClampsNegativeToZeroAndHugeToMax() {
+        prefs.putInt(McpConfig.KEY_BROKER_LINGER_SECONDS, -30);
+        assertEquals(0, McpConfig.load().getBrokerLingerSeconds(),
+                "a negative stored linger must clamp to 0, not disable the exit");
+        prefs.putInt(McpConfig.KEY_BROKER_LINGER_SECONDS, Integer.MAX_VALUE);
+        assertEquals(McpConfig.MAX_BROKER_LINGER_SECONDS, McpConfig.load().getBrokerLingerSeconds(),
+                "an oversized stored linger must clamp to the one-hour cap");
+    }
+
+    @Test
+    void lingerMsConvertsSecondsToMilliseconds() {
+        prefs.putInt(McpConfig.KEY_BROKER_LINGER_SECONDS, 15);
+        assertEquals(15_000L, McpConfig.load().getBrokerLingerMs(),
+                "the protocol speaks milliseconds; 15 s must convert to 15000 ms");
+    }
+
+    @Test
+    void clampBrokerLingerSecondsBounds() {
+        assertEquals(0, McpConfig.clampBrokerLingerSeconds(-1));
+        assertEquals(0, McpConfig.clampBrokerLingerSeconds(0));
+        assertEquals(3600, McpConfig.clampBrokerLingerSeconds(3600));
+        assertEquals(3600, McpConfig.clampBrokerLingerSeconds(3601));
     }
 
     // ---- getters (via load()) -------------------------------------------------------------------

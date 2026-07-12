@@ -66,13 +66,20 @@ public final class BrokerClient {
         return MAPPER.readTree(resp.body());
     }
 
-    /** @return the broker-assigned process id used in every subsequent heartbeat/unregister. */
-    public String register(long pid, String version, String token, List<InstanceRegistry.Window> windows)
-            throws IOException, InterruptedException {
+    /**
+     * @param lingerMs the user's broker idle-linger preference, carried so a running broker adopts
+     *     it without a respawn; pass a negative value to leave the broker's linger untouched
+     * @return the broker-assigned process id used in every subsequent heartbeat/unregister.
+     */
+    public String register(long pid, String version, String token, long lingerMs,
+            List<InstanceRegistry.Window> windows) throws IOException, InterruptedException {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("pid", pid);
         body.put("version", version);
         body.put("token", token);
+        if (lingerMs >= 0) {
+            body.put("lingerMs", lingerMs);
+        }
         body.set("windows", windowsJson(windows));
         HttpResponse<String> resp = send("POST", "/internal/register", body.toString());
         if (resp.statusCode() != 200) {
@@ -87,11 +94,14 @@ public final class BrokerClient {
     }
 
     /** @return false when the broker does not know the process (restarted) — re-register then. */
-    public boolean heartbeat(String processId, String token, List<InstanceRegistry.Window> windows)
-            throws IOException, InterruptedException {
+    public boolean heartbeat(String processId, String token, long lingerMs,
+            List<InstanceRegistry.Window> windows) throws IOException, InterruptedException {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("processId", processId);
         body.put("token", token);
+        if (lingerMs >= 0) {
+            body.put("lingerMs", lingerMs);
+        }
         body.set("windows", windowsJson(windows));
         HttpResponse<String> resp = send("POST", "/internal/heartbeat", body.toString());
         if (resp.statusCode() == 404) {

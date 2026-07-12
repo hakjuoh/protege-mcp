@@ -1000,7 +1000,10 @@ class OAuthServletTest {
     @Test
     void tokenRefreshGrantRotatesAndSucceeds() throws IOException {
         OAuthStore store = emptyStore();
-        OAuthStore.Tokens issued = store.issueTokens("cid", "read", "res");
+        // refresh() fails closed for a grant whose client record is gone, so the grant must
+        // belong to a registered client.
+        String cid = store.registerClient(List.of("http://127.0.0.1/cb"), "app").clientId;
+        OAuthStore.Tokens issued = store.issueTokens(cid, "read", "res");
 
         FakeRequest req = new FakeRequest().path("/token")
                 .param("grant_type", "refresh_token")

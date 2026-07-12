@@ -54,6 +54,11 @@ class OAuthStoreTest {
         return new OAuthStore(() -> staticToken, () -> null, save);
     }
 
+    /** A store on a hand-cranked clock, for the time-based cleanup rules. */
+    private static OAuthStore store(java.util.concurrent.atomic.AtomicLong clock, SaveCapture save) {
+        return new OAuthStore(() -> "tok", () -> null, save == null ? s -> {} : save, true, clock::get);
+    }
+
     // ------------------------------------------------------------- constructor / load
 
     @Test
@@ -391,7 +396,8 @@ class OAuthStoreTest {
     @Test
     void refreshReturnsNewTokensAndRotates() {
         OAuthStore s = store("tok");
-        OAuthStore.Tokens original = s.issueTokens("cid", "read", "res");
+        String cid = s.registerClient(List.of("http://a/cb"), "app").clientId;
+        OAuthStore.Tokens original = s.issueTokens(cid, "read", "res");
         OAuthStore.Tokens rotated = s.refresh(original.refreshToken);
         assertNotNull(rotated, "refresh returns new token pair");
         assertNotEquals(original.accessToken, rotated.accessToken, "access token rotated");
@@ -401,7 +407,8 @@ class OAuthStoreTest {
     @Test
     void refreshInvalidatesOldGrantPair() {
         OAuthStore s = store("tok");
-        OAuthStore.Tokens original = s.issueTokens("cid", "read", "res");
+        String cid = s.registerClient(List.of("http://a/cb"), "app").clientId;
+        OAuthStore.Tokens original = s.issueTokens(cid, "read", "res");
         s.refresh(original.refreshToken);
         assertFalse(s.isValidAccessToken(original.accessToken), "old access token invalid after refresh");
         assertNull(s.refresh(original.refreshToken), "old refresh token invalid after refresh");
@@ -410,9 +417,20 @@ class OAuthStoreTest {
     @Test
     void refreshPreservesScopeAndResource() {
         OAuthStore s = store("tok");
-        OAuthStore.Tokens original = s.issueTokens("cid", "read write", "res");
+        String cid = s.registerClient(List.of("http://a/cb"), "app").clientId;
+        OAuthStore.Tokens original = s.issueTokens(cid, "read write", "res");
         OAuthStore.Tokens rotated = s.refresh(original.refreshToken);
         assertEquals("read write", rotated.scope, "scope carried across refresh");
+    }
+
+    @Test
+    void refreshFailsClosedWhenTheClientRecordIsGone() {
+        // Fail closed like isValidAccessToken: minting fresh tokens for a client-less grant would
+        // trap the client in a refresh-then-401 loop instead of sending it back to re-register.
+        OAuthStore s = store("tok");
+        OAuthStore.Tokens orphan = s.issueTokens("mcpc_never_registered", "read", "res");
+        assertNull(s.refresh(orphan.refreshToken),
+                "a refresh grant without a client record must not mint tokens");
     }
 
     @Test
@@ -495,10 +513,13 @@ class OAuthStoreTest {
     void isValidAccessTokenUpdatesClientLastSeen() {
         OAuthStore s = store("tok");
         OAuthStore.Client c = s.registerClient(List.of("http://a/cb"), "app");
-        OAuthStore.Tokens t = s.issueTokens(c.clientId, "read", "res");
         assertEquals(0L, c.lastSeenAt.get(), "client last-seen starts at 0");
+        OAuthStore.Tokens t = s.issueTokens(c.clientId, "read", "res");
+        long afterIssue = c.lastSeenAt.get();
+        assertTrue(afterIssue > 0L, "issuing tokens counts as client activity");
+        sleepAtLeastAMilli();
         assertTrue(s.isValidAccessToken(t.accessToken), "token validated");
-        assertTrue(c.lastSeenAt.get() > 0L, "client lastSeenAt updated on validation");
+        assertTrue(c.lastSeenAt.get() > afterIssue, "client lastSeenAt updated on validation");
     }
 
     @Test
@@ -754,23 +775,277 @@ class OAuthStoreTest {
     void evictedClientAccessTokenIsRejected() {
         // The persist() size guard evicts the least-recently-seen client TOGETHER with its tokens, so an
         // evicted client's access token must stop validating — the runtime counterpart to the
-        // corrupted-state orphan rejection in isValidAccessTokenFalseWhenClientMissing. Deterministic:
-        // 'victim' is registered first and never validated (lastSeenAt stays 0), so among the never-seen
-        // clients it has the oldest registeredAt and is the first evicted; the sleep guarantees the flood
-        // registers strictly later. (Validating the victim's token here would bump its lastSeenAt and make
-        // a never-seen flood client the eviction target instead, so the pre-eviction validity of a freshly
-        // issued token is left to issueTokensAccessTokenIsImmediatelyValid.)
-        OAuthStore s = store("tok");
+        // corrupted-state orphan rejection in isValidAccessTokenFalseWhenClientMissing. Deterministic on
+        // a hand-cranked clock: 'victim' is issued its tokens first (issuing bumps lastSeenAt), then every
+        // flood client is issued tokens at a strictly later clock value, leaving the victim as the
+        // least-recently-seen client and therefore the first evicted.
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
         OAuthStore.Client victim = s.registerClient(List.of("http://a/cb"), "victim");
         OAuthStore.Tokens t = s.issueTokens(victim.clientId, "read", "res");
-        sleepAtLeastAMilli();
         String longUri = "http://localhost/callback/" + "x".repeat(400);
         for (int i = 0; i < 40; i++) {
-            s.registerClient(List.of(longUri + i), "client-" + i);
+            clock.addAndGet(1_000);
+            OAuthStore.Client flood = s.registerClient(List.of(longUri + i), "client-" + i);
+            s.issueTokens(flood.clientId, "read", "res");
         }
-        assertNull(s.client(victim.clientId), "oldest never-seen client evicted by the size guard");
+        assertNull(s.client(victim.clientId), "least-recently-seen client evicted by the size guard");
         assertFalse(s.isValidAccessToken(t.accessToken),
                 "an evicted client's access token no longer validates (dropped with its client)");
+    }
+
+    // ------------------------------------------------------------- automatic cleanup
+
+    @Test
+    void issuingToAReRegisteredClientSupersedesItsOldSameNameRegistration() {
+        // The reconnect case: a client lost its credentials, re-registered under the same name and
+        // completed authorization — its previous registration (and tokens) must clean up on its own.
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client old = s.registerClient(List.of("http://a/cb"), "Claude Code");
+        OAuthStore.Tokens oldTokens = s.issueTokens(old.clientId, "read", "res");
+        clock.addAndGet(60_000);
+        OAuthStore.Client fresh = s.registerClient(List.of("http://b/cb"), "Claude Code");
+        s.issueTokens(fresh.clientId, "read", "res");
+        assertNull(s.client(old.clientId), "the superseded registration is dropped");
+        assertFalse(s.isValidAccessToken(oldTokens.accessToken),
+                "the superseded registration's tokens die with it");
+        assertNotNull(s.client(fresh.clientId), "the re-registered client stays");
+    }
+
+    @Test
+    void supersedeLeavesDifferentlyNamedClientsAlone() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client other = s.registerClient(List.of("http://a/cb"), "mcp-inspector");
+        s.issueTokens(other.clientId, "read", "res");
+        clock.addAndGet(60_000);
+        OAuthStore.Client fresh = s.registerClient(List.of("http://b/cb"), "Claude Code");
+        s.issueTokens(fresh.clientId, "read", "res");
+        assertNotNull(s.client(other.clientId), "a different client app is not a reconnect victim");
+    }
+
+    @Test
+    void supersedeKeepsASameNameClientSeenAfterTheSuccessorRegistered() {
+        // Two genuinely live same-name clients: the older one authenticated a request AFTER the
+        // newcomer registered, proving it is alive — it must not be yanked.
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client old = s.registerClient(List.of("http://a/cb"), "Claude Code");
+        OAuthStore.Tokens oldTokens = s.issueTokens(old.clientId, "read", "res");
+        clock.addAndGet(60_000);
+        OAuthStore.Client fresh = s.registerClient(List.of("http://b/cb"), "Claude Code");
+        clock.addAndGet(1_000);
+        assertTrue(s.isValidAccessToken(oldTokens.accessToken), "old client makes a live request");
+        s.issueTokens(fresh.clientId, "read", "res");
+        assertNotNull(s.client(old.clientId),
+                "a same-name client seen after the successor registered is demonstrably alive");
+        assertTrue(s.isValidAccessToken(oldTokens.accessToken), "…and keeps its tokens");
+    }
+
+    @Test
+    void supersedeNeverYanksAnInFlightAuthorization() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client inFlight = s.registerClient(List.of("http://a/cb"), "Claude Code");
+        String code = s.newAuthCode(inFlight.clientId, "http://a/cb", "chal", "read", "res");
+        clock.addAndGet(10_000); // well inside the 2-minute code TTL
+        OAuthStore.Client fresh = s.registerClient(List.of("http://b/cb"), "Claude Code");
+        s.issueTokens(fresh.clientId, "read", "res");
+        assertNotNull(s.client(inFlight.clientId),
+                "a pending (unexpired) auth code marks an in-flight flow — never superseded");
+        assertNotNull(s.consumeAuthCode(code), "the in-flight code still completes");
+    }
+
+    @Test
+    void supersedeIgnoresAnonymousRegistrations() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client nameless = s.registerClient(List.of("http://a/cb"), null);
+        OAuthStore.Client blank = s.registerClient(List.of("http://a/cb"), "");
+        clock.addAndGet(60_000);
+        OAuthStore.Client fresh = s.registerClient(List.of("http://b/cb"), "");
+        s.issueTokens(fresh.clientId, "read", "res");
+        assertNotNull(s.client(nameless.clientId), "no name, no supersede match");
+        assertNotNull(s.client(blank.clientId), "a blank name never matches anything");
+    }
+
+    @Test
+    void issueAndRefreshCountAsClientActivity() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client c = s.registerClient(List.of("http://a/cb"), "app");
+        clock.addAndGet(5_000);
+        OAuthStore.Tokens t = s.issueTokens(c.clientId, "read", "res");
+        assertEquals(clock.get(), c.lastSeenAt.get(), "issuing tokens bumps lastSeenAt");
+        clock.addAndGet(5_000);
+        s.refresh(t.refreshToken);
+        assertEquals(clock.get(), c.lastSeenAt.get(), "refreshing bumps lastSeenAt too");
+    }
+
+    @Test
+    void sweepDropsAnAbandonedRegistrationOnlyAfterItsGrace() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client abandoned = s.registerClient(List.of("http://a/cb"), "app");
+        clock.addAndGet(OAuthStore.ABANDONED_CLIENT_GRACE_MS - 1);
+        assertEquals(0, s.sweepInactiveClients(),
+                "a token-less registration inside the grace may still be mid-flow");
+        assertNotNull(s.client(abandoned.clientId));
+        clock.addAndGet(2);
+        assertEquals(1, s.sweepInactiveClients(),
+                "past the grace, a registration with no tokens and no pending code is dead weight");
+        assertNull(s.client(abandoned.clientId));
+    }
+
+    @Test
+    void sweepKeepsTokenHoldersUntilTheInactivityTtl() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client c = s.registerClient(List.of("http://a/cb"), "app");
+        OAuthStore.Tokens t = s.issueTokens(c.clientId, "read", "res");
+        clock.addAndGet(OAuthStore.INACTIVE_CLIENT_TTL_MS - 1);
+        assertEquals(0, s.sweepInactiveClients(),
+                "a client holding tokens is kept for the full inactivity TTL");
+        clock.addAndGet(2);
+        assertEquals(1, s.sweepInactiveClients(),
+                "a client silent past the TTL is cleaned up, tokens and all");
+        assertNull(s.refresh(t.refreshToken), "its refresh token goes with it");
+    }
+
+    @Test
+    void listClientsAndRegisterClientRunTheSweep() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        s.registerClient(List.of("http://a/cb"), "stale");
+        clock.addAndGet(OAuthStore.ABANDONED_CLIENT_GRACE_MS + 1);
+        assertTrue(s.listClients().isEmpty(), "the view's listing self-cleans");
+
+        s.registerClient(List.of("http://a/cb"), "stale2");
+        clock.addAndGet(OAuthStore.ABANDONED_CLIENT_GRACE_MS + 1);
+        OAuthStore.Client kept = s.registerClient(List.of("http://b/cb"), "fresh");
+        List<OAuthStore.ClientInfo> listed = s.listClients();
+        assertEquals(1, listed.size(), "registering sweeps earlier dead weight");
+        assertEquals(kept.clientId, listed.get(0).clientId);
+    }
+
+    @Test
+    void noteClientActivityShieldsAConsentPageDwell() {
+        // The consent phase holds no token and no code; the authorize endpoints report activity so
+        // a user parked on the consent page does not read as an abandoned registration.
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client c = s.registerClient(List.of("http://a/cb"), "app");
+        clock.addAndGet(OAuthStore.ABANDONED_CLIENT_GRACE_MS - 1);
+        s.noteClientActivity(c.clientId); // the consent page renders just before the grace is up
+        clock.addAndGet(OAuthStore.ABANDONED_CLIENT_GRACE_MS - 1);
+        assertEquals(0, s.sweepInactiveClients(),
+                "the grace must run from the last authorize touch, not from registration");
+        assertNotNull(s.client(c.clientId));
+        s.noteClientActivity("mcpc_missing"); // unknown/null ids are a no-op, not an error
+        s.noteClientActivity(null);
+    }
+
+    @Test
+    void expiredCodeDoesNotShieldASupersededRegistration() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        OAuthStore.Client dead = s.registerClient(List.of("http://a/cb"), "Claude Code");
+        s.newAuthCode(dead.clientId, "http://a/cb", "chal", "read", "res");
+        clock.addAndGet(130_000); // past the 2-minute code TTL — the flow is dead, not in-flight
+        OAuthStore.Client fresh = s.registerClient(List.of("http://b/cb"), "Claude Code");
+        s.issueTokens(fresh.clientId, "read", "res");
+        assertNull(s.client(dead.clientId),
+                "an expired code must not shield a dead registration from the supersede");
+    }
+
+    @Test
+    void sweepAndSupersedeBoundariesAreExclusive() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        // Exactly AT the abandoned grace: kept (strictly-older-than semantics).
+        OAuthStore.Client c = s.registerClient(List.of("http://a/cb"), "app");
+        clock.addAndGet(OAuthStore.ABANDONED_CLIENT_GRACE_MS);
+        assertEquals(0, s.sweepInactiveClients(), "exactly at the grace boundary is not past it");
+        assertNotNull(s.client(c.clientId));
+
+        // Exactly AT the inactivity TTL: kept.
+        s.issueTokens(c.clientId, "read", "res"); // bumps lastSeenAt to now
+        clock.addAndGet(OAuthStore.INACTIVE_CLIENT_TTL_MS);
+        assertEquals(0, s.sweepInactiveClients(), "exactly at the TTL boundary is not past it");
+        assertNotNull(s.client(c.clientId));
+    }
+
+    @Test
+    void supersedeRequiresStrictlyOlderRegistrationAndStaleLastSeen() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        OAuthStore s = store(clock, null);
+        // Same-instant registrations (same clock value): neither is strictly older — both kept.
+        OAuthStore.Client a = s.registerClient(List.of("http://a/cb"), "app");
+        OAuthStore.Client b = s.registerClient(List.of("http://b/cb"), "app");
+        s.issueTokens(b.clientId, "read", "res");
+        assertNotNull(s.client(a.clientId), "equal registeredAt must not supersede");
+
+        // lastSeenAt exactly equal to the successor's registeredAt: seen "since", kept.
+        clock.addAndGet(60_000);
+        OAuthStore.Client c2 = s.registerClient(List.of("http://c/cb"), "app");
+        a.lastSeenAt.set(c2.registeredAt);
+        s.issueTokens(c2.clientId, "read", "res");
+        assertNotNull(s.client(a.clientId),
+                "a client seen at the successor's registration instant is not strictly stale");
+    }
+
+    @Test
+    void hydrationAnchorsTheSweepAfterARestart() {
+        // Persisted lastSeenAt is best-effort and can badly understate real activity; after a
+        // reload the cleanup clocks must restart from hydration, not fire on stale evidence.
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(
+                10L * OAuthStore.INACTIVE_CLIENT_TTL_MS);
+        String ancient = "{"
+                + "\"clients\":[{\"clientId\":\"mcpc_old\",\"clientName\":\"app\","
+                + "\"redirectUris\":[\"http://a/cb\"],\"registeredAt\":1,\"lastSeenAt\":1}],"
+                + "\"accessTokens\":[],"
+                + "\"refreshTokens\":[{\"token\":\"mcpr_live\",\"clientId\":\"mcpc_old\","
+                + "\"grantId\":\"g\",\"scope\":\"s\",\"resource\":\"r\","
+                + "\"expiresAt\":" + Long.MAX_VALUE + "}]}";
+        OAuthStore s = new OAuthStore(() -> "tok", () -> ancient, x -> {}, true, clock::get);
+        assertEquals(0, s.sweepInactiveClients(),
+                "epoch-old persisted timestamps must not be reaped right after hydration");
+        assertNotNull(s.client("mcpc_old"));
+        clock.addAndGet(OAuthStore.INACTIVE_CLIENT_TTL_MS + 1);
+        assertEquals(1, s.sweepInactiveClients(),
+                "once the post-hydration TTL elapses with no activity, the client is reaped");
+    }
+
+    @Test
+    void sweepCollectsOrphanedGrants() throws Exception {
+        // Grants whose client record is gone can never validate (fail-closed) but would otherwise
+        // sit in the persisted blob forever — the sweep drops them.
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        SaveCapture save = new SaveCapture();
+        OAuthStore s = store(clock, save);
+        s.issueTokens("mcpc_never_registered", "read", "res");
+        assertTrue(MAPPER.readTree(save.last).path("refreshTokens").size() > 0,
+                "the orphan grant is persisted at issue time");
+        s.sweepInactiveClients();
+        assertEquals(0, MAPPER.readTree(save.last).path("accessTokens").size(),
+                "orphaned access grants are collected");
+        assertEquals(0, MAPPER.readTree(save.last).path("refreshTokens").size(),
+                "orphaned refresh grants are collected");
+    }
+
+    @Test
+    void sweepPersistsOnlyWhenSomethingWasRemoved() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
+        SaveCapture save = new SaveCapture();
+        OAuthStore s = store(clock, save);
+        s.registerClient(List.of("http://a/cb"), "app");
+        int afterRegister = save.saved.size();
+        assertEquals(0, s.sweepInactiveClients(), "nothing stale yet");
+        assertEquals(afterRegister, save.saved.size(), "a no-op sweep must not rewrite preferences");
+        clock.addAndGet(OAuthStore.ABANDONED_CLIENT_GRACE_MS + 1);
+        assertEquals(1, s.sweepInactiveClients());
+        assertTrue(save.saved.size() > afterRegister, "a sweep that removed something persists");
     }
 
     // ------------------------------------------------------------- purgeExpired (via newAuthCode)

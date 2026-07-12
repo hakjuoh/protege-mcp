@@ -95,6 +95,45 @@ class InstanceRegistryTest {
         assertFalse(registry.shouldExit(15_000, 60_000), "a new instance keeps the broker alive");
     }
 
+    // ---- requested linger (the user's preference, carried per register/heartbeat) ------------------
+
+    @Test
+    void effectiveLingerIsTheDefaultUntilAnInstanceReportsOne() {
+        assertEquals(15_000, registry.effectiveLingerMs(15_000),
+                "before any report the spawn-time default applies");
+    }
+
+    @Test
+    void noteRequestedLingerOverridesTheDefaultIncludingZero() {
+        registry.noteRequestedLinger(60_000);
+        assertEquals(60_000, registry.effectiveLingerMs(15_000));
+        registry.noteRequestedLinger(0);
+        assertEquals(0, registry.effectiveLingerMs(15_000),
+                "0 (exit immediately on last disconnect) is a legitimate reported value");
+    }
+
+    @Test
+    void noteRequestedLingerIgnoresNegativesAndCapsOversizedValues() {
+        registry.noteRequestedLinger(30_000);
+        registry.noteRequestedLinger(-1);
+        assertEquals(30_000, registry.effectiveLingerMs(15_000),
+                "a payload without a linger (older plugin, -1) must not clobber the last report");
+        registry.noteRequestedLinger(Long.MAX_VALUE);
+        assertEquals(InstanceRegistry.MAX_REQUESTED_LINGER_MS, registry.effectiveLingerMs(15_000),
+                "a corrupt/oversized report must not pin the broker forever");
+    }
+
+    @Test
+    void requestedLingerSurvivesTheRegistryEmptyingAndDrivesTheExit() {
+        String p = registry.register(11, "1.0", "tok", List.of(window("w1", 5001, 1, 1)));
+        registry.noteRequestedLinger(0);
+        registry.unregister(p);
+        // The linger matters exactly now, after the last unregister — the reported value must
+        // still be in force even though no process remains to re-report it.
+        assertTrue(registry.shouldExit(registry.effectiveLingerMs(15_000), 60_000),
+                "with a reported linger of 0 the broker exits on the first tick after emptying");
+    }
+
     // ---- routing ----------------------------------------------------------------------------------
 
     @Test

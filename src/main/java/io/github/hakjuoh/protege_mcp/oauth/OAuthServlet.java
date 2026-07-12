@@ -123,6 +123,9 @@ public class OAuthServlet extends HttpServlet {
             errorPage(resp, "Unknown client or unregistered redirect URI.");
             return;
         }
+        // The consent phase carries no token and no code yet; without this touch the inactivity
+        // sweep cannot tell a user reading the consent page from an abandoned registration.
+        store.noteClientActivity(clientId);
         if (!"code".equals(responseType)) {
             redirectError(resp, redirectUri, "unsupported_response_type", req.getParameter("state"));
             return;
@@ -145,6 +148,7 @@ public class OAuthServlet extends HttpServlet {
             errorPage(resp, "Unknown client or unregistered redirect URI.");
             return;
         }
+        store.noteClientActivity(clientId);
         if (!"allow".equals(req.getParameter("decision"))) {
             redirectError(resp, redirectUri, "access_denied", state);
             return;

@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.broker;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -149,7 +150,7 @@ class BrokerWiredTest {
 
     @Test
     void mcpWithoutBearerIs401WithOAuthChallenge() throws Exception {
-        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, List.of());
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1, List.of());
         HttpResponse<String> resp = call("POST", "/mcp", null);
         assertEquals(401, resp.statusCode());
         assertTrue(resp.headers().firstValue("WWW-Authenticate").orElse("").contains("resource_metadata"),
@@ -172,7 +173,7 @@ class BrokerWiredTest {
     void bearerRequestRoutesToMostRecentlyFocusedWindowAndCarriesItsSecret() throws Exception {
         FakeBackend older = startBackend("older");
         FakeBackend focused = startBackend("focused");
-        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN,
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
                 List.of(reg(older, "w-old", 100), reg(focused, "w-foc", 900)));
 
         HttpResponse<String> resp = call("POST", "/mcp", STATIC_TOKEN);
@@ -188,7 +189,7 @@ class BrokerWiredTest {
     void sessionStaysPinnedToItsWindowEvenWhenFocusMoves() throws Exception {
         FakeBackend first = startBackend("first");
         BrokerClient c = client();
-        String processId = c.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN,
+        String processId = c.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
                 List.of(reg(first, "w1", 100)));
 
         HttpResponse<String> init = call("POST", "/mcp", STATIC_TOKEN);
@@ -196,7 +197,7 @@ class BrokerWiredTest {
 
         // A newer window appears and takes the default slot…
         FakeBackend second = startBackend("second");
-        c.heartbeat(processId, STATIC_TOKEN, List.of(reg(first, "w1", 100), reg(second, "w2", 999)));
+        c.heartbeat(processId, STATIC_TOKEN, -1, List.of(reg(first, "w1", 100), reg(second, "w2", 999)));
 
         // …but the established session keeps hitting the window that owns its state.
         HttpRequest pinned = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + brokerPort + "/mcp"))
@@ -215,7 +216,7 @@ class BrokerWiredTest {
     void explicitInstancePathTargetsThatWindow() throws Exception {
         FakeBackend a = startBackend("aa");
         FakeBackend b = startBackend("bb");
-        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN,
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
                 List.of(reg(a, "w-a", 900), reg(b, "w-b", 100)));
 
         HttpResponse<String> resp = call("POST", "/instances/w-b/mcp", STATIC_TOKEN);
@@ -228,7 +229,7 @@ class BrokerWiredTest {
     @Test
     void instancesListingShowsWindowsAndNeedsAuth() throws Exception {
         FakeBackend a = startBackend("aa");
-        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, List.of(reg(a, "w-a", 1)));
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1, List.of(reg(a, "w-a", 1)));
 
         assertEquals(401, call("GET", "/instances", null).statusCode());
         HttpResponse<String> resp = call("GET", "/instances", STATIC_TOKEN);
@@ -239,7 +240,7 @@ class BrokerWiredTest {
 
     @Test
     void noRegisteredWindowsIs503ForAnAuthenticatedClient() throws Exception {
-        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, List.of());
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1, List.of());
         HttpResponse<String> resp = call("POST", "/mcp", STATIC_TOKEN);
         assertEquals(503, resp.statusCode());
         assertTrue(resp.body().contains("no_instances"));
@@ -250,7 +251,7 @@ class BrokerWiredTest {
     @Test
     void sseEventsPassThroughTheProxyLive() throws Exception {
         FakeBackend sse = startBackend("sse");
-        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, List.of(reg(sse, "w-sse", 1)));
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1, List.of(reg(sse, "w-sse", 1)));
 
         HttpRequest req = HttpRequest.newBuilder(
                         URI.create("http://127.0.0.1:" + brokerPort + "/mcp?mode=sse"))
@@ -286,7 +287,7 @@ class BrokerWiredTest {
     @Test
     void brokerAsksToExitOnceTheLastInstanceUnregisters() throws Exception {
         BrokerClient c = client();
-        String processId = c.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, List.of());
+        String processId = c.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1, List.of());
         c.unregister(processId);
         assertTrue(shutdownRequested.await(5, TimeUnit.SECONDS),
                 "refcount 0 past the linger must trigger the broker's self-shutdown");
@@ -296,6 +297,57 @@ class BrokerWiredTest {
     void internalShutdownIsHonoured() throws Exception {
         client().requestShutdown();
         assertTrue(shutdownRequested.await(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void reportedLingerReachesTheRegistryAndZeroMeansPromptExit() throws Exception {
+        BrokerClient c = client();
+        String processId = c.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, 45_000,
+                List.of());
+        assertEquals(45_000, broker.registry().effectiveLingerMs(300),
+                "register must deliver the user's linger preference to the broker");
+        // Discriminating step: unregister under the 45 s override. The broker's own default here
+        // is 300 ms, so if maintain() ignored the reported linger it would ask to exit within a
+        // couple of ticks — staying alive proves the override is what the exit decision uses.
+        c.unregister(processId);
+        assertFalse(shutdownRequested.await(2_500, TimeUnit.MILLISECONDS),
+                "with a reported 45 s linger the broker must outlive its 300 ms default");
+        processId = c.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, 45_000, List.of());
+        c.heartbeat(processId, STATIC_TOKEN, 0, List.of());
+        assertEquals(0, broker.registry().effectiveLingerMs(300),
+                "a heartbeat must update a changed preference on the running broker");
+        c.unregister(processId);
+        assertTrue(shutdownRequested.await(5, TimeUnit.SECONDS),
+                "linger 0: the broker must ask to exit on the first maintenance tick after emptying");
+    }
+
+    @Test
+    void oldPayloadWithoutLingerLeavesTheBrokerDefaultInForce() throws Exception {
+        // A pre-linger plugin registers with no "lingerMs" field (the -1 sentinel omits it): the
+        // broker must keep whatever linger it already has, not misread the absence as 0.
+        BrokerClient c = client();
+        String processId = c.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1, List.of());
+        c.heartbeat(processId, STATIC_TOKEN, -1, List.of());
+        assertEquals(300, broker.registry().effectiveLingerMs(300),
+                "an absent lingerMs must leave the spawn-time default untouched");
+    }
+
+    @Test
+    void maintenanceLoopSweepsTheBrokersOauthStore() throws Exception {
+        // The rules themselves are unit-tested on OAuthStore; this pins the broker-side wiring:
+        // the store the servlets use is the one maintain() sweeps, and a fresh registration
+        // arriving over HTTP survives the sweep.
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1, List.of());
+        HttpRequest register = HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/oauth/register"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        "{\"client_name\":\"wired\",\"redirect_uris\":[\"http://127.0.0.1/cb\"]}"))
+                .build();
+        assertEquals(201, http.send(register, HttpResponse.BodyHandlers.ofString()).statusCode());
+        Thread.sleep(1_500); // let at least one maintenance tick run its sweep
+        assertEquals(1, broker.oauthStore().listClients().size(),
+                "a fresh (in-grace) registration must survive the maintenance sweep");
     }
 
     @Test

@@ -33,7 +33,10 @@ import io.github.hakjuoh.protege_mcp.server.McpServerRegistry;
  *
  * <p>It also lists the OAuth clients currently registered with the running server — when each was
  * registered and last seen, and how many active tokens it holds — and lets the user revoke a
- * selected client (dropping all of its tokens immediately).
+ * selected client (dropping all of its tokens immediately). Dead entries disappear on their own:
+ * the store supersedes a reconnected client's old registration and sweeps abandoned or long-idle
+ * ones (see {@link OAuthStore#sweepInactiveClients()}), so revoking by hand is for kicking out a
+ * live client, not list hygiene.
  */
 public class McpServerView extends AbstractOWLViewComponent {
 

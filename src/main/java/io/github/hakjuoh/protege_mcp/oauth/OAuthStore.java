@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 import org.slf4j.Logger;
@@ -34,6 +35,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * <p>For the "Connected clients" view, each client tracks when it was registered and last made an
  * authenticated request ({@link #listClients()}), and individual clients/tokens can be revoked
  * ({@link #revokeClient(String)}, {@link #revokeToken(String)}).
+ *
+ * <p>Dead registrations clean themselves up — no manual revoking after a client reconnects: when a
+ * re-registered client completes authorization, the same-name registrations it replaced are dropped
+ * (see {@code removeSupersededSiblings}), and {@link #sweepInactiveClients()} reaps abandoned
+ * auth flows after {@link #ABANDONED_CLIENT_GRACE_MS} and clients silent past
+ * {@link #INACTIVE_CLIENT_TTL_MS}.
  */
 public final class OAuthStore {
 
@@ -41,11 +48,22 @@ public final class OAuthStore {
 
     private static final long CODE_TTL_MS = 120_000L;            // 2 minutes
     private static final long ACCESS_TTL_MS = 30L * 24 * 3600 * 1000; // 30 days (localhost, single user)
+    /**
+     * A registration holding no token and no pending code (an abandoned auth flow) is cleaned up
+     * automatically once this old. The consent phase has no code yet (it is minted on Allow), so
+     * this must out-wait a human parked on the consent page: every authorize touch also counts as
+     * activity ({@link #noteClientActivity}), so the hour runs from the last consent-page render,
+     * not from registration.
+     */
+    static final long ABANDONED_CLIENT_GRACE_MS = 60 * 60_000L;  // 1 hour
+    /** A client that has not authenticated anything this long is cleaned up, tokens and all. */
+    static final long INACTIVE_CLIENT_TTL_MS = 60L * 24 * 3600 * 1000; // 60 days (2x access TTL)
     /** Margin under java.util.prefs' 8192-char per-value limit; above this we evict to fit. */
     private static final int MAX_PERSIST_CHARS = 8000;
 
     private final SecureRandom random = new SecureRandom();
     private final ObjectMapper mapper = new ObjectMapper();
+    private final LongSupplier clock;
     private final Supplier<String> staticToken;
     private final Supplier<String> loadState;
     private final Consumer<String> saveState;
@@ -58,6 +76,14 @@ public final class OAuthStore {
 
     /** Last time the static fallback token authenticated a request (0 = never). */
     private final AtomicLong staticTokenLastSeen = new AtomicLong(0L);
+
+    /**
+     * When this store last (re)hydrated. {@code lastSeenAt} is bumped in memory on the hot auth
+     * path but only persisted on the next mutation, so after a restart the persisted value can
+     * understate real activity by weeks; the cleanup rules therefore never act on evidence older
+     * than this process's own view (sweep clocks restart at hydration).
+     */
+    private volatile long hydratedAt;
 
     /**
      * @param staticToken supplies the current static fallback bearer token (also accepted on /mcp)
@@ -77,9 +103,17 @@ public final class OAuthStore {
      */
     public OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
             Consumer<String> saveState, boolean loadPersistedNow) {
+        this(staticToken, loadState, saveState, loadPersistedNow, System::currentTimeMillis);
+    }
+
+    /** Test seam: an injected clock makes the time-based cleanup rules assertable without sleeps. */
+    OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
+            Consumer<String> saveState, boolean loadPersistedNow, LongSupplier clock) {
+        this.clock = clock;
         this.staticToken = staticToken;
         this.loadState = loadState;
         this.saveState = saveState;
+        this.hydratedAt = clock.getAsLong();
         if (loadPersistedNow) {
             load();
         }
@@ -92,6 +126,7 @@ public final class OAuthStore {
      */
     public void loadPersisted() {
         synchronized (persistLock) {
+            hydratedAt = clock.getAsLong();
             load();
         }
     }
@@ -101,10 +136,13 @@ public final class OAuthStore {
     public Client registerClient(List<String> redirectUris, String clientName) {
         String id = "mcpc_" + randomId();
         Client c = new Client(id, clientName, new LinkedHashSet<>(redirectUris),
-                System.currentTimeMillis());
+                clock.getAsLong());
         // persistLock makes the mutation + persist() snapshot atomic so a concurrent persist() can
         // never serialize a half-applied change.
         synchronized (persistLock) {
+            // A registration burst (repeated failed reconnects) is the moment dead weight piles up;
+            // sweeping here keeps the store clean even when nothing ever reads the client list.
+            sweepInactiveClients();
             clients.put(id, c);
             persist();
         }
@@ -127,7 +165,7 @@ public final class OAuthStore {
         purgeExpired();
         String code = "mcpa_" + randomId();
         codes.put(code, new AuthCode(clientId, redirectUri, codeChallenge, scope, resource,
-                System.currentTimeMillis() + CODE_TTL_MS));
+                clock.getAsLong() + CODE_TTL_MS));
         return code;
     }
 
@@ -137,7 +175,7 @@ public final class OAuthStore {
             return null;
         }
         AuthCode a = codes.remove(code);
-        if (a == null || a.expiresAt < System.currentTimeMillis()) {
+        if (a == null || a.expiresAt < clock.getAsLong()) {
             return null;
         }
         return a;
@@ -150,7 +188,7 @@ public final class OAuthStore {
         String grantId = randomId();
         String accessToken = "mcpt_" + randomId();
         String refreshToken = "mcpr_" + randomId();
-        long expiresAt = System.currentTimeMillis() + ACCESS_TTL_MS;
+        long expiresAt = clock.getAsLong() + ACCESS_TTL_MS;
         synchronized (persistLock) {
             // Keep at most one active grant pair per client: drop any prior pair (whether from an
             // earlier browser-auth run or a refresh) so tokens can't accumulate without bound, which
@@ -160,10 +198,56 @@ public final class OAuthStore {
             refreshTokens.values().removeIf(g -> clientId.equals(g.clientId));
             accessTokens.put(accessToken, new Grant(clientId, grantId, scope, resource, expiresAt));
             refreshTokens.put(refreshToken, new Grant(clientId, grantId, scope, resource, Long.MAX_VALUE));
+            Client owner = clients.get(clientId);
+            if (owner != null) {
+                // Issuing (or refreshing) is client activity: without this bump a client whose
+                // requests only ever used a fresh token pair would look idle to the cleanup below.
+                owner.lastSeenAt.set(clock.getAsLong());
+                removeSupersededSiblings(owner);
+            }
             persist();
         }
         log.info("protege-mcp oauth: issued tokens to client {} (scope={})", clientId, scope);
         return new Tokens(accessToken, refreshToken, scope, ACCESS_TTL_MS / 1000L);
+    }
+
+    /**
+     * The reconnect cleanup: an MCP client that lost or discarded its credentials re-registers
+     * (RFC 7591 mints a fresh {@code client_id}), leaving its previous registration behind as dead
+     * weight the user otherwise removes by hand. Once the NEW registration proves itself by
+     * completing authorization (tokens issued), same-name registrations that predate it and have
+     * not authenticated since it appeared are dropped with their tokens. A pending (unexpired)
+     * authorization code marks an in-flight flow and is never yanked; a same-name client seen
+     * <em>after</em> the successor registered is demonstrably alive and kept. Call under
+     * {@link #persistLock}; the caller persists.
+     *
+     * <p>Known trade-off: two <em>concurrently live</em> same-name clients with separate
+     * credential stores cannot be told apart from a reconnect — the one idle across the other's
+     * authorization loses its tokens and must re-authorize (a browser consent, so a human is in
+     * the loop each round). Authorization is same-machine-only, and same-machine clients of one
+     * app share a credential store, so this needs two distinct apps claiming one name; accepted
+     * in exchange for the reconnect case cleaning up immediately.
+     */
+    private void removeSupersededSiblings(Client successor) {
+        if (successor.clientName == null || successor.clientName.isEmpty()) {
+            return; // no name to match on — never supersede anonymous registrations
+        }
+        purgeExpired(); // an expired code must not shield a dead registration
+        List<Client> victims = new ArrayList<>();
+        for (Client c : clients.values()) {
+            if (c != successor
+                    && successor.clientName.equals(c.clientName)
+                    && c.registeredAt < successor.registeredAt
+                    && c.lastSeenAt.get() < successor.registeredAt
+                    && !hasPendingCode(c.clientId)) {
+                victims.add(c);
+            }
+        }
+        for (Client victim : victims) {
+            dropClientLocked(victim.clientId);
+            log.info("protege-mcp oauth: cleaned up client {} ({}) — superseded by re-registered "
+                    + "client {}", victim.clientId, victim.clientName, successor.clientId);
+        }
     }
 
     public Tokens refresh(String refreshToken) {
@@ -173,6 +257,12 @@ public final class OAuthStore {
         // issueTokens() drops the client's prior grant pair, so this rotates the refresh token too.
         Grant g = refreshTokens.get(refreshToken);
         if (g == null) {
+            return null;
+        }
+        if (clients.get(g.clientId) == null) {
+            // Fail closed like isValidAccessToken: a grant whose client record is gone (cleaned
+            // up, revoked, or evicted) must not mint fresh tokens — answering 200 here would trap
+            // the client in a refresh-then-401 loop instead of sending it back to re-register.
             return null;
         }
         log.debug("protege-mcp oauth: refreshing tokens for client {}", g.clientId);
@@ -186,11 +276,11 @@ public final class OAuthStore {
         }
         String configured = staticToken.get();
         if (configured != null && PkceUtil.constantTimeEquals(token, configured)) {
-            staticTokenLastSeen.set(System.currentTimeMillis());
+            staticTokenLastSeen.set(clock.getAsLong());
             return true;
         }
         Grant g = accessTokens.get(token);
-        if (g != null && g.expiresAt > System.currentTimeMillis()) {
+        if (g != null && g.expiresAt > clock.getAsLong()) {
             Client c = clients.get(g.clientId);
             if (c != null) {
                 // A token is only honoured while its owning client still exists: revokeClient() and
@@ -200,7 +290,7 @@ public final class OAuthStore {
                 // Best-effort, in-memory: not persisted on the hot auth path (that would write prefs
                 // on every request), so the displayed "last seen" only reaches disk via a later
                 // register/issue/revoke and may read stale right after a restart.
-                c.lastSeenAt.set(System.currentTimeMillis());
+                c.lastSeenAt.set(clock.getAsLong());
                 return true;
             }
         }
@@ -219,10 +309,7 @@ public final class OAuthStore {
         }
         Client removed;
         synchronized (persistLock) {
-            removed = clients.remove(clientId);
-            accessTokens.values().removeIf(g -> clientId.equals(g.clientId));
-            refreshTokens.values().removeIf(g -> clientId.equals(g.clientId));
-            codes.values().removeIf(a -> clientId.equals(a.clientId));
+            removed = dropClientLocked(clientId);
             if (removed != null) {
                 persist();
             }
@@ -260,9 +347,95 @@ public final class OAuthStore {
         return true;
     }
 
+    /**
+     * Drop registrations that are demonstrably dead: token-less, code-less ones past
+     * {@link #ABANDONED_CLIENT_GRACE_MS} (abandoned auth flows — and, deliberately, a client that
+     * RFC-7009-revoked all its tokens without re-authorizing: dynamic clients re-register on the
+     * next connect), and any client silent past {@link #INACTIVE_CLIENT_TTL_MS} (its tokens go
+     * with it — a client that idle would have to refresh anyway). Both clocks run from
+     * {@link #hydratedAt} at the earliest, so a restart with stale persisted {@code lastSeenAt}
+     * never triggers an early reap. Grants whose owning client is gone (only reachable through a
+     * cleanup/exchange race) are dropped too — they can never validate but would otherwise sit in
+     * the persisted blob forever. Runs opportunistically from {@link #registerClient},
+     * {@link #listClients()} and the broker's maintenance loop; persists only on removal.
+     *
+     * @return how many clients were cleaned up
+     */
+    public int sweepInactiveClients() {
+        synchronized (persistLock) {
+            long now = clock.getAsLong();
+            purgeExpired();
+            List<Client> victims = new ArrayList<>();
+            for (Client c : clients.values()) {
+                long lastEvidence = Math.max(hydratedAt, Math.max(c.registeredAt, c.lastSeenAt.get()));
+                boolean deadWeight = !hasTokens(c.clientId) && !hasPendingCode(c.clientId)
+                        && now - lastEvidence > ABANDONED_CLIENT_GRACE_MS;
+                if (deadWeight || now - lastEvidence > INACTIVE_CLIENT_TTL_MS) {
+                    victims.add(c);
+                }
+            }
+            for (Client victim : victims) {
+                dropClientLocked(victim.clientId);
+                log.info("protege-mcp oauth: cleaned up inactive client {} ({})",
+                        victim.clientId, victim.clientName);
+            }
+            boolean orphansDropped = accessTokens.values().removeIf(g -> !clients.containsKey(g.clientId));
+            orphansDropped |= refreshTokens.values().removeIf(g -> !clients.containsKey(g.clientId));
+            if (!victims.isEmpty() || orphansDropped) {
+                persist();
+            }
+            return victims.size();
+        }
+    }
+
+    /**
+     * Count an authorization touch (consent page render, allow/deny decision) as client activity.
+     * The consent phase holds no token and no code yet, so without this a human parked on the
+     * consent page looks exactly like an abandoned registration to {@link #sweepInactiveClients}.
+     */
+    public void noteClientActivity(String clientId) {
+        Client c = clientId == null ? null : clients.get(clientId);
+        if (c != null) {
+            c.lastSeenAt.set(clock.getAsLong());
+        }
+    }
+
+    /** Remove a client with everything it owns (tokens, pending codes). Call under persistLock. */
+    private Client dropClientLocked(String clientId) {
+        Client removed = clients.remove(clientId);
+        accessTokens.values().removeIf(g -> clientId.equals(g.clientId));
+        refreshTokens.values().removeIf(g -> clientId.equals(g.clientId));
+        codes.values().removeIf(a -> clientId.equals(a.clientId));
+        return removed;
+    }
+
+    private boolean hasTokens(String clientId) {
+        for (Grant g : accessTokens.values()) {
+            if (clientId.equals(g.clientId)) {
+                return true;
+            }
+        }
+        for (Grant g : refreshTokens.values()) {
+            if (clientId.equals(g.clientId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasPendingCode(String clientId) {
+        for (AuthCode a : codes.values()) {
+            if (clientId.equals(a.clientId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Snapshot of the currently registered clients for display (newest registration first). */
     public List<ClientInfo> listClients() {
-        long now = System.currentTimeMillis();
+        sweepInactiveClients();
+        long now = clock.getAsLong();
         List<ClientInfo> out = new ArrayList<>();
         for (Client c : clients.values()) {
             int activeAccess = 0;
@@ -341,24 +514,29 @@ public final class OAuthStore {
         return mapper.writeValueAsString(root);
     }
 
-    /** Evict the client that authenticated longest ago (then oldest registration) and its tokens. */
+    /**
+     * Evict the client whose last activity (authenticated request, or the registration itself for
+     * a never-seen client) is oldest, together with its tokens. Counting registration as activity
+     * matters at capacity: ordering by raw {@code lastSeenAt} would rank a just-registered client
+     * (still 0) below every previously seen one and evict it during its own registration — it
+     * would then finish authorization against a record that no longer exists.
+     */
     private boolean evictLeastRecentlySeenClient() {
         Client victim = null;
+        long victimActivity = Long.MAX_VALUE;
         for (Client c : clients.values()) {
+            long activity = Math.max(c.lastSeenAt.get(), c.registeredAt);
             if (victim == null
-                    || c.lastSeenAt.get() < victim.lastSeenAt.get()
-                    || (c.lastSeenAt.get() == victim.lastSeenAt.get()
-                            && c.registeredAt < victim.registeredAt)) {
+                    || activity < victimActivity
+                    || (activity == victimActivity && c.registeredAt < victim.registeredAt)) {
                 victim = c;
+                victimActivity = activity;
             }
         }
         if (victim == null) {
             return false;
         }
-        String id = victim.clientId;
-        clients.remove(id);
-        accessTokens.values().removeIf(g -> id.equals(g.clientId));
-        refreshTokens.values().removeIf(g -> id.equals(g.clientId));
+        dropClientLocked(victim.clientId);
         return true;
     }
 
@@ -433,7 +611,7 @@ public final class OAuthStore {
     }
 
     private void purgeExpired() {
-        long now = System.currentTimeMillis();
+        long now = clock.getAsLong();
         codes.values().removeIf(c -> c.expiresAt < now);
         accessTokens.values().removeIf(g -> g.expiresAt < now);
     }

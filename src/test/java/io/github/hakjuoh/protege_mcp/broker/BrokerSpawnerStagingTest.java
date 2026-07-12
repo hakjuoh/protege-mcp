@@ -37,6 +37,29 @@ class BrokerSpawnerStagingTest {
         return jar;
     }
 
+    // ---- broker command line -----------------------------------------------------------------
+
+    @Test
+    void brokerCommandCarriesTheLingerWhenConfigured() {
+        BrokerHome home = new BrokerHome(tmp.resolve("home"));
+        List<String> command = BrokerSpawner.brokerCommand(
+                "/usr/bin/java", "a.jar:b.jar", home, 8123, "127.0.0.1", "1.2.3", 15_000);
+        int flag = command.indexOf("--linger-ms");
+        assertTrue(flag > 0, "a non-negative linger must be passed to the broker process");
+        assertEquals("15000", command.get(flag + 1), "linger is passed in milliseconds");
+        assertEquals(0, (command.size() - command.indexOf(BrokerMain.class.getName()) - 1) % 2,
+                "BrokerMain parses arguments pair-wise; the argument list must stay even");
+    }
+
+    @Test
+    void brokerCommandOmitsTheLingerWhenNegative() {
+        BrokerHome home = new BrokerHome(tmp.resolve("home"));
+        List<String> command = BrokerSpawner.brokerCommand(
+                "/usr/bin/java", "a.jar", home, 8123, "127.0.0.1", "1.2.3", -1);
+        assertFalse(command.contains("--linger-ms"),
+                "a negative linger means 'no opinion' — the broker keeps its built-in default");
+    }
+
     @Test
     void stagesAJarAsAContentNamedCopy() throws Exception {
         Path source = sourceJar("protege-mcp-0.5.0.jar", "bundle-bytes");

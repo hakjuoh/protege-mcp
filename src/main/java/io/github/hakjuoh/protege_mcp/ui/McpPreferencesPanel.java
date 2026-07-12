@@ -18,10 +18,10 @@ import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
 
 /**
- * Preferences tab for the MCP server: listen port (or ephemeral), bind address, auto-start,
- * read-only mode and write confirmation. Values are persisted via the Protégé {@link Preferences}
- * store; the server reads a fresh snapshot when it (re)starts, while read-only / confirm toggles
- * apply live.
+ * Preferences tab for the MCP server: listen port (or ephemeral), bind address, shared broker and
+ * its idle linger, auto-start, read-only mode and write confirmation. Values are persisted via the
+ * Protégé {@link Preferences} store; the server reads a fresh snapshot when it (re)starts, while
+ * read-only / confirm toggles apply live and the linger reaches a running broker per heartbeat.
  */
 public class McpPreferencesPanel extends PreferencesPanel {
 
@@ -32,6 +32,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
     private JComboBox<String> bindCombo;
     private JLabel bindWarning;
     private JCheckBox sharedBrokerCheck;
+    private JSpinner lingerSpinner;
     private JCheckBox autoStartCheck;
     private JCheckBox readOnlyCheck;
     private JCheckBox confirmWritesCheck;
@@ -88,6 +89,15 @@ public class McpPreferencesPanel extends PreferencesPanel {
         sharedBrokerCheck = new JCheckBox("Share one MCP endpoint across all Protégé windows and "
                 + "instances (broker process)", p.getBoolean(McpConfig.KEY_SHARED_BROKER, true));
 
+        lingerSpinner = new JSpinner(new SpinnerNumberModel(
+                McpConfig.clampBrokerLingerSeconds(p.getInt(McpConfig.KEY_BROKER_LINGER_SECONDS,
+                        McpConfig.DEFAULT_BROKER_LINGER_SECONDS)),
+                0, McpConfig.MAX_BROKER_LINGER_SECONDS, 1));
+        lingerSpinner.setEditor(new JSpinner.NumberEditor(lingerSpinner, "#"));
+        lingerSpinner.setEnabled(sharedBrokerCheck.isSelected());
+        sharedBrokerCheck.addActionListener(e ->
+                lingerSpinner.setEnabled(sharedBrokerCheck.isSelected()));
+
         autoStartCheck = new JCheckBox("Start the server automatically when a window opens",
                 p.getBoolean(McpConfig.KEY_AUTOSTART, true));
         readOnlyCheck = new JCheckBox("Read-only mode (block all write tools)",
@@ -102,6 +112,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
         panel.addGroupComponent(PreferencesRows.labelled("Bind address:", bindCombo));
         panel.addGroupComponent(bindWarning);
         panel.addGroupComponent(sharedBrokerCheck);
+        panel.addGroupComponent(PreferencesRows.labelled("Broker idle linger (seconds):", lingerSpinner));
         panel.addHelpText(PreferencesText.wrapped(
                 "The server binds the address above — 127.0.0.1 (this machine only) by default; "
                 + "IPv6-preferring clients connect fine over IPv4 loopback, so ::1 is only for a "
@@ -114,6 +125,19 @@ public class McpPreferencesPanel extends PreferencesPanel {
                 + "loopback port behind it. Port, bind-address and broker changes apply the next "
                 + "time a server (or the broker) starts — for a clean switch, close all Protégé "
                 + "windows and reopen."));
+        panel.addHelpText(PreferencesText.wrapped(
+                "Idle linger: once the last Protégé instance disconnects (last window closed, or "
+                + "the application quits), the broker keeps running this many seconds before "
+                + "exiting, so a quick restart — or a second instance arriving moments later — "
+                + "reuses the live broker and its port instead of paying a respawn. Unlike the "
+                + "settings above, this reaches a running broker within a heartbeat (a few "
+                + "seconds) while this window's server is attached to it; with the server "
+                + "stopped, it applies when the broker next starts. 0 makes the broker exit "
+                + "immediately when the last "
+                + "instance disconnects: every quit-and-relaunch then spawns a fresh broker, MCP "
+                + "clients briefly get connection errors during that gap, and a relaunch racing "
+                + "the dying broker's lock handover can delay startup by a few seconds. The "
+                + "default of 15 seconds bridges a normal restart."));
         panel.addSeparator();
         panel.addGroup("Startup");
         panel.addGroupComponent(autoStartCheck);
@@ -144,6 +168,8 @@ public class McpPreferencesPanel extends PreferencesPanel {
         p.putInt(McpConfig.KEY_PORT, port);
         p.putString(McpConfig.KEY_BIND_ADDRESS, McpConfig.sanitizeBindAddress(editedBindAddress()));
         p.putBoolean(McpConfig.KEY_SHARED_BROKER, sharedBrokerCheck.isSelected());
+        p.putInt(McpConfig.KEY_BROKER_LINGER_SECONDS,
+                McpConfig.clampBrokerLingerSeconds((Integer) lingerSpinner.getValue()));
         p.putBoolean(McpConfig.KEY_AUTOSTART, autoStartCheck.isSelected());
         p.putBoolean(McpConfig.KEY_READ_ONLY, readOnlyCheck.isSelected());
         p.putBoolean(McpConfig.KEY_CONFIRM_WRITES, confirmWritesCheck.isSelected());
