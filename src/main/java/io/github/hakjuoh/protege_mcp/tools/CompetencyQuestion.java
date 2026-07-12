@@ -10,7 +10,7 @@ import java.util.Map;
  * {@code run_competency_questions} judges — so {@code run} is convention-agnostic (it sees only this
  * model, never a file format). A CQ pairs an executable SPARQL query with an {@link Expectation} (the
  * pass condition) and light metadata (id, natural-language text, type, tags, whether to run over inferred
- * triples). {@code queryLang} is reserved for a future DL path; 0.4.0 accepts only {@code sparql}.
+ * triples). {@code queryLang} is reserved for a future DL path; only {@code sparql} is accepted.
  *
  * <p>Pure and Protégé-free (round-trippable to/from a standalone {@code .rq}, a JSON manifest entry, or an
  * ontology annotation), so it is unit-tested directly.
@@ -98,7 +98,7 @@ final class CompetencyQuestion {
         }
         String lang = cq.queryLang == null ? "sparql" : cq.queryLang.toLowerCase(java.util.Locale.ROOT);
         if (!lang.equals("sparql")) {
-            throw new ToolArgException("query_lang '" + cq.queryLang + "' is not supported in 0.4.0 "
+            throw new ToolArgException("query_lang '" + cq.queryLang + "' is not supported "
                     + "(only 'sparql'; a DL path is reserved for a later release).");
         }
     }

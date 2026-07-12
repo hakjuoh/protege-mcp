@@ -41,7 +41,7 @@ public final class CompetencyQuestionTools {
                         .strReq("query", "Executable SPARQL 1.1 query — SELECT or ASK.")
                         .str("text", "The natural-language competency question (recommended).")
                         .str("type", "Optional category, e.g. Scoping | Validating.")
-                        .str("query_lang", "Query language — only 'sparql' in 0.4.0 (default sparql).")
+                        .str("query_lang", "Query language — only 'sparql' is supported (default sparql).")
                         .bool("include_inferred", "Also run over the reasoner's inferred triples when the "
                                 + "suite runs (default true).")
                         .str("expected", "Pass condition: nonEmpty (default) | empty | 'count OP N'.")
