@@ -31,6 +31,7 @@ import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import io.github.hakjuoh.protege_mcp.oauth.OAuthStore;
 import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
 
 /**
@@ -67,6 +68,12 @@ class BrokerWiredTest {
         @Override
         protected void service(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             record(req);
+            String forcedStatus = req.getParameter("status");
+            if (forcedStatus != null) {
+                resp.setStatus(Integer.parseInt(forcedStatus));
+                resp.getWriter().write("forced status " + forcedStatus);
+                return;
+            }
             if ("sse".equals(req.getParameter("mode"))) {
                 resp.setStatus(200);
                 resp.setContentType("text/event-stream");
@@ -210,6 +217,65 @@ class BrokerWiredTest {
 
         // A fresh (no-session) request goes to the new default.
         assertTrue(call("POST", "/mcp", STATIC_TOKEN).body().contains("second"));
+    }
+
+    @Test
+    void failedDeleteKeepsSessionPinnedForRetry() throws Exception {
+        FakeBackend backend = startBackend("first");
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(backend, "w1", 100)));
+        call("POST", "/mcp", STATIC_TOKEN); // pins session-of-first
+
+        HttpResponse<String> failed = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/mcp?status=500"))
+                .header("Authorization", "Bearer " + STATIC_TOKEN)
+                .header("Mcp-Session-Id", "session-of-first")
+                .DELETE().build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(500, failed.statusCode());
+
+        HttpResponse<String> retry = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/mcp"))
+                .header("Authorization", "Bearer " + STATIC_TOKEN)
+                .header("Mcp-Session-Id", "session-of-first")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, retry.statusCode());
+        assertTrue(retry.body().contains("first"), "the failed DELETE remains retryable");
+    }
+
+    @Test
+    void successfulDeleteUnpinsTheSession() throws Exception {
+        FakeBackend backend = startBackend("first");
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(backend, "w1", 100)));
+        call("POST", "/mcp", STATIC_TOKEN); // pins session-of-first
+
+        HttpResponse<String> deleted = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/mcp"))
+                .header("Authorization", "Bearer " + STATIC_TOKEN)
+                .header("Mcp-Session-Id", "session-of-first")
+                .DELETE().build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, deleted.statusCode());
+
+        HttpResponse<String> retry = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/mcp"))
+                .header("Authorization", "Bearer " + STATIC_TOKEN)
+                .header("Mcp-Session-Id", "session-of-first")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(404, retry.statusCode(), "a successful session close removes the pin");
+    }
+
+    @Test
+    void brokerFileStoreDoesNotEvictClientsAtThePreferencesSizeLimit() {
+        OAuthStore store = broker.oauthStore();
+        String longUri = "http://localhost/callback/" + "x".repeat(400);
+        for (int i = 0; i < 40; i++) {
+            OAuthStore.Client registered = store.registerClient(List.of(longUri + i), "client-" + i);
+            store.issueTokens(registered.clientId, "mcp", null);
+        }
+        assertEquals(40, store.listClients().size(),
+                "oauth.json has no 8k java.util.prefs limit, so active clients stay registered");
     }
 
     @Test

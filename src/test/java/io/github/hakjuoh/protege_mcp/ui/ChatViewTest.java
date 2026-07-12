@@ -717,6 +717,29 @@ class ChatViewTest {
         assertFalse(boundaryBreak(renderState(false, "SYSTEM"), "ERROR", "boom"));
     }
 
+    @Test
+    void reasoningVisibilityIsFrozenForTheActiveTurn() throws Exception {
+        ChatView v = bareInstance();
+        javax.swing.JCheckBox toggle = new javax.swing.JCheckBox();
+        setField(v, "showThinking", toggle);
+        setField(v, "activeTurn", 1);
+        Method visible = ChatView.class.getDeclaredMethod("shouldShowReasoning");
+        visible.setAccessible(true);
+
+        setField(v, "showReasoningForTurn", true);
+        toggle.setSelected(false);
+        assertTrue((boolean) visible.invoke(v),
+                "unticking mid-turn must not drop reasoning already requested from the CLI");
+
+        setField(v, "showReasoningForTurn", false);
+        toggle.setSelected(true);
+        assertFalse((boolean) visible.invoke(v),
+                "ticking mid-turn applies to the next message, not the current one");
+
+        setField(v, "activeTurn", 0);
+        assertTrue((boolean) visible.invoke(v), "between turns the live checkbox is authoritative");
+    }
+
     // ------------------------------------------------------------------ copy-as-Markdown affordance
 
     /** A bare view wired with just the transcript + segment state the affordance path touches. */

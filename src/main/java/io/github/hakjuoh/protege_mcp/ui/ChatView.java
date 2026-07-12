@@ -178,6 +178,8 @@ public class ChatView extends AbstractOWLViewComponent {
     // Stop was pressed for the turn in flight: deltas drained after the [stopped] marker form a tail
     // fragment, so the turn's final message must not be offered as "the reply" to copy.
     private boolean turnStopped;
+    /** Reasoning visibility snapshotted with the provider flags at the start of the active turn. */
+    private boolean showReasoningForTurn;
 
     private long turnStartMillis;
 
@@ -995,6 +997,7 @@ public class ChatView extends AbstractOWLViewComponent {
         // Read the toggle here, on the EDT: the providers add their CLI-side opt-in flag from it
         // (no CLI sends reasoning text unless asked), so it snapshots per turn like the model does.
         boolean reasoningOn = showThinking != null && showThinking.isSelected();
+        showReasoningForTurn = reasoningOn;
 
         Thread launcher = new Thread(() -> {
             try {
@@ -1166,7 +1169,7 @@ public class ChatView extends AbstractOWLViewComponent {
                 assistantBatch.append(c.text());
                 continue;
             }
-            if (c.kind() == Kind.THINKING && (showThinking == null || !showThinking.isSelected())) {
+            if (c.kind() == Kind.THINKING && !shouldShowReasoning()) {
                 continue;
             }
             if (assistantBatch != null) {
@@ -1241,8 +1244,8 @@ public class ChatView extends AbstractOWLViewComponent {
         if (text == null || text.isEmpty()) {
             return;
         }
-        // Reasoning is rendered only when the (EDT-owned) toggle is on — checked here, on the EDT.
-        if (kind == Kind.THINKING && (showThinking == null || !showThinking.isSelected())) {
+        // Reasoning is rendered only when this turn's EDT-owned snapshot opted in.
+        if (kind == Kind.THINKING && !shouldShowReasoning()) {
             return;
         }
         if (kind == Kind.ASSISTANT) {
@@ -1275,6 +1278,15 @@ public class ChatView extends AbstractOWLViewComponent {
             return false;
         }
         return (kind == Kind.THINKING) != (lastRenderedKind == Kind.THINKING);
+    }
+
+    /**
+     * Reasoning display is a per-turn choice, matching the CLI-side opt-in. Once a turn starts,
+     * changing the checkbox only affects the next message and cannot drop the tail of this one.
+     */
+    private boolean shouldShowReasoning() {
+        return activeTurn != 0 ? showReasoningForTurn
+                : showThinking != null && showThinking.isSelected();
     }
 
     /**

@@ -772,6 +772,21 @@ class OAuthStoreTest {
     }
 
     @Test
+    void uncappedFileStoreKeepsEveryClientPastThePreferencesLimit() throws Exception {
+        SaveCapture save = new SaveCapture();
+        OAuthStore s = new OAuthStore(() -> "tok", () -> null, save, true, 0);
+        String longUri = "http://localhost/callback/" + "x".repeat(400);
+        for (int i = 0; i < 40; i++) {
+            OAuthStore.Client client = s.registerClient(List.of(longUri + i), "client-" + i);
+            s.issueTokens(client.clientId, "mcp", null);
+        }
+
+        assertTrue(save.last.length() > 8000, "file-backed state is allowed past the prefs cap");
+        assertEquals(40, s.listClients().size(), "no active file-backed client is evicted");
+        assertEquals(40, MAPPER.readTree(save.last).path("clients").size());
+    }
+
+    @Test
     void evictedClientAccessTokenIsRejected() {
         // The persist() size guard evicts the least-recently-seen client TOGETHER with its tokens, so an
         // evicted client's access token must stop validating — the runtime counterpart to the

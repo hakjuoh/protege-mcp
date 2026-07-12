@@ -98,7 +98,10 @@ public final class BrokerServer {
      * @return the bound port.
      */
     public synchronized int start(String bindAddress, int port) throws Exception {
-        OAuthStore oauthStore = new OAuthStore(registry::latestToken, this::readOauthState, this::writeOauthState);
+        // oauth.json is a normal file, not one java.util.prefs value: keep every active client
+        // instead of applying the standalone store's 8k preference-size eviction policy.
+        OAuthStore oauthStore = new OAuthStore(registry::latestToken, this::readOauthState,
+                this::writeOauthState, true, 0);
         this.oauthStore = oauthStore;
 
         http = new EmbeddedHttpServer();

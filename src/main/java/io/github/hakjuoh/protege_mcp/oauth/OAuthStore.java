@@ -59,7 +59,7 @@ public final class OAuthStore {
     /** A client that has not authenticated anything this long is cleaned up, tokens and all. */
     static final long INACTIVE_CLIENT_TTL_MS = 60L * 24 * 3600 * 1000; // 60 days (2x access TTL)
     /** Margin under java.util.prefs' 8192-char per-value limit; above this we evict to fit. */
-    private static final int MAX_PERSIST_CHARS = 8000;
+    private static final int PREFERENCES_MAX_PERSIST_CHARS = 8000;
 
     private final SecureRandom random = new SecureRandom();
     private final ObjectMapper mapper = new ObjectMapper();
@@ -67,6 +67,8 @@ public final class OAuthStore {
     private final Supplier<String> staticToken;
     private final Supplier<String> loadState;
     private final Consumer<String> saveState;
+    /** Positive persistence cap, or {@code 0} for an uncapped file-backed store. */
+    private final int maxPersistChars;
     private final Object persistLock = new Object();
 
     private final Map<String, Client> clients = new ConcurrentHashMap<>();
@@ -92,7 +94,7 @@ public final class OAuthStore {
      */
     public OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
             Consumer<String> saveState) {
-        this(staticToken, loadState, saveState, true);
+        this(staticToken, loadState, saveState, true, PREFERENCES_MAX_PERSIST_CHARS);
     }
 
     /**
@@ -103,16 +105,41 @@ public final class OAuthStore {
      */
     public OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
             Consumer<String> saveState, boolean loadPersistedNow) {
-        this(staticToken, loadState, saveState, loadPersistedNow, System::currentTimeMillis);
+        this(staticToken, loadState, saveState, loadPersistedNow,
+                PREFERENCES_MAX_PERSIST_CHARS);
+    }
+
+    /**
+     * Build a store with an explicit persistence-size policy.
+     *
+     * @param maxPersistChars positive character cap for a preferences-backed value, or {@code 0}
+     *     when the save hook writes a normal file with no 8k {@code java.util.prefs} limit
+     */
+    public OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
+            Consumer<String> saveState, boolean loadPersistedNow, int maxPersistChars) {
+        this(staticToken, loadState, saveState, loadPersistedNow, maxPersistChars,
+                System::currentTimeMillis);
     }
 
     /** Test seam: an injected clock makes the time-based cleanup rules assertable without sleeps. */
     OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
             Consumer<String> saveState, boolean loadPersistedNow, LongSupplier clock) {
+        this(staticToken, loadState, saveState, loadPersistedNow,
+                PREFERENCES_MAX_PERSIST_CHARS, clock);
+    }
+
+    /** Test seam combining an explicit persistence cap with an injected clock. */
+    OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
+            Consumer<String> saveState, boolean loadPersistedNow, int maxPersistChars,
+            LongSupplier clock) {
+        if (maxPersistChars < 0) {
+            throw new IllegalArgumentException("maxPersistChars must be >= 0");
+        }
         this.clock = clock;
         this.staticToken = staticToken;
         this.loadState = loadState;
         this.saveState = saveState;
+        this.maxPersistChars = maxPersistChars;
         this.hydratedAt = clock.getAsLong();
         if (loadPersistedNow) {
             load();
@@ -465,11 +492,12 @@ public final class OAuthStore {
     /**
      * Serialize clients + tokens to JSON and hand it to the save hook. Codes are not persisted.
      *
-     * <p>The Protégé preference store is backed by {@code java.util.prefs}, which caps a single
-     * value at 8192 chars and <em>throws</em> above that. To guarantee the write always succeeds (a
-     * silent failure would freeze the persisted state and re-introduce "Unknown client" on the next
-     * restart), expired tokens are purged and, if the blob is still too large, the least-recently-seen
-     * clients are evicted until it fits.
+     * <p>When {@link #maxPersistChars} is positive, this is the standalone Protégé preference store:
+     * {@code java.util.prefs} caps a single value at 8192 chars and <em>throws</em> above that. To
+     * guarantee the write always succeeds (a silent failure would freeze the persisted state and
+     * re-introduce "Unknown client" on the next restart), expired tokens are purged and, if the blob
+     * is still too large, the least-recently-seen clients are evicted until it fits. The broker's
+     * normal-file store sets the cap to zero, so it never evicts merely for serialized size.
      */
     private void persist() {
         if (saveState == null) {
@@ -480,14 +508,15 @@ public final class OAuthStore {
                 purgeExpired();
                 String json = serializeState();
                 int evicted = 0;
-                while (json.length() > MAX_PERSIST_CHARS && evictLeastRecentlySeenClient()) {
+                while (maxPersistChars > 0 && json.length() > maxPersistChars
+                        && evictLeastRecentlySeenClient()) {
                     evicted++;
                     json = serializeState();
                 }
                 if (evicted > 0) {
                     log.warn("protege-mcp oauth: persisted state exceeded the {}-char preference "
                             + "limit; evicted {} least-recently-seen client(s) — they will re-authorize "
-                            + "on next connect", MAX_PERSIST_CHARS, evicted);
+                            + "on next connect", maxPersistChars, evicted);
                 }
                 saveState.accept(json);
             } catch (Exception e) {

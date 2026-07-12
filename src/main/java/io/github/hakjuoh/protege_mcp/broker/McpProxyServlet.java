@@ -183,7 +183,8 @@ public final class McpProxyServlet extends HttpServlet {
             closeQuietly(in);
         }
 
-        if ("DELETE".equals(method)) {
+        if ("DELETE".equals(method) && upstreamResp.statusCode() >= 200
+                && upstreamResp.statusCode() < 300 && !upstreamFailed) {
             registry.unpinSession(req.getHeader(SESSION_HEADER));
         }
         if (upstreamFailed) {
