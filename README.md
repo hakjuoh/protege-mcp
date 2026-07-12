@@ -24,6 +24,9 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 
 - **66 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
   govern, extract modules, run SWRL rules, SPARQL and SHACL, and reason.
+- **One endpoint, any number of windows** (`0.5.0`) — a shared **broker** owns the configured port
+  across every Protégé window and instance and routes each MCP session to a live window, so one fixed
+  URL (`http://127.0.0.1:8123/mcp`) always works.
 - **Safe, testable authoring** (`0.4.0`) — `apply_changes verify=report|rollback` classifies the reasoner
   and reverts an edit that makes a class unsatisfiable or the ontology inconsistent; a re-runnable
   **competency-question suite** and SPARQL **invariants** (`verify_ontology`) catch regressions; a single
@@ -32,8 +35,9 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
   minting a new one.
 - **Edits are GUI-visible and undoable** — every edit goes through Protégé's shared `OWLModelManager`,
   so it appears in the editor immediately and joins the **Edit ▸ Undo** stack.
-- **Safe by default** — a local, loopback-only server that requires **OAuth** or a **bearer token** on
-  every request, with optional **read-only** mode and **confirm-each-write**.
+- **Safe by default** — a local server, bound to loopback (`127.0.0.1`) unless you change the
+  bind-address preference, that requires **OAuth** or a **bearer token** on every request, with
+  optional **read-only** mode and **confirm-each-write**.
 - **In-app Ontology Assistant** — chat that drives your existing `claude` / `codex` CLI back into the
   server; **no API key is stored by Protégé**.
 

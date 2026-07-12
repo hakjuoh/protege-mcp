@@ -165,7 +165,8 @@ After restarting **on Java 17+**, you should see:
 
 - A **MCP Server** view — add it from **Window ▸ Views ▸ Miscellaneous views**, or to any tab. It shows
   the server status, bound URL, and bearer token.
-- A **MCP** settings tab under **Settings ▸ MCP** (port, autostart, read-only, confirm-writes).
+- A **MCP** settings tab under **Settings ▸ MCP** (port, bind address, shared broker and its idle
+  linger, autostart, read-only, confirm-writes).
 - An **Ontology Assistant** top-level tab, and an **Ontology Assistant** settings tab under
   **Settings ▸ Ontology Assistant**.
 

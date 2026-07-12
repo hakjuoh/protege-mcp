@@ -38,7 +38,9 @@ So the assistant reads and edits through **exactly the same tools** an external 
 - **Install and log in to at least one CLI:**
   - Claude Code — <https://docs.claude.com/en/docs/claude-code> (then `claude` works in your terminal), or
   - Codex — <https://github.com/openai/codex> (`codex login`).
-- The **MCP server must be running.** The chat starts it automatically on your first message.
+- The **MCP server must be running.** The chat starts it automatically on your first message — unless
+  you stopped the server yourself with **Stop** in the **MCP Server** view; an explicit Stop blocks
+  every automatic start (added in `0.5.0`) until you press **Start** again.
 
 Only CLIs that are actually detected on your system are offered as providers.
 
@@ -55,6 +57,10 @@ Only CLIs that are actually detected on your system are offered as providers.
 4. Watch the reply **stream** in. Replies render as **Markdown** while they stream (added in `0.5.0`) —
    headings, bold/italic, lists, quotes, inline code and code blocks, tables, and links (`http(s)` links
    are clickable). **Stop** cancels mid-turn. **Edit ▸ Undo** reverts any edit it made.
+   Styled rendering is lossy to plain select-and-copy, so each reply keeps its **original Markdown**
+   (also `0.5.0`): a small **copy button** under the turn's closing reply puts that markup on the
+   clipboard, and a **right-click menu** on the transcript offers **Copy** (the selection, as displayed)
+   and **Copy message as Markdown** for any assistant message under the pointer.
 5. Two checkboxes sit next to **New chat** in the panel:
    - **Confirm each edit** — require a confirmation dialog before any edit applies (this is the MCP
      server's confirm-writes setting, toggled live).
@@ -110,3 +116,6 @@ The chat input accepts more than plain text (added in `0.3.1`):
   plugin spawns the CLI through a login shell so it can pick up your environment.
 - **Edits don't apply** — check **read-only** mode and any pending **confirm-each-write** dialog
   (Settings ▸ MCP), and the **Confirm each edit** checkbox in the panel.
+- **The chat says the server is stopped** — you stopped it explicitly (**Stop** in the **MCP Server**
+  view), which blocks every automatic start, the chat's included. Press **Start** in the view to bring
+  it back.

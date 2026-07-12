@@ -28,9 +28,17 @@ and a fix or mitigation plan once the report is triaged.
 Protégé MCP is designed for a **single user on their own desktop**. Understanding this scope helps
 frame what is and isn't in-scope:
 
-- **Transport.** The embedded MCP server binds **loopback only** (`127.0.0.1`) and authenticates every
-  `/mcp` request with a bearer token (OAuth 2.0 + PKCE `S256`, or a static fallback token). Bearer-token
-  (not cookie) auth is inherently resistant to CSRF and DNS-rebinding.
+- **Transport.** The MCP endpoint binds **loopback** (`127.0.0.1`) **by default** and authenticates
+  every `/mcp` request with a bearer token (OAuth 2.0 + PKCE `S256`, or a static fallback token). Since
+  0.5.0 a bind-address preference can expose a non-loopback interface; it is opt-in, warned about in the
+  UI, and OAuth **authorization** (the browser consent flow) stays restricted to **same-machine**
+  clients even then. Bearer-token (not cookie) auth is inherently resistant to CSRF and DNS-rebinding.
+- **Broker (0.5.0).** By default the configured port is owned by a small standalone **broker** process
+  shared by every Protégé window and instance. It terminates auth exactly as above and proxies each MCP
+  session to a per-window backend that stays on **loopback regardless** of the bind-address preference;
+  its control plane (`/internal/*`) is guarded by an owner-only file secret. Broker state lives under
+  `~/.protege-mcp/` (`0700`), including OAuth client registrations and tokens persisted to `oauth.json`
+  — superseded, abandoned, or long-inactive registrations are swept automatically.
 - **Editing.** All ontology reads/edits flow through Protégé's `OWLModelManager`, join the shared undo
   stack, and can be gated by a **read-only** switch and an optional **write-confirmation** dialog. The
   confirmation fails **closed**.
@@ -41,9 +49,10 @@ frame what is and isn't in-scope:
   `0600` config file for Claude) so it is not exposed on the process command line.
 
 ### In scope
-Authentication/authorization bypass of `/mcp`; the OAuth/PKCE flow; token handling and disclosure;
-command/argument injection into the spawned CLIs; path traversal or over-broad directory grants via
-attachments; any write that bypasses the read-only / confirmation gates.
+Authentication/authorization bypass of `/mcp` (standalone or through the broker); the broker's
+`/internal` control-plane guard; the OAuth/PKCE flow; token handling and disclosure (including
+`~/.protege-mcp/oauth.json`); command/argument injection into the spawned CLIs; path traversal or
+over-broad directory grants via attachments; any write that bypasses the read-only / confirmation gates.
 
 ### Out of scope
 Attacks that require an already-compromised local account (the model is a single trusted desktop user);
@@ -75,7 +84,7 @@ unreachable:
 | --- | --- | --- |
 | CVE-2023-2976 | `Files.createTempDir()` | Plugin creates temp files via JDK `java.nio.file.Files.createTempFile`, never guava. |
 | CVE-2020-8908 | `FileBackedOutputStream` | Never referenced in source or via the OWLAPI APIs the plugin drives. |
-| CVE-2018-10237 | `AtomicDoubleArray` / `CompoundOrdering` deserialization | The plugin does no Java deserialization (no `ObjectInputStream`); the MCP transport is JSON over a `127.0.0.1`-bound servlet with no Jetty session store. |
+| CVE-2018-10237 | `AtomicDoubleArray` / `CompoundOrdering` deserialization | The plugin does no Java deserialization (no `ObjectInputStream`); the MCP transport is JSON over a locally-bound servlet (loopback by default) with no Jetty session store. |
 
 The real remediation ("run on a newer guava") belongs to Protégé Desktop and is outside this plugin's
 control. Note the released JAR does embed *relocated/shaded* guava copies under

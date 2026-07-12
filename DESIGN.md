@@ -6,11 +6,11 @@
 > Design for adding **MCP (Model Context Protocol) support** to Protégé Desktop as a plugin.
 > **Adopted: Architecture Approach A — in-Protégé MCP server.** External LLM clients (Claude Code/Desktop,
 > Codex CLI, VS Code MCP, other IDE extensions) read and edit the user's **live, open ontology** directly;
-> edits appear in the GUI immediately and join the user's **undo** stack. Architecture Approach A is **built and shipping**
-> (first delivered at `0.1.0`; `0.2.0` adds a natural-language layer — JSON tool output, context/validation/preview
-> tools, and MCP prompts — see §5).
+> edits appear in the GUI immediately and join the user's **undo** stack. Architecture Approach A is **built and
+> shipping**: 66 structured tools + 11 guided prompts (§5) behind one fixed MCP endpoint that a shared broker
+> keeps stable across every Protégé window and instance (§4.1 item 11).
 >
-> **Architecture Approach B — in-Protégé chat assistant — is also now built (`0.3.0`).** A chat panel (and a
+> **Architecture Approach B — in-Protégé chat assistant — is also built.** A chat panel (and a
 > dedicated **Ontology Assistant** tab) drives a locally-installed coding-agent CLI (`claude` / `codex`) that connects back
 > to Approach A's own MCP server, so the assistant reads/edits the live ontology with no API key stored by the
 > plugin (see §9).
@@ -44,11 +44,13 @@ Provided platform libraries (supplied by Protégé, not embedded): `protege-edit
 - Ship as a **single OSGi bundle** dropped into `plugins/`, with no changes to Protégé core.
 
 **Non-goals (this track)**
-- An in-app LLM chat UI — this is **Architecture Approach B**, now **built in `0.3.0`** (§9): a chat panel that
+- A direct model-API chat client — the in-app chat is **Architecture Approach B** (§9): a chat panel that
   drives a local agent CLI rather than the plugin calling a model API directly.
 - Headless / batch file editing — this is **Architecture Approach C** (a separate complement track, §10).
-- Multi-user remote access — the server binds **`127.0.0.1`** only
-  (`EmbeddedHttpServer`: `LOOPBACK = "127.0.0.1"`, `connector.setHost(LOOPBACK)`).
+- Multi-user remote access — the server binds **loopback (`127.0.0.1`) by default**
+  (`EmbeddedHttpServer`: `connector.setHost(bindAddress)`, default `LOOPBACK = "127.0.0.1"`). The
+  bind-address preference can expose another interface, but the design target remains a
+  **single local user** — OAuth authorization stays same-machine-only whatever the bind address.
 
 > *"Architecture Approach" describes the plugin's internal shape; it is distinct from the
 > README/Check-for-plugins "Distribution Path A/B", which describes how the built jar is delivered (§11).*
@@ -57,7 +59,7 @@ Provided platform libraries (supplied by Protégé, not embedded): `protege-edit
 
 ## 2. Architecture Decision
 
-Three candidates were designed and validated; **Architecture Approach A was adopted and is now built.**
+Three candidates were designed and validated; **Architecture Approach A was adopted and built.**
 
 | | **A. In-Protégé MCP server** ✅ built | **B. In-Protégé chat** ✅ built | C. Standalone MCP server |
 |---|---|---|---|
@@ -67,13 +69,13 @@ Three candidates were designed and validated; **Architecture Approach A was adop
 | GUI reflect / Undo | ✅ (core value) | ✅ (reuses A's tool layer) | ❌ (file snapshots) |
 | External clients | as-is | not required (in-app) | as-is |
 | Auth | OAuth 2.1 + static bearer | the CLI's own login (no key stored) | n/a (stdio child) |
-| Status | **shipped** | **shipped (`0.3.0`)** | designed (§10, complement) |
+| Status | **shipped** | **shipped** | designed (§10, complement) |
 
 **Why A (and then B atop it).** The request is "add MCP to the Protégé app," and the largest value is an LLM
 acting on the **model the user already has open** — the shared `OWLModelManager`, renderers, reasoner, and undo
 stack. Only Architecture Approach A delivers this cleanly: Architecture Approach C edits stale file snapshots.
-Architecture Approach B was originally deferred as an LLM-chat product the request did not ask for; the `0.3.0`
-build sidesteps that cost entirely by **driving the user's existing agent CLI** (which reuses A's tool layer over
+Architecture Approach B was originally deferred as an LLM-chat product the request did not ask for; the as-built
+chat sidesteps that cost entirely by **driving the user's existing agent CLI** (which reuses A's tool layer over
 loopback), so B ships as a thin UI + subprocess driver with no API-key custody (§9).
 
 **Feasibility verdict: built.** Three real costs were confronted and solved, addressed head-on in this document —
@@ -126,9 +128,11 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
 
 1. **`McpServerHook`** (`EditorKitHook`) — per-window lifecycle owner. `initialise()` builds an
    `OntologyAccess` and a `McpServerController`, registers the controller in `McpServerRegistry` keyed by the
-   `EditorKit`, and (if auto-start is on) calls `McpServerRegistry.startIfNoOwner(...)` (daemon thread
-   `protege-mcp-start`) — a new window **defers** to whichever controller already owns the single process-wide
-   port rather than fighting over the bind (a bind failure is non-fatal: logged and surfaced in the view). It
+   `EditorKit`, and (if auto-start is on) calls `McpBoot.autoStart(...)` (daemon thread
+   `protege-mcp-start`) — broker-first (item 11); in the standalone/degraded mode this becomes the
+   `McpServerRegistry.startIfNoOwner(...)` election, where a new window **defers** to whichever controller
+   already owns the single process-wide port rather than fighting over the bind (a bind failure is
+   non-fatal: the server falls back to an ephemeral port, logged and surfaced in the view). It
    touches no UI/model (the workspace is not yet initialised; it may run on the EDT or the OSGi framework
    thread). `dispose()` unregisters and stops the controller **off-EDT** on a daemon thread with a bounded 3s
    join (so closing a window never blocks); if this window held the port, it then hands it to another open
@@ -163,12 +167,12 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.4.3`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.5.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
    McpServer.sync(transport)
-            .serverInfo("protege-mcp", "0.4.2")
+            .serverInfo(SERVER_NAME, SERVER_VERSION)
             .capabilities(ServerCapabilities.builder().tools(false).prompts(false).build())  // tools + prompts (both listChanged=false); no resources
             .immediateExecution(true)     // run handlers on the transport (HTTP) thread; the plugin marshals to the EDT itself
             .validateToolInputs(false)
@@ -181,7 +185,8 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    `close()` calls `closeGracefully()` then `close()`.
 
 5. **`EmbeddedHttpServer`** — a minimal embedded **Jetty 12 ee10** host (`jetty-ee10-servlet`) bound to
-   `127.0.0.1` only, a single `ServletContextHandler` at context path `/`. Filters are registered with
+   the configured bind address (default `127.0.0.1`; a specific non-IPv4-loopback bind additionally
+   aliases the same port on `127.0.0.1`), a single `ServletContextHandler` at context path `/`. Filters are registered with
    `REQUEST` + `ASYNC` dispatch and `asyncSupported` (Streamable-HTTP uses `request.startAsync()` for SSE).
    `start(port)` with port `0` picks a free ephemeral port and returns `connector.getLocalPort()`;
    `startWithFallback(port)` retries on port `0` when the failure chain is a `BindException` (port already in
@@ -211,16 +216,27 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    worker threads), Regenerate token, Copy URL, and **Copy connect command**
    (`claude mcp add --transport http protege <url>`). It hosts the **Connected-clients** `JTable`
    (Client, Client ID, Registered, Last seen, Active tokens, Expires) with single-selection **Revoke**, a
-   "Static fallback token last used" label, and a 1500ms refresh timer.
+   "Static fallback token last used" label, and a 1500ms refresh timer. An explicit **Stop latches the
+   server off** (`McpServerController.userStopped`): every auto-start path — window open, the chat's lazy
+   start, standalone promotion — refuses under the same monitor until the user presses **Start**, which
+   clears the latch. While the shared broker is unreachable, the view flips to *"Broker is down — press
+   Start to relaunch it"* (Stop disabled, Start relaunches the broker immediately, bypassing the retry
+   throttle) and the clients panel attributes clients to the window's direct server, not the dead broker.
 
 10. **`McpPreferencesPanel`** (`PreferencesPanel`, label `"MCP"`) — port spinner (1–65535) + ephemeral checkbox,
-    shared-broker toggle (default on), auto-start, read-only mode, confirm-each-write. Port, broker and
-    auto-start take effect on restart; read-only and confirm apply live. Persisted via `McpConfig.prefs()`.
+    **bind address** (editable combo; presets `127.0.0.1`, `::1`, `0.0.0.0`; a non-loopback choice shows a
+    red plain-HTTP warning), shared-broker toggle (default on) + **broker idle linger** spinner (seconds,
+    0–3600, default 15), auto-start, read-only mode, confirm-each-write. Port, bind address and broker
+    take effect on restart; read-only and confirm apply live, and a linger change reaches a running broker
+    with its next heartbeat. Persisted via `McpConfig.prefs()`.
 
 11. **Shared broker (`broker` package)** — a tiny standalone process that owns the configured port across
     every Protégé window AND instance, so external clients keep one fixed URL. On-demand lifecycle: a
     starting Protégé process probes `~/.protege-mcp/broker.json` + `GET /internal/info`; if no live broker
-    answers, it spawns one (`java -cp <this plugin's bundle jar + Protégé's slf4j jars> BrokerMain` —
+    answers, it spawns one — a cross-process file lock (`~/.protege-mcp/broker.lock`, held for the
+    broker's life) keeps the spawn a **singleton** even when the port itself cannot arbitrate (ephemeral
+    `0`, or held by a foreign app), and the lock is handed over when its holder is still dying —
+    (`java -cp <this plugin's bundle jar + Protégé's slf4j jars> BrokerMain` —
     compile-scope deps are inlined into the bundle so the jar is self-sufficient; only provided-scope slf4j
     is resolved from the running framework's CodeSource). The classpath is **staged**: both jars are copied
     to `~/.protege-mcp/jars/<name>-<sha256/12>.jar` and the broker runs from the copies, never from the
@@ -230,7 +246,7 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
     (age-gated, best-effort) on later spawns; staging failure falls back to the original jars. On spawn
     failure, or when a broker already exists, it simply uses whichever broker is alive. The broker **reference-counts** registered processes (2s
     heartbeats plus a pid/staleness reaper for crashed instances) and **exits itself** once no instance
-    references it (15s linger; 60s boot grace for orphans). `BrokerServer` reuses `EmbeddedHttpServer`,
+    references it (configurable idle linger, default 15s, range 0–3600s; 60s boot grace for orphans). `BrokerServer` reuses `EmbeddedHttpServer`,
     `AccessTokenFilter` and the OAuth stack, persisting OAuth state to `~/.protege-mcp/oauth.json`;
     `McpProxyServlet` streams `/mcp` byte-for-byte (flush per chunk → live SSE) to per-window backends,
     pinning each MCP session to the window that created it (`Mcp-Session-Id`) and defaulting new sessions to
@@ -254,15 +270,21 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
 ```
 window open → OWLEditorKit created (EDT or OSGi framework thread, boot-path dependent)
             → loadEditorKitHooks → McpServerHook.initialise()
-            → builds controller, registers, auto-starts via owner election (defers to the current port owner)
-            → EmbeddedHttpServer bound on 127.0.0.1:<port>
-external client → 127.0.0.1:<port>/mcp → AccessTokenFilter (OAuth access token or static token)
+            → builds controller, registers, auto-starts via McpBoot — broker-first: ensure/spawn the
+              shared broker, register with it, start a broker-managed backend on an ephemeral loopback
+              port; degrades to the standalone owner election (+ ephemeral-port fallback) when no
+              broker can be reached or spawned
+external client → <bind address>:<port>/mcp (the broker — or the standalone owner window)
+            → AccessTokenFilter (OAuth access token or static token)
+            → broker mode: McpProxyServlet pins the session (Mcp-Session-Id) and streams
+              byte-for-byte to that window's backend (per-window X-Protege-Mcp-Broker secret)
             → Streamable-HTTP transport servlet
             → MCP handler runs on a Jetty thread (immediateExecution(true))
             → OntologyAccess marshals to the EDT → OWLModelManager.applyChange(s)
             → ontologiesChanged listener → HistoryManager.logChanges (shared undo) → GUI refresh
             → handler re-queries resulting state (ChangeListMinimizer may drop/merge) → CallToolResult
-window close → McpServerHook.dispose() → unregister + stop off-EDT (bounded join); port handed off to another window
+window close → McpServerHook.dispose() → unregister + stop off-EDT (bounded join); the broker routes new
+              sessions to a remaining window (standalone: the port is handed off / promoted)
 ```
 
 The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `WriteTools` / `ReasonerTools`.
@@ -275,9 +297,9 @@ Sixty-six tools — 7 read, 2 context, 20 edit/curation/history/persistence (inc
 `apply_changes`, `set_label`, `create_term`, `create_terms`, `create_property`, `create_properties`, `deprecate_entity`,
 `move_class`), 6 ontology-header (incl. `set_prefix`), 5 document (incl. `set_active_ontology`,
 `create_ontology`, `write_catalog`), 1 module (`extract_module`), 3 rule
-(`list_rules`/`add_rule`/`remove_rule`), 9 reasoner (incl. `explain_inconsistency`, new in `0.4.3`), 3 SPARQL
+(`list_rules`/`add_rule`/`remove_rule`), 9 reasoner (incl. `explain_inconsistency`), 3 SPARQL
 (`sparql_query`/`sparql_schema`/`sparql_validate`), 4 validation (incl. `diff_ontologies`,
-`validate_governance`, `shacl_validate`), and — new in `0.4.0` — 6 safe/testable-authoring tools
+`validate_governance`, `shacl_validate`), and 6 safe/testable-authoring tools
 (`add_competency_question` / `list_competency_questions` / `remove_competency_question` /
 `run_competency_questions`, `verify_ontology`, `run_qc_suite`) — each defined by a `name`, a `description`, and a
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
@@ -286,32 +308,28 @@ serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clie
 programmatically and a human still sees readable JSON. The server also registers **11 MCP prompts**
 (guided workflows) — see the end of this section.
 
-New in `0.2.0` (the natural-language layer): `get_ontology_context` / `get_entity_context`
-(model-friendly orientation + entity cards), `preview_changes` (a non-mutating dry-run / diff),
-`validate_ontology` (a modelling-quality audit complementing the reasoner), the full JSON-output
-migration, and the MCP prompts.
+**The natural-language layer.** `get_ontology_context` / `get_entity_context` give a model-friendly
+orientation and per-entity cards, `preview_changes` is a non-mutating dry-run / diff, and
+`validate_ontology` runs a modelling-quality audit that complements the reasoner (it takes
+`with_reasoner`); tool output is uniformly structured JSON, and the MCP prompts sit on top.
 
-New in `0.2.1` (tool-driven-construction ergonomics, found by reconstructing a multi-module domain ontology through the
-tools): `set_active_ontology`
-(switch the active edit target) and `load_ontology`/`add_import` options that resolve imports without
-stealing it; `apply_changes` (apply a previewed batch in one call); write tools now report minted
-`new_entities` and take `strict` (refuse to mint from a typo'd IRI); `create_*` gain `namespace` +
-language-tagged labels; `set_label` (relabel upsert); `set_prefix` (prefix-map management); the
-Manchester parser accepts full `<IRI>` operands inside compound expressions; `get_entity_context`
-returns structured `{iri, …}` neighbours; `validate_ontology` takes `with_reasoner`; and `undo`/`redo`
+**Tool-driven construction ergonomics.** `set_active_ontology` switches the active edit target, and
+`load_ontology`/`add_import` options resolve imports without stealing it; `apply_changes` applies a
+previewed batch in one call; write tools report minted `new_entities` and take `strict` (refuse to mint
+from a typo'd IRI); `create_*` accept `namespace` + language-tagged labels; `set_label` is a relabel
+upsert; `set_prefix` manages the prefix map; the Manchester parser accepts full `<IRI>` operands inside
+compound expressions; `get_entity_context` returns structured `{iri, …}` neighbours; and `undo`/`redo`
 report the axiom-count delta.
 
-New in `0.2.2` (closing the multi-module reconstruction gaps found by rebuilding a multi-module ontology
-through the tools): structured SWRL rule editing — `list_rules` / `add_rule` / `remove_rule` read,
-add, and remove `swrl:Imp` axioms as body/head atoms, preserving named rule-variable IRIs (e.g.
-`ex-var:process1`) and rule-level annotations that the conventional `?x` text syntax cannot
-round-trip; `create_ontology` mints a new empty module in the workspace (paired with the existing
-`set_ontology_id`); `write_catalog` generates the OASIS `catalog-v001.xml` that maps a module's
-imports to their local files (a file outside the OWL axiom model, so no other tool can produce it);
-and `diff_ontologies` performs an axiom-level semantic diff / round-trip check between two loaded
-ontologies, or the active ontology against a freshly-loaded document.
+**Structured rule and multi-module authoring.** `list_rules` / `add_rule` / `remove_rule` read, add, and
+remove `swrl:Imp` axioms as body/head atoms, preserving named rule-variable IRIs (e.g. `ex-var:process1`)
+and rule-level annotations that the conventional `?x` text syntax cannot round-trip; `create_ontology`
+mints a new empty module in the workspace (paired with `set_ontology_id`); `write_catalog` generates the
+OASIS `catalog-v001.xml` that maps a module's imports to their local files (a file outside the OWL axiom
+model, so no other tool can produce it); and `diff_ontologies` performs an axiom-level semantic diff /
+round-trip check between two loaded ontologies, or the active ontology against a freshly-loaded document.
 
-New in `0.3.2`: `sparql_query` — run a SPARQL 1.1 query (`SELECT`/`ASK`/`CONSTRUCT`/`DESCRIBE`; read-only,
+**SPARQL.** `sparql_query` runs a SPARQL 1.1 query (`SELECT`/`ASK`/`CONSTRUCT`/`DESCRIBE`; read-only,
 since `UPDATE` and `SERVICE` are rejected) over the active ontology and its imports closure, using an
 embedded Apache Jena ARQ engine. The closure is snapshotted into a private throwaway ontology on the EDT —
 preserving the real ontology IRI and ontology-level (header) annotations, not just entity axioms — then
@@ -322,7 +340,7 @@ a reported note, on a large ABox). Jena is inlined into the bundle; because jena
 same `META-INF/services/org.apache.jena.sys.JenaSubsystemLifecycle` resource, a hand-merged copy is shipped so
 RIOT/ARQ init survives the single-classloader inlining, and `JenaSystem.init()` is warmed once at server start.
 
-Also new in `0.3.2`, two tools that help *author* a query (since `sparql_query` only executes one): `sparql_schema`
+Two companion tools help *author* a query (since `sparql_query` only executes one): `sparql_schema`
 returns the queryable vocabulary in one call — the prefix map (and a ready-to-paste `PREFIX` block), classes,
 object/data properties with their domains and ranges, individuals and datatypes (each with a CURIE + IRI), plus
 example queries grounded in the ontology's own terms — and `sparql_validate` parses a draft (without running it,
@@ -332,11 +350,11 @@ unless `dry_run`) with the ontology prefixes auto-prepended, reporting whether `
 typos). Both reuse the `sparql_query` snapshot/prefix machinery so they describe and validate exactly what would
 run; the `author_sparql_query` prompt chains them (discover → draft → validate → run → iterate).
 
-New in `0.4.0` (*safe, testable LLM-assisted authoring* — closing the **propose → ground → verify →
-confirm** loop), all built by reusing shipping primitives (the single-undo transactional apply, the
-embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern):
+**Safe, testable LLM-assisted authoring** closes the **propose → ground → verify → confirm** loop, built by
+reusing the shipping primitives (the single-undo transactional apply, the embedded reasoner, Jena ARQ,
+`OWLEntityFinder`, and the catalog sidecar pattern):
 
-- **`apply_changes` gains `verify=none|report|rollback`** (F1). With `report` or `rollback` the batch is
+- **`apply_changes` takes `verify=none|report|rollback`.** With `report` or `rollback` the batch is
   applied as one undoable transaction, then the reasoner is classified off the EDT and the result is
   checked for a **regression** — a class that became unsatisfiable, or an ontology that became
   inconsistent, *because of this batch* (`postUnsat \ preUnsat`, or newly-inconsistent). `report` keeps the
@@ -348,7 +366,7 @@ embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern)
   `HistoryManager.getLoggedChanges().size()`) degrades to `report` semantics rather than blind-undoing. The
   post-apply unsatisfiable read uses the manager's current reasoner *after* a completed classification (the
   status-gated verdict stubs out while `OUT_OF_SYNC`). Warm reasoner = 1 classification, cold = 2.
-- **`search_entities` is grounding-aware** (F2, additive fields only). Each hit carries a `score` and a
+- **`search_entities` is grounding-aware** (additive fields only). Each hit carries a `score` and a
   `match_kind` (exact | prefix | substring | fuzzy — the exact tier considers every `rdfs:label` language
   variant and the IRI local name, case/whitespace/diacritic-folded), and the result adds `best_match` (the
   IRI the query grounds to, or null) and `would_mint` (true when a single-term query grounds to nothing, so
@@ -356,7 +374,7 @@ embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern)
   not touch the shared `entityList` shape) with an IRI-string final tiebreak so the finder's `Set` order
   can't leak; `would_mint` keys on the real resolution (`EntityResolver.findEntity` + exact label/local
   name), not the substring finder, and carves out full-IRI / Manchester / multi-word inputs.
-- **A re-runnable competency-question suite** (F3): `add_competency_question` / `list_competency_questions`
+- **A re-runnable competency-question suite**: `add_competency_question` / `list_competency_questions`
   / `remove_competency_question` / `run_competency_questions`. A CQ pairs an executable SPARQL query with an
   `Expectation` (the pass condition — `nonEmpty` (default) | `empty` | `count OP N` | `exactRows`); `run`
   re-checks them all against one shared point-in-time snapshot, so an edit that quietly breaks a requirement
@@ -370,7 +388,7 @@ embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern)
   convention-agnostic. Malformed input is isolated (a bad `.rq`/manifest entry is skipped-with-reason, never
   fatal); file/annotation writes go through `checkWriteAllowed`; ids are sanitised so a `.rq` filename can
   never traverse.
-- **`verify_ontology`** (F4): run project-defined SPARQL **invariants** (ROBOT `verify` — patterns that must
+- **`verify_ontology`**: run project-defined SPARQL **invariants** (ROBOT `verify` — patterns that must
   never appear; a returned row / ASK true is a *violation*, the inverse of a CQ) over the shared off-EDT
   snapshot, with a `fail_on` severity gate. Invariants must be `SELECT`/`ASK` (a graph-producing
   `CONSTRUCT`/`DESCRIBE` is not a detector and is rejected); a check that **cannot run** — a query error, or
@@ -378,23 +396,23 @@ embedded reasoner, Jena ARQ, `OWLEntityFinder`, and the catalog sidecar pattern)
   degrading to the asserted triples and reporting a false pass. Violation rows are reported in the
   `nodeJson` binding shape `sparql_query` already produces — **never** rendered through the EDT-only
   `mm.getRendering`.
-- **`run_qc_suite`** (F5): one umbrella gate composing the shipping plain-data cores — `reasoner`,
+- **`run_qc_suite`**: one umbrella gate composing the shipping plain-data cores — `reasoner`,
   `profile`, `structural` (the `validate_ontology` checks), `invariants`, `cqs`, `shacl` (validate against supplied SHACL shapes) — over
   one shared snapshot, collapsed to a single verdict. A stage whose backing data is absent (no classified
   reasoner, no invariants, no CQs, no SHACL shapes) is **skipped with a reason, never an error**; the gate is the
   worst *ran* stage versus `fail_on`.
 
-New in `0.4.3` (operational safety / transparency): `save_ontology` maps `.obo` and makes an
+**Operational safety and transparency.** `save_ontology` maps `.obo` and makes an
 *unrecognized* extension a hard error instead of a silent format fallback (extensionless paths still keep
-the current format), and gains `all=true` (save every dirty ontology to its own document, file-less ones
+the current format), and takes `all=true` (save every dirty ontology to its own document, file-less ones
 reported as skipped); `list_ontologies` reports per-ontology `dirty` + `document` and a `dirty_count`;
-`rename_entity` / `delete_entity` / `merge_ontology_document` gain `preview=true` (report the exact change
+`rename_entity` / `delete_entity` / `merge_ontology_document` take `preview=true` (report the exact change
 set / blast radius without applying — the same computed change list the apply path uses); `undo_change`
-gains `peek=true` (inspect the next-undo transaction via `HistoryManager.getLoggedChanges()`; the redo
+takes `peek=true` (inspect the next-undo transaction via `HistoryManager.getLoggedChanges()`; the redo
 stack has no public accessor, so redo stays boolean) and both history tools report `undo_depth`;
 `run_reasoner` and the `run_qc_suite` reasoner stage warn when the ontology has SWRL rules the selected
 reasoner silently ignores (ELK — surfaced, deliberately not gated); `create_terms` / `create_properties`
-gain `apply_changes`-style `verify=report|rollback` (the `ApplyVerify` orchestration now takes the batch
+take `apply_changes`-style `verify=report|rollback` (the `ApplyVerify` orchestration takes the batch
 as an injected applier); and **`explain_inconsistency`** finds a minimal jointly-inconsistent axiom set via
 a contraction-only search over a private closure copy — `OWLReasoner.isConsistent()` is the sole oracle
 (the one query that does not throw `InconsistentOntologyException`; the clarkparsia black-box generator's
@@ -405,11 +423,11 @@ a pointed error naming `explain_inconsistency`.
 
 | Tool | Mapping / notes |
 |---|---|
-| `list_ontologies` | `OWLModelManager.getOntologies()` / `getActiveOntologies()` + `getActiveOntology()`; marks the active one; `0.4.3`: per-ontology `dirty` (`getDirtyOntologies()`) + `document` IRI |
+| `list_ontologies` | `OWLModelManager.getOntologies()` / `getActiveOntologies()` + `getActiveOntology()`; marks the active one; per-ontology `dirty` (`getDirtyOntologies()`) + `document` IRI and a `dirty_count` |
 | `get_active_ontology` | `getActiveOntology().getOntologyID()`, axiom/logical-axiom counts, imports. ⚠️ `isActiveOntologyMutable()` is **always true**, so write protection is a plugin-side setting |
 | `summarize_ontology` | signature, annotation/import, and axiom-type counts over the active ontology, optionally including imports |
 | `list_classes` | `getActiveOntology().getClassesInSignature()` + `OWLModelManager.getRendering(obj)` |
-| `search_entities` | `getOWLEntityFinder().getMatchingOWLClasses(...)` and property/individual/datatype variants. A plain fragment is wrapped `*frag*` (the finder otherwise misses substrings); a blank/wildcard-only query falls back to `getActiveOntology().get…InSignature()` (the finder returns nothing for a bare `*`). `0.4.0`: a separate ranked builder (`EntitySearch`) adds `score`/`match_kind` per hit and top-level `would_mint`/`best_match` (grounding-aware; keyed on `EntityResolver.findEntity` + label/local-name, not the substring finder) |
+| `search_entities` | `getOWLEntityFinder().getMatchingOWLClasses(...)` and property/individual/datatype variants. A plain fragment is wrapped `*frag*` (the finder otherwise misses substrings); a blank/wildcard-only query falls back to `getActiveOntology().get…InSignature()` (the finder returns nothing for a bare `*`). A separate ranked builder (`EntitySearch`) adds `score`/`match_kind` per hit and top-level `would_mint`/`best_match` (grounding-aware; keyed on `EntityResolver.findEntity` + label/local-name, not the substring finder) |
 | `get_entity` | `OWLEntityFinder.getEntities(IRI)` / `getOWLEntity(...)`; returns type(s), IRI, rendering |
 | `get_axioms_for_entity` | `getReferencingAxioms(entity)` over the active ontology, or the whole `getImportsClosure()` when `include_imports=true` (reads imported terms' domain/range/restrictions) + rendering |
 | `create_class` | `getOWLEntityFactory().createOWLClass(short, baseIRI)` → `OWLEntityCreationSet` → `applyChanges(set.getOntologyChanges())` |
@@ -428,8 +446,8 @@ a pointed error naming `explain_inconsistency`.
 | `create_ontology` | `OWLModelManager.createNewOntology(id, physicalURI)` (collision guard; sets active + fires `ONTOLOGY_CREATED`; optional `keep_active`; not undoable) |
 | `write_catalog` | build an `org.protege.xmlcatalog.XMLCatalog` of `UriEntry`s mapping each `owl:imports` declaration IRI (and the resolved ontology's IRI/version) to its local file (relativized via `CatalogUtilities.relativize`), then `CatalogUtilities.save(catalog, catalog-v001.xml)` — a filesystem write, not undoable |
 | `list_rules` / `add_rule` / `remove_rule` | `getAxioms(AxiomType.SWRL_RULE)`; build `SWRLRule`s from structured body/head atoms via `getSWRL*` factory methods (`?name`/`?<IRI>` → `getSWRLVariable(IRI)` preserves named variable IRIs); rule annotations via `getSWRLRule(body, head, annotations)`; remove via `RemoveAxiom` |
-| `undo_change` / `redo_change` | `getHistoryManager().undo()/redo()` (shared with the GUI); `0.4.3`: both report `undo_depth` (`getLoggedChanges().size()`), and `undo_change peek=true` renders the last logged transaction without undoing |
-| `save_ontology` | `OWLModelManager.save()` / `save(ontology)`; save-as picks the format from the extension (unknown extension = error, `0.4.3`); `all=true` loops `getDirtyOntologies()` (file-less documents skipped-with-reason) |
+| `undo_change` / `redo_change` | `getHistoryManager().undo()/redo()` (shared with the GUI); both report `undo_depth` (`getLoggedChanges().size()`), and `undo_change peek=true` renders the last logged transaction without undoing |
+| `save_ontology` | `OWLModelManager.save()` / `save(ontology)`; save-as picks the format from the extension (unknown extension = error); `all=true` loops `getDirtyOntologies()` (file-less documents skipped-with-reason) |
 | `list_reasoners` / `set_reasoner` | `OWLReasonerManager.getInstalledReasonerFactories()` / `setCurrentReasonerFactoryId(id)` |
 | `run_reasoner` | `classifyAsynchronously(...)` then `EmbeddedClassificationWaiter` (listener + latch, §4.1 item 7) |
 | `get_unsatisfiable_classes` | `getUnsatisfiableClasses()` returns a `Node<OWLClass>`; reported via `getEntitiesMinusBottom()` |
@@ -437,12 +455,12 @@ a pointed error naming `explain_inconsistency`.
 | `execute_dl_query` | resolve a Manchester class expression, then `reasoner.getEquivalentClasses/getSubClasses/getSuperClasses/getInstances` (DL Query workbench) |
 | `explain_entailment` | `reasoner.isEntailed(axiom)` for a structured axiom |
 | `get_explanations` | `com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator.getExplanations(axiom, max)` — minimal justifications, using the selected reasoner's factory; for an axiom type the generator can't convert, falls back to an `isEntailed` check plus the related asserted axioms as structural context (capped) |
-| `explain_inconsistency` (`0.4.3`) | contraction-only minimal-inconsistent-subset search over an `isolatedClosure` copy, `OWLReasoner.isConsistent()` as the sole oracle (fresh reasoner per probe, disposed), fast window pass + one-by-one pass, time-bounded off the EDT; renders on the EDT |
+| `explain_inconsistency` | contraction-only minimal-inconsistent-subset search over an `isolatedClosure` copy, `OWLReasoner.isConsistent()` as the sole oracle (fresh reasoner per probe, disposed), fast window pass + one-by-one pass, time-bounded off the EDT; renders on the EDT |
 | `diff_ontologies` | pure set difference over `getAxioms()` / `getLogicalAxioms()` (optionally imports closures) of two loaded ontologies, or the active ontology vs. a document loaded into a throwaway manager; `identical=true` ⇔ both sides empty (a faithful round-trip) |
-| `add_competency_question` / `list_competency_questions` / `remove_competency_question` (`0.4.0`) | upsert / detect+union / remove CQs across the `CqStore` conventions (`robot-sparql-dir` `*.rq`, `sidecar-manifest` JSON, `ontology-annotations`); writes gated by `checkWriteAllowed`, ids sanitised, malformed entries skipped-with-reason |
-| `run_competency_questions` (`0.4.0`) | load the matching CQs, build ONE `SuiteSnapshot` (asserted + at most one inferred materialisation), then judge each query off the EDT via `SparqlTools.execute` against its `Expectation` (`nonEmpty`/`empty`/`count`/`exactRows`); per-CQ pass + overall `{passed, failed, gate}`, open-world / truncation caveats surfaced |
-| `verify_ontology` (`0.4.0`) | run project SPARQL invariants over the shared off-EDT snapshot — a returned row / ASK true is a violation at the item's severity; violations reported as `nodeJson` bindings (no EDT render); `fail_on` gate |
-| `run_qc_suite` (`0.4.0`) | compose the shipping cores (`reasonerVerdict`, `GovernanceTools.profileCheck`, `ValidationTools.analyze`, `Invariants.run`, `CqRunner.run`) over one snapshot; each stage `{ran, verdict, findings_summary}`, absent backends skipped-with-reason, overall `gate` = worst ran stage vs `fail_on` |
+| `add_competency_question` / `list_competency_questions` / `remove_competency_question` | upsert / detect+union / remove CQs across the `CqStore` conventions (`robot-sparql-dir` `*.rq`, `sidecar-manifest` JSON, `ontology-annotations`); writes gated by `checkWriteAllowed`, ids sanitised, malformed entries skipped-with-reason |
+| `run_competency_questions` | load the matching CQs, build ONE `SuiteSnapshot` (asserted + at most one inferred materialisation), then judge each query off the EDT via `SparqlTools.execute` against its `Expectation` (`nonEmpty`/`empty`/`count`/`exactRows`); per-CQ pass + overall `{passed, failed, gate}`, open-world / truncation caveats surfaced |
+| `verify_ontology` | run project SPARQL invariants over the shared off-EDT snapshot — a returned row / ASK true is a violation at the item's severity; violations reported as `nodeJson` bindings (no EDT render); `fail_on` gate |
+| `run_qc_suite` | compose the shipping cores (`reasonerVerdict`, `GovernanceTools.profileCheck`, `ValidationTools.analyze`, `Invariants.run`, `CqRunner.run`) over one snapshot; each stage `{ran, verdict, findings_summary}`, absent backends skipped-with-reason, overall `gate` = worst ran stage vs `fail_on` |
 
 - **Ontology edits go through `OWLModelManager.applyChange` (singular, the majority) and `applyChanges`
   (plural, for `create_class` / `create_entity` / `rename_entity` / `delete_entity` / document merge).** Both
@@ -465,7 +483,7 @@ a pointed error naming `explain_inconsistency`.
   render SAM): each expands to a single user message that drives the tools in a safe order
   (orient → preview → confirm/apply → verify). They touch no model state and run on the transport
   thread.
-- **New context/validation/preview tools (`0.2.0`).** `get_ontology_context` (active-ontology
+- **Context / validation / preview tools.** `get_ontology_context` (active-ontology
   orientation: counts, asserted roots, sampled properties, reasoner state, prefixes) and
   `get_entity_context` (a one-call "entity card": annotations, deprecation, and the asserted
   neighbourhood — super/sub/equivalent/disjoint, domain/range, super/sub properties, inverses,
@@ -488,8 +506,8 @@ a pointed error naming `explain_inconsistency`.
 ### 6.1 Why localhost HTTP, not stdio
 stdio assumes the client spawns the server as a child process, which cannot apply to an **already-running GUI**.
 The server must **listen** on a port and let clients connect independently → **Streamable HTTP**
-(`HttpServletStreamableServerTransportProvider`, endpoint `/mcp`) bound to `127.0.0.1`. No legacy `/sse`
-transport is registered.
+(`HttpServletStreamableServerTransportProvider`, endpoint `/mcp`) bound to the configured bind address
+(default `127.0.0.1`). No legacy `/sse` transport is registered.
 
 ### 6.2 Servlet hosting (decided)
 The MCP transport is a `jakarta.servlet` `HttpServlet`, but the platform ships no servlet container. The
@@ -544,7 +562,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.4.2`**.
+  `artifactId protege-mcp`, version **`0.5.0`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing
@@ -636,10 +654,18 @@ never cross the bundle boundary and there is no conflict.
   (`mcpr_`, never expire). Access and refresh tokens share a grant id, so revoking either drops both (RFC 7009);
   `issueTokens` keeps at most one grant pair per client. The static token is accepted via a constant-time
   compare (`PkceUtil.constantTimeEquals`), and the store tracks `staticTokenLastSeen` and per-client `lastSeenAt`
-  in memory.
-- **Loopback-HTTPS note:** the server serves **plain HTTP on `127.0.0.1`** (`getEndpointUrl` returns
-  `http://127.0.0.1:…`); there is **no TLS code in the plugin**. The "loopback exemption" is the MCP client's
-  own willingness to run OAuth over `http` for a loopback host (RFC 8252), not server-side logic.
+  in memory. The client list is **self-cleaning** (`0.5.0`): when a same-name re-registration completes
+  authorization it supersedes the registrations it replaced (a same-name client seen since the newcomer
+  registered is kept; one mid-authorization is never touched), a registration that never finishes
+  authorizing is swept after an hour of inactivity, and a client silent for 60 days is removed tokens and
+  all — the sweep clocks restart on every plugin/broker start, so a stale persisted `lastSeenAt` cannot
+  trigger an early reap. Refreshing a token whose client record is gone fails closed with `invalid_grant`.
+  This applies to the standalone store and the broker's `~/.protege-mcp/oauth.json` alike.
+- **Loopback-HTTPS note:** the server serves **plain HTTP** (loopback by default; `getEndpointUrl` names
+  the concrete bind host, `127.0.0.1` for a wildcard bind); there is **no TLS code in the plugin**. The
+  "loopback exemption" is the MCP client's own willingness to run OAuth over `http` for a loopback host
+  (RFC 8252), not server-side logic — a non-loopback bind is plain HTTP on the network (explicit opt-in,
+  red warning in Preferences), and OAuth **authorization** rejects remote peers (403) regardless.
 - The platform has no read-only guard (`isActiveOntologyMutable()` is always true), so **read-only mode,
   confirm-each-write, and status display are the plugin's responsibility.**
 
@@ -652,9 +678,11 @@ tokens from `KEY_OAUTH_STATE`, so previously-connected clients stay authorized. 
 bounded to the preference-value size limit: `java.util.prefs` caps a single value at 8192 chars and throws
 above it, so `persist()` writes under a `MAX_PERSIST_CHARS = 8000` margin — it first purges expired entries,
 then evicts the least-recently-seen client (tie-break: oldest registration) until the JSON fits, logging a
-warning; evicted clients must re-authorize.
+warning; evicted clients must re-authorize — a brand-new registration is never chosen to evict itself.
 
-**Multi-window.** Each window has its own controller, but `McpServerRegistry` elects a **single owner of the one
+**Multi-window.** With the shared broker on (the default), each window runs a broker-managed backend and the
+**broker** owns the configured port across windows and instances (§4.1 item 11); the election below is the
+standalone/degraded mode. Each window has its own controller, but `McpServerRegistry` elects a **single owner of the one
 process-wide port** (default 8123). A newly opened window **defers** to whichever controller already owns the
 port — it stays idle but registered (`startIfNoOwner`) rather than fighting over the bind — and when the owning
 window closes, the port is **handed off** to another open window (`promoteSuccessor`), so swapping EditorKits
@@ -667,16 +695,16 @@ single user-global preference key, effectively shared by whichever window curren
 
 ---
 
-## 9. Architecture Approach B — In-Protégé chat assistant (built, `0.3.0`)
+## 9. Architecture Approach B — In-Protégé chat assistant (built)
 
 > *This "B" is the **architecture** axis (the plugin's internal shape). It is unrelated to the README/docs
 > **"Distribution Path B"** (Check for plugins, §11), which describes how the jar is delivered. They are
 > different things.*
 
-**Status: built (`0.3.0`).** Approach B is a Swing chat panel — and a dedicated **Ontology Assistant** workspace tab —
+**Status: built.** Approach B is a Swing chat panel — and a dedicated **Ontology Assistant** workspace tab —
 inside Protégé where the user converses with an assistant that reads and edits the open ontology.
 
-**As-built decision (supersedes the original raw-HTTP plan in earlier drafts of this section).** Rather than the
+**As-built decision.** Rather than the
 plugin itself calling `api.anthropic.com`, the chat **drives a locally-installed coding-agent CLI** — Claude Code
 (`claude`) or OpenAI Codex (`codex`) — as a subprocess, one per user turn, configured to connect **back to this
 plugin's own MCP server** (Approach A). Those CLIs are themselves MCP clients, so the agent loop and provider
@@ -720,7 +748,14 @@ The original design remains a viable direct-API alternative behind the `ChatProv
   reasoning"** toggle, a per-turn token readout (dollar cost is intentionally not surfaced), and a
   server/egress status line. Borrows the window's
   `McpServerController` via
-  `McpServerRegistry.get(getOWLEditorKit())` and starts it off-EDT on the first turn.
+  `McpServerRegistry.get(getOWLEditorKit())` and starts it off-EDT on the first turn (unless the user's
+  explicit Stop has latched the server off — §4.1 item 9). Assistant replies render as **Markdown**
+  (`0.5.0`): **`ChatMarkdown`** (commonmark-java, embedded) restyles the in-flight message live as it
+  streams — headings, emphasis, code, lists, quotes, GFM tables, links (`http(s)` links open in the
+  browser after a confirmation dialog naming the real destination; nothing else is clickable) — and a
+  render failure falls back to plain text. Each reply keeps its original Markdown source
+  (**`AssistantSegment`**): a per-reply **copy button** under a turn's closing reply and a right-click
+  **Copy / Copy message as Markdown** transcript menu put the untouched markup on the clipboard.
 - **`ChatPreferencesPanel`** — per-provider CLI path overrides + a reset for the one-time egress consent. No
   API-key field.
 
@@ -738,6 +773,7 @@ keychain/OAuth):
 claude -p --output-format stream-json --include-partial-messages --verbose \
   --strict-mcp-config \
   --mcp-config <path-to-owner-only-config-file> \
+  [--thinking-display summarized] \
   --allowedTools mcp__protege  [--add-dir <attachment-dir>...]  [--model <alias>]  [--resume <session-id>]  -- "<prompt>"
 ```
 `--strict-mcp-config` means the run sees *exactly* Protégé's server; `--allowedTools mcp__protege` pre-approves
@@ -754,6 +790,7 @@ PROTEGE_MCP_TOKEN=<token>  codex \
   -c mcp_servers.protege.url="<endpointUrl>" \
   -c mcp_servers.protege.bearer_token_env_var="PROTEGE_MCP_TOKEN" \
   -c mcp_servers.protege.default_tools_approval_mode="approve" \
+  [-c model_reasoning_summary="detailed"] \
   exec [resume <session-id>] --json --skip-git-repo-check  [-m <model>]  [--image <image-path>]...  -- "<prompt>"
 ```
 `codex mcp add --help` confirms `--url` + `--bearer-token-env-var` for streamable-HTTP servers. `-s/--sandbox`
@@ -764,6 +801,12 @@ only shell/exec): the per-server default is `required`, so a headless run with n
 auto-cancel every tool call ("user cancelled MCP tool call") — hence the required
 `-c mcp_servers.protege.default_tools_approval_mode="approve"` override (server-side read-only / confirm-write
 gates still apply to actual edits).
+
+The bracketed reasoning flag on each provider (`--thinking-display summarized` / `-c
+model_reasoning_summary="detailed"`) is added **only while "Show reasoning" is ticked** — current CLIs
+stream no reasoning text unless explicitly asked, so the toggle opts in per turn on the CLI side (an
+older Claude CLI that does not know the flag fails the turn with "unknown option"; unticking sends
+without it).
 
 The prompt is passed as a single argv element after `--` (no shell), so its content cannot break the command
 line. When attachments are present, the transcript keeps compact placeholders while `ChatRequest.providerPrompt()`
@@ -894,7 +937,7 @@ offers an update.
 
 ## 12. Roadmap
 
-**Architecture Approach A — delivered (`0.1.0`).**
+**Architecture Approach A — delivered.**
 
 | Phase | Scope | Status |
 |---|---|---|
@@ -905,9 +948,10 @@ offers an update.
 | **4. Reasoner tools** | 4 reasoner tools + `EmbeddedClassificationWaiter` | ✅ done |
 | **5. Security / settings** | **Expanded beyond the original MVP:** embedded OAuth 2.1 AS + static bearer, persistence across restarts, preferences | ✅ done |
 | **6. Status UI / multi-window / docs** | `McpServerView` with the connected-clients table + per-client revocation; per-window controllers | ✅ done |
-| **7. Hardening** | deadlock/perf/OSGi regression coverage across all tool paths | ⏳ ongoing |
+| **7. Shared broker** | one fixed MCP endpoint across windows and instances (§4.1 item 11); singleton lock, staged jar copies, refcount self-exit, session-pinned proxy | ✅ done |
+| **8. Hardening** | deadlock/perf/OSGi regression coverage across all tool paths | ⏳ ongoing |
 
-**Architecture Approach B — delivered (`0.3.0`).** The in-Protégé chat assistant (§9): a `ChatView` + dedicated
+**Architecture Approach B — delivered.** The in-Protégé chat assistant (§9): a `ChatView` + dedicated
 **Ontology Assistant** tab, the `io.github.hakjuoh.protege_mcp.chat` provider/driver layer (Claude Code and Codex CLIs), and the
 event-stream parsers — built atop A's tool layer with no new embedded jars and no API-key custody.
 
@@ -931,18 +975,26 @@ model alias already ships, and long-context compaction is owned by the CLI's age
   inferred results.
 - **Undo interleaving** — LLM edits mix into the human undo history, and `ChangeListMinimizer` may drop/merge —
   hence re-query after apply.
-- **Multi-window port/state** — a single process-wide port is shared across windows via owner election +
-  hand-off (`McpServerRegistry.startIfNoOwner` / `promoteSuccessor`); a bind failure is logged and surfaced.
-  The residual caveat is the **single user-global OAuth blob** shared by whichever window currently holds the port.
-- **OAuth state size bound** — the `java.util.prefs` 8192-char cap; persistence stays under
-  `MAX_PERSIST_CHARS = 8000` via purge-expired + least-recently-seen client eviction; evicted clients must
-  re-authorize; per-client `lastSeenAt` / `staticTokenLastSeen` can read stale right after a restart.
+- **Multi-window / multi-instance endpoint** — the shared broker owns one fixed port across windows and
+  instances (§4.1 item 11), singleton-guarded by `~/.protege-mcp/broker.lock` and self-exiting on refcount
+  zero; a broker outage flips the view to a one-click relaunch and each window keeps serving directly. The
+  standalone/degraded fallback shares a single process-wide port via owner election + hand-off
+  (`McpServerRegistry.startIfNoOwner` / `promoteSuccessor`, ephemeral-port fallback on a busy port). The
+  residual caveat is that broker OAuth state (`~/.protege-mcp/oauth.json`) has no in-view revocation UI yet,
+  and the standalone store keeps a single user-global OAuth blob shared by whichever window holds the port.
+- **OAuth state size bound** — the `java.util.prefs` 8192-char cap; standalone persistence stays under
+  `MAX_PERSIST_CHARS = 8000` via purge-expired + least-recently-seen client eviction (a brand-new
+  registration is never chosen to evict itself); evicted clients must re-authorize; per-client `lastSeenAt`
+  / `staticTokenLastSeen` can read stale right after a restart (the self-cleaning sweep clocks restart on
+  every start, so a stale timestamp cannot trigger an early reap).
 - **Loopback OAuth over plain HTTP** — no TLS in the plugin; relies on the client's loopback-http exemption.
+  A non-loopback bind (the bind-address preference) is plain unencrypted HTTP on the network — deliberate,
+  warned-about opt-in; OAuth authorization stays same-machine-only to keep consent local.
 - **`mcp-remote` dependency** — stdio-only clients (e.g. Claude Desktop) need Node/`npx`.
-- **Architecture Approach B risks (as built, `0.3.0`)** — egress of ontology content + prompts to the user's model
+- **Architecture Approach B risks (as built)** — egress of ontology content + prompts to the user's model
   provider happens **via the local CLI** (disclosed by a one-time consent banner; the plugin itself stores no API
   key and opens no new socket); the chat **requires** a working `claude`/`codex` install + login and a running
-  Approach A server (the panel starts it); a Finder/Dock-launched Protégé may not have the CLI on `PATH`
+  Approach A server (the panel starts it, unless the user has latched it off with Stop); a Finder/Dock-launched Protégé may not have the CLI on `PATH`
   (mitigated by well-known-dir search + a path-override pref); and the CLIs' JSONL event schemas can drift across
   versions (mitigated by tolerant parsers that ignore unknown event types). Autonomous multi-edit volume is
   bounded by the inherited read-only / confirm-each-write gates.
@@ -975,7 +1027,7 @@ model alias already ships, and long-context compaction is owned by the CLI's age
 | `server/McpServerRegistry` | static `EditorKit → controller` map; elects the single port owner across windows (`startIfNoOwner` / `promoteSuccessor`) |
 | `server/ManagedServer` | minimal interface (`isRunning`/`start`) implemented by `McpServerController`; lets the registry elect the single port owner and hand it off (a fake substitutes in tests) |
 | `server/McpServerManager` | builds the MCP sync server + Streamable-HTTP transport; explicit JSON mapper + validator |
-| `server/EmbeddedHttpServer` | embedded Jetty 12 ee10, `127.0.0.1` only |
+| `server/EmbeddedHttpServer` | embedded Jetty 12 ee10, configured bind address (default `127.0.0.1`) + loopback alias |
 | `server/OntologyAccess` | the single EDT choke point (inline on EDT, else `invokeLater` + bounded latch) |
 | `server/EmbeddedClassificationWaiter` | off-EDT classification wait on the `ONTOLOGY_CLASSIFIED` latch |
 | `server/AccessTokenFilter` | `/mcp/*` guard; OAuth access token or static token; RFC 9728 401 challenge |
@@ -991,3 +1043,9 @@ model alias already ships, and long-context compaction is owned by the CLI's age
 | `prompts/Prompts` | the guided-workflow prompt templates (§5) |
 | `config/McpConfig` | preferences snapshot (`io.github.hakjuoh.protege_mcp` / `server`); token + OAuth state keys |
 | `ui/McpServerView`, `ui/McpPreferencesPanel` | status view (connected-clients table) + settings panel |
+| `broker/McpBoot` | the single boot policy — broker-first, degrading to the standalone election + port fallback (§4.1 item 11) |
+| `broker/BrokerMain`, `broker/BrokerServer` | the standalone broker process entry point + its HTTP host (reuses `EmbeddedHttpServer`, `AccessTokenFilter`, the OAuth stack; persists to `~/.protege-mcp/oauth.json`) |
+| `broker/BrokerSpawner`, `broker/BrokerHome` | probe/spawn (staged jar copies under `~/.protege-mcp/jars/`, `broker.lock` singleton arbitration) + the `~/.protege-mcp` (`0700`) layout |
+| `broker/McpProxyServlet` | byte-for-byte `/mcp` streaming proxy; session pinning (`Mcp-Session-Id`); routes new sessions to the most recent window |
+| `broker/InstanceRegistry`, `broker/InternalApiServlet` | registered-window bookkeeping (heartbeats, pid reaper, refcount exit) + the owner-secret `/internal/*` control plane |
+| `broker/BrokerClient`, `broker/BrokerLink`, `broker/BrokerState`, `broker/BrokerTokenFilter` | plugin-side broker RPC, a window's registration/heartbeat loop, on-disk broker descriptor, per-window backend auth |

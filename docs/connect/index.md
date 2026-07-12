@@ -28,7 +28,9 @@ The plugin runs an **embedded HTTP MCP server** inside Protégé. It serves the
 http://127.0.0.1:8123/mcp
 ```
 
-- It binds to **loopback (`127.0.0.1`) only** — never a public interface.
+- It binds to **loopback (`127.0.0.1`) by default**; the **Bind address** preference can expose
+  another interface (see the table below), and the broker's per-window backends stay on loopback
+  regardless.
 - It **requires authorization on every request** (see [Authorization](#authorization)).
 - It operates on the **active ontology** — whatever you have selected in Protégé — and its imports
   closure. Reads and edits flow through Protégé's shared `OWLModelManager`, so edits appear in the GUI
@@ -41,6 +43,9 @@ http://127.0.0.1:8123/mcp
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | **Port** | `8123` | Listen port. Set to `0` to bind an ephemeral (OS-assigned) port. |
+| **Bind address** | `127.0.0.1` | Interface the endpoint binds — presets `::1` and `0.0.0.0`, any interface address accepted. Anything but loopback is plain unencrypted HTTP on your network (Preferences shows a red warning), and OAuth authorization stays **same-machine only** regardless. |
+| **Share one MCP endpoint…** | on | Keep the configured port on a shared **broker** so one URL serves every window and instance — see [below](#one-endpoint-for-every-window-and-instance-shared-broker). |
+| **Broker idle linger (seconds)** | `15` | How long the broker outlives the last Protégé instance (`0`–`3600`), so a quick restart reuses the live broker and its port instead of respawning one. |
 | **Auto-start** | on | Start the server automatically when Protégé opens an ontology. |
 | **Read-only mode** | off | Reject every mutating tool; only reads/queries succeed. |
 | **Confirm each write** | off | Pop a confirmation dialog in Protégé before each edit is applied. |
@@ -58,18 +63,20 @@ ready-to-paste connect command.
 By default the configured port belongs to a small **shared broker** process rather than to any single
 Protégé window: the first Protégé instance starts it automatically, every window registers its own
 (ephemeral-port) server behind it, and the broker exits by itself once the last Protégé instance
-closes. For you this means `http://127.0.0.1:8123/mcp` **keeps working no matter how many Protégé
-windows or instances are open** — no per-window URLs to chase.
+closes (after the configurable **idle linger** — 15 seconds by default). For you this means
+`http://127.0.0.1:8123/mcp` **keeps working no matter how many Protégé windows or instances are
+open** — no per-window URLs to chase.
 
 - A **new MCP session** is routed to the window most recently connected to the broker (with
   auto-start on, effectively the newest window) and then stays pinned to that window for its
   lifetime.
 - `GET /instances` (same auth) lists every window registered with the broker — all open windows
   when auto-start is on; connect a client to `/instances/{id}/mcp` to target a specific one.
-- Auth is unchanged (bearer token or OAuth) and everything stays on `127.0.0.1`. The broker keeps its
-  OAuth client registrations in `~/.protege-mcp/oauth.json`; the **MCP Server** view's
-  Connected-clients table applies to standalone mode (a broker-mode client listing/revocation UI is a
-  follow-up — to reset broker clients, delete `oauth.json` while no broker is running).
+- Auth is unchanged (bearer token or OAuth) and the endpoint stays on `127.0.0.1` unless the
+  **Bind address** preference says otherwise. The broker keeps its OAuth client registrations in
+  `~/.protege-mcp/oauth.json`; the **MCP Server** view's Connected-clients table applies to
+  standalone mode (a broker-mode client listing/revocation UI is a follow-up — to reset broker
+  clients, delete `oauth.json` while no broker is running).
 - The toggle lives in **Settings ▸ MCP** ("Share one MCP endpoint…"). With it off — or when the broker
   cannot be spawned — the plugin falls back to the standalone behavior below.
 
@@ -91,9 +98,15 @@ OAuth-capable clients (such as Claude Code) need no token to copy:
    **browser consent page**.
 3. You click **Allow** — and you're connected.
 
-Registered clients and their tokens are **persisted to Protégé's preferences**, so a client that
-authorized once keeps working across restarts. Access tokens **expire after 30 days**. Revoke a client
-from the **MCP Server** view to force re-authorization. Endpoints are plain HTTP on loopback
+Registered clients and their tokens are **persisted** — to Protégé's preferences in standalone mode,
+to `~/.protege-mcp/oauth.json` when the broker owns the endpoint — so a client that authorized once
+keeps working across restarts. Access tokens **expire after 30 days**, and the client list **cleans
+itself up**: when a client that re-registered under the same name completes authorization, its old
+registrations are dropped; a registration that never finishes authorizing disappears after an hour;
+and a client silent for 60 days is removed, tokens and all. Revoke a client from the **MCP Server**
+view (standalone mode) to force re-authorization at any time. The **browser consent step works from
+this machine only** — a remote peer gets a `403` pointing at the static bearer token — whatever the
+bind address. Endpoints are plain HTTP on loopback
 ([RFC 8252](https://www.rfc-editor.org/rfc/rfc8252) exempts loopback redirects from HTTPS).
 
 ### Static bearer token
@@ -108,8 +121,9 @@ The token is a URL-safe, 256-bit secret generated on first run. **Regenerate** i
 view at any time (this invalidates the old token).
 
 {: .warning }
-> Treat the bearer token like a password. Anyone who can reach `127.0.0.1:8123` **and** has the token
-> (or an OAuth grant) can read and edit your ontology. Prefer OAuth where the client supports it.
+> Treat the bearer token like a password. Anyone who can reach the endpoint **and** has the token
+> (or an OAuth grant) can read and edit your ontology — and a non-loopback **Bind address** makes the
+> endpoint reachable from your network. Prefer OAuth where the client supports it.
 
 ## Pick your client
 

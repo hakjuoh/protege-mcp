@@ -47,8 +47,8 @@ Everything an AI client does flows through Protégé's own model manager, so:
 - **Edits appear in the GUI immediately** and join the shared **Edit ▸ Undo** stack.
 - **Safety gates apply to every write** — a **read-only** mode and a **confirm-each-write** prompt you
   control from **Settings ▸ MCP**.
-- **The server is local and authorized** — it binds to `127.0.0.1` only and requires an OAuth
-  authorization or a bearer token on every request.
+- **The server is local and authorized** — it binds to `127.0.0.1` unless you deliberately pick
+  another interface, and requires an OAuth authorization or a bearer token on every request.
 
 ## Why use it?
 
