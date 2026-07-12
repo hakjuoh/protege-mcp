@@ -12,6 +12,10 @@ description: >-
   gated access to the ontology you have open — plus an in-app Ontology Assistant.
 remote_theme: just-the-docs/just-the-docs@v0.12.0
 
+# Current release version, mirrored from pom.xml. The version-consistency gate
+# keeps this value and the other distribution metadata in sync.
+version: 0.5.0
+
 # Project site lives at https://hakjuoh.github.io/protege-mcp/
 url: https://hakjuoh.github.io
 baseurl: /protege-mcp

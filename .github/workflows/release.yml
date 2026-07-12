@@ -32,6 +32,16 @@ jobs:
         with:
           ref: ${{ steps.release_tag.outputs.tag }}
 
+      - name: Check version consistency
+        # Old tags predate this gate and do not contain the script. Keep manual
+        # republishing of those releases possible; every new tag is checked.
+        run: |
+          if [ -f scripts/check-version-consistency.sh ]; then
+            bash scripts/check-version-consistency.sh
+          else
+            echo "No version-consistency gate in this legacy tag; skipping."
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:

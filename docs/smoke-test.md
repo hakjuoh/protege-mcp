@@ -10,11 +10,11 @@ The unit tests (`mvn test`) cover the tool cores in isolation, and `ToolPipeline
 end-to-end **headlessly** (load → edit → validate → govern → diff → SPARQL) so a cross-tool regression
 fails in CI. What they cannot cover is the live stack: the OSGi bundle loading in a real Protégé, the
 HTTP/OAuth transport, the EDT marshalling, and a real reasoner. This checklist is the manual
-counterpart — run it against the built `v0.5.0` jar before publishing a release.
+counterpart — run it against the built `v{{ site.version }}` jar before publishing a release.
 
 ## Setup
 
-1. `mvn clean package` and copy `target/protege-mcp-0.5.0.jar` into
+1. `mvn clean package` and copy `target/protege-mcp-{{ site.version }}.jar` into
    `/Applications/Protégé.app/Contents/plugins/` (replace the older versioned jar — keep exactly one).
 2. Launch Protégé on a **Java 17+** JVM (`PROTEGE_JAVA_HOME`), open the **MCP Server** view, and
    **Start** the server. Note the bound URL and bearer token.

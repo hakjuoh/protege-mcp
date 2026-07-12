@@ -52,14 +52,40 @@ Releases are automated by the
 Pushing a tag of the form `vX.Y.Z` triggers it:
 
 1. **Checkout** the tag.
-2. **Verify the tag matches the Maven version** — the tag must equal `v` + `pom.xml`'s `<version>`, or
+2. **Check version consistency** — every file that restates the current version must agree with
+   `pom.xml` (see [the next section](#what-a-release-bumps-the-version-consistency-gate)). Tags cut
+   before the gate existed are skipped, so old releases can still be republished.
+3. **Verify the tag matches the Maven version** — the tag must equal `v` + `pom.xml`'s `<version>`, or
    the workflow fails. This guarantees the tag, the jar name, and the code all agree.
-3. **Build and test** with `mvn -B clean package` on JDK 17.
-4. **Extract the release notes** — the `## [X.Y.Z]` section of `CHANGELOG.md` becomes the release body
+4. **Build, test, and enforce coverage** with `mvn -B clean verify` on JDK 17.
+5. **Extract the release notes** — the `## [X.Y.Z]` section of `CHANGELOG.md` becomes the release body
    (falling back to auto-generated notes if that section is missing).
-5. **Publish the GitHub release** titled `protege-mcp vX.Y.Z`, attaching `protege-mcp-X.Y.Z.jar`.
+6. **Publish the GitHub release** titled `protege-mcp vX.Y.Z`, attaching `protege-mcp-X.Y.Z.jar`.
 
 You can also run it manually from the Actions tab (**workflow_dispatch**) with a `tag` input.
+
+## What a release bumps (the version-consistency gate)
+
+`pom.xml`'s `<version>` is the single source of truth. The dedicated
+`Release protege-mcp X.Y.Z` commit must update these mirrors with it:
+
+| Where | What restates the version |
+| --- | --- |
+| [`update.properties`](https://github.com/hakjuoh/protege-mcp/blob/main/update.properties) | `version=` and the release-asset `download=` URL used by **Check for plugins**. |
+| `McpServerManager.SERVER_VERSION` | The version reported to MCP clients. |
+| [`DESIGN.md`](https://github.com/hakjuoh/protege-mcp/blob/main/DESIGN.md) | The as-built server and bundle versions. |
+| [`docs/_config.yml`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/_config.yml) | `version:`, exposed to the documentation as `site.version`. |
+| [`docs/readme.html`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/readme.html) | The first version-history heading. This file is fetched raw by Protégé, so it cannot use Liquid. |
+| `CHANGELOG.md` + [Changelog](changelog.html) | The newest release section in both mirrored changelogs. |
+
+[`scripts/check-version-consistency.sh`](https://github.com/hakjuoh/protege-mcp/blob/main/scripts/check-version-consistency.sh)
+enforces this list in both [CI](https://github.com/hakjuoh/protege-mcp/blob/main/.github/workflows/ci.yml)
+and [Release](https://github.com/hakjuoh/protege-mcp/blob/main/.github/workflows/release.yml). Run it
+locally before tagging:
+
+```bash
+bash scripts/check-version-consistency.sh
+```
 
 ## Updating the plugin registry (Check for plugins)
 
