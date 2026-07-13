@@ -14,7 +14,15 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Check version consistency
-        run: bash scripts/check-version-consistency.sh
+        # Two-phase release: develop may legitimately lag the plugin registry while a release is
+        # in flight, but main must always advertise the current released version, so the strict
+        # registry gate runs whenever main is the pushed branch or the pull-request target.
+        run: |
+          if [ "${GITHUB_REF_NAME}" = "main" ] || [ "${GITHUB_BASE_REF}" = "main" ]; then
+            bash scripts/check-version-consistency.sh --require-registry-current
+          else
+            bash scripts/check-version-consistency.sh
+          fi
 
       - name: Verify advertised release asset exists
         run: bash scripts/check-advertised-release.sh

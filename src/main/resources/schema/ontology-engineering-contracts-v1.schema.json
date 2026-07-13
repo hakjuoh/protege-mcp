@@ -141,7 +141,7 @@
     "iri": {
       "type": "string",
       "format": "uri",
-      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s\\u0000-\\u001F\\u007F]+$"
+      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^ \\u0000-\\u001F\\u007F]+$"
     },
     "fingerprint": {
       "type": "string",

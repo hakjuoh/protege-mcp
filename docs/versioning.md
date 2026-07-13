@@ -56,15 +56,29 @@ until the next asset actually exists.
 
 1. On `develop`, prepare the new source version and an `Unreleased` changelog section. Leave
    `update.properties` on the last published release.
-2. Run `bash scripts/check-version-consistency.sh` and `mvn clean verify`, then finalize the changelog
-   heading to `YYYY-MM-DD` in both copies.
-3. Tag that verified commit as `vX.Y.Z` and push the tag. Do **not** advance the public descriptor yet.
+2. Commit the release finalization: change the changelog heading from `Unreleased` to the `YYYY-MM-DD`
+   release date in both copies. On that commit, run `bash scripts/check-version-consistency.sh` and
+   `mvn clean verify`.
+3. Tag that verified finalization commit as `vX.Y.Z` and push the tag. Do **not** advance the public
+   descriptor yet.
 4. Wait for the Release workflow to publish and verify `protege-mcp-X.Y.Z.jar`.
 5. On `develop`, make a post-tag registry commit that updates `update.properties` to the new version
    and exact asset URL. Run `bash scripts/check-advertised-release.sh` and
    `bash scripts/check-version-consistency.sh --require-registry-current`.
 6. Fast-forward or merge through that verified registry commit into `main`. This is the moment
-   **Check for plugins** begins advertising the release; `main` never contains a future asset URL.
+   **Check for plugins** begins advertising the release; `main` never contains a future asset URL,
+   and `main`'s CI enforces the strict registry gate to keep it that way.
+7. Complete post-publish reconciliation. After the updated changelog is publicly visible on `main`,
+   identify any historical release sections changed retrospectively during this release, regenerate
+   each corresponding live GitHub Release body from its complete section on `main`, and verify the
+   two bodies are byte-identical. Then replace any deployed/installed plugin jar with the newly
+   published asset. Never edit a live release body before `main` contains the source note.
+
+{: .note }
+> **Re-cuts.** When a published tag is re-cut, rebase the post-tag registry commit back on top of the
+> moved tag before advancing `main`, so `main` keeps passing the strict gate. The Release workflow
+> deletes and recreates the GitHub release on a moved tag; the CI asset probe retries through that
+> brief window, so an unrelated red run only means it raced the re-cut — re-run it.
 
 Pushing a tag of the form `vX.Y.Z` triggers this automated portion:
 
@@ -73,7 +87,9 @@ Pushing a tag of the form `vX.Y.Z` triggers this automated portion:
    update descriptor may safely lag (see [the next section](#what-a-release-bumps-the-version-consistency-gate)). Tags cut
    before the gate existed are skipped, so old releases can still be republished.
 3. **Verify the tag and finalized changelog** — the tag must equal `v` + `pom.xml`'s `<version>` and
-   that version's changelog heading must contain an ISO date, not `Unreleased`.
+   that version's changelog heading must contain an ISO date, not `Unreleased`. Legacy tags that
+   predate `CHANGELOG.md` skip this heading gate (and fall back to auto-generated release notes), so
+   they can still be republished.
 4. **Build, test, and enforce coverage** with `mvn -B clean verify` on JDK 17.
 5. **Extract the release notes** — the `## [X.Y.Z]` section of `CHANGELOG.md` becomes the release body
    (falling back to auto-generated notes if that section is missing).
@@ -101,7 +117,9 @@ asset that already exists. During release preparation it intentionally lags the 
 [`scripts/check-version-consistency.sh`](https://github.com/hakjuoh/protege-mcp/blob/main/scripts/check-version-consistency.sh)
 enforces this list in both [CI](https://github.com/hakjuoh/protege-mcp/blob/main/.github/workflows/ci.yml)
 and [Release](https://github.com/hakjuoh/protege-mcp/blob/main/.github/workflows/release.yml). CI also
-probes the advertised URL, on both `develop` and `main`. Run the source check before tagging:
+probes the advertised URL on both `develop` and `main`, and on `main` it runs the strict
+`--require-registry-current` mode: `develop` may lag the registry only while a release is in flight,
+while `main` must always advertise the current released version. Run the source check before tagging:
 
 ```bash
 bash scripts/check-version-consistency.sh

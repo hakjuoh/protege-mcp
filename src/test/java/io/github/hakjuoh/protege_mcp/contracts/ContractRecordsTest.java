@@ -256,6 +256,24 @@ class ContractRecordsTest {
     }
 
     @Test
+    void strictMapperRejectsScalarCoercionsNullPrimitivesAndTrailingContent() throws Exception {
+        String json = JSON.writeValueAsString(new ModelRevision(WORKSPACE, 7, HASH_A, HASH_B));
+
+        assertThrows(JsonProcessingException.class, () -> JSON.readValue(
+                json.replace("\"session_revision\":7", "\"session_revision\":7.9"),
+                ModelRevision.class), "a fractional revision must fail, not truncate");
+        assertThrows(JsonProcessingException.class, () -> JSON.readValue(
+                json.replace("\"session_revision\":7", "\"session_revision\":\"7\""),
+                ModelRevision.class), "a quoted revision must fail, not coerce");
+        assertThrows(JsonProcessingException.class, () -> JSON.readValue(
+                json.replace("\"session_revision\":7", "\"session_revision\":null"),
+                ModelRevision.class), "an explicit null revision must fail, not zero");
+        assertThrows(JsonProcessingException.class,
+                () -> JSON.readValue(json + " {\"junk\":true}", ModelRevision.class),
+                "trailing content after the document must fail");
+    }
+
+    @Test
     void unknownFutureJsonFieldsAreRejectedRatherThanSilentlyReinterpreted() throws Exception {
         String json = JSON.writeValueAsString(new ModelRevision(WORKSPACE, 1, HASH_A, HASH_B));
         String withUnknown = json.substring(0, json.length() - 1) + ",\"future\":true}";

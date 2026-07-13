@@ -30,7 +30,10 @@ Start from the example closest to the project:
 
 Schema validation checks data shape, enumerated values, duplicate stages, positive timeouts, explicit
 IRI/date syntax patterns, and
-cross-field requirements such as a lockfile for `imports.mode: locked`. Context-dependent checks still
+cross-field requirements such as a lockfile for `imports.mode: locked`. Network allowlist entries are
+RFC 1123 hostnames containing at least one letter (digits, dots, and hyphens allowed — underscore names
+are intentionally rejected), strict IPv4 addresses (all-numeric dotted entries are validated as IPv4),
+or textual IPv6 addresses including the IPv4-mapped forms. Context-dependent checks still
 belong to the future policy loader: path containment/capabilities, referenced-file existence, CURIE
 prefix resolution, Java-regex compilation, selected-reasoner availability, and contradictory runtime
 settings. A policy is therefore not a release attestation merely because it validates against the

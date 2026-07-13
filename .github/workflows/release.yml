@@ -68,7 +68,10 @@ jobs:
             exit 1
           fi
 
-          if ! grep -Eq "^## \\[${project_version}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+          # Tags v0.1.0 through v0.3.2 predate CHANGELOG.md entirely; keep them republishable.
+          if [ ! -f CHANGELOG.md ]; then
+            echo "No CHANGELOG.md in this legacy tag; skipping the finalized-heading gate."
+          elif ! grep -Eq "^## \\[${project_version}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
             echo "CHANGELOG.md must finalize ${project_version} from Unreleased to a YYYY-MM-DD date before tagging." >&2
             exit 1
           fi
@@ -85,10 +88,16 @@ jobs:
         env:
           VERSION: ${{ steps.project.outputs.version }}
         run: |
-          # Extract this version's "## [x.y.z]" section (up to the next "## [" header) as the release body.
-          awk -v hdr="## [$VERSION]" \
-            'index($0, hdr) == 1 { f = 1; next } f && index($0, "## [") == 1 { f = 0 } f { print }' \
-            CHANGELOG.md > RELEASE_NOTES.md
+          # Extract this version's "## [x.y.z]" section (up to the next "## [" header) as the release
+          # body. Legacy tags v0.1.0-v0.3.2 have no CHANGELOG.md at all; fall through to have_notes=false
+          # there so they republish with auto-generated notes.
+          if [ -f CHANGELOG.md ]; then
+            awk -v hdr="## [$VERSION]" \
+              'index($0, hdr) == 1 { f = 1; next } f && index($0, "## [") == 1 { f = 0 } f { print }' \
+              CHANGELOG.md > RELEASE_NOTES.md
+          else
+            : > RELEASE_NOTES.md
+          fi
           if grep -q '[^[:space:]]' RELEASE_NOTES.md; then
             echo "have_notes=true" >> "$GITHUB_OUTPUT"
             echo "Using CHANGELOG.md section for $VERSION:"
@@ -117,4 +126,4 @@ jobs:
             gh release create "$TAG" "$ASSET" --title "protege-mcp $TAG" --generate-notes
           fi
 
-          echo "Release asset published. Now update update.properties on develop, run scripts/check-version-consistency.sh --require-registry-current, and only then advance main."
+          echo "Release asset published. Now update update.properties on develop, run scripts/check-version-consistency.sh --require-registry-current, and only then advance main (whose CI enforces the strict registry gate)."

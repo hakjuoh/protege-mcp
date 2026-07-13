@@ -56,9 +56,11 @@ changing interactive runtime behavior.** Tool and guided-prompt counts remain **
   gate-detail patterns even when a validator treats JSON Schema `format` as annotation-only.
 - Release preparation no longer advertises a nonexistent future jar. The public plugin descriptor remains on
   the last published asset until the tag workflow succeeds; CI checks the advertised URL on `develop` and
-  `main`, full changelog mirrors are compared, and a strict post-publication gate controls the descriptor bump.
+  `main`, requires the newest release section to stay byte-identical across both changelog mirrors, and runs
+  the strict post-publication registry gate on `main`, so a stale or future descriptor turns `main` red
+  immediately.
 - The testing guide now records the verified counts: 2,488 tests shipped at `v0.5.0` despite that tag retaining
-  a stale 2,044 label, and the current adversarial suite contains 2,520 tests.
+  a stale 2,044 label, and the current adversarial suite contains 2,523 tests.
 
 ### Compatibility
 - Existing MCP tools, guided prompts, arguments, and interactive defaults are unchanged. A policy file is not

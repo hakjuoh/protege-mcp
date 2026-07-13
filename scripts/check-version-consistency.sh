@@ -116,8 +116,10 @@ extract_current_changelog() {
     printing { print }
   ' "$file"
 }
-root_changelog="$(extract_current_changelog CHANGELOG.md)"
-docs_changelog="$(extract_current_changelog docs/changelog.md)"
+# The trailing "x" sentinel keeps command substitution from stripping trailing newlines, so even
+# blank-line drift at the end of the section fails the byte comparison.
+root_changelog="$(extract_current_changelog CHANGELOG.md; printf x)"
+docs_changelog="$(extract_current_changelog docs/changelog.md; printf x)"
 if [[ "$root_changelog" != "$docs_changelog" ]]; then
   echo "STALE: CHANGELOG.md and docs/changelog.md ${version} sections differ." >&2
   failed=1

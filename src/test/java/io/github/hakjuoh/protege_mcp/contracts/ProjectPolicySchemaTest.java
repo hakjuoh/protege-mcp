@@ -149,10 +149,16 @@ class ProjectPolicySchemaTest {
     void hostAllowlistSupportsDnsIpv4AndIpv6ButRejectsMalformedEntries() throws IOException {
         Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
         object(base, "network").put("allowed_hosts", List.of(
-                "ontology.example.org", "127.0.0.1", "::1", "2001:db8::1"));
+                "ontology.example.org", "3com.example", "localhost", "127.0.0.1",
+                "::1", "2001:db8::1",
+                "::ffff:192.0.2.128", "64:ff9b::192.0.2.33",
+                "2001:db8:0:0:0:0:192.0.2.1", "2001:db8::1:192.0.2.1",
+                "::ffff:0:0:192.0.2.1", "fe80::1:2:192.0.2.1"));
         assertValid(base, "valid host allowlist");
 
-        for (String host : List.of("...", "bad_host", "-example.org", "example..org", "::::")) {
+        for (String host : List.of("...", "bad_host", "-example.org", "example..org", "::::",
+                "::ffff:192.0.2.999", "1:2:3:4:5:6:7:1.2.3.4",
+                "999.999.999.999", "127.0.0.999")) {
             Map<String, Object> invalid = readYaml(EXAMPLES.resolve("minimal.yaml"));
             object(invalid, "network").put("allowed_hosts", List.of(host));
             assertInvalid(invalid, "invalid allowed host " + host);
@@ -161,13 +167,42 @@ class ProjectPolicySchemaTest {
 
     @Test
     void waiverExpiryRequiresAnIsoDateShapeEvenWhenFormatIsAnnotationOnly() throws IOException {
-        Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
-        object(base, "validation").put("waivers", List.of(Map.of(
+        for (String expires : List.of("banana", "2026-13-01", "2026-04-31", "2026-02-29", "1900-02-29")) {
+            Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
+            object(base, "validation").put("waivers", List.of(waiver(expires)));
+            assertInvalid(base, "malformed waiver expiry " + expires);
+        }
+        for (String expires : List.of("2026-12-31", "2026-02-28", "2024-02-29", "2000-02-29")) {
+            Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
+            object(base, "validation").put("waivers", List.of(waiver(expires)));
+            assertValid(base, "well-formed waiver expiry " + expires);
+        }
+    }
+
+    @Test
+    void strengthenedPatternsStillAcceptLegitimatePathsAndIris() throws IOException {
+        for (String path : List.of("ontologies/core", "c", "release.2026/output")) {
+            Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
+            base.put("project_root", path);
+            assertValid(base, "legitimate project_root " + path);
+        }
+        for (String iri : List.of(
+                "urn:uuid:8a15d9e8-828f-4d94-9d45-0a31e92d28eb",
+                "https://example.org/onto?rev=3#Widget",
+                "https://example.org/a%20b/onto",
+                "file:///data/onto.owl")) {
+            Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
+            base.put("root_ontology", iri);
+            assertValid(base, "legitimate root_ontology " + iri);
+        }
+    }
+
+    private static Map<String, Object> waiver(String expires) {
+        return Map.of(
                 "rule_id", "annotation.definition.required",
                 "reason", "Migration window",
                 "owner", "ontology-team",
-                "expires", "banana")));
-        assertInvalid(base, "malformed waiver expiry");
+                "expires", expires);
     }
 
     @Test

@@ -18,7 +18,7 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
 
-At the time of writing: **2,520 tests, green**, across `tools`, `prompts`, `contracts`, `oauth`, `server`,
+At the time of writing: **2,523 tests, green**, across `tools`, `prompts`, `contracts`, `oauth`, `server`,
 `chat`, `config`, and the pure helpers of `ui`. Coverage is measured by **JaCoCo** (`mvn verify`) and a floor on
 the `tools`/`server`/`oauth` layers gates against regressions; the EDT/subprocess-bound `ui`/`chat`
 surfaces are intentionally not gated.

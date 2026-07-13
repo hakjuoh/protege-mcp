@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -26,6 +27,7 @@ import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.core.util.DefaultIndenter;
@@ -63,11 +65,15 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
  * </pre>
  *
  * The generated files are still reviewed and committed like source. Normal test runs never write files.
+ * The published baseline can never be regenerated; any other already-existing snapshot pair is only
+ * rewritten when {@code -Dprotege.contract.snapshot.overwrite=true} is passed as well, so an unreleased
+ * draft can iterate but a committed golden is never clobbered by a copy-pasted command.
  */
 class PublicContractSnapshotTest {
 
     private static final String BASELINE = "0.5.0";
     private static final String UPDATE_PROPERTY = "protege.contract.snapshot.update";
+    private static final String OVERWRITE_PROPERTY = "protege.contract.snapshot.overwrite";
     private static final Pattern RELEASE = Pattern.compile("[0-9]+\\.[0-9]+\\.[0-9]+");
     private static final Pattern TOOL_HEADING = Pattern.compile("^## `([^`]+)`$");
     private static final Pattern CODE_SPAN = Pattern.compile("`([a-z][a-z0-9_]*)`");
@@ -118,6 +124,35 @@ class PublicContractSnapshotTest {
     }
 
     @Test
+    void existingDraftSnapshotsRequireAnExplicitOverwriteFlagAndTheBaselineStaysImmutable(
+            @TempDir Path contractDir) throws IOException {
+        Files.writeString(toolSnapshot(contractDir, "9.9.9"), "{}\n", StandardCharsets.UTF_8);
+        // The suite itself may run with -Dprotege.contract.snapshot.overwrite=true (that is the
+        // documented draft-regeneration flow), so pin the property for both assertions and put the
+        // caller's value back afterwards.
+        String callerFlag = System.getProperty(OVERWRITE_PROPERTY);
+        try {
+            System.clearProperty(OVERWRITE_PROPERTY);
+            IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                    () -> validateUpdateVersion("9.9.9", contractDir));
+            assertTrue(error.getMessage().contains(OVERWRITE_PROPERTY));
+
+            System.setProperty(OVERWRITE_PROPERTY, "true");
+            validateUpdateVersion("9.9.9", contractDir);
+            IllegalArgumentException baseline = assertThrows(IllegalArgumentException.class,
+                    () -> validateUpdateVersion(BASELINE, contractDir));
+            assertTrue(baseline.getMessage().contains("immutable"),
+                    "the overwrite flag must never unlock the published baseline");
+        } finally {
+            if (callerFlag == null) {
+                System.clearProperty(OVERWRITE_PROPERTY);
+            } else {
+                System.setProperty(OVERWRITE_PROPERTY, callerFlag);
+            }
+        }
+    }
+
+    @Test
     void v050GoldensAreCanonicalAndHaveThePublishedCardinality() throws IOException {
         assertEquals(66, entries(baselineTools, "tools").size(), "0.5.0 published 66 tools");
         assertEquals(11, entries(baselinePrompts, "prompts").size(), "0.5.0 published 11 prompts");
@@ -144,7 +179,9 @@ class PublicContractSnapshotTest {
             }
             if (!INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050.contains(name)) {
                 for (String field : List.of("title", "output_schema", "annotations", "meta", "icons")) {
-                    assertEquals(oldTool.get(field), now.get(field),
+                    // The baseline side is parsed JSON while the live side holds SDK records;
+                    // normalize both to trees so a future non-null value compares structurally.
+                    assertEquals(node(oldTool.get(field)), node(now.get(field)),
                             () -> name + " changed public tool field " + field + " without review");
                 }
             }
@@ -190,7 +227,7 @@ class PublicContractSnapshotTest {
             }
             if (!INTENTIONAL_PROMPT_METADATA_CHANGES_SINCE_V050.contains(name)) {
                 for (String field : List.of("title", "meta", "icons")) {
-                    assertEquals(oldPrompt.get(field), now.get(field),
+                    assertEquals(node(oldPrompt.get(field)), node(now.get(field)),
                             () -> name + " changed public prompt field " + field + " without review");
                 }
             }
@@ -368,11 +405,20 @@ class PublicContractSnapshotTest {
     }
 
     private static void validateUpdateVersion(String update) {
+        validateUpdateVersion(update, CONTRACT_DIR);
+    }
+
+    private static void validateUpdateVersion(String update, Path contractDir) {
         if (!RELEASE.matcher(update).matches()) {
             throw new IllegalArgumentException(UPDATE_PROPERTY + " must be a major.minor.patch version");
         }
         if (BASELINE.equals(update)) {
             throw new IllegalArgumentException("Published baseline " + BASELINE + " is immutable");
+        }
+        if ((Files.exists(toolSnapshot(contractDir, update)) || Files.exists(promptSnapshot(contractDir, update)))
+                && !Boolean.getBoolean(OVERWRITE_PROPERTY)) {
+            throw new IllegalArgumentException("Snapshots for " + update + " already exist; pass -D"
+                    + OVERWRITE_PROPERTY + "=true only to regenerate an unpublished draft");
         }
     }
 
@@ -416,11 +462,19 @@ class PublicContractSnapshotTest {
     }
 
     private static Path toolSnapshot(String version) {
-        return CONTRACT_DIR.resolve("v" + version + "-tools.json");
+        return toolSnapshot(CONTRACT_DIR, version);
+    }
+
+    private static Path toolSnapshot(Path contractDir, String version) {
+        return contractDir.resolve("v" + version + "-tools.json");
     }
 
     private static Path promptSnapshot(String version) {
-        return CONTRACT_DIR.resolve("v" + version + "-prompts.json");
+        return promptSnapshot(CONTRACT_DIR, version);
+    }
+
+    private static Path promptSnapshot(Path contractDir, String version) {
+        return contractDir.resolve("v" + version + "-prompts.json");
     }
 
     private static Map<String, Object> read(Path path) throws IOException {
@@ -435,7 +489,13 @@ class PublicContractSnapshotTest {
     }
 
     private static JsonNode node(Object value) {
-        return JSON.valueToTree(value);
+        // Round-trip through text instead of valueToTree: both the parsed-golden and live-SDK
+        // sides must yield identical numeric node types (IntNode and LongNode are never equal).
+        try {
+            return JSON.readTree(JSON.writeValueAsString(value));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     @SuppressWarnings("unchecked")

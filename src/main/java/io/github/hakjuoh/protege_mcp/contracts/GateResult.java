@@ -10,7 +10,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * Strict, composable QC result. A required skipped/missing/errored stage yields {@link GateStatus#ERROR};
- * a completed policy violation yields {@link GateStatus#FAIL}.
+ * a completed required-stage policy violation yields {@link GateStatus#FAIL}. Findings from optional
+ * stages stay visible in {@link #findings()} but never control the gate.
  */
 public record GateResult(
         @JsonProperty("gate") GateStatus gate,
