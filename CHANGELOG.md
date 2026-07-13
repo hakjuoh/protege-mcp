@@ -5,7 +5,7 @@ All notable changes to **Protégé MCP** are documented here. The format is base
 [Semantic Versioning](https://semver.org/). Each release's section is published verbatim as the body of
 its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the release workflow.
 
-## [0.5.1] - Unreleased
+## [0.5.1] - 2026-07-13
 
 **A compatibility-and-contract hardening release: the 0.5.0 MCP surface is now guarded by machine-readable
 goldens, and the first versioned project-policy/QC contracts are defined and adversarially tested without

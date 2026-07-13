@@ -21,7 +21,7 @@ each section is also published as the body of its
 
 ---
 
-## [0.5.1] - Unreleased
+## [0.5.1] - 2026-07-13
 
 **A compatibility-and-contract hardening release: the 0.5.0 MCP surface is now guarded by machine-readable
 goldens, and the first versioned project-policy/QC contracts are defined and adversarially tested without
