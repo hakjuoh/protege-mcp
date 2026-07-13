@@ -1,0 +1,21 @@
+version: 1
+project_id: example-ontology
+root_ontology: https://example.org/ontology
+project_root: .
+
+# These security defaults are explicit so a reviewed policy does not depend on
+# process working-directory or network state.
+filesystem:
+  allow_external_paths: false
+network:
+  default: deny
+  allowed_hosts: []
+
+imports:
+  mode: unlocked
+  fail_on_missing: true
+  network: deny
+
+validation:
+  required_stages: [reasoner, profile, governance, structural]
+  fail_on: warning

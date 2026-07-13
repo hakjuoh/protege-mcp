@@ -53,7 +53,7 @@ the built jar before a release.
 
 ## Continuous integration
 
-[**CI**](https://github.com/hakjuoh/protege-mcp/actions/workflows/ci.yml) runs `mvn -B clean package`
+[**CI**](https://github.com/hakjuoh/protege-mcp/actions/workflows/ci.yml) runs `mvn -B clean verify`
 on JDK 17 (Temurin) for every push and pull request to `main`. Keep it green: a PR that fails to build
 or test will not be merged.
 
@@ -67,6 +67,7 @@ Everything lives under `src/main/java/io/github/hakjuoh/protege_mcp/`:
 | `oauth` | The embedded OAuth authorization server (dynamic client registration, PKCE, consent, token store). |
 | `tools` | The tool implementations. Each `*Tools.java` builds a list of `SyncToolSpecification`s; `ToolCatalog` aggregates them all. |
 | `prompts` | The guided MCP prompts. `Prompts.java` registers the templates; `PromptCatalog` aggregates the providers (mirrors the `tools` registry pattern). |
+| `contracts` | Versioned project/revision/finding/stage/gate records; matching JSON Schemas are packaged under `src/main/resources/schema`. |
 | `chat` | The Ontology Assistant back end: the `ChatProvider` SPI and the Claude / Codex CLI providers + event parsers. |
 | `ui` | Swing views/panels: `McpServerView`, `McpPreferencesPanel`, `ChatView`, `ChatTab`, `ChatPreferencesPanel`. |
 | `config` | `McpConfig` — the settings snapshot backed by Protégé's preferences store. |

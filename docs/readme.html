@@ -50,6 +50,17 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h3>Version information</h3>
 
+<h4>v0.5.1</h4>
+<ul>
+    <li>Compatibility and contract hardening: deterministic 0.5.0 goldens now guard all 66 tool schemas,
+        their documented result fields, and all 11 guided-prompt contracts.</li>
+    <li>A versioned project-policy v1 JSON Schema, minimal/general-OWL/OBO examples, and common
+        revision/finding/stage/gate contracts establish the tested foundation for later project QC and
+        release automation. Policy files are <b>not yet loaded or executed</b> by the 0.5.1 plugin.</li>
+    <li>The test classpath now keeps the embedded Jackson 2.20.1 stack coherent when the real JSON Schema
+        validator runs. Existing MCP tools, prompts, and interactive defaults are unchanged.</li>
+</ul>
+
 <h4>v0.5.0</h4>
 <ul>
     <li>Shared MCP broker across Prot&#233;g&#233; windows and instances (default on; Settings &gt; MCP

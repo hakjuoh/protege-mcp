@@ -17,6 +17,7 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Connecting a client](https://hakjuoh.github.io/protege-mcp/connect/) | The server model (ports, OAuth vs. token) + Claude Code, Codex CLI, VS Code, Claude Desktop recipes. |
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
 | [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 66 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
+| [Project policy contracts](https://hakjuoh.github.io/protege-mcp/project-policy.html) | 0.5.1 policy/schema foundations, examples, common QC contracts, and current delivery status. |
 | [Contributing](https://hakjuoh.github.io/protege-mcp/contributing.html) | Build from source, run the tests, and add a tool. |
 | [Versioning & releases](https://hakjuoh.github.io/protege-mcp/versioning.html) · [Changelog](https://hakjuoh.github.io/protege-mcp/changelog.html) | The release scheme and notes for every version. |
 

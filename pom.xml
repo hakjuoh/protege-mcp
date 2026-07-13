@@ -6,7 +6,7 @@
 
     <groupId>io.github.hakjuoh</groupId>
     <artifactId>protege-mcp</artifactId>
-    <version>0.5.0</version>
+    <version>0.5.1</version>
     <packaging>bundle</packaging>
 
     <name>protege-mcp</name>
@@ -34,9 +34,9 @@
 
         <!-- embedded MCP stack (versions exactly as resolved by the MCP 2.0.0 dependency tree).
              Every jackson-* module is aligned by importing jackson-bom in <dependencyManagement>, so
-             the transitive jackson-dataformat-yaml (pulled by json-schema-validator) tracks this same
-             release train instead of lagging a couple of minors behind — per Jackson's same-minor
-             guidance. -->
+             the directly-declared jackson-dataformat-yaml (also pulled transitively by the schema
+             validator) tracks this same release train instead of lagging a couple of minors behind —
+             per Jackson's same-minor guidance. -->
         <mcp.version>2.0.0</mcp.version>
         <jackson.version>2.20.1</jackson.version>
         <snakeyaml.version>2.4</snakeyaml.version>
@@ -73,6 +73,31 @@
     </dependencyManagement>
 
     <dependencies>
+
+        <!-- ===================================================================== -->
+        <!-- embedded Jackson, deliberately BEFORE the provided Protégé jars    -->
+        <!-- ===================================================================== -->
+        <!-- protege-editor-owl is an OSGi distribution jar that also contains old Jackson classes.
+             Protégé's OSGi runtime isolates those from the private Jackson packages in this bundle,
+             but Surefire uses one flat classpath and resolves the first class it sees. Keep the aligned
+             direct dependencies first so headless tests exercise one coherent Jackson 2.20.1 stack
+             instead of combining Protégé's old JsonFactory with the new databind/schema validator. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+        </dependency>
 
         <!-- ===================================================================== -->
         <!-- provided: supplied by the Protege / OWLAPI OSGi runtime, NOT embedded  -->
@@ -124,20 +149,6 @@
             <version>${mcp.version}</version>
         </dependency>
 
-        <!-- Jackson — versions come from the imported jackson-bom (see <dependencyManagement>). -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-annotations</artifactId>
-        </dependency>
-
         <!-- Reactor (MCP transport runtime) -->
         <dependency>
             <groupId>io.projectreactor</groupId>
@@ -145,8 +156,9 @@
             <version>${reactor.version}</version>
         </dependency>
 
-        <!-- json-schema-validator pulls jackson-dataformat-yaml + snakeyaml + itu transitively;
-             they are embedded automatically via Embed-Transitive. -->
+        <!-- json-schema-validator also pulls jackson-dataformat-yaml plus snakeyaml and itu;
+             dataformat-yaml is direct above for classpath order, while the rest is embedded via
+             Embed-Transitive. -->
         <dependency>
             <groupId>com.networknt</groupId>
             <artifactId>json-schema-validator</artifactId>

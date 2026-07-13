@@ -167,7 +167,7 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.5.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.5.1`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
@@ -562,7 +562,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.5.0`**.
+  `artifactId protege-mcp`, version **`0.5.1`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing
@@ -949,11 +949,17 @@ offers an update.
 | **5. Security / settings** | **Expanded beyond the original MVP:** embedded OAuth 2.1 AS + static bearer, persistence across restarts, preferences | ✅ done |
 | **6. Status UI / multi-window / docs** | `McpServerView` with the connected-clients table + per-client revocation; per-window controllers | ✅ done |
 | **7. Shared broker** | one fixed MCP endpoint across windows and instances (§4.1 item 11); singleton lock, staged jar copies, refcount self-exit, session-pinned proxy | ✅ done |
+| **M0 contract foundations** | 0.5.0 public-contract goldens; policy v1/schema examples; surface-neutral project, revision, finding, stage, artifact, and strict gate contracts | ✅ done (0.5.1) |
 | **8. Hardening** | deadlock/perf/OSGi regression coverage across all tool paths | ⏳ ongoing |
 
 **Architecture Approach B — delivered.** The in-Protégé chat assistant (§9): a `ChatView` + dedicated
 **Ontology Assistant** tab, the `io.github.hakjuoh.protege_mcp.chat` provider/driver layer (Claude Code and Codex CLIs), and the
 event-stream parsers — built atop A's tool layer with no new embedded jars and no API-key custody.
+
+The M0 records and schemas are intentionally not wired into public tools yet. Policy discovery/execution,
+fingerprinting, preflight change sets, locked imports, verified release artifacts, and the headless adapter
+remain in [`PLAN.md`](PLAN.md); see the [policy-contract status page](docs/project-policy.md) for the precise
+0.5.1 boundary.
 
 **Next tracks:** the §9.9 items behind the `ChatProvider` SPI (a direct-API provider — kept only as a fallback,
 not a roadmap goal — and user-configured external MCP servers) and Architecture Approach C (§10). (The `fable`
@@ -1041,6 +1047,7 @@ model alias already ships, and long-context compaction is owned by the CLI's age
 | `tools/Tools`, `tools/ToolArgException` | shared OWLAPI/finder/render helpers; an invalid-argument signal turned into a non-fatal MCP error result |
 | `prompts/PromptCatalog`, `PromptSpecs`, `PromptProvider`, `PromptRegistry`, `PromptTemplate` | prompt aggregation, spec factory, provider SAM, fluent sink, render SAM (mirrors the tools registry pattern) |
 | `prompts/Prompts` | the guided-workflow prompt templates (§5) |
+| `contracts/*` | versioned project/revision/finding/stage/artifact/gate records and fail-closed pure aggregation; JSON schemas live under `src/main/resources/schema` |
 | `config/McpConfig` | preferences snapshot (`io.github.hakjuoh.protege_mcp` / `server`); token + OAuth state keys |
 | `ui/McpServerView`, `ui/McpPreferencesPanel` | status view (connected-clients table) + settings panel |
 | `broker/McpBoot` | the single boot policy — broker-first, degrading to the standalone election + port fallback (§4.1 item 11) |

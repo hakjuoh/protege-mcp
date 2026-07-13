@@ -5,6 +5,41 @@ All notable changes to **Protégé MCP** are documented here. The format is base
 [Semantic Versioning](https://semver.org/). Each release's section is published verbatim as the body of
 its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the release workflow.
 
+## [0.5.1] - 2026-07-12
+
+**A compatibility-and-contract hardening release: the 0.5.0 MCP surface is now guarded by machine-readable
+goldens, and the first versioned project-policy/QC contracts are defined and adversarially tested without
+changing interactive runtime behavior.** Tool and guided-prompt counts remain **66 + 11**.
+
+### Added
+- **0.5.0 public-contract snapshots and compatibility tests** for all 66 tool registrations and 11 guided
+  prompts. Tool goldens capture names, descriptions, complete input schemas, and the manual's documented
+  result fields; prompt goldens capture argument contracts and deterministic rendered messages. The harness
+  rejects removed/changed arguments, new required prompt arguments, dropped documented result fields,
+  unreviewed prompt-text drift, and duplicate or undocumented registrations while permitting explicitly
+  reviewed additive optional surface.
+- **Project-policy v1 JSON Schema plus three validated YAML examples**: minimal, general OWL, and OBO-oriented.
+  The schema rejects unknown/future fields and malformed core types, constrains stage/profile/severity
+  vocabularies and timeouts, and requires a lockfile or validation asset block when the selected mode/stage
+  needs it. Filesystem and network defaults are explicit in every example.
+- **Surface-neutral ontology-engineering contracts** for project coordinates, full workspace/session/
+  semantic/document revision envelopes, findings, validator stages, checksum artifacts, and aggregate gates.
+  Their JSON shape is published as a packaged versioned schema. The pure gate aggregator distinguishes a
+  policy `fail` from an execution `error`; a required missing/skipped/errored stage fails closed and can never
+  become a vacuous pass.
+- Documentation for the policy/contract boundary, schema limitations, examples, gate semantics, and golden
+  regeneration workflow.
+
+### Fixed
+- Surefire now resolves the aligned embedded Jackson 2.20.1 stack before Protégé's provided OSGi jars.
+  Protégé privately contains an old `JsonFactory`; OSGi isolates it in the application, but the flat test
+  classpath could combine it with new databind/networknt classes when the real JSON Schema validator ran.
+
+### Compatibility
+- Existing MCP tools, guided prompts, arguments, and interactive defaults are unchanged. A policy file is not
+  discovered or executed in 0.5.1; `get_project_policy`, strict project QC, fingerprints/change sets, import
+  locking, and release gates remain subsequent roadmap work.
+
 ## [0.5.0] - 2026-07-12
 
 **One MCP endpoint, however many Protégés: a shared broker now owns the configured port and routes

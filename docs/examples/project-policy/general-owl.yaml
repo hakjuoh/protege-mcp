@@ -1,0 +1,75 @@
+version: 1
+project_id: example-product-ontology
+root_ontology: https://example.org/ontology
+project_root: .
+
+prefixes:
+  ex: https://example.org/ontology/
+  dcterms: http://purl.org/dc/terms/
+  rdfs: http://www.w3.org/2000/01/rdf-schema#
+  skos: http://www.w3.org/2004/02/skos/core#
+
+filesystem:
+  allow_external_paths: false
+network:
+  default: deny
+  allowed_hosts: []
+
+modules:
+  - ontology_iri: https://example.org/ontology
+    path: ontology.ttl
+    owned_namespaces:
+      - https://example.org/ontology/
+  - ontology_iri: https://example.org/ontology/core
+    path: modules/core.ttl
+    owned_namespaces:
+      - https://example.org/ontology/
+
+reasoning:
+  reasoner: HermiT
+  owl_profile: DL
+  required: true
+  timeout_ms: 120000
+
+annotations:
+  labels:
+    properties: [rdfs:label]
+    required_languages: [en]
+    one_preferred_per_language: true
+  definitions:
+    properties: [skos:definition]
+    required: true
+    required_languages: [en]
+  required: [dcterms:source]
+
+iri_policy:
+  required_namespaces:
+    - https://example.org/ontology/
+  pattern: '^https://example[.]org/ontology/[A-Z][A-Za-z0-9_]+$'
+
+imports:
+  mode: locked
+  fail_on_missing: true
+  lockfile: imports.lock.json
+  network: deny
+
+validation:
+  required_stages: [reasoner, profile, governance, structural, invariants, cqs, shacl]
+  fail_on: warning
+  structural:
+    disabled: [property_missing_domain, property_missing_range]
+    severity_overrides: {}
+  invariants:
+    paths: [quality/invariants/*.rq]
+  shacl:
+    paths: [quality/shapes.ttl]
+  competency_questions:
+    convention: robot-sparql-dir
+    path: cqs
+  waivers: []
+
+release:
+  format: turtle
+  output_dir: dist
+  require_version_iri: true
+  require_clean_round_trip: true

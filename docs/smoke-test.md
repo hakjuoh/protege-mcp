@@ -79,6 +79,14 @@ counterpart — run it against the built `v{{ site.version }}` jar before publis
 | 37 | Quit the Protégé instances one by one, then check again after the **last** one exits | `pgrep -f broker.BrokerMain` finds nothing within ~20 s (the broker lingers briefly before self-exit) and port 8123 is free |
 | 38 | Kill the broker process while Protégé runs, then **Stop/Start** in the MCP Server view | a fresh broker is spawned (or the server degrades to standalone with the view showing the actual URL); the in-app Ontology Assistant keeps working throughout |
 
+### 0.5.1 — compatibility and packaged contracts
+
+| # | Step | Expect |
+| --- | --- | --- |
+| 39 | Connect a fresh MCP client and inspect initialize/list responses | server version is `0.5.1`; exactly 66 tools and 11 prompts are advertised, with the same required arguments as 0.5.0 |
+| 40 | Open a project containing a `.protege-mcp/project.yaml`, then use the existing context/QC tools | existing interactive behavior is unchanged; 0.5.1 does **not** auto-discover or execute the proposed policy and advertises no unfinished project-policy tools |
+| 41 | Inspect the built jar with `jar tf target/protege-mcp-{{ site.version }}.jar` | both `schema/project-policy-v1.schema.json` and `schema/ontology-engineering-contracts-v1.schema.json` are packaged |
+
 Any step that errors, freezes the UI, or does not appear in Protégé's editor/undo stack is a release
 blocker — capture the JSON error and the Protégé log. Steps 16–18 must **never** undo an unrelated edit:
 if a GUI edit happens between apply and re-classification, expect `verify.concurrent_change=true` and no

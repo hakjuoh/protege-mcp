@@ -1,0 +1,3469 @@
+{
+  "product_version" : "0.5.0",
+  "snapshot_version" : 1,
+  "tools" : [ {
+    "annotations" : null,
+    "description" : "List EVERY ontology loaded in the Protégé workspace — the active ontology, its imports closure, and any other loaded ontologies. Marks which one is active, which have unsaved changes (dirty), and where each is saved (document).",
+    "documented_result_fields" : [ "count", "active", "dirty_count", "ontologies", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "list_ontologies",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Details of the active ontology: IRI, axiom counts and direct imports.",
+    "documented_result_fields" : [ "ontology_iri", "version_iri", "anonymous", "axioms", "logical_axioms", "direct_imports", "write_protection" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "get_active_ontology",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Summarize the active ontology: signature counts, ontology annotations, imports and axiom-type counts. Set include_imports=true to summarize the imports closure.",
+    "documented_result_fields" : [ "scope", "ontologies", "axioms", "logical_axioms", "ontology_annotations", "import_declarations", "signature_entities", "entity_types", "axiom_types", "axiom_types_truncated" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "include_imports" : {
+          "description" : "Also summarize the imports closure (default false).",
+          "type" : "boolean"
+        },
+        "limit" : {
+          "description" : "Max axiom-type rows to return (default 80).",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "summarize_ontology",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "List named classes in the active ontology's signature (rendering + IRI), display-sorted. Paginated: 'limit' caps the page and 'offset' skips that many classes — when the result carries 'next_offset', pass it back as 'offset' to fetch the next page and enumerate the whole signature past 'limit'.",
+    "documented_result_fields" : [ "count", "offset", "returned", "items", "next_offset" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "limit" : {
+          "description" : "Max classes to return per page (default 200).",
+          "type" : "integer"
+        },
+        "offset" : {
+          "description" : "0-based index to start from (default 0); pass a prior 'next_offset' to page forward.",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "list_classes",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Search entities by name/IRI fragment across the loaded ontologies. 'type' is one of class, object_property, data_property, annotation_property, individual, datatype, all (default all). A plain fragment matches as a substring and '*' is a wildcard; an empty or wildcard-only query lists the active ontology's whole signature. Results are RANKED: each carries a 'score' and 'match_kind' (exact | prefix | substring | fuzzy — exact considers every rdfs:label language variant and the IRI local name). Paginated: 'limit' caps the page and 'offset' skips that many ranked hits — when the result carries 'next_offset', pass it back as 'offset' for the next page. Two grounding fields help decide whether to reuse a term or mint a new one: 'best_match' is the IRI the query resolves to (or null), and 'would_mint' is true when a single-term query resolves to no existing entity, so using it as a create_* name would introduce a NEW one.",
+    "documented_result_fields" : [ "count", "offset", "returned", "items", "next_offset", "would_mint", "best_match", "query", "type" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "limit" : {
+          "description" : "Max results per page (default 50).",
+          "type" : "integer"
+        },
+        "offset" : {
+          "description" : "0-based index into the ranked results to start from (default 0); pass a prior 'next_offset' to page forward.",
+          "type" : "integer"
+        },
+        "query" : {
+          "description" : "Search text (use '*' as a wildcard).",
+          "type" : "string"
+        },
+        "type" : {
+          "description" : "Entity type filter (default 'all').",
+          "type" : "string"
+        }
+      },
+      "required" : [ "query" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "search_entities",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Look up an entity by IRI or display name; returns its type(s), IRI and rendering. An IRI may be 'punned' across several entity types, so 'matches' can hold more than one entity.",
+    "documented_result_fields" : [ "query", "count", "matches", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "entity" : {
+          "description" : "Entity IRI or display name.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "entity" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "get_entity",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Axioms that reference the given entity. By default only the active ontology; set include_imports=true to also include axioms from the imports closure (e.g. an imported term's domain/range and class restrictions). The 'axioms' block is paginated ('limit' + 'offset'): when it carries 'next_offset', pass it back as 'offset' to page through an entity with more referencing axioms than 'limit'.",
+    "documented_result_fields" : [ "entity", "include_imports", "axioms" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "entity" : {
+          "description" : "Entity IRI or display name.",
+          "type" : "string"
+        },
+        "include_imports" : {
+          "description" : "Also search the imports closure (default false).",
+          "type" : "boolean"
+        },
+        "limit" : {
+          "description" : "Max axioms to return per page (default 100).",
+          "type" : "integer"
+        },
+        "offset" : {
+          "description" : "0-based index to start from (default 0); pass a prior 'next_offset' to page forward.",
+          "type" : "integer"
+        }
+      },
+      "required" : [ "entity" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "get_axioms_for_entity",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Orientation overview of the active ontology in one call: id, signature counts, imports, ontology annotations, the asserted root classes (direct children of owl:Thing), sampled object/data properties, the reasoner state, and the prefix map. Use this first, then get_entity_context to drill into a term.",
+    "documented_result_fields" : [ "active_ontology", "counts", "imports", "ontology_annotations", "root_classes", "object_properties", "data_properties", "reasoner", "prefixes", "write_protection", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "limit" : {
+          "description" : "Max items per sampled list — roots, properties (default 50).",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "get_ontology_context",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "An 'entity card' for one term in a single call: its type(s), labels/annotations, whether it is deprecated, and its asserted neighbourhood — for a class: super/sub/equivalent/disjoint classes and asserted instances; for a property: domains, ranges, super/sub properties, inverses and characteristics; for an individual: types and property assertions. Resolves an IRI or display name; if the name is punned across several entity types, every match gets its own card. Asserted structure only.",
+    "documented_result_fields" : [ "query", "count", "include_imports", "entities", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "entity" : {
+          "description" : "Entity IRI or display name.",
+          "type" : "string"
+        },
+        "include_imports" : {
+          "description" : "Include the imports closure (default true).",
+          "type" : "boolean"
+        },
+        "limit" : {
+          "description" : "Max items per neighbourhood list (default 50).",
+          "type" : "integer"
+        }
+      },
+      "required" : [ "entity" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "get_entity_context",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Create a named class. Give a full 'iri', or a 'namespace' to mint the IRI in (IRI = namespace + name — useful when terms live in a shared namespace distinct from the ontology IRI), else the IRI is minted from 'name' using Protégé's entity-creation settings. An rdfs:label ('label' or 'name', tagged with 'label_lang') is added unless 'no_label'. Optionally set a 'parent' superclass.",
+    "documented_result_fields" : [ "created", "parent", "present" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "iri" : {
+          "description" : "Full IRI to use (optional; overrides 'namespace').",
+          "type" : "string"
+        },
+        "label" : {
+          "description" : "rdfs:label text (default: 'name').",
+          "type" : "string"
+        },
+        "label_lang" : {
+          "description" : "Language tag for the rdfs:label, e.g. 'en-US' (default: none).",
+          "type" : "string"
+        },
+        "name" : {
+          "description" : "Short name for the class — the IRI local part when minting, and the default rdfs:label. Optional when a full 'iri' is given (its local part becomes the name).",
+          "type" : "string"
+        },
+        "namespace" : {
+          "description" : "Namespace to mint the IRI in: IRI becomes namespace + name (optional).",
+          "type" : "string"
+        },
+        "no_label" : {
+          "description" : "Do not add any rdfs:label (default false).",
+          "type" : "boolean"
+        },
+        "parent" : {
+          "description" : "Superclass: IRI, name or Manchester class expression (optional).",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "create_class",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Create a named entity of a given type: class, object_property, data_property, annotation_property, individual or datatype. Give a full 'iri', or a 'namespace' to mint it in (IRI = namespace + name), else the IRI is minted from 'name'. An rdfs:label ('label' or 'name', tagged with 'label_lang') is added unless 'no_label'.",
+    "documented_result_fields" : [ "created" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "entity_type" : {
+          "description" : "class | object_property | data_property | annotation_property | individual | datatype",
+          "type" : "string"
+        },
+        "iri" : {
+          "description" : "Full IRI to use (optional; overrides 'namespace').",
+          "type" : "string"
+        },
+        "label" : {
+          "description" : "rdfs:label text (default: 'name').",
+          "type" : "string"
+        },
+        "label_lang" : {
+          "description" : "Language tag for the rdfs:label, e.g. 'en-US' (default: none).",
+          "type" : "string"
+        },
+        "name" : {
+          "description" : "Short name — the IRI local part when minting, and the default rdfs:label. Optional when a full 'iri' is given (its local part becomes the name).",
+          "type" : "string"
+        },
+        "namespace" : {
+          "description" : "Namespace to mint the IRI in: IRI becomes namespace + name (optional).",
+          "type" : "string"
+        },
+        "no_label" : {
+          "description" : "Do not add any rdfs:label (default false).",
+          "type" : "boolean"
+        }
+      },
+      "required" : [ "entity_type" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "create_entity",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Assert that 'child' is a subclass of 'parent'. Each may be a class name, a full IRI, or a Manchester-syntax class expression (e.g. 'hasOwner some Person'). Any entities introduced as a side effect are reported as 'new_entities'.",
+    "documented_result_fields" : [ "applied", "axiom", "new_entities", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "child" : {
+          "description" : "Subclass: IRI, name or class expression.",
+          "type" : "string"
+        },
+        "parent" : {
+          "description" : "Superclass: IRI, name or class expression.",
+          "type" : "string"
+        },
+        "strict" : {
+          "description" : "If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name (guards against typo'd references). Default false.",
+          "type" : "boolean"
+        }
+      },
+      "required" : [ "child", "parent" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "add_subclass_of",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Add an annotation assertion to an entity (default property rdfs:label). The value is a literal (optionally typed with 'datatype' or tagged with 'lang') or, with 'value_iri', an IRI; pass 'annotations' to attach axiom annotations (reified owl:Axiom). For a non-entity subject or full OWL 2 symmetry use add_axiom with axiom_type=annotation_assertion.",
+    "documented_result_fields" : [ "applied", "axiom", "new_entities", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Optional axiom annotations on this assertion (array of {property, value | value_iri, lang, datatype}).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "datatype" : {
+          "description" : "Optional datatype IRI/name for a typed literal value.",
+          "type" : "string"
+        },
+        "entity" : {
+          "description" : "Target subject: entity IRI/name or any absolute IRI.",
+          "type" : "string"
+        },
+        "lang" : {
+          "description" : "Optional language tag for a literal value, e.g. 'en'.",
+          "type" : "string"
+        },
+        "property" : {
+          "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+          "type" : "string"
+        },
+        "strict" : {
+          "description" : "If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name (guards against typo'd references). Default false.",
+          "type" : "boolean"
+        },
+        "value" : {
+          "description" : "Literal text value (omit if value_iri is given).",
+          "type" : "string"
+        },
+        "value_iri" : {
+          "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+          "type" : "string"
+        }
+      },
+      "required" : [ "entity" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "add_annotation",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Add a structured axiom. axiom_type is one of: subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, sub_object_property_of, sub_data_property_of, sub_property_chain_of, equivalent_object_properties, equivalent_data_properties, disjoint_object_properties, disjoint_data_properties, inverse_object_properties, transitive_object_property, functional_object_property, inverse_functional_object_property, symmetric_object_property, asymmetric_object_property, reflexive_object_property, irreflexive_object_property, functional_data_property, has_key, object_property_domain, object_property_range, data_property_domain, data_property_range, annotation_assertion, sub_annotation_property_of, annotation_property_domain, annotation_property_range, declaration, datatype_definition. Provide the operands the chosen type needs (sub/super, classes[], class/individual, property/subject/object, property/subject/value[+lang|datatype], property/domain, property/range). Any class operand may be a named class, a full IRI, or a Manchester-syntax class expression such as \"Animal and (hasOwner some Person)\" — so defined classes and restrictions are expressible via equivalent_classes / subclass_of. Entities introduced as a side effect are reported as 'new_entities'.",
+    "documented_result_fields" : [ "applied", "axiom", "new_entities", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Optional axiom annotations (array of {property, value | value_iri, lang, datatype}); reconstructs reified owl:Axiom blocks.",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "axiom_type" : {
+          "description" : "subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, sub_object_property_of, sub_data_property_of, sub_property_chain_of, equivalent_object_properties, equivalent_data_properties, disjoint_object_properties, disjoint_data_properties, inverse_object_properties, transitive_object_property, functional_object_property, inverse_functional_object_property, symmetric_object_property, asymmetric_object_property, reflexive_object_property, irreflexive_object_property, functional_data_property, has_key, object_property_domain, object_property_range, data_property_domain, data_property_range, annotation_assertion, sub_annotation_property_of, annotation_property_domain, annotation_property_range, declaration, datatype_definition",
+          "type" : "string"
+        },
+        "chain" : {
+          "description" : "sub_property_chain_of: ordered object property list (each a name/IRI, or an inverse link inverse(P) / ObjectInverseOf(P))",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "class" : {
+          "description" : "class_assertion / disjoint_union / has_key: class — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "classes" : {
+          "description" : "equivalent_classes / disjoint_classes / disjoint_union: classes — names, IRIs or Manchester class expressions",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "datatype" : {
+          "description" : "data_property_assertion / annotation_assertion: optional datatype IRI/name; datatype_definition: defined datatype IRI/name",
+          "type" : "string"
+        },
+        "domain" : {
+          "description" : "object_property_domain / data_property_domain: domain class expression; annotation_property_domain: domain IRI",
+          "type" : "string"
+        },
+        "entity" : {
+          "description" : "declaration: entity IRI/name",
+          "type" : "string"
+        },
+        "entity_type" : {
+          "description" : "declaration: class | object_property | data_property | annotation_property | individual | datatype",
+          "type" : "string"
+        },
+        "individual" : {
+          "description" : "class_assertion: individual IRI/name",
+          "type" : "string"
+        },
+        "individuals" : {
+          "description" : "same_individual / different_individuals: individual IRI/name list",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "inverse_property" : {
+          "description" : "inverse_object_properties: inverse object property IRI/name",
+          "type" : "string"
+        },
+        "lang" : {
+          "description" : "data_property_assertion / annotation_assertion: optional language tag",
+          "type" : "string"
+        },
+        "object" : {
+          "description" : "object_property_assertion / negative_object_property_assertion: object individual IRI/name",
+          "type" : "string"
+        },
+        "properties" : {
+          "description" : "equivalent_/disjoint_object|data_properties: property IRI/name list; has_key: object/data property IRI/name list",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "property" : {
+          "description" : "*_property_assertion / property characteristic / sub_*_property_of / *_property_domain|range / annotation_* / has_key seed: property IRI/name",
+          "type" : "string"
+        },
+        "range" : {
+          "description" : "object_property_range: range class expression; data_property_range / datatype_definition: datatype IRI/name or a Manchester-syntax data range such as \"xsd:integer[>= 0]\" or \"{1, 2, 3}\"; annotation_property_range: range IRI",
+          "type" : "string"
+        },
+        "strict" : {
+          "description" : "If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name (guards against typo'd references). Default false.",
+          "type" : "boolean"
+        },
+        "sub" : {
+          "description" : "subclass_of: subclass — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "subject" : {
+          "description" : "*_property_assertion / annotation_assertion: subject IRI/name",
+          "type" : "string"
+        },
+        "super" : {
+          "description" : "subclass_of: superclass — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "super_property" : {
+          "description" : "sub_object_property_of / sub_data_property_of / sub_property_chain_of / sub_annotation_property_of: super property IRI/name",
+          "type" : "string"
+        },
+        "value" : {
+          "description" : "data_property_assertion / annotation_assertion: literal value",
+          "type" : "string"
+        },
+        "value_iri" : {
+          "description" : "annotation_assertion: IRI-valued annotation (entity name/IRI or absolute IRI; alternative to value)",
+          "type" : "string"
+        }
+      },
+      "required" : [ "axiom_type" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "add_axiom",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Remove a structured axiom (same arguments as add_axiom). axiom_type is one of: subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, sub_object_property_of, sub_data_property_of, sub_property_chain_of, equivalent_object_properties, equivalent_data_properties, disjoint_object_properties, disjoint_data_properties, inverse_object_properties, transitive_object_property, functional_object_property, inverse_functional_object_property, symmetric_object_property, asymmetric_object_property, reflexive_object_property, irreflexive_object_property, functional_data_property, has_key, object_property_domain, object_property_range, data_property_domain, data_property_range, annotation_assertion, sub_annotation_property_of, annotation_property_domain, annotation_property_range, declaration, datatype_definition.",
+    "documented_result_fields" : [ "removed", "axiom" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Optional axiom annotations (array of {property, value | value_iri, lang, datatype}); reconstructs reified owl:Axiom blocks.",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "axiom_type" : {
+          "description" : "subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, sub_object_property_of, sub_data_property_of, sub_property_chain_of, equivalent_object_properties, equivalent_data_properties, disjoint_object_properties, disjoint_data_properties, inverse_object_properties, transitive_object_property, functional_object_property, inverse_functional_object_property, symmetric_object_property, asymmetric_object_property, reflexive_object_property, irreflexive_object_property, functional_data_property, has_key, object_property_domain, object_property_range, data_property_domain, data_property_range, annotation_assertion, sub_annotation_property_of, annotation_property_domain, annotation_property_range, declaration, datatype_definition",
+          "type" : "string"
+        },
+        "chain" : {
+          "description" : "sub_property_chain_of: ordered object property list (each a name/IRI, or an inverse link inverse(P) / ObjectInverseOf(P))",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "class" : {
+          "description" : "class_assertion / disjoint_union / has_key: class — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "classes" : {
+          "description" : "equivalent_classes / disjoint_classes / disjoint_union: classes — names, IRIs or Manchester class expressions",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "datatype" : {
+          "description" : "data_property_assertion / annotation_assertion: optional datatype IRI/name; datatype_definition: defined datatype IRI/name",
+          "type" : "string"
+        },
+        "domain" : {
+          "description" : "object_property_domain / data_property_domain: domain class expression; annotation_property_domain: domain IRI",
+          "type" : "string"
+        },
+        "entity" : {
+          "description" : "declaration: entity IRI/name",
+          "type" : "string"
+        },
+        "entity_type" : {
+          "description" : "declaration: class | object_property | data_property | annotation_property | individual | datatype",
+          "type" : "string"
+        },
+        "individual" : {
+          "description" : "class_assertion: individual IRI/name",
+          "type" : "string"
+        },
+        "individuals" : {
+          "description" : "same_individual / different_individuals: individual IRI/name list",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "inverse_property" : {
+          "description" : "inverse_object_properties: inverse object property IRI/name",
+          "type" : "string"
+        },
+        "lang" : {
+          "description" : "data_property_assertion / annotation_assertion: optional language tag",
+          "type" : "string"
+        },
+        "object" : {
+          "description" : "object_property_assertion / negative_object_property_assertion: object individual IRI/name",
+          "type" : "string"
+        },
+        "properties" : {
+          "description" : "equivalent_/disjoint_object|data_properties: property IRI/name list; has_key: object/data property IRI/name list",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "property" : {
+          "description" : "*_property_assertion / property characteristic / sub_*_property_of / *_property_domain|range / annotation_* / has_key seed: property IRI/name",
+          "type" : "string"
+        },
+        "range" : {
+          "description" : "object_property_range: range class expression; data_property_range / datatype_definition: datatype IRI/name or a Manchester-syntax data range such as \"xsd:integer[>= 0]\" or \"{1, 2, 3}\"; annotation_property_range: range IRI",
+          "type" : "string"
+        },
+        "sub" : {
+          "description" : "subclass_of: subclass — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "subject" : {
+          "description" : "*_property_assertion / annotation_assertion: subject IRI/name",
+          "type" : "string"
+        },
+        "super" : {
+          "description" : "subclass_of: superclass — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "super_property" : {
+          "description" : "sub_object_property_of / sub_data_property_of / sub_property_chain_of / sub_annotation_property_of: super property IRI/name",
+          "type" : "string"
+        },
+        "value" : {
+          "description" : "data_property_assertion / annotation_assertion: literal value",
+          "type" : "string"
+        },
+        "value_iri" : {
+          "description" : "annotation_assertion: IRI-valued annotation (entity name/IRI or absolute IRI; alternative to value)",
+          "type" : "string"
+        }
+      },
+      "required" : [ "axiom_type" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "remove_axiom",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Apply a batch of axiom add/remove operations in ONE call — the same 'operations' array as preview_changes (each item: axiom_type + operands, optional op=add|remove, default add). Closes the gap where preview batches but the write tools apply one axiom per call. The whole batch is applied as a SINGLE undoable transaction, so one undo_change reverts all of it at once (like create_class). Reports, per operation, what was applied/removed and any new entities introduced, plus a summary. Run preview_changes first to dry-run; set strict=true to skip any add that would mint a brand-new entity from an unrecognized IRI/name. Note: because nothing is applied until the batch completes, an operation that references an entity introduced by an EARLIER operation in the same batch must refer to it by full IRI. Optionally set verify=report|rollback to classify the reasoner after applying and detect a regression (a NEWLY unsatisfiable class or a NEWLY inconsistent ontology): report keeps the batch and returns the verdict; rollback additionally undoes the whole batch when a regression is found (default none = no reasoner pass).",
+    "documented_result_fields" : [ "operations", "summary", "verify" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "operations" : {
+          "description" : "Axiom changes to preview; each item is an add_axiom/remove_axiom operand set plus optional op=add|remove.",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "annotations" : {
+                "description" : "Optional axiom annotations (array of {property, value | value_iri, lang, datatype}); reconstructs reified owl:Axiom blocks.",
+                "items" : {
+                  "additionalProperties" : false,
+                  "properties" : {
+                    "datatype" : {
+                      "description" : "Optional datatype IRI/name for a typed literal value.",
+                      "type" : "string"
+                    },
+                    "lang" : {
+                      "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                      "type" : "string"
+                    },
+                    "property" : {
+                      "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                      "type" : "string"
+                    },
+                    "value" : {
+                      "description" : "Literal text value (omit if value_iri is given).",
+                      "type" : "string"
+                    },
+                    "value_iri" : {
+                      "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                      "type" : "string"
+                    }
+                  },
+                  "type" : "object"
+                },
+                "type" : "array"
+              },
+              "axiom_type" : {
+                "description" : "subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, sub_object_property_of, sub_data_property_of, sub_property_chain_of, equivalent_object_properties, equivalent_data_properties, disjoint_object_properties, disjoint_data_properties, inverse_object_properties, transitive_object_property, functional_object_property, inverse_functional_object_property, symmetric_object_property, asymmetric_object_property, reflexive_object_property, irreflexive_object_property, functional_data_property, has_key, object_property_domain, object_property_range, data_property_domain, data_property_range, annotation_assertion, sub_annotation_property_of, annotation_property_domain, annotation_property_range, declaration, datatype_definition",
+                "type" : "string"
+              },
+              "chain" : {
+                "description" : "sub_property_chain_of: ordered object property list (each a name/IRI, or an inverse link inverse(P) / ObjectInverseOf(P))",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "class" : {
+                "description" : "class_assertion / disjoint_union / has_key: class — name, IRI or Manchester class expression",
+                "type" : "string"
+              },
+              "classes" : {
+                "description" : "equivalent_classes / disjoint_classes / disjoint_union: classes — names, IRIs or Manchester class expressions",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "datatype" : {
+                "description" : "data_property_assertion / annotation_assertion: optional datatype IRI/name; datatype_definition: defined datatype IRI/name",
+                "type" : "string"
+              },
+              "domain" : {
+                "description" : "object_property_domain / data_property_domain: domain class expression; annotation_property_domain: domain IRI",
+                "type" : "string"
+              },
+              "entity" : {
+                "description" : "declaration: entity IRI/name",
+                "type" : "string"
+              },
+              "entity_type" : {
+                "description" : "declaration: class | object_property | data_property | annotation_property | individual | datatype",
+                "type" : "string"
+              },
+              "individual" : {
+                "description" : "class_assertion: individual IRI/name",
+                "type" : "string"
+              },
+              "individuals" : {
+                "description" : "same_individual / different_individuals: individual IRI/name list",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "inverse_property" : {
+                "description" : "inverse_object_properties: inverse object property IRI/name",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "data_property_assertion / annotation_assertion: optional language tag",
+                "type" : "string"
+              },
+              "object" : {
+                "description" : "object_property_assertion / negative_object_property_assertion: object individual IRI/name",
+                "type" : "string"
+              },
+              "op" : {
+                "description" : "add (default) or remove.",
+                "type" : "string"
+              },
+              "properties" : {
+                "description" : "equivalent_/disjoint_object|data_properties: property IRI/name list; has_key: object/data property IRI/name list",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "property" : {
+                "description" : "*_property_assertion / property characteristic / sub_*_property_of / *_property_domain|range / annotation_* / has_key seed: property IRI/name",
+                "type" : "string"
+              },
+              "range" : {
+                "description" : "object_property_range: range class expression; data_property_range / datatype_definition: datatype IRI/name or a Manchester-syntax data range such as \"xsd:integer[>= 0]\" or \"{1, 2, 3}\"; annotation_property_range: range IRI",
+                "type" : "string"
+              },
+              "sub" : {
+                "description" : "subclass_of: subclass — name, IRI or Manchester class expression",
+                "type" : "string"
+              },
+              "subject" : {
+                "description" : "*_property_assertion / annotation_assertion: subject IRI/name",
+                "type" : "string"
+              },
+              "super" : {
+                "description" : "subclass_of: superclass — name, IRI or Manchester class expression",
+                "type" : "string"
+              },
+              "super_property" : {
+                "description" : "sub_object_property_of / sub_data_property_of / sub_property_chain_of / sub_annotation_property_of: super property IRI/name",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "data_property_assertion / annotation_assertion: literal value",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "annotation_assertion: IRI-valued annotation (entity name/IRI or absolute IRI; alternative to value)",
+                "type" : "string"
+              }
+            },
+            "required" : [ "axiom_type" ],
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "strict" : {
+          "description" : "If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name (guards against typo'd references). Default false.",
+          "type" : "boolean"
+        },
+        "timeout_ms" : {
+          "description" : "Max wait in ms for EACH classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000.",
+          "type" : "integer"
+        },
+        "verify" : {
+          "description" : "none (default) | report | rollback. With report or rollback, classify the reasoner after applying and flag a regression (newly unsatisfiable class, or newly inconsistent ontology); rollback undoes the whole batch on a regression. Requires a reasoner selected in Protégé; rollback additionally refuses up front (applying nothing) when no pre-apply baseline classification can be established.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "operations" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "apply_changes",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Set (upsert) an entity's rdfs:label: removes any existing rdfs:label on the entity in the SAME language and adds the new one. Use this to fix a label without hand-removing the old axiom — rename_entity changes the IRI, not the label.",
+    "documented_result_fields" : [ "entity", "label", "lang", "removed_previous" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "entity" : {
+          "description" : "Target entity: IRI or display name.",
+          "type" : "string"
+        },
+        "lang" : {
+          "description" : "Language tag, e.g. 'en-US' (default none). Only labels in the same language are replaced.",
+          "type" : "string"
+        },
+        "value" : {
+          "description" : "New rdfs:label text.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "entity", "value" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "set_label",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Undo the last change on the shared Protégé undo stack. Pass peek=true to instead REPORT what the next undo would revert (the transaction's change count and a sample of its axioms) without undoing anything.",
+    "documented_result_fields" : [ "undone", "message", "axioms_before", "axioms_after", "net_axiom_change", "undo_depth", "can_undo", "can_redo", "peek", "next_undo", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "peek" : {
+          "description" : "Inspect the next-undo transaction without undoing it (works in read-only mode). Default false.",
+          "type" : "boolean"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "undo_change",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Redo the last undone change on the shared Protégé undo stack.",
+    "documented_result_fields" : [ "redone", "message", "axioms_before", "axioms_after", "net_axiom_change", "undo_depth", "can_undo", "can_redo" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "redo_change",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Save the active ontology to disk. With no arguments it writes to the ontology's existing document; a never-saved (untitled) ontology has no file yet, so pass 'path' to choose one (save-as). The serialization format is inferred from the file extension (.ttl/.turtle, .owl/.rdf/.xml, .omn, .ofn/.fss, .owx, .obo — anything else is an error); a path without an extension keeps the ontology's current format. After a save-as the ontology is bound to that file, so later argument-less saves go to the same place. Pass all=true to instead save EVERY ontology with unsaved changes to its own existing document (list_ontologies shows which are dirty).",
+    "documented_result_fields" : [ "saved", "path", "format", "skipped", "message" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "all" : {
+          "description" : "Save every dirty ontology to its existing document instead of just the active one (default false; cannot be combined with 'path' — ontologies without a file are reported as skipped).",
+          "type" : "boolean"
+        },
+        "path" : {
+          "description" : "Optional file path to save to (save-as), e.g. /tmp/pets.ttl.",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "save_ontology",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Dry-run a batch of axiom changes WITHOUT applying them. 'operations' is an array; each item takes the same operands as add_axiom/remove_axiom (axiom_type + operands) plus 'op' = add (default) or remove. Reports, per operation, the rendered axiom, whether it is already present, and the new entities an add would introduce. Apply the whole batch in one undoable call with apply_changes (same 'operations' array), or a single change with add_axiom/remove_axiom, once the diff looks right.",
+    "documented_result_fields" : [ "operations", "summary", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "operations" : {
+          "description" : "Axiom changes to preview; each item is an add_axiom/remove_axiom operand set plus optional op=add|remove.",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "annotations" : {
+                "description" : "Optional axiom annotations (array of {property, value | value_iri, lang, datatype}); reconstructs reified owl:Axiom blocks.",
+                "items" : {
+                  "additionalProperties" : false,
+                  "properties" : {
+                    "datatype" : {
+                      "description" : "Optional datatype IRI/name for a typed literal value.",
+                      "type" : "string"
+                    },
+                    "lang" : {
+                      "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                      "type" : "string"
+                    },
+                    "property" : {
+                      "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                      "type" : "string"
+                    },
+                    "value" : {
+                      "description" : "Literal text value (omit if value_iri is given).",
+                      "type" : "string"
+                    },
+                    "value_iri" : {
+                      "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                      "type" : "string"
+                    }
+                  },
+                  "type" : "object"
+                },
+                "type" : "array"
+              },
+              "axiom_type" : {
+                "description" : "subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, sub_object_property_of, sub_data_property_of, sub_property_chain_of, equivalent_object_properties, equivalent_data_properties, disjoint_object_properties, disjoint_data_properties, inverse_object_properties, transitive_object_property, functional_object_property, inverse_functional_object_property, symmetric_object_property, asymmetric_object_property, reflexive_object_property, irreflexive_object_property, functional_data_property, has_key, object_property_domain, object_property_range, data_property_domain, data_property_range, annotation_assertion, sub_annotation_property_of, annotation_property_domain, annotation_property_range, declaration, datatype_definition",
+                "type" : "string"
+              },
+              "chain" : {
+                "description" : "sub_property_chain_of: ordered object property list (each a name/IRI, or an inverse link inverse(P) / ObjectInverseOf(P))",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "class" : {
+                "description" : "class_assertion / disjoint_union / has_key: class — name, IRI or Manchester class expression",
+                "type" : "string"
+              },
+              "classes" : {
+                "description" : "equivalent_classes / disjoint_classes / disjoint_union: classes — names, IRIs or Manchester class expressions",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "datatype" : {
+                "description" : "data_property_assertion / annotation_assertion: optional datatype IRI/name; datatype_definition: defined datatype IRI/name",
+                "type" : "string"
+              },
+              "domain" : {
+                "description" : "object_property_domain / data_property_domain: domain class expression; annotation_property_domain: domain IRI",
+                "type" : "string"
+              },
+              "entity" : {
+                "description" : "declaration: entity IRI/name",
+                "type" : "string"
+              },
+              "entity_type" : {
+                "description" : "declaration: class | object_property | data_property | annotation_property | individual | datatype",
+                "type" : "string"
+              },
+              "individual" : {
+                "description" : "class_assertion: individual IRI/name",
+                "type" : "string"
+              },
+              "individuals" : {
+                "description" : "same_individual / different_individuals: individual IRI/name list",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "inverse_property" : {
+                "description" : "inverse_object_properties: inverse object property IRI/name",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "data_property_assertion / annotation_assertion: optional language tag",
+                "type" : "string"
+              },
+              "object" : {
+                "description" : "object_property_assertion / negative_object_property_assertion: object individual IRI/name",
+                "type" : "string"
+              },
+              "op" : {
+                "description" : "add (default) or remove.",
+                "type" : "string"
+              },
+              "properties" : {
+                "description" : "equivalent_/disjoint_object|data_properties: property IRI/name list; has_key: object/data property IRI/name list",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "property" : {
+                "description" : "*_property_assertion / property characteristic / sub_*_property_of / *_property_domain|range / annotation_* / has_key seed: property IRI/name",
+                "type" : "string"
+              },
+              "range" : {
+                "description" : "object_property_range: range class expression; data_property_range / datatype_definition: datatype IRI/name or a Manchester-syntax data range such as \"xsd:integer[>= 0]\" or \"{1, 2, 3}\"; annotation_property_range: range IRI",
+                "type" : "string"
+              },
+              "sub" : {
+                "description" : "subclass_of: subclass — name, IRI or Manchester class expression",
+                "type" : "string"
+              },
+              "subject" : {
+                "description" : "*_property_assertion / annotation_assertion: subject IRI/name",
+                "type" : "string"
+              },
+              "super" : {
+                "description" : "subclass_of: superclass — name, IRI or Manchester class expression",
+                "type" : "string"
+              },
+              "super_property" : {
+                "description" : "sub_object_property_of / sub_data_property_of / sub_property_chain_of / sub_annotation_property_of: super property IRI/name",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "data_property_assertion / annotation_assertion: literal value",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "annotation_assertion: IRI-valued annotation (entity name/IRI or absolute IRI; alternative to value)",
+                "type" : "string"
+              }
+            },
+            "required" : [ "axiom_type" ],
+            "type" : "object"
+          },
+          "type" : "array"
+        }
+      },
+      "required" : [ "operations" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "preview_changes",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Create a class WITH its curation suite in one undoable step (vs. create_class + several add_axiom calls): mints the class (same 'iri'/'namespace'/'label'/'label_lang'/'no_label' options as create_class), adds a definition ('definition', default property rdfs:comment — set 'definition_property' e.g. skos:definition), any extra 'annotations', one or more 'parents' (each a class name, IRI or Manchester restriction such as 'hasPart some Cell'), and optional 'equivalent_to' class expressions for a defined class. Reports the created term and any 'new_entities' the operands introduced; strict=true refuses to mint an unrecognised operand.",
+    "documented_result_fields" : [ "created", "new_entities", "applied" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Extra annotations for the term (array of {property, value | value_iri, lang, datatype}).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "definition" : {
+          "description" : "Definition text (optional).",
+          "type" : "string"
+        },
+        "definition_lang" : {
+          "description" : "Language tag for the definition literal (optional).",
+          "type" : "string"
+        },
+        "definition_property" : {
+          "description" : "Annotation property for the definition (default rdfs:comment; e.g. skos:definition, or your ontology's own definition property).",
+          "type" : "string"
+        },
+        "equivalent_to" : {
+          "description" : "Equivalent class expressions for a defined class (each a name, IRI or Manchester class expression; optional).",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "iri" : {
+          "description" : "Full IRI to use (optional; overrides 'namespace').",
+          "type" : "string"
+        },
+        "label" : {
+          "description" : "rdfs:label text (default: 'name').",
+          "type" : "string"
+        },
+        "label_lang" : {
+          "description" : "Language tag for the rdfs:label, e.g. 'en' (default: none).",
+          "type" : "string"
+        },
+        "name" : {
+          "description" : "Short name — the IRI local part when minting, and the default label. Optional when a full 'iri' is given (its local part becomes the name).",
+          "type" : "string"
+        },
+        "namespace" : {
+          "description" : "Namespace to mint the IRI in: IRI = namespace + name (optional).",
+          "type" : "string"
+        },
+        "no_label" : {
+          "description" : "Do not add any rdfs:label (default false).",
+          "type" : "boolean"
+        },
+        "parents" : {
+          "description" : "Superclasses: each a class name, IRI or Manchester class expression (optional).",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "strict" : {
+          "description" : "If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name (guards against typo'd references). Default false.",
+          "type" : "boolean"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "create_term",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Create MANY classes in one undoable transaction (batch term-request intake) — the array form of create_term. 'terms' is an array; each item takes the same fields as create_term ('name', optional when a full 'iri' is given, plus 'iri'/'namespace'/'label'/'label_lang'/'no_label'/'definition'/'definition_property'/'definition_lang'/'parents'/'equivalent_to'/'annotations'). Top-level 'namespace' and 'definition_property' are DEFAULTS applied to any term that omits its own (mint IRIs in a shared namespace, set one definition property for all). The whole batch is applied as a SINGLE undoable change (one undo_change reverts every term) and is ATOMIC: if any term is malformed, nothing is applied. strict=true refuses the whole batch if any operand would be minted as a new, empty entity (a typo guard). Note: to make one term reference ANOTHER term in the SAME batch (e.g. as a parent), give that other term an explicit 'iri'/'namespace' and reference it by its full IRI — nothing is in the ontology until the batch commits, so a bare name for a same-batch term won't resolve. Optionally set verify=report|rollback to classify the reasoner after applying and detect a regression (as in apply_changes); rollback undoes the whole batch when one is found.",
+    "documented_result_fields" : [ "created", "count", "applied", "new_entities", "verify" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "definition_property" : {
+          "description" : "Default definition annotation property for any term that omits its own 'definition_property' (e.g. skos:definition).",
+          "type" : "string"
+        },
+        "namespace" : {
+          "description" : "Default namespace for any term that gives neither its own 'iri' nor 'namespace' (IRI = namespace + name).",
+          "type" : "string"
+        },
+        "strict" : {
+          "description" : "If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name (guards against typo'd references). Default false.",
+          "type" : "boolean"
+        },
+        "terms" : {
+          "description" : "The classes to create; each item is a create_term field set (only 'name' or a full 'iri' is required).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "annotations" : {
+                "description" : "Extra annotations (array of {property, value | value_iri, lang, datatype}).",
+                "items" : {
+                  "additionalProperties" : false,
+                  "properties" : {
+                    "datatype" : {
+                      "description" : "Optional datatype IRI/name for a typed literal value.",
+                      "type" : "string"
+                    },
+                    "lang" : {
+                      "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                      "type" : "string"
+                    },
+                    "property" : {
+                      "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                      "type" : "string"
+                    },
+                    "value" : {
+                      "description" : "Literal text value (omit if value_iri is given).",
+                      "type" : "string"
+                    },
+                    "value_iri" : {
+                      "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                      "type" : "string"
+                    }
+                  },
+                  "type" : "object"
+                },
+                "type" : "array"
+              },
+              "definition" : {
+                "description" : "Definition text (optional).",
+                "type" : "string"
+              },
+              "definition_lang" : {
+                "description" : "Language tag for the definition literal (optional).",
+                "type" : "string"
+              },
+              "definition_property" : {
+                "description" : "Annotation property for the definition (optional; falls back to the top-level 'definition_property' default, else rdfs:comment).",
+                "type" : "string"
+              },
+              "equivalent_to" : {
+                "description" : "Equivalent class expressions for a defined class (optional).",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "iri" : {
+                "description" : "Full IRI to use (optional; overrides 'namespace').",
+                "type" : "string"
+              },
+              "label" : {
+                "description" : "rdfs:label text (default: 'name').",
+                "type" : "string"
+              },
+              "label_lang" : {
+                "description" : "Language tag for the rdfs:label, e.g. 'en' (default: none).",
+                "type" : "string"
+              },
+              "name" : {
+                "description" : "Short name — the IRI local part when minting, and the default label. Optional when a full 'iri' is given (its local part becomes the name).",
+                "type" : "string"
+              },
+              "namespace" : {
+                "description" : "Namespace to mint the IRI in: IRI = namespace + name (optional; falls back to the top-level 'namespace' default).",
+                "type" : "string"
+              },
+              "no_label" : {
+                "description" : "Do not add any rdfs:label (default false).",
+                "type" : "boolean"
+              },
+              "parents" : {
+                "description" : "Superclasses: each a class name, IRI or Manchester class expression. To reference another term in THIS batch, use its full IRI.",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "timeout_ms" : {
+          "description" : "Max wait in ms for EACH classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000.",
+          "type" : "integer"
+        },
+        "verify" : {
+          "description" : "none (default) | report | rollback. With report or rollback, classify the reasoner after applying and flag a regression (newly unsatisfiable class, or newly inconsistent ontology); rollback undoes the whole batch on a regression. Requires a reasoner selected in Protégé; rollback additionally refuses up front (applying nothing) when no pre-apply baseline classification can be established.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "terms" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "create_terms",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Create an object or data property WITH its axioms in one undoable step: mints the property ('property_type' object|data, default object; same 'iri'/'namespace'/'label'/'label_lang'/'no_label' options), and optionally adds a 'definition', extra 'annotations', a 'domain' (class expression), a 'range' (class expression for object; datatype / Manchester data range for data), 'super_properties', 'characteristics' (object: functional, inverse_functional, transitive, symmetric, asymmetric, reflexive, irreflexive; data: functional) and an 'inverse_of' (object only). Reports 'new_entities'; strict=true refuses to mint an unrecognised operand.",
+    "documented_result_fields" : [ "created", "new_entities", "applied" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Extra annotations (array of {property, value | value_iri, lang, datatype}).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "characteristics" : {
+          "description" : "Property characteristics to assert (optional).",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "definition" : {
+          "description" : "Definition text (optional).",
+          "type" : "string"
+        },
+        "definition_lang" : {
+          "description" : "Language tag for the definition literal (optional).",
+          "type" : "string"
+        },
+        "definition_property" : {
+          "description" : "Annotation property for the definition (default rdfs:comment).",
+          "type" : "string"
+        },
+        "domain" : {
+          "description" : "Domain class expression (name, IRI or Manchester; optional).",
+          "type" : "string"
+        },
+        "inverse_of" : {
+          "description" : "Inverse object property (object properties only; optional).",
+          "type" : "string"
+        },
+        "iri" : {
+          "description" : "Full IRI to use (optional; overrides 'namespace').",
+          "type" : "string"
+        },
+        "label" : {
+          "description" : "rdfs:label text (default: 'name').",
+          "type" : "string"
+        },
+        "label_lang" : {
+          "description" : "Language tag for the rdfs:label (optional).",
+          "type" : "string"
+        },
+        "name" : {
+          "description" : "Short name — the IRI local part when minting, and the default label. Optional when a full 'iri' is given (its local part becomes the name).",
+          "type" : "string"
+        },
+        "namespace" : {
+          "description" : "Namespace to mint the IRI in: IRI = namespace + name (optional).",
+          "type" : "string"
+        },
+        "no_label" : {
+          "description" : "Do not add any rdfs:label (default false).",
+          "type" : "boolean"
+        },
+        "property_type" : {
+          "description" : "object (default) | data.",
+          "type" : "string"
+        },
+        "range" : {
+          "description" : "Range: a class expression for an object property, or a datatype / Manchester data range (e.g. xsd:integer[>= 0]) for a data property.",
+          "type" : "string"
+        },
+        "strict" : {
+          "description" : "If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name (guards against typo'd references). Default false.",
+          "type" : "boolean"
+        },
+        "super_properties" : {
+          "description" : "Super-properties this is a subproperty of (optional).",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "create_property",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Create MANY object/data properties in ONE undoable transaction — the array form of create_property. 'properties' is an array; each item takes the same fields as create_property ('name', optional when a full 'iri' is given, plus property_type/iri/namespace/label/no_label/definition/definition_property/domain/range/super_properties/characteristics/inverse_of/annotations). Top-level 'namespace', 'definition_property' and 'property_type' are DEFAULTS applied to any item that omits its own. The whole batch is a SINGLE undoable change (one undo_change reverts every property) and ATOMIC: if any item is malformed, nothing is applied. strict=true refuses the whole batch if any operand would be minted as a new, empty entity. To reference another property in THIS batch (e.g. as inverse_of / super_properties), give it an explicit iri/namespace and reference its full IRI — nothing is in the ontology until the batch commits. Optionally set verify=report|rollback to classify the reasoner after applying and detect a regression (as in apply_changes); rollback undoes the whole batch when one is found.",
+    "documented_result_fields" : [ "created", "count", "new_entities", "applied", "verify" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "definition_property" : {
+          "description" : "Default definition annotation property for any item that omits its own 'definition_property'.",
+          "type" : "string"
+        },
+        "namespace" : {
+          "description" : "Default namespace for any item that gives neither its own 'iri' nor 'namespace' (IRI = namespace + name).",
+          "type" : "string"
+        },
+        "properties" : {
+          "description" : "The properties to create; each item is a create_property field set (only 'name' or a full 'iri' is required).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "annotations" : {
+                "description" : "Extra annotations (array of {property, value | value_iri, lang, datatype}).",
+                "items" : {
+                  "additionalProperties" : false,
+                  "properties" : {
+                    "datatype" : {
+                      "description" : "Optional datatype IRI/name for a typed literal value.",
+                      "type" : "string"
+                    },
+                    "lang" : {
+                      "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                      "type" : "string"
+                    },
+                    "property" : {
+                      "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                      "type" : "string"
+                    },
+                    "value" : {
+                      "description" : "Literal text value (omit if value_iri is given).",
+                      "type" : "string"
+                    },
+                    "value_iri" : {
+                      "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                      "type" : "string"
+                    }
+                  },
+                  "type" : "object"
+                },
+                "type" : "array"
+              },
+              "characteristics" : {
+                "description" : "Property characteristics to assert (optional).",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              },
+              "definition" : {
+                "description" : "Definition text (optional).",
+                "type" : "string"
+              },
+              "definition_lang" : {
+                "description" : "Language tag for the definition literal (optional).",
+                "type" : "string"
+              },
+              "definition_property" : {
+                "description" : "Annotation property for the definition (optional; falls back to the top-level 'definition_property' default, else rdfs:comment).",
+                "type" : "string"
+              },
+              "domain" : {
+                "description" : "Domain class expression (name, IRI or Manchester; optional).",
+                "type" : "string"
+              },
+              "inverse_of" : {
+                "description" : "Inverse object property (object properties only; optional).",
+                "type" : "string"
+              },
+              "iri" : {
+                "description" : "Full IRI to use (optional; overrides 'namespace').",
+                "type" : "string"
+              },
+              "label" : {
+                "description" : "rdfs:label text (default: 'name').",
+                "type" : "string"
+              },
+              "label_lang" : {
+                "description" : "Language tag for the rdfs:label (optional).",
+                "type" : "string"
+              },
+              "name" : {
+                "description" : "Short name — the IRI local part when minting, and the default label. Optional when a full 'iri' is given (its local part becomes the name).",
+                "type" : "string"
+              },
+              "namespace" : {
+                "description" : "Namespace to mint the IRI in: IRI = namespace + name (optional; falls back to the top-level 'namespace' default).",
+                "type" : "string"
+              },
+              "no_label" : {
+                "description" : "Do not add any rdfs:label (default false).",
+                "type" : "boolean"
+              },
+              "property_type" : {
+                "description" : "object (default) | data.",
+                "type" : "string"
+              },
+              "range" : {
+                "description" : "Range: a class expression for an object property, or a datatype / Manchester data range (e.g. xsd:integer[>= 0]) for a data property.",
+                "type" : "string"
+              },
+              "super_properties" : {
+                "description" : "Super-properties this is a subproperty of (optional).",
+                "items" : {
+                  "type" : "string"
+                },
+                "type" : "array"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "property_type" : {
+          "description" : "Default property_type (object|data) for any item that omits its own (else object).",
+          "type" : "string"
+        },
+        "strict" : {
+          "description" : "If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name (guards against typo'd references). Default false.",
+          "type" : "boolean"
+        },
+        "timeout_ms" : {
+          "description" : "Max wait in ms for EACH classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000.",
+          "type" : "integer"
+        },
+        "verify" : {
+          "description" : "none (default) | report | rollback. With report or rollback, classify the reasoner after applying and flag a regression (newly unsatisfiable class, or newly inconsistent ontology); rollback undoes the whole batch on a regression. Requires a reasoner selected in Protégé; rollback additionally refuses up front (applying nothing) when no pre-apply baseline classification can be established.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "properties" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "create_properties",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Deprecate a term (the standard obsolescence pattern) in one undoable step: asserts owl:deprecated true (the W3C OWL 2 deprecation flag), and — when 'replaced_by' is given — a 'term replaced by' pointer (default IAO_0100001, the de-facto OBO Foundry obsolescence convention — NOT a W3C standard; override with 'replaced_by_property') to the replacement term, plus any extra 'annotations' (e.g. a skos:changeNote). The term and its axioms are kept (existing usages are NOT rewritten — repoint them with rename_entity or edit each axiom if a full merge is intended).",
+    "documented_result_fields" : [ "deprecated", "replaced_by", "applied", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Extra annotations to add (e.g. a change note; array of {property, value | value_iri, lang, datatype}).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "entity" : {
+          "description" : "Term to deprecate: an IRI or display name.",
+          "type" : "string"
+        },
+        "replaced_by" : {
+          "description" : "Replacement term: an IRI or display name (optional).",
+          "type" : "string"
+        },
+        "replaced_by_property" : {
+          "description" : "Annotation property for the replacement pointer. Default IAO_0100001 'term replaced by' — the de-facto OBO Foundry obsolescence convention, not a W3C standard; pass e.g. dcterms:isReplacedBy for a vocabulary-neutral alternative.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "entity" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "deprecate_entity",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Reparent a class (its subtree follows automatically, since subclasses point at it): removes the class's asserted NAMED superclass axioms and asserts SubClassOf(class, new_parent). Anonymous restriction superclasses are left untouched. Pass keep_other_parents=true to ADD the new parent without removing the existing ones; omit new_parent to detach the class to a root. One undoable change.",
+    "documented_result_fields" : [ "moved", "new_parent", "removed_parents", "applied", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "entity" : {
+          "description" : "Class to move: an IRI or display name.",
+          "type" : "string"
+        },
+        "keep_other_parents" : {
+          "description" : "Add new_parent without removing existing named superclasses (default false: replace them).",
+          "type" : "boolean"
+        },
+        "new_parent" : {
+          "description" : "New superclass: a class name, IRI or Manchester class expression (omit to detach to a root).",
+          "type" : "string"
+        }
+      },
+      "required" : [ "entity" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "move_class",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Change an entity's IRI throughout the active ontology (every axiom and annotation that references the old IRI is rewritten to the new one). If the IRI is punned across several entity types, all of them are renamed. The new IRI must be a full absolute IRI. Pass preview=true to only REPORT what the rename would rewrite, without changing anything.",
+    "documented_result_fields" : [ "renamed", "old_iri", "new_iri", "changes", "preview", "new_iri_already_in_signature", "rewritten_axioms_sample", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "entity" : {
+          "description" : "Entity to rename: an IRI or display name.",
+          "type" : "string"
+        },
+        "new_iri" : {
+          "description" : "New full IRI for the entity.",
+          "type" : "string"
+        },
+        "preview" : {
+          "description" : "Dry-run: report the rewrite without applying anything (works in read-only mode). Default false.",
+          "type" : "boolean"
+        }
+      },
+      "required" : [ "entity", "new_iri" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "rename_entity",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Delete an entity from the active ontology: removes its declaration and every axiom that references it. If the IRI is punned across several entity types, all are removed unless 'entity_type' narrows it to one. Pass preview=true to only REPORT the blast radius (every axiom the delete would remove), without changing anything.",
+    "documented_result_fields" : [ "deleted", "removed_axioms", "preview", "would_delete", "removed_axioms_sample", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "entity" : {
+          "description" : "Entity to delete: an IRI or display name.",
+          "type" : "string"
+        },
+        "entity_type" : {
+          "description" : "Optional: class | object_property | data_property | annotation_property | individual | datatype (narrows a punned IRI).",
+          "type" : "string"
+        },
+        "preview" : {
+          "description" : "Dry-run: report what would be removed without applying anything (works in read-only mode). Default false.",
+          "type" : "boolean"
+        }
+      },
+      "required" : [ "entity" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "delete_entity",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Set the active ontology's IRI and (optionally) version IRI.",
+    "documented_result_fields" : [ "ontology_iri", "version_iri", "message" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "ontology_iri" : {
+          "description" : "New ontology IRI.",
+          "type" : "string"
+        },
+        "version_iri" : {
+          "description" : "Optional version IRI.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "ontology_iri" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "set_ontology_id",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Add an owl:imports declaration to the active ontology. The result's 'resolved' flag reports whether the document actually loaded into the workspace — an unresolved import is a dangling declaration whose terms stay invisible to lookups and reasoning until it is loaded. Pass 'document' (a path/URL/IRI) to resolve the import NOW by loading that document WITHOUT changing your active edit target.",
+    "documented_result_fields" : [ "added", "iri", "already_present", "resolved", "document", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "connection_timeout_ms" : {
+          "description" : "Document connection timeout when 'document' is given (default 15000).",
+          "type" : "integer"
+        },
+        "document" : {
+          "description" : "Optional path/URL/IRI of the import's document to load now so the import resolves (keeps the active ontology unchanged).",
+          "type" : "string"
+        },
+        "iri" : {
+          "description" : "Imported ontology IRI.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "iri" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "add_import",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Register or update a prefix in the active ontology's prefix map (e.g. prefix 'ex' → 'http://example.org/ns#'), so CURIEs like 'ex:myTerm' render and parse and the document serializes with the prefix. The prefix map lives in the ontology's document format — this changes no axioms and is NOT on the undo stack.",
+    "documented_result_fields" : [ "prefix", "namespace", "prefixes" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "namespace" : {
+          "description" : "Namespace IRI the prefix expands to.",
+          "type" : "string"
+        },
+        "prefix" : {
+          "description" : "Prefix name, with or without a trailing ':' (e.g. 'ex' or 'ex:'); use ':' for the default namespace.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "prefix", "namespace" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "set_prefix",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Remove an owl:imports declaration from the active ontology.",
+    "documented_result_fields" : [ "removed", "iri" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "iri" : {
+          "description" : "Imported ontology IRI to remove.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "iri" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "remove_import",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Add an ontology-level annotation (e.g. dcterms:title, owl:versionInfo). The value is a literal (optionally typed with 'datatype' or tagged with 'lang') or, with 'value_iri', an IRI.",
+    "documented_result_fields" : [ "added", "annotation", "already_present" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Optional nested annotations on this annotation.",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "datatype" : {
+          "description" : "Optional datatype IRI/name for a typed literal value.",
+          "type" : "string"
+        },
+        "lang" : {
+          "description" : "Optional language tag for a literal value, e.g. 'en'.",
+          "type" : "string"
+        },
+        "property" : {
+          "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+          "type" : "string"
+        },
+        "value" : {
+          "description" : "Literal text value (omit if value_iri is given).",
+          "type" : "string"
+        },
+        "value_iri" : {
+          "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI.",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "add_ontology_annotation",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Remove an ontology-level annotation (same arguments as add_ontology_annotation).",
+    "documented_result_fields" : [ "removed", "annotation" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Optional nested annotations on this annotation.",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "datatype" : {
+          "description" : "Optional datatype IRI/name for a typed literal value.",
+          "type" : "string"
+        },
+        "lang" : {
+          "description" : "Optional language tag for a literal value, e.g. 'en'.",
+          "type" : "string"
+        },
+        "property" : {
+          "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+          "type" : "string"
+        },
+        "value" : {
+          "description" : "Literal text value (omit if value_iri is given).",
+          "type" : "string"
+        },
+        "value_iri" : {
+          "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI.",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "remove_ontology_annotation",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Load an OWL ontology document from a local path or document IRI/URL into the current Protégé workspace and make the loaded ontology active. Unlike merge_ontology_document, this keeps the document as its own loaded ontology instead of copying its contents into the previous active ontology. GitHub blob URLs are converted to raw.githubusercontent.com URLs automatically. The document is fetched off the UI thread (so a slow remote fetch does not freeze Protégé) and missing imports are skipped silently — but a sibling catalog-v001.xml next to a local-file document first resolves its imports to local files (offline), like Protégé's own File ▸ Open. Note: a load is not an applyChange edit, so it does NOT join the shared undo stack — undo_change cannot revert it. Pass keep_active=true to load the document (e.g. to resolve an import) WITHOUT changing your current active edit target.",
+    "documented_result_fields" : [ "loaded_document", "loaded_ontology", "loaded_axioms", "active_ontology", "kept_active", "document_iri", "active", "added_ontologies", "already_loaded", "workspace_ontologies", "unresolved_imports", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "connection_timeout_ms" : {
+          "description" : "Remote document connection timeout (default 15000).",
+          "type" : "integer"
+        },
+        "keep_active" : {
+          "description" : "Keep the current active ontology instead of switching to the loaded document (default false). Use this to resolve an unresolved import without losing your edit target.",
+          "type" : "boolean"
+        },
+        "source" : {
+          "description" : "Local file path, file: IRI, http(s) document IRI, or GitHub blob URL.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "source" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "load_ontology",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Load an OWL ontology document from a local path or document IRI/URL and copy its axioms, direct import declarations, and ontology annotations into the active ontology. This preserves axiom annotations and axiom types that are not exposed by the structured add_axiom tool. GitHub blob URLs are converted to raw.githubusercontent.com URLs automatically. Pass preview=true to fetch and parse the document but only REPORT what the merge would do, without changing anything.",
+    "documented_result_fields" : [ "merged_document", "source_ontology", "replace_active", "removed", "copied", "skipped_ontology_id", "unresolved_imports", "active", "preview", "would_copy", "would_remove", "already_present_axioms", "total_changes", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "connection_timeout_ms" : {
+          "description" : "Remote document connection timeout (default 15000).",
+          "type" : "integer"
+        },
+        "copy_ontology_id" : {
+          "description" : "Copy source ontology IRI/version to the active ontology. Defaults to replace_active.",
+          "type" : "boolean"
+        },
+        "preview" : {
+          "description" : "Dry-run: report what the merge would copy/remove without applying anything (works in read-only mode). Default false.",
+          "type" : "boolean"
+        },
+        "replace_active" : {
+          "description" : "Remove active ontology axioms/imports/ontology annotations first (default false).",
+          "type" : "boolean"
+        },
+        "source" : {
+          "description" : "Local file path, file: IRI, http(s) document IRI, or GitHub blob URL.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "source" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "merge_ontology_document",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Select which already-loaded ontology is the ACTIVE edit target (every edit tool writes to the active ontology). Resolve by ontology IRI or version IRI (see list_ontologies). Unlike load_ontology this loads/fetches nothing — it just switches focus among ontologies already in the workspace, e.g. back to your module after load_ontology brought an imported ontology into the workspace.",
+    "documented_result_fields" : [ "active_ontology", "changed", "axioms", "logical_axioms", "direct_imports" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "ontology_iri" : {
+          "description" : "Ontology IRI or version IRI of a loaded ontology (see list_ontologies).",
+          "type" : "string"
+        }
+      },
+      "required" : [ "ontology_iri" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "set_active_ontology",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Create a brand-new empty ontology in the workspace and make it the active edit target (so add_axiom/create_* write into it). Give its 'ontology_iri' and optionally a 'version_iri'. Pass 'path' to bind it to a file now (so an argument-less save_ontology writes there, and write_catalog has a folder); otherwise it is untitled until you save_ontology with a path. Use this to start a new module before adding imports/axioms; set_ontology_id changes an existing ontology's id, whereas this mints a new one. Creating an ontology is not on the undo stack.",
+    "documented_result_fields" : [ "created_ontology", "active_ontology", "kept_active", "document_iri", "workspace_ontologies", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "keep_active" : {
+          "description" : "Keep the current active ontology instead of switching to the new one (default false).",
+          "type" : "boolean"
+        },
+        "ontology_iri" : {
+          "description" : "IRI of the new ontology.",
+          "type" : "string"
+        },
+        "path" : {
+          "description" : "Optional file path to bind the new ontology to (e.g. /tmp/mymodule/MyModule.rdf).",
+          "type" : "string"
+        },
+        "version_iri" : {
+          "description" : "Optional version IRI.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "ontology_iri" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "create_ontology",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Extract a locality-based MODULE — a self-contained subset of the ontology that preserves everything the seed terms entail — using syntactic locality (the same technique as robot extract). 'signature' is the seed set: entity names or full IRIs (classes, properties, individuals; punned IRIs bring all senses). 'module_type' is STAR (default — smallest, both-directions), BOT (⊥, subclasses/uses of the seeds) or TOP (⊤, superclasses/context). 'source' is imports_closure (default — extract from the active ontology + its imports) or active (the active ontology only). By default the module is loaded as a NEW ontology in the Protégé workspace (give 'iri' to name it); pass 'path' to save it to a file instead (format from the extension: .ttl/.turtle, .owl/.rdf/.xml, .omn, .ofn/.fss, .owx, .obo — anything else is an error; no extension writes RDF/XML). Reports the module's axiom/entity counts and which seeds resolved.",
+    "documented_result_fields" : [ "module", "module_type", "source", "seeds", "axioms", "entities" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "iri" : {
+          "description" : "IRI for the new module ontology (optional; anonymous if omitted). Ignored when 'path' is given and the file format has no ontology IRI.",
+          "type" : "string"
+        },
+        "module_type" : {
+          "description" : "STAR (default) | BOT | TOP.",
+          "type" : "string"
+        },
+        "path" : {
+          "description" : "File to save the module to (save instead of loading into the workspace); format inferred from the extension (.ttl/.turtle, .owl/.rdf/.xml, .omn, .ofn/.fss, .owx, .obo — anything else is an error; no extension writes RDF/XML).",
+          "type" : "string"
+        },
+        "signature" : {
+          "description" : "Seed entities: names or full IRIs (classes, properties, individuals). A punned IRI contributes every sense.",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "source" : {
+          "description" : "imports_closure (default) | active — which axioms to extract from.",
+          "type" : "string"
+        },
+        "timeout_ms" : {
+          "description" : "Time budget in ms for the on-EDT phases (seed resolution + closure snapshot, and the workspace load); default 60000. It does not interrupt the extraction itself, which runs off the UI thread.",
+          "type" : "integer"
+        }
+      },
+      "required" : [ "signature" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "extract_module",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "List the SWRL rules (swrl:Imp axioms) in the active ontology as structured body/head atoms plus any rule annotations and a text rendering. Variable arguments are emitted as ?<absolute IRI> so a listed rule round-trips through add_rule unchanged. Set include_imports=true to include rules from the imports closure. Read-only.",
+    "documented_result_fields" : [ "count", "rules" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "include_imports" : {
+          "description" : "Include rules from imported ontologies too (default false).",
+          "type" : "boolean"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "list_rules",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Add a SWRL rule (swrl:Imp) to the active ontology from structured body and head atoms. Each atom is {type, ...}: type=class {predicate, arg1}; object_property {predicate, arg1, arg2}; data_property {predicate, arg1, arg2|value[+lang|datatype]}; same_as/different_from {arg1, arg2}; builtin {builtin, args[]}. An argument starting with '?' is a variable (?name → variable_namespace+name, ?<IRI> → that IRI); otherwise an i-argument is an individual and a d-argument is a literal. Optional 'annotations' attach rule-level rdfs:label/comment/etc. The rule is implication body → head (an empty body is allowed; head must be non-empty).",
+    "documented_result_fields" : [ "added", "already_present", "rule" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Optional rule-level annotations (rdfs:label, dcterms:description, …).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "body" : {
+          "description" : "Body atoms (the rule's premise; may be empty).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "arg1" : {
+                "description" : "First argument: ?variable or an individual IRI/name.",
+                "type" : "string"
+              },
+              "arg2" : {
+                "description" : "Second argument: ?variable, an individual (object_property/same_as/different_from) or a literal/?variable (data_property).",
+                "type" : "string"
+              },
+              "args" : {
+                "description" : "builtin: ordered d-arguments (?variables or literal values; typed/lang literals as {value, datatype|lang}).",
+                "items" : {
+                  "description" : "A ?variable, a plain literal value (string), or a typed/lang literal object {value, datatype} / {value, lang}."
+                },
+                "type" : "array"
+              },
+              "builtin" : {
+                "description" : "builtin: the built-in IRI/CURIE, e.g. swrlb:greaterThan.",
+                "type" : "string"
+              },
+              "datatype" : {
+                "description" : "data_property value: optional datatype IRI/name.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "data_property value: optional language tag.",
+                "type" : "string"
+              },
+              "predicate" : {
+                "description" : "class/object_property/data_property: the class or property IRI/name (a class may be a Manchester expression).",
+                "type" : "string"
+              },
+              "predicate_iri" : {
+                "description" : "class/object_property/data_property: full IRI of the predicate (alternative to 'predicate', preferred when present — lets list_rules output replay verbatim across ontologies).",
+                "type" : "string"
+              },
+              "type" : {
+                "description" : "class | object_property | data_property | same_as | different_from | builtin",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "data_property: literal value (alternative to a variable arg2).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "head" : {
+          "description" : "Head atoms (the rule's conclusion; at least one).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "arg1" : {
+                "description" : "First argument: ?variable or an individual IRI/name.",
+                "type" : "string"
+              },
+              "arg2" : {
+                "description" : "Second argument: ?variable, an individual (object_property/same_as/different_from) or a literal/?variable (data_property).",
+                "type" : "string"
+              },
+              "args" : {
+                "description" : "builtin: ordered d-arguments (?variables or literal values; typed/lang literals as {value, datatype|lang}).",
+                "items" : {
+                  "description" : "A ?variable, a plain literal value (string), or a typed/lang literal object {value, datatype} / {value, lang}."
+                },
+                "type" : "array"
+              },
+              "builtin" : {
+                "description" : "builtin: the built-in IRI/CURIE, e.g. swrlb:greaterThan.",
+                "type" : "string"
+              },
+              "datatype" : {
+                "description" : "data_property value: optional datatype IRI/name.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "data_property value: optional language tag.",
+                "type" : "string"
+              },
+              "predicate" : {
+                "description" : "class/object_property/data_property: the class or property IRI/name (a class may be a Manchester expression).",
+                "type" : "string"
+              },
+              "predicate_iri" : {
+                "description" : "class/object_property/data_property: full IRI of the predicate (alternative to 'predicate', preferred when present — lets list_rules output replay verbatim across ontologies).",
+                "type" : "string"
+              },
+              "type" : {
+                "description" : "class | object_property | data_property | same_as | different_from | builtin",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "data_property: literal value (alternative to a variable arg2).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "variable_namespace" : {
+          "description" : "Namespace for ?name variables (default urn:swrl:var#). ?<absolute IRI> ignores this.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "head" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "add_rule",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Remove a SWRL rule from the active ontology. Identify it by 'index' (into the same rendering-sorted order list_rules returns) and/or 'label' (its rdfs:label), or by passing the same structured 'body'/'head'/'annotations' as add_rule to remove that exact rule. An index/label that matches no rule is reported, not an error.",
+    "documented_result_fields" : [ "removed", "rule", "rules" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Optional rule-level annotations (rdfs:label, dcterms:description, …).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "body" : {
+          "description" : "Body atoms of the exact rule to remove (with 'head').",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "arg1" : {
+                "description" : "First argument: ?variable or an individual IRI/name.",
+                "type" : "string"
+              },
+              "arg2" : {
+                "description" : "Second argument: ?variable, an individual (object_property/same_as/different_from) or a literal/?variable (data_property).",
+                "type" : "string"
+              },
+              "args" : {
+                "description" : "builtin: ordered d-arguments (?variables or literal values; typed/lang literals as {value, datatype|lang}).",
+                "items" : {
+                  "description" : "A ?variable, a plain literal value (string), or a typed/lang literal object {value, datatype} / {value, lang}."
+                },
+                "type" : "array"
+              },
+              "builtin" : {
+                "description" : "builtin: the built-in IRI/CURIE, e.g. swrlb:greaterThan.",
+                "type" : "string"
+              },
+              "datatype" : {
+                "description" : "data_property value: optional datatype IRI/name.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "data_property value: optional language tag.",
+                "type" : "string"
+              },
+              "predicate" : {
+                "description" : "class/object_property/data_property: the class or property IRI/name (a class may be a Manchester expression).",
+                "type" : "string"
+              },
+              "predicate_iri" : {
+                "description" : "class/object_property/data_property: full IRI of the predicate (alternative to 'predicate', preferred when present — lets list_rules output replay verbatim across ontologies).",
+                "type" : "string"
+              },
+              "type" : {
+                "description" : "class | object_property | data_property | same_as | different_from | builtin",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "data_property: literal value (alternative to a variable arg2).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "head" : {
+          "description" : "Head atoms of the exact rule to remove (with 'body').",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "arg1" : {
+                "description" : "First argument: ?variable or an individual IRI/name.",
+                "type" : "string"
+              },
+              "arg2" : {
+                "description" : "Second argument: ?variable, an individual (object_property/same_as/different_from) or a literal/?variable (data_property).",
+                "type" : "string"
+              },
+              "args" : {
+                "description" : "builtin: ordered d-arguments (?variables or literal values; typed/lang literals as {value, datatype|lang}).",
+                "items" : {
+                  "description" : "A ?variable, a plain literal value (string), or a typed/lang literal object {value, datatype} / {value, lang}."
+                },
+                "type" : "array"
+              },
+              "builtin" : {
+                "description" : "builtin: the built-in IRI/CURIE, e.g. swrlb:greaterThan.",
+                "type" : "string"
+              },
+              "datatype" : {
+                "description" : "data_property value: optional datatype IRI/name.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "data_property value: optional language tag.",
+                "type" : "string"
+              },
+              "predicate" : {
+                "description" : "class/object_property/data_property: the class or property IRI/name (a class may be a Manchester expression).",
+                "type" : "string"
+              },
+              "predicate_iri" : {
+                "description" : "class/object_property/data_property: full IRI of the predicate (alternative to 'predicate', preferred when present — lets list_rules output replay verbatim across ontologies).",
+                "type" : "string"
+              },
+              "type" : {
+                "description" : "class | object_property | data_property | same_as | different_from | builtin",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "data_property: literal value (alternative to a variable arg2).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "index" : {
+          "description" : "0-based index into the active ontology's rules in the same rendering-sorted order list_rules returns (call list_rules without include_imports).",
+          "type" : "integer"
+        },
+        "label" : {
+          "description" : "Remove rule(s) whose rdfs:label equals this.",
+          "type" : "string"
+        },
+        "variable_namespace" : {
+          "description" : "Namespace for ?name variables (default urn:swrl:var#). ?<absolute IRI> ignores this.",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "remove_rule",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Write an OASIS catalog-v001.xml next to the active ontology that maps each imported ontology IRI (and version IRI) to the local file it loaded from, so the module re-opens in Protégé with imports resolved offline. By default the catalog is written in the folder of the active ontology's saved document and covers its whole imports closure; pass 'path' to choose a target folder or file, and direct_imports_only=true to map just the directly-imported ontologies. Imports that are unresolved or not backed by a local file are reported as skipped. This writes a file and is NOT undoable.",
+    "documented_result_fields" : [ "catalog", "entries", "entry_count", "skipped" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "direct_imports_only" : {
+          "description" : "Map only directly-imported ontologies instead of the full imports closure (default false).",
+          "type" : "boolean"
+        },
+        "path" : {
+          "description" : "Target folder, or a catalog file path (default: the active ontology's document folder, file catalog-v001.xml).",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "write_catalog",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Diff two ontologies at the axiom level. 'left' (default the active ontology) and 'right' name loaded ontologies by ontology IRI or version IRI (see list_ontologies); alternatively 'right_document' loads a document (path/URL/IRI) purely to compare against — without adding it to the workspace. Reports counts and capped samples of axioms only-in-left and only-in-right, and identical=true when the two axiom sets match (a faithful round-trip). Use include_imports to compare imports closures, logical_only to ignore declarations/annotations. Read-only.",
+    "documented_result_fields" : [ "left", "right", "include_imports", "logical_only", "identical", "left_axioms", "right_axioms", "common", "only_in_left", "only_in_right" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "include_imports" : {
+          "description" : "Compare full imports closures instead of just the two ontologies (default false).",
+          "type" : "boolean"
+        },
+        "left" : {
+          "description" : "Ontology IRI/version of a loaded ontology (default: active).",
+          "type" : "string"
+        },
+        "limit" : {
+          "description" : "Max axioms to list per side (default 50).",
+          "type" : "integer"
+        },
+        "logical_only" : {
+          "description" : "Compare logical axioms only, ignoring declarations and annotation assertions (default false).",
+          "type" : "boolean"
+        },
+        "right" : {
+          "description" : "Ontology IRI/version of a loaded ontology to compare against.",
+          "type" : "string"
+        },
+        "right_document" : {
+          "description" : "Path/URL/IRI of a document to load and compare against (alternative to 'right'; not added to the workspace).",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "diff_ontologies",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Run the reasoner selected in Protégé (classify) and wait for completion. Reports the resulting status and unsatisfiable-class count, and warns when the ontology has SWRL rules the selected reasoner silently ignores (ELK).",
+    "documented_result_fields" : [ "started", "completed", "reasoner", "status", "inconsistent", "unsatisfiable_count", "message", "warning" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "timeout_ms" : {
+          "description" : "Max wait in ms (default 60000).",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "run_reasoner",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "List unsatisfiable (equivalent to owl:Nothing) classes from the active reasoner. If the whole ontology is INCONSISTENT, use explain_inconsistency instead.",
+    "documented_result_fields" : [ "count", "items", "truncated", "coherent" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "get_unsatisfiable_classes",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Read inferred relations from the reasoner. 'relation' is one of superclasses (default), subclasses, equivalent, types (for an individual), instances (of a class). 'direct' limits to direct relations (default true).",
+    "documented_result_fields" : [ "count", "items", "truncated", "relation", "entity", "direct" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "direct" : {
+          "description" : "Direct relations only (default true).",
+          "type" : "boolean"
+        },
+        "entity" : {
+          "description" : "Class IRI/name (or individual for 'types').",
+          "type" : "string"
+        },
+        "relation" : {
+          "description" : "superclasses | subclasses | equivalent | types | instances",
+          "type" : "string"
+        }
+      },
+      "required" : [ "entity" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "get_inferred_superclasses",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Check whether a structured axiom is entailed by the active reasoner (true/false). axiom_type is one of: subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, sub_object_property_of, sub_data_property_of, sub_property_chain_of, equivalent_object_properties, equivalent_data_properties, disjoint_object_properties, disjoint_data_properties, inverse_object_properties, transitive_object_property, functional_object_property, inverse_functional_object_property, symmetric_object_property, asymmetric_object_property, reflexive_object_property, irreflexive_object_property, functional_data_property, has_key, object_property_domain, object_property_range, data_property_domain, data_property_range, annotation_assertion, sub_annotation_property_of, annotation_property_domain, annotation_property_range, declaration, datatype_definition. Use get_explanations for the justifications behind an entailment.",
+    "documented_result_fields" : [ "entailed", "axiom" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Optional axiom annotations (array of {property, value | value_iri, lang, datatype}); reconstructs reified owl:Axiom blocks.",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "axiom_type" : {
+          "description" : "subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, sub_object_property_of, sub_data_property_of, sub_property_chain_of, equivalent_object_properties, equivalent_data_properties, disjoint_object_properties, disjoint_data_properties, inverse_object_properties, transitive_object_property, functional_object_property, inverse_functional_object_property, symmetric_object_property, asymmetric_object_property, reflexive_object_property, irreflexive_object_property, functional_data_property, has_key, object_property_domain, object_property_range, data_property_domain, data_property_range, annotation_assertion, sub_annotation_property_of, annotation_property_domain, annotation_property_range, declaration, datatype_definition",
+          "type" : "string"
+        },
+        "chain" : {
+          "description" : "sub_property_chain_of: ordered object property list (each a name/IRI, or an inverse link inverse(P) / ObjectInverseOf(P))",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "class" : {
+          "description" : "class_assertion / disjoint_union / has_key: class — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "classes" : {
+          "description" : "equivalent_classes / disjoint_classes / disjoint_union: classes — names, IRIs or Manchester class expressions",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "datatype" : {
+          "description" : "data_property_assertion / annotation_assertion: optional datatype IRI/name; datatype_definition: defined datatype IRI/name",
+          "type" : "string"
+        },
+        "domain" : {
+          "description" : "object_property_domain / data_property_domain: domain class expression; annotation_property_domain: domain IRI",
+          "type" : "string"
+        },
+        "entity" : {
+          "description" : "declaration: entity IRI/name",
+          "type" : "string"
+        },
+        "entity_type" : {
+          "description" : "declaration: class | object_property | data_property | annotation_property | individual | datatype",
+          "type" : "string"
+        },
+        "individual" : {
+          "description" : "class_assertion: individual IRI/name",
+          "type" : "string"
+        },
+        "individuals" : {
+          "description" : "same_individual / different_individuals: individual IRI/name list",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "inverse_property" : {
+          "description" : "inverse_object_properties: inverse object property IRI/name",
+          "type" : "string"
+        },
+        "lang" : {
+          "description" : "data_property_assertion / annotation_assertion: optional language tag",
+          "type" : "string"
+        },
+        "object" : {
+          "description" : "object_property_assertion / negative_object_property_assertion: object individual IRI/name",
+          "type" : "string"
+        },
+        "properties" : {
+          "description" : "equivalent_/disjoint_object|data_properties: property IRI/name list; has_key: object/data property IRI/name list",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "property" : {
+          "description" : "*_property_assertion / property characteristic / sub_*_property_of / *_property_domain|range / annotation_* / has_key seed: property IRI/name",
+          "type" : "string"
+        },
+        "range" : {
+          "description" : "object_property_range: range class expression; data_property_range / datatype_definition: datatype IRI/name or a Manchester-syntax data range such as \"xsd:integer[>= 0]\" or \"{1, 2, 3}\"; annotation_property_range: range IRI",
+          "type" : "string"
+        },
+        "sub" : {
+          "description" : "subclass_of: subclass — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "subject" : {
+          "description" : "*_property_assertion / annotation_assertion: subject IRI/name",
+          "type" : "string"
+        },
+        "super" : {
+          "description" : "subclass_of: superclass — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "super_property" : {
+          "description" : "sub_object_property_of / sub_data_property_of / sub_property_chain_of / sub_annotation_property_of: super property IRI/name",
+          "type" : "string"
+        },
+        "value" : {
+          "description" : "data_property_assertion / annotation_assertion: literal value",
+          "type" : "string"
+        },
+        "value_iri" : {
+          "description" : "annotation_assertion: IRI-valued annotation (entity name/IRI or absolute IRI; alternative to value)",
+          "type" : "string"
+        }
+      },
+      "required" : [ "axiom_type" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "explain_entailment",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Explain WHY a structured axiom is entailed: return one or more justifications (minimal sets of asserted axioms that together entail it). Minimal justifications are computed for these axiom_type values: subclass_of, equivalent_classes, disjoint_classes, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, object_property_domain, object_property_range, data_property_domain, data_property_range. For any OTHER axiom_type (e.g. a property-hierarchy or property-characteristic entailment) it falls back to confirming whether the axiom is entailed and returning the asserted axioms that mention the same entities as structural context (not a minimal justification). To explain why a class C is unsatisfiable, use axiom_type=class_assertion with class=C and any individual, or subclass_of with sub=C, super=\"owl:Nothing\". Requires a reasoner (see list_reasoners / set_reasoner).",
+    "documented_result_fields" : [ "axiom", "entailed", "justification_count", "justifications", "justification_available", "note", "related_axioms" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "annotations" : {
+          "description" : "Optional axiom annotations (array of {property, value | value_iri, lang, datatype}); reconstructs reified owl:Axiom blocks.",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "datatype" : {
+                "description" : "Optional datatype IRI/name for a typed literal value.",
+                "type" : "string"
+              },
+              "lang" : {
+                "description" : "Optional language tag for a literal value, e.g. 'en'.",
+                "type" : "string"
+              },
+              "property" : {
+                "description" : "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name (default rdfs:label).",
+                "type" : "string"
+              },
+              "value" : {
+                "description" : "Literal text value (omit if value_iri is given).",
+                "type" : "string"
+              },
+              "value_iri" : {
+                "description" : "IRI-valued annotation: an entity name/IRI or absolute IRI (alternative to value).",
+                "type" : "string"
+              }
+            },
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "axiom_type" : {
+          "description" : "subclass_of, equivalent_classes, disjoint_classes, disjoint_union, class_assertion, object_property_assertion, data_property_assertion, negative_object_property_assertion, negative_data_property_assertion, same_individual, different_individuals, sub_object_property_of, sub_data_property_of, sub_property_chain_of, equivalent_object_properties, equivalent_data_properties, disjoint_object_properties, disjoint_data_properties, inverse_object_properties, transitive_object_property, functional_object_property, inverse_functional_object_property, symmetric_object_property, asymmetric_object_property, reflexive_object_property, irreflexive_object_property, functional_data_property, has_key, object_property_domain, object_property_range, data_property_domain, data_property_range, annotation_assertion, sub_annotation_property_of, annotation_property_domain, annotation_property_range, declaration, datatype_definition",
+          "type" : "string"
+        },
+        "chain" : {
+          "description" : "sub_property_chain_of: ordered object property list (each a name/IRI, or an inverse link inverse(P) / ObjectInverseOf(P))",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "class" : {
+          "description" : "class_assertion / disjoint_union / has_key: class — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "classes" : {
+          "description" : "equivalent_classes / disjoint_classes / disjoint_union: classes — names, IRIs or Manchester class expressions",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "datatype" : {
+          "description" : "data_property_assertion / annotation_assertion: optional datatype IRI/name; datatype_definition: defined datatype IRI/name",
+          "type" : "string"
+        },
+        "domain" : {
+          "description" : "object_property_domain / data_property_domain: domain class expression; annotation_property_domain: domain IRI",
+          "type" : "string"
+        },
+        "entity" : {
+          "description" : "declaration: entity IRI/name",
+          "type" : "string"
+        },
+        "entity_type" : {
+          "description" : "declaration: class | object_property | data_property | annotation_property | individual | datatype",
+          "type" : "string"
+        },
+        "individual" : {
+          "description" : "class_assertion: individual IRI/name",
+          "type" : "string"
+        },
+        "individuals" : {
+          "description" : "same_individual / different_individuals: individual IRI/name list",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "inverse_property" : {
+          "description" : "inverse_object_properties: inverse object property IRI/name",
+          "type" : "string"
+        },
+        "lang" : {
+          "description" : "data_property_assertion / annotation_assertion: optional language tag",
+          "type" : "string"
+        },
+        "max" : {
+          "description" : "Maximum number of justifications to compute (default 3; 0 = all).",
+          "type" : "integer"
+        },
+        "object" : {
+          "description" : "object_property_assertion / negative_object_property_assertion: object individual IRI/name",
+          "type" : "string"
+        },
+        "properties" : {
+          "description" : "equivalent_/disjoint_object|data_properties: property IRI/name list; has_key: object/data property IRI/name list",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "property" : {
+          "description" : "*_property_assertion / property characteristic / sub_*_property_of / *_property_domain|range / annotation_* / has_key seed: property IRI/name",
+          "type" : "string"
+        },
+        "range" : {
+          "description" : "object_property_range: range class expression; data_property_range / datatype_definition: datatype IRI/name or a Manchester-syntax data range such as \"xsd:integer[>= 0]\" or \"{1, 2, 3}\"; annotation_property_range: range IRI",
+          "type" : "string"
+        },
+        "sub" : {
+          "description" : "subclass_of: subclass — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "subject" : {
+          "description" : "*_property_assertion / annotation_assertion: subject IRI/name",
+          "type" : "string"
+        },
+        "super" : {
+          "description" : "subclass_of: superclass — name, IRI or Manchester class expression",
+          "type" : "string"
+        },
+        "super_property" : {
+          "description" : "sub_object_property_of / sub_data_property_of / sub_property_chain_of / sub_annotation_property_of: super property IRI/name",
+          "type" : "string"
+        },
+        "timeout_ms" : {
+          "description" : "Max wait in ms for the explanation search (default 60000).",
+          "type" : "integer"
+        },
+        "value" : {
+          "description" : "data_property_assertion / annotation_assertion: literal value",
+          "type" : "string"
+        },
+        "value_iri" : {
+          "description" : "annotation_assertion: IRI-valued annotation (entity name/IRI or absolute IRI; alternative to value)",
+          "type" : "string"
+        }
+      },
+      "required" : [ "axiom_type" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "get_explanations",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Explain WHY the ontology is INCONSISTENT: find a set of asserted logical axioms that together cause the contradiction. The result's 'minimal' flag reports whether the set was fully minimized within the time budget (false = still jointly inconsistent, but reduced-not-minimal). Runs the selected reasoner over a private copy of the imports closure (off the UI thread; the live reasoner state is untouched). If the ontology is consistent it says so. Use after run_reasoner reports INCONSISTENT — the other explanation/query tools cannot run over an inconsistent ontology.",
+    "documented_result_fields" : [ "inconsistent", "reasoner", "minimal", "consistency_checks", "axiom_count", "justification", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "timeout_ms" : {
+          "description" : "Time budget in ms for the whole search (default 60000). On expiry the current still-inconsistent axiom set is returned with minimal=false.",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "explain_inconsistency",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Run a Protégé DL Query: given a Manchester-syntax class expression, return the reasoner's equivalent classes, subclasses, superclasses, and instances. 'relation' limits the result (equivalent | subclasses | superclasses | instances | all, default all); 'direct' limits sub/super/instance results to direct ones (default true). Caveat: for a COMPLEX (anonymous) class expression with direct=false, some reasoners — notably ELK — can return an INCOMPLETE set of sub/superclasses, omitting the DIRECT level (Protégé's own DL Query tab shows the same); the response then carries a 'warning'. Set complete=true to reconstruct the exhaustive set (the reasoner's direct results unioned with each direct class's transitive descent, which every reasoner computes reliably for named classes), or classify with a DL reasoner (e.g. HermiT). Call run_reasoner first.",
+    "documented_result_fields" : [ "query", "direct", "equivalent", "superclasses", "subclasses", "instances", "warning", "completed" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "complete" : {
+          "description" : "For a complex (anonymous) expression with direct=false, reconstruct the exhaustive sub/superclass set (direct + named-class descent) instead of the raw reasoner call, working around reasoners (e.g. ELK) that under-report complex-expression queries (default false).",
+          "type" : "boolean"
+        },
+        "direct" : {
+          "description" : "Direct results only for sub/super/instances (default true).",
+          "type" : "boolean"
+        },
+        "query" : {
+          "description" : "Manchester-syntax class expression, e.g. \"hasOwner some Person\" or \"Animal and (hasOwner some Person)\".",
+          "type" : "string"
+        },
+        "relation" : {
+          "description" : "equivalent | subclasses | superclasses | instances | all (default all).",
+          "type" : "string"
+        },
+        "timeout_ms" : {
+          "description" : "Max wait in ms for the query (default 60000).",
+          "type" : "integer"
+        }
+      },
+      "required" : [ "query" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "execute_dl_query",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "List the reasoner plugins installed in Protégé and mark the one currently selected. Use set_reasoner to change it, then run_reasoner to classify.",
+    "documented_result_fields" : [ "count", "reasoners", "current_id" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "list_reasoners",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Select the reasoner Protégé will use, by id or name (see list_reasoners). This does not classify — call run_reasoner afterwards.",
+    "documented_result_fields" : [ "selected", "message" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "reasoner" : {
+          "description" : "Reasoner id or name (see list_reasoners).",
+          "type" : "string"
+        }
+      },
+      "required" : [ "reasoner" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "set_reasoner",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Run a SPARQL 1.1 query over the active ontology and its imports closure, using an embedded Jena ARQ engine. Supports the read query forms SELECT, ASK, CONSTRUCT and DESCRIBE; SPARQL UPDATE and SERVICE are rejected (edits go through the write tools; no network access). Prefixes declared in the ontology (plus rdf/rdfs/owl/xsd) are auto-prepended, so queries can use them without their own PREFIX lines. By default the query sees the ASSERTED triples (like Protégé's SPARQL Query tab); set include_inferred=true to first materialise the active reasoner's inferences (run_reasoner first — this runs on the UI thread and can be slow on a large ABox). 'limit' caps the rows (SELECT) or triples (CONSTRUCT/DESCRIBE) returned (default 1000).",
+    "documented_result_fields" : [ "query_type", "note", "vars", "count", "bindings", "truncated", "boolean", "turtle" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "include_inferred" : {
+          "description" : "Materialise the active reasoner's inferred axioms before querying (default false; requires a classified reasoner; runs on the UI thread).",
+          "type" : "boolean"
+        },
+        "limit" : {
+          "description" : "Max rows (SELECT) or triples (CONSTRUCT/DESCRIBE) to return (default 1000).",
+          "type" : "integer"
+        },
+        "query" : {
+          "description" : "A SPARQL 1.1 query (SELECT, ASK, CONSTRUCT, or DESCRIBE).",
+          "type" : "string"
+        },
+        "timeout_ms" : {
+          "description" : "Overall time budget in ms, covering both the snapshot/inference step and the query evaluation (default 120000).",
+          "type" : "integer"
+        }
+      },
+      "required" : [ "query" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "sparql_query",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Discover the queryable vocabulary for AUTHORING a SPARQL query over the active ontology (its imports closure by default — the same graph sparql_query sees). Returns the prefix map (plus a ready-to-paste PREFIX block), and capped, sorted lists of classes, object/data properties (with their domains and ranges), named individuals and datatypes — each with a CURIE (e.g. ex:Widget) and full IRI — and a set of ready-to-run example queries built from the ontology's own terms. Use 'keyword' to focus on a sub-topic. sparql_query auto-prepends these prefixes, so you can use the CURIEs directly. This is asserted structure; for reasoner-derived triples query with include_inferred=true.",
+    "documented_result_fields" : [ "active_ontology", "counts", "matched", "prefixes", "prefix_lines", "classes", "object_properties", "data_properties", "individuals", "datatypes", "examples", "keyword", "truncated", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "include_examples" : {
+          "description" : "Include example queries grounded in the ontology's own terms (default true).",
+          "type" : "boolean"
+        },
+        "include_imports" : {
+          "description" : "Include terms from the imports closure (default true; sparql_query queries the closure).",
+          "type" : "boolean"
+        },
+        "include_individuals" : {
+          "description" : "Include a sample of named individuals (default true).",
+          "type" : "boolean"
+        },
+        "keyword" : {
+          "description" : "Only include classes/properties/individuals whose label or IRI contains this text (case-insensitive). Use to focus on a sub-topic.",
+          "type" : "string"
+        },
+        "limit" : {
+          "description" : "Max items per list (default 100).",
+          "type" : "integer"
+        },
+        "timeout_ms" : {
+          "description" : "Time budget in ms for gathering the vocabulary on the UI thread (default 120000; raise for very large imports closures).",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "sparql_schema",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Check a SPARQL query BEFORE running it (it is parsed, not executed, unless dry_run=true). Reports whether it parses, the query form, the projected variables, and whether sparql_query would accept it ('executable' — a read query with no SERVICE). The ontology's prefixes are auto-prepended just as sparql_query does, so a query that uses declared CURIEs validates without its own PREFIX lines. 'unknown_terms' lists IRIs used in the query (graph patterns, property paths, VALUES, CONSTRUCT template, DESCRIBE targets) that are NOT declared in the ontology — usually a typo or a term from another vocabulary; catch these before running. A syntax error is reported as valid=false with the engine's message, not as a tool error. Set dry_run=true to also run it with a small LIMIT and return a sample.",
+    "documented_result_fields" : [ "valid", "query_type", "executable", "vars", "uses_service", "parse_error", "unknown_terms", "issues", "sample", "sample_error", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "dry_run" : {
+          "description" : "Also execute the query with a small LIMIT to confirm it runs and return a sample of results (default false).",
+          "type" : "boolean"
+        },
+        "query" : {
+          "description" : "The SPARQL query to check.",
+          "type" : "string"
+        },
+        "sample_limit" : {
+          "description" : "Rows/triples to return when dry_run=true (default 5).",
+          "type" : "integer"
+        },
+        "timeout_ms" : {
+          "description" : "Time budget for the dry run in ms (default 120000).",
+          "type" : "integer"
+        }
+      },
+      "required" : [ "query" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "sparql_validate",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Audit the active ontology for modelling-quality issues (not logical consistency — use run_reasoner for that). Runs structural checks and reports, per check, a count, sample offenders, and a fix suggestion. Checks: missing_label, missing_definition, duplicate_label, multiple_labels, deprecated_in_use, undeclared_entity, property_missing_domain, property_missing_range, self_subclass, subclass_cycle, isolated_class. Imported terms (declared upstream) are not flagged for missing label/definition/domain/range when auditing the active ontology alone; set include_imports=true to audit the whole imports closure. Pass 'checks' to run a subset. These are modelling-quality checks only; set with_reasoner=true to also include the reasoner's consistency / unsatisfiable-class verdict (a clean audit is NOT proof of logical consistency).",
+    "documented_result_fields" : [ "scope", "total_issues", "checks", "reasoner", "reasoner_note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "checks" : {
+          "description" : "Subset of check ids to run (default all).",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "include_imports" : {
+          "description" : "Audit the imports closure too (default false).",
+          "type" : "boolean"
+        },
+        "limit" : {
+          "description" : "Max sample offenders/details per check (default 25).",
+          "type" : "integer"
+        },
+        "timeout_ms" : {
+          "description" : "Time budget in ms before the call returns a timeout error (default 60000). The structural checks run on the model thread and are not interrupted mid-run, so this bounds the caller's wait, not the on-thread work itself.",
+          "type" : "integer"
+        },
+        "with_reasoner" : {
+          "description" : "Also report the reasoner's consistency / unsatisfiable classes (uses the already-classified reasoner; run_reasoner first for a current verdict). Default false.",
+          "type" : "boolean"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "validate_ontology",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Audit the active ontology against PROJECT GOVERNANCE rules (complements validate_ontology's generic quality checks and run_reasoner's logic checks). Checks: (1) owl_profile — OWL 2 profile conformance (default DL; or EL/QL/RL; 'none'/'Full' skips), reporting the axioms that leave the profile; (4) check_ownership (default true) — the active module must not assert logical axioms about IMPORTED terms (import-layering / module ownership) — both run BY DEFAULT; (2) required_namespaces / iri_pattern — every owned entity's IRI must start with one of the namespaces and/or match the regex; and (3) required_annotations — every owned class/property must carry each listed annotation property (use 'label' and 'definition' for rdfs:label / any definition property) — are opt-in. Owned = declared in the audited scope, not purely imported. Set include_imports=true to audit the whole imports closure as owned.",
+    "documented_result_fields" : [ "scope", "profile", "total_violations", "checks", "notes", "note" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "check_ownership" : {
+          "description" : "Flag logical axioms in the active ontology whose subject is an imported (upstream) term — an import-layering violation. Default true.",
+          "type" : "boolean"
+        },
+        "include_imports" : {
+          "description" : "Treat the whole imports closure as owned and audit it too (default false: only the active ontology's own terms).",
+          "type" : "boolean"
+        },
+        "iri_pattern" : {
+          "description" : "Owned entity IRIs must match this Java regular expression (optional; applied to the full IRI).",
+          "type" : "string"
+        },
+        "limit" : {
+          "description" : "Max sample offenders/details per check (default 25).",
+          "type" : "integer"
+        },
+        "owl_profile" : {
+          "description" : "OWL 2 profile to check conformance against: DL (default), EL, QL, RL. Pass 'none' or 'Full' to skip the profile check.",
+          "type" : "string"
+        },
+        "required_annotations" : {
+          "description" : "Annotation properties every owned class/property must carry: an IRI/CURIE/name, or the specials 'label' (rdfs:label) and 'definition' (rdfs:comment / skos:definition / any *definition property). Optional.",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "required_namespaces" : {
+          "description" : "Owned entity IRIs must start with one of these namespace prefixes (optional; e.g. your ontology's term namespace).",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "timeout_ms" : {
+          "description" : "Time budget in ms before the call returns a timeout error (default 60000). The checks run on the model thread and are not interrupted mid-run, so this bounds the caller's wait, not the work.",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "validate_governance",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Add or update (by id) a competency question — a SPARQL query plus an expected result that run_competency_questions later re-checks. Give the 'query' (SELECT or ASK) and, recommended, the natural-language 'text'. 'expected' is the pass condition: nonEmpty (default) | empty | 'count OP N' (OP one of >=,<=,==,>,<); EXACT_ROWS is authored directly in a sidecar-manifest. 'convention' chooses the store (robot-sparql-dir = the default *.rq writer for ROBOT/CI interop | sidecar-manifest = a full-fidelity JSON file | ontology-annotations = stored inside the ontology, the fallback when it is unsaved); omit it to follow an existing store. This writes a file (or an ontology annotation) and echoes where.",
+    "documented_result_fields" : [ "added", "convention", "target" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "convention" : {
+          "description" : "robot-sparql-dir | sidecar-manifest | ontology-annotations (optional; omit to follow an existing store, else defaults to robot-sparql-dir, or ontology-annotations when the ontology is unsaved).",
+          "type" : "string"
+        },
+        "expected" : {
+          "description" : "Pass condition: nonEmpty (default) | empty | 'count OP N'.",
+          "type" : "string"
+        },
+        "id" : {
+          "description" : "Stable id within the store (optional; an auto CQ-N is minted if omitted).",
+          "type" : "string"
+        },
+        "include_inferred" : {
+          "description" : "Also run over the reasoner's inferred triples when the suite runs (default true).",
+          "type" : "boolean"
+        },
+        "query" : {
+          "description" : "Executable SPARQL 1.1 query — SELECT or ASK.",
+          "type" : "string"
+        },
+        "query_lang" : {
+          "description" : "Query language — only 'sparql' is supported (default sparql).",
+          "type" : "string"
+        },
+        "tags" : {
+          "description" : "Optional tags.",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "text" : {
+          "description" : "The natural-language competency question (recommended).",
+          "type" : "string"
+        },
+        "type" : {
+          "description" : "Optional category, e.g. Scoping | Validating.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "query" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "add_competency_question",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "List every competency question found across all storage conventions (robot-sparql-dir *.rq files, a sidecar-manifest JSON, and ontology annotations), each tagged with its 'convention'. Reports 'conventions_found' and any 'skipped' entries that could not be parsed (malformed input is isolated, never fatal).",
+    "documented_result_fields" : [ "count", "conventions_found", "competency_questions", "skipped" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "list_competency_questions",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Remove a competency question by id. Pass 'convention' to disambiguate when the same id exists in more than one store; otherwise the single store holding it is used.",
+    "documented_result_fields" : [ "removed", "id", "convention" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "convention" : {
+          "description" : "robot-sparql-dir | sidecar-manifest | ontology-annotations (optional; required only when the id exists in several stores).",
+          "type" : "string"
+        },
+        "id" : {
+          "description" : "The competency question id to remove.",
+          "type" : "string"
+        }
+      },
+      "required" : [ "id" ],
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "remove_competency_question",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Re-run the competency-question suite against the active ontology and report, per CQ, whether it still passes — a regression check for curation edits. Each CQ's query runs over a shared point-in-time snapshot (asserted triples, plus the reasoner's inferences for CQs with include_inferred=true when a classified reasoner is available). Judged by its expected result (nonEmpty / empty / count / exactRows). Filter with 'ids' or 'convention'; 'fail_on'=any makes the overall 'gate' fail if any CQ fails (default none = report only). Caveats (open-world EMPTY, truncated results/inferences) are surfaced, never silent.",
+    "documented_result_fields" : [ "total", "passed", "failed", "gate", "questions", "skipped" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "convention" : {
+          "description" : "Only run CQs from this convention (default: all detected).",
+          "type" : "string"
+        },
+        "fail_on" : {
+          "description" : "Gate policy: none (default) | any.",
+          "type" : "string"
+        },
+        "ids" : {
+          "description" : "Only run these CQ ids (default: all).",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "limit" : {
+          "description" : "Max rows per query (default 1000).",
+          "type" : "integer"
+        },
+        "timeout_ms" : {
+          "description" : "Per-query time budget in ms (default 120000).",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "run_competency_questions",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Run project-defined SPARQL INVARIANTS over the active ontology — patterns that must NEVER appear (like ROBOT 'verify'). Each queries[] item is a SPARQL SELECT/ASK whose results are VIOLATIONS: any returned row (or ASK true) flags it, at the item's severity (error | warn | info, default error). The overall 'gate' fails when a violation reaches the 'fail_on' severity (none | info | warn | error, default error). Queries run over a shared snapshot (asserted, or the reasoner's inferences for items with include_inferred=true); UPDATE/SERVICE are rejected. Violations are reported as raw SPARQL bindings (a persisted invariant 'profile' is reserved for a later release).",
+    "documented_result_fields" : [ "checked", "violations", "errors", "fail_on", "gate", "invariants" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "fail_on" : {
+          "description" : "Gate severity: none | info | warn | error (default error).",
+          "type" : "string"
+        },
+        "limit" : {
+          "description" : "Max violation rows per invariant (default 1000).",
+          "type" : "integer"
+        },
+        "profile" : {
+          "description" : "Persisted invariant set (reserved for a later release; use inline queries[]).",
+          "type" : "string"
+        },
+        "queries" : {
+          "description" : "The invariants to check; each item's results are violations.",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "id" : {
+                "description" : "Optional stable id (default invariant-N).",
+                "type" : "string"
+              },
+              "include_inferred" : {
+                "description" : "Run over the reasoner's inferred triples (default false).",
+                "type" : "boolean"
+              },
+              "message" : {
+                "description" : "Human message describing the violation.",
+                "type" : "string"
+              },
+              "severity" : {
+                "description" : "error (default) | warn | info.",
+                "type" : "string"
+              },
+              "sparql" : {
+                "description" : "A SPARQL SELECT or ASK whose results are VIOLATIONS (a returned row / ASK true means the forbidden pattern is present). CONSTRUCT/DESCRIBE are rejected — a graph-producing form is not a detector; use sparql_query for those.",
+                "type" : "string"
+              }
+            },
+            "required" : [ "sparql" ],
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "timeout_ms" : {
+          "description" : "Per-invariant time budget in ms (default 120000).",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "verify_ontology",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Validate the active ontology (its imports-closure RDF) against a SHACL shapes graph using the embedded Apache Jena SHACL engine. Provide the shapes inline as Turtle in 'shapes', or a LOCAL file path in 'shapes_path' (remote fetch is disabled for offline safety). By default validation runs over the ASSERTED triples (like sparql_query); set include_inferred=true to first materialise the active reasoner's inferences (run_reasoner first). Reports 'conforms' plus, per validation result, the focus node, result path, value, severity (Violation/Warning/Info), source shape, constraint component and message. This is the SHACL counterpart to verify_ontology's SPARQL invariants; use it for shape-based data-quality checks (cardinality, datatype, value/class constraints).",
+    "documented_result_fields" : [ "conforms", "total_results", "violations", "warnings", "infos", "worst_severity", "limit", "truncated" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "include_inferred" : {
+          "description" : "Validate over the active reasoner's inferred triples (default false; requires a classified reasoner — run_reasoner first).",
+          "type" : "boolean"
+        },
+        "limit" : {
+          "description" : "Max validation results to return (default 1000).",
+          "type" : "integer"
+        },
+        "shapes" : {
+          "description" : "SHACL shapes graph as Turtle text (inline). Either this or 'shapes_path' is required.",
+          "type" : "string"
+        },
+        "shapes_path" : {
+          "description" : "Path to a LOCAL SHACL shapes document (Turtle/RDF-XML/etc.; format inferred from the extension). Alternative to 'shapes'.",
+          "type" : "string"
+        },
+        "timeout_ms" : {
+          "description" : "Time budget in ms, applied to BOTH the data snapshot (on the model thread) and the SHACL validation itself (default 120000).",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "shacl_validate",
+    "output_schema" : null,
+    "title" : null
+  }, {
+    "annotations" : null,
+    "description" : "Run an aggregate quality-control gate over the active ontology and collapse it to ONE verdict. Composable stages (default reasoner + profile + structural): 'reasoner' (consistency + no unsatisfiable classes), 'profile' (OWL 2 profile conformance, owl_profile default DL), 'structural' (validate_ontology's modelling-quality checks), 'invariants' (verify_ontology-style SPARQL invariants — pass them in 'invariants'), 'cqs' (the competency-question suite), and 'shacl' (validate against the SHACL shapes supplied in 'shacl_shapes'/'shacl_shapes_path'). Every stage runs against one shared snapshot; a stage whose backing data is absent (no classified reasoner, no invariants, no CQs, no SHACL shapes) is skipped with a reason, never an error. The overall 'gate' fails when the worst stage reaches 'fail_on' (none | warn | error, default error).",
+    "documented_result_fields" : [ "gate", "fail_on", "stages_ran", "stages" ],
+    "icons" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "fail_on" : {
+          "description" : "Gate severity: none | warn | error (default error).",
+          "type" : "string"
+        },
+        "invariants" : {
+          "description" : "Invariants for the 'invariants' stage (verify_ontology queries[]).",
+          "items" : {
+            "additionalProperties" : false,
+            "properties" : {
+              "id" : {
+                "description" : "Optional stable id.",
+                "type" : "string"
+              },
+              "include_inferred" : {
+                "description" : "Run over inferred triples (default false).",
+                "type" : "boolean"
+              },
+              "message" : {
+                "description" : "Human message for a violation.",
+                "type" : "string"
+              },
+              "severity" : {
+                "description" : "error (default) | warn | info.",
+                "type" : "string"
+              },
+              "sparql" : {
+                "description" : "A SPARQL SELECT/ASK whose results are violations.",
+                "type" : "string"
+              }
+            },
+            "required" : [ "sparql" ],
+            "type" : "object"
+          },
+          "type" : "array"
+        },
+        "limit" : {
+          "description" : "Max samples per check (default 25).",
+          "type" : "integer"
+        },
+        "owl_profile" : {
+          "description" : "OWL 2 profile for the profile stage: DL (default), EL, QL, RL.",
+          "type" : "string"
+        },
+        "shacl_shapes" : {
+          "description" : "SHACL shapes graph as Turtle (inline) for the 'shacl' stage.",
+          "type" : "string"
+        },
+        "shacl_shapes_path" : {
+          "description" : "Local file path to a SHACL shapes document for the 'shacl' stage.",
+          "type" : "string"
+        },
+        "stages" : {
+          "description" : "Subset of: reasoner, profile, structural, invariants, cqs, shacl (default reasoner, profile, structural).",
+          "items" : {
+            "type" : "string"
+          },
+          "type" : "array"
+        },
+        "timeout_ms" : {
+          "description" : "Time budget in ms for the SPARQL and SHACL stages (default 120000).",
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "meta" : null,
+    "name" : "run_qc_suite",
+    "output_schema" : null,
+    "title" : null
+  } ]
+}

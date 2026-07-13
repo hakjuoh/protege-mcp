@@ -80,6 +80,7 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | [Connecting a client](connect/) | The server model (ports, OAuth vs. bearer token) and per-environment recipes for Claude Code, Codex CLI, VS Code, and Claude Desktop. |
 | [Ontology Assistant](ontology-assistant.html) | The in-Protégé chat: what it is, how it works, attachments, privacy, and settings. |
 | [Tools](tools/) | All 66 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
+| [Project policy contracts](project-policy.html) | Policy v1 schema/examples and common QC contracts introduced as 0.5.1 foundations. |
 | [Contributing](contributing.html) | Build from source, run the tests, project layout, and how to add a tool. |
 | [Versioning & releases](versioning.html) | The SemVer + Keep-a-Changelog scheme and how releases are cut. |
 | [Changelog](changelog.html) | Release notes for every version. |

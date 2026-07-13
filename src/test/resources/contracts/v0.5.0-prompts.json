@@ -1,0 +1,252 @@
+{
+  "product_version" : "0.5.0",
+  "prompts" : [ {
+    "arguments" : [ ],
+    "description" : "Audit the active ontology for modelling-quality issues and propose fixes.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "audit_ontology",
+    "rendered_description" : "Audit the active ontology for modelling-quality issues and propose fixes.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Audit the ontology currently open in Protégé and propose fixes.\n\n1. Call get_ontology_context to orient yourself (size, roots, reasoner state).\n2. Call validate_ontology to collect modelling-quality findings, and validate_governance for OWL 2 profile conformance and import-layering/ownership issues that validate_ontology does not check.\n3. Call run_reasoner for logical problems. If it reports the ontology INCONSISTENT, call explain_inconsistency to find the contradicting axioms; otherwise call get_unsatisfiable_classes.\n4. For the most important findings, call get_entity_context on the offending terms to understand them before suggesting changes.\n5. Summarise the issues by severity and propose concrete fixes. Use preview_changes to show the exact axioms before applying anything, and DO NOT modify the ontology until I approve. After I approve, apply the batch with apply_changes (the same operations array, ONE undoable transaction) with verify=\"rollback\" so a fix that breaks satisfiability is undone automatically — or verify=\"report\" when repairing an ALREADY-inconsistent ontology, since rollback only detects new regressions (re-run run_reasoner to confirm the repair instead).",
+      "type" : "text"
+    } ],
+    "sample_arguments" : { },
+    "title" : null
+  }, {
+    "arguments" : [ {
+      "description" : "Class IRI or display name.",
+      "name" : "class",
+      "required" : true,
+      "title" : null
+    } ],
+    "description" : "Explain a class: its definition, neighbourhood, and what the reasoner infers about it.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "explain_class",
+    "rendered_description" : "Explain a class: its definition, neighbourhood, and what the reasoner infers about it.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Explain the class \"<class>\" in the active ontology, in plain language.\n\n1. Call get_entity_context with entity=\"<class>\" for its labels, annotations, asserted parents/children/equivalents and disjoints.\n2. Call get_axioms_for_entity for the exact axioms (include_imports=true if it is an imported term).\n3. Call run_reasoner, then get_inferred_superclasses with entity=\"<class>\" to see what is inferred beyond what is asserted.\n4. Summarise: what the class means, where it sits in the hierarchy, its key restrictions, and anything surprising the reasoner derived.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : {
+      "class" : "<class>"
+    },
+    "title" : null
+  }, {
+    "arguments" : [ {
+      "description" : "Subclass — IRI, name, or Manchester class expression.",
+      "name" : "child",
+      "required" : true,
+      "title" : null
+    }, {
+      "description" : "Superclass — IRI, name, or Manchester class expression.",
+      "name" : "parent",
+      "required" : true,
+      "title" : null
+    } ],
+    "description" : "Add a subclass relationship safely: check the terms exist, preview, then apply and verify.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "add_subclass_safely",
+    "rendered_description" : "Add a subclass relationship safely: check the terms exist, preview, then apply and verify.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Assert that \"<child>\" is a subclass of \"<parent>\", safely.\n\n1. Confirm both terms with get_entity (or search_entities if a name is ambiguous) — resolve to exact IRIs and avoid creating an unintended new entity from a typo.\n2. Call preview_changes with one operation {op:add, axiom_type:subclass_of, sub:\"<child>\", super:\"<parent>\"} and show me the diff and any new entities it would introduce.\n3. After I approve, apply the SAME operations array with apply_changes and verify=\"rollback\" — one undoable transaction that re-classifies the reasoner and automatically undoes the edit if it makes any class newly unsatisfiable or the ontology inconsistent. Report the verify verdict.\n4. If no reasoner is selected (verify=\"rollback\" refuses before applying anything), call set_reasoner (list_reasoners shows the choices) and retry step 3. Only if no reasoner is available at all, apply with add_subclass_of and report the edit as UNVERIFIED — the reasoner checks cannot run in that state.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : {
+      "child" : "<child>",
+      "parent" : "<parent>"
+    },
+    "title" : null
+  }, {
+    "arguments" : [ ],
+    "description" : "Find unsatisfiable classes, explain why, and propose minimal fixes.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "find_and_fix_unsatisfiable",
+    "rendered_description" : "Find unsatisfiable classes, explain why, and propose minimal fixes.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Diagnose and fix unsatisfiable classes in the active ontology.\n\n1. Call run_reasoner, then get_unsatisfiable_classes. If the ontology is wholly INCONSISTENT the per-class tools refuse to run — call explain_inconsistency instead for a set of contradicting axioms (its 'minimal' flag reports whether the set was fully minimised; undo_change with peek=true shows whether the LAST edit is the likely culprit).\n2. For each unsatisfiable class C, call get_explanations (axiom_type=subclass_of, sub=C, super=\"owl:Nothing\") to get the minimal justifications.\n3. For terms in the justifications, call get_entity_context to understand them.\n4. Propose the smallest set of axiom removals/changes that restores satisfiability. Use preview_changes (op:remove) to show exactly what would be removed, and only after I approve apply the batch with apply_changes (the same operations array — ONE undoable transaction) with verify=\"report\", which re-classifies and flags anything the fix makes newly unsatisfiable or inconsistent. Confirm with get_unsatisfiable_classes; a single undo_change reverts the whole batch if not.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : { },
+    "title" : null
+  }, {
+    "arguments" : [ {
+      "description" : "The question to answer in plain words.",
+      "name" : "question",
+      "required" : true,
+      "title" : null
+    } ],
+    "description" : "Author a SPARQL query that answers a question: discover the vocabulary, draft, validate, then run it.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "author_sparql_query",
+    "rendered_description" : "Author a SPARQL query that answers a question: discover the vocabulary, draft, validate, then run it.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Write and run a SPARQL query over the ontology open in Protégé to answer: <question>\n\n1. Call sparql_schema (pass keyword= a key term from the question to focus it) to get the prefixes and the exact classes, properties (with their domains/ranges) and individuals you can use — note the CURIEs and the example queries.\n2. Draft a SELECT/ASK/CONSTRUCT/DESCRIBE query using ONLY those CURIEs/IRIs (do not invent term names). The ontology's prefixes are auto-prepended, so you can use the CURIEs without PREFIX lines.\n3. Call sparql_validate on the draft. Fix anything in unknown_terms (a typo or wrong vocabulary) and any parse_error until executable=true; set dry_run=true to also run it with a small LIMIT and sanity-check sample results.\n4. Run it with sparql_query. If you need triples the reasoner derives (e.g. inferred types or subclasses), set include_inferred=true (run_reasoner first). Refine the pattern and repeat if the results are empty or too broad.\n5. Summarise the answer, and show the final query you used.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : {
+      "question" : "<question>"
+    },
+    "title" : null
+  }, {
+    "arguments" : [ {
+      "description" : "What to model (the domain in plain words).",
+      "name" : "description",
+      "required" : true,
+      "title" : null
+    } ],
+    "description" : "Model a described domain incrementally: propose terms, preview, apply with confirmation.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "model_domain",
+    "rendered_description" : "Model a described domain incrementally: propose terms, preview, apply with confirmation.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Help me model this in the active ontology: <description>\n\n1. Call get_ontology_context to see what already exists (reuse terms, match the naming and IRI style, don't duplicate).\n2. Propose a small set of classes, properties (with domains/ranges) and any individuals. Explain the modelling choices.\n3. Show me the additions BEFORE applying: the new classes as a create_terms batch (name/label/definition/parents per item) and the new properties as a create_properties batch (domain/range/characteristics per item) — each batch is atomic and ONE undoable transaction — plus preview_changes for any remaining axioms (individuals, extra restrictions) as an operations array.\n4. After I approve, apply the batches with strict=true (refuses typo-minted entities) and verify=\"report\", and the remaining operations array with apply_changes. Then call run_qc_suite for a one-call quality gate (reasoner + profile + structural). Work in small, reviewable batches.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : {
+      "description" : "<description>"
+    },
+    "title" : null
+  }, {
+    "arguments" : [ {
+      "description" : "The requirement/competency question in plain words.",
+      "name" : "question",
+      "required" : true,
+      "title" : null
+    }, {
+      "description" : "Pass condition: nonEmpty (default) | empty | 'count OP N'.",
+      "name" : "expected",
+      "required" : false,
+      "title" : null
+    } ],
+    "description" : "Turn a plain-language requirement into a stored, executable competency question: discover vocabulary, draft, validate, store, and run it.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "author_competency_question",
+    "rendered_description" : "Turn a plain-language requirement into a stored, executable competency question: discover vocabulary, draft, validate, store, and run it.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Turn this requirement into an executable competency question for the active ontology: <question>\n\n1. Call list_competency_questions to see the existing CQ ids and which storage convention the project already uses — follow it (note: ontology-annotations is the fallback when the ontology is unsaved; robot-sparql-dir writes *.rq files for ROBOT/CI interop).\n2. Call sparql_schema (keyword= a key term from the question) to get the exact classes/properties and CURIEs. Use ONLY those — do not invent term names.\n3. Draft a SELECT or ASK query that answers the question, and choose the pass condition: <expected>.\n4. Call sparql_validate on the draft; fix anything in unknown_terms and any parse_error until executable=true.\n5. Show me the query, the expected condition and the target store. After I approve, call add_competency_question with the query, text=\"<question>\" and the expected condition (omit 'convention' to follow the existing store; note include_inferred DEFAULTS TO TRUE — set include_inferred=false unless the check should also hold over reasoner-derived triples).\n6. Call run_competency_questions with ids=[the new id] to confirm it passes NOW (an include_inferred CQ needs a classified reasoner — run_reasoner first). If it fails, either refine the query or report the real ontology gap it exposed.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : {
+      "expected" : "<expected>",
+      "question" : "<question>"
+    },
+    "title" : null
+  }, {
+    "arguments" : [ {
+      "description" : "The rule to express, in plain words (if X then Y).",
+      "name" : "rule",
+      "required" : true,
+      "title" : null
+    } ],
+    "description" : "Author a SWRL rule from a plain-language description, checking reasoner compatibility (ELK ignores rules; built-ins can fail classification) before and after applying.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "author_swrl_rule",
+    "rendered_description" : "Author a SWRL rule from a plain-language description, checking reasoner compatibility (ELK ignores rules; built-ins can fail classification) before and after applying.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Author this as a SWRL rule in the active ontology: <rule>\n\n1. Resolve every class, property and individual the rule mentions with search_entities / get_entity and collect their exact IRIs — use the IRIs as the atoms' predicate values so a typo cannot mint a new entity.\n2. Call list_rules to match the existing rules' style and avoid duplicating one.\n3. Build the structured body/head atoms for add_rule (atom types: class {predicate, arg1}, object_property {predicate, arg1, arg2}, data_property {predicate, arg1, arg2|value}, same_as/different_from {arg1, arg2}, builtin {builtin, args[]}; an argument starting with '?' is a variable). Show me the atoms plus a readable body -> head rendering, and include an rdfs:label via 'annotations'.\n4. Check reasoner compatibility BEFORE applying (list_reasoners): ELK silently IGNORES SWRL rules (run_reasoner will attach a warning), and swrlb: built-in atoms make some DL reasoners (e.g. HermiT) FAIL classification — run_reasoner surfaces that as an error, not a no-op. If the current reasoner cannot honour the rule, propose set_reasoner to one that can, and get my approval.\n5. After I approve the rule and the reasoner choice, call add_rule with the body/head (and annotations).\n6. Verify the rule fires: run_reasoner (heed any warning/error), then confirm one expected inference with get_inferred_superclasses or sparql_query with include_inferred=true. If nothing is inferred, explain why (rules ignored by the reasoner / no individuals match) instead of reporting success.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : {
+      "rule" : "<rule>"
+    },
+    "title" : null
+  }, {
+    "arguments" : [ {
+      "description" : "The term to refactor: IRI or display name.",
+      "name" : "entity",
+      "required" : true,
+      "title" : null
+    }, {
+      "description" : "What to achieve: rename | deprecate | delete | move (plain words are fine).",
+      "name" : "goal",
+      "required" : true,
+      "title" : null
+    } ],
+    "description" : "Rename, deprecate, delete or move a term the safe way: blast-radius first, correct tool choice, preview, confirm, verify.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "refactor_entity_safely",
+    "rendered_description" : "Rename, deprecate, delete or move a term the safe way: blast-radius first, correct tool choice, preview, confirm, verify.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Refactor \"<entity>\" in the active ontology. Intended goal: <goal>. Choose the SAFE operation and preview before touching anything.\n\n1. Call get_entity_context and get_axioms_for_entity for \"<entity>\" to establish the blast radius (how much references it).\n2. Pick the right tool and confirm the semantics with me FIRST:\n   - fix/change an IRI -> rename_entity (rewrites every reference; if new_iri already exists in the signature the two entities MERGE — sometimes intended, often not),\n   - retire a published term -> deprecate_entity (keeps the term and its axioms, adds owl:deprecated plus an optional replaced_by pointer; usages are NOT rewritten),\n   - remove a mistake entirely -> delete_entity (removes its declaration and EVERY axiom that references it),\n   - reparent a class -> move_class (replaces its asserted named parents unless keep_other_parents=true; the subtree follows).\n3. Preview: rename_entity and delete_entity take preview=true — show me the change count, the sample axioms, and (rename) the new_iri_already_in_signature flag. move_class and deprecate_entity have no preview, so show the exact arguments you intend to pass instead.\n4. Apply ONLY after I approve. Each of these is a single undo transaction — undo_change with peek=true shows what an undo would revert.\n5. Verify: run_reasoner and get_unsatisfiable_classes; for a broad change also validate_ontology. Report exactly what changed.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : {
+      "entity" : "<entity>",
+      "goal" : "<goal>"
+    },
+    "title" : null
+  }, {
+    "arguments" : [ {
+      "description" : "IRI of the new ontology.",
+      "name" : "ontology_iri",
+      "required" : true,
+      "title" : null
+    }, {
+      "description" : "File path to bind the ontology to (optional but recommended).",
+      "name" : "path",
+      "required" : false,
+      "title" : null
+    } ],
+    "description" : "Start a new ontology module correctly: create it bound to a file, set prefixes and metadata, add resolved imports, save, and write the catalog.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "bootstrap_ontology",
+    "rendered_description" : "Start a new ontology module correctly: create it bound to a file, set prefixes and metadata, add resolved imports, save, and write the catalog.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Set up a new ontology module <ontology_iri>, ready for authoring.\n\n1. Confirm the plan with me first: ontology IRI (+ version IRI?), the term namespace, the file location (<path>), and which upstream ontologies to import.\n2. Call create_ontology with ontology_iri=\"<ontology_iri>\" and path=\"<path>\" (binding the path now means an argument-less save_ontology works and write_catalog has a folder). It becomes the active edit target; note it is NOT undoable.\n3. Call set_prefix for the term namespace (and each upstream namespace) so CURIEs render/parse and the saved file is readable.\n4. Add metadata with add_ontology_annotation (e.g. dcterms:title, rdfs:comment, owl:versionInfo).\n5. For each upstream ontology call add_import with its IRI, passing 'document' (a path/URL) so the import resolves NOW — then check the result's 'resolved' flag: an unresolved import's terms stay INVISIBLE to lookups and reasoning until its document is loaded.\n6. Call save_ontology (pass 'path' here if the ontology is still untitled — an argument-less save has nowhere to write), then write_catalog so the local imports re-open offline in Protégé.\n7. Verify with get_ontology_context (imports resolved, prefixes right), and once the first terms exist run validate_governance with required_namespaces=[the term namespace] to catch IRIs minted outside it.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : {
+      "ontology_iri" : "<ontology_iri>",
+      "path" : "<path>"
+    },
+    "title" : null
+  }, {
+    "arguments" : [ {
+      "description" : "OWL 2 profile the project must stay in: DL (default), EL, QL or RL.",
+      "name" : "profile",
+      "required" : false,
+      "title" : null
+    }, {
+      "description" : "The project's required term namespace, for the governance IRI policy.",
+      "name" : "namespace",
+      "required" : false,
+      "title" : null
+    } ],
+    "description" : "Run the full quality gate (reasoner, profile, structural checks, competency questions, governance policy) and, on approval, save the release artifacts.",
+    "icons" : null,
+    "meta" : null,
+    "name" : "release_readiness_check",
+    "rendered_description" : "Run the full quality gate (reasoner, profile, structural checks, competency questions, governance policy) and, on approval, save the release artifacts.",
+    "rendered_messages" : [ {
+      "role" : "user",
+      "text" : "Run a release-readiness check on the active ontology and tell me whether it is safe to ship.\n\n1. Call get_ontology_context, and list_ontologies to see which loaded ontologies have unsaved changes.\n2. Call run_reasoner. Treat an error (failed classification) or warning (e.g. ELK ignoring SWRL rules) as a release finding, not a side note.\n3. Call run_qc_suite with stages=[\"reasoner\",\"profile\",\"structural\",\"cqs\"] and owl_profile=\"<profile>\". A stage skipped for missing backing data (e.g. no competency questions stored) is fine — report the skip reason. If the project has a SHACL shapes file, add the \"shacl\" stage with shacl_shapes_path.\n4. Call validate_governance with owl_profile=\"<profile>\", required_annotations=[\"label\",\"definition\"] and required_namespaces=[\"<namespace>\"] — report policy violations per check (profile leaks, wrong-namespace IRIs, missing annotations, import-layering).\n5. If the active ontology has a saved document, call diff_ontologies with right_document= that file to summarise exactly what changed since the last save.\n6. Summarise every gate and finding by severity and give a clear ship / do-not-ship verdict. DO NOT save anything until I approve; after approval, call save_ontology (all=true if several ontologies are dirty) and — when there are locally-loaded imports — write_catalog so the module re-opens offline.",
+      "type" : "text"
+    } ],
+    "sample_arguments" : {
+      "namespace" : "<namespace>",
+      "profile" : "<profile>"
+    },
+    "title" : null
+  } ],
+  "snapshot_version" : 1
+}
