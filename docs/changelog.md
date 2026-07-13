@@ -21,7 +21,7 @@ each section is also published as the body of its
 
 ---
 
-## [0.5.1] - 2026-07-12
+## [0.5.1] - Unreleased
 
 **A compatibility-and-contract hardening release: the 0.5.0 MCP surface is now guarded by machine-readable
 goldens, and the first versioned project-policy/QC contracts are defined and adversarially tested without
@@ -32,17 +32,19 @@ changing interactive runtime behavior.** Tool and guided-prompt counts remain **
   prompts. Tool goldens capture names, descriptions, complete input schemas, and the manual's documented
   result fields; prompt goldens capture argument contracts and deterministic rendered messages. The harness
   rejects removed/changed arguments, new required prompt arguments, dropped documented result fields,
-  unreviewed prompt-text drift, and duplicate or undocumented registrations while permitting explicitly
-  reviewed additive optional surface.
+  unreviewed tool-description or prompt-text drift, and duplicate or undocumented registrations while
+  permitting explicitly reviewed additive optional surface. Published baselines are immutable, prompt
+  documentation is checked one-for-one, and canonical snapshots use LF on every platform.
 - **Project-policy v1 JSON Schema plus three validated YAML examples**: minimal, general OWL, and OBO-oriented.
   The schema rejects unknown/future fields and malformed core types, constrains stage/profile/severity
   vocabularies and timeouts, and requires a lockfile or validation asset block when the selected mode/stage
   needs it. Filesystem and network defaults are explicit in every example.
 - **Surface-neutral ontology-engineering contracts** for project coordinates, full workspace/session/
   semantic/document revision envelopes, findings, validator stages, checksum artifacts, and aggregate gates.
-  Their JSON shape is published as a packaged versioned schema. The pure gate aggregator distinguishes a
-  policy `fail` from an execution `error`; a required missing/skipped/errored stage fails closed and can never
-  become a vacuous pass.
+  Their JSON shape is published as a packaged versioned schema. Both direct/Jackson construction and the
+  pure gate aggregator distinguish a policy `fail` from an execution `error`; a required
+  missing/skipped/errored stage fails closed and can never become a vacuous pass. A supplied strict mapper
+  rejects unknown and duplicate JSON fields.
 - Documentation for the policy/contract boundary, schema limitations, examples, gate semantics, and golden
   regeneration workflow.
 
@@ -50,6 +52,13 @@ changing interactive runtime behavior.** Tool and guided-prompt counts remain **
 - Surefire now resolves the aligned embedded Jackson 2.20.1 stack before Protégé's provided OSGi jars.
   Protégé privately contains an old `JsonFactory`; OSGi isolates it in the application, but the flat test
   classpath could combine it with new databind/networknt classes when the real JSON Schema validator ran.
+- Policy/contract schemas now enforce explicit IRI, date, canonical UUID, safe drive-path, DNS/IP host, and
+  gate-detail patterns even when a validator treats JSON Schema `format` as annotation-only.
+- Release preparation no longer advertises a nonexistent future jar. The public plugin descriptor remains on
+  the last published asset until the tag workflow succeeds; CI checks the advertised URL on `develop` and
+  `main`, full changelog mirrors are compared, and a strict post-publication gate controls the descriptor bump.
+- The testing guide now records the verified counts: 2,488 tests shipped at `v0.5.0` despite that tag retaining
+  a stale 2,044 label, and the current adversarial suite contains 2,520 tests.
 
 ### Compatibility
 - Existing MCP tools, guided prompts, arguments, and interactive defaults are unchanged. A policy file is not
@@ -173,6 +182,9 @@ cleans up after reconnects by itself.** Tool count is unchanged at **66**.
   hits its size cap.
 
 ### Changed
+- **Release metadata is now checked automatically.** CI and the tag workflow validate the Maven, OSGi,
+  server, design, documentation, readme, download-URL, and changelog version mirrors before a release can
+  publish, preventing a stale or internally inconsistent release bundle.
 - **Tool descriptions are ontology-neutral.** The MCP tool and parameter descriptions no longer use
   one ontology family's vocabulary in their examples: `set_prefix` and `sparql_schema` illustrate
   prefixes and CURIEs with neutral `ex:` / `example.org` placeholders, and `create_term`,

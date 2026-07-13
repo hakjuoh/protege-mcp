@@ -2,11 +2,9 @@ package io.github.hakjuoh.protege_mcp.contracts;
 
 import java.util.Map;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /** Checksum-addressed report or release artifact referenced by a gate result. */
-@JsonIgnoreProperties(ignoreUnknown = false)
 public record ArtifactReference(
         @JsonProperty("path") String path,
         @JsonProperty("sha256") String sha256,

@@ -18,24 +18,32 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
 
-At the time of writing: **2,512 tests, green**, across `tools`, `prompts`, `contracts`, `oauth`, `server`,
+At the time of writing: **2,520 tests, green**, across `tools`, `prompts`, `contracts`, `oauth`, `server`,
 `chat`, `config`, and the pure helpers of `ui`. Coverage is measured by **JaCoCo** (`mvn verify`) and a floor on
 the `tools`/`server`/`oauth` layers gates against regressions; the EDT/subprocess-bound `ui`/`chat`
 surfaces are intentionally not gated.
 
+Historical correction: the `v0.5.0` tag's copy of this page still said 2,044, but that tag's verified
+release commit records the actual clean run as **2,488 tests**. The count above comes from the current
+Surefire XML reports after a clean build.
+
 ## Public-contract and policy-schema harnesses
 
 - `PublicContractSnapshotTest` pins the 0.5.0 baseline for all 66 runtime tool registrations and 11
-  prompt registrations. The tool goldens combine MCP input schemas with the manual's documented result
-  fields; prompt goldens also render every template with deterministic sentinel arguments. Compatibility
-  checks allow additive optional surface while rejecting removed/changed arguments, new required prompt
-  arguments, dropped result fields, and unreviewed workflow-text drift.
+  prompt registrations. The tool goldens combine all MCP registration metadata and input schemas with
+  the manual's documented result fields; prompt goldens also render every template with deterministic
+  sentinel arguments. Compatibility checks allow additive optional surface while rejecting
+  removed/changed arguments, new required prompt arguments, dropped result fields, unreviewed descriptions,
+  workflow text or metadata, and undocumented registrations. Published baselines cannot be overwritten;
+  snapshots are canonical LF files on every platform.
 - `ProjectPolicySchemaTest` validates the minimal, general-OWL, and OBO YAML examples against the packaged
   policy v1 JSON Schema. Adversarial cases cover unknown/future fields, unsafe project roots, malformed
-  identities and types, duplicate/unknown stages, invalid timeouts, and missing lock/stage assets.
+  identities/IRIs/dates/host allowlists and types, duplicate/unknown stages, invalid timeouts, and missing
+  lock/stage assets.
 - `ContractRecordsTest` round-trips the project/revision/finding/stage/gate records through Jackson and the
   packaged JSON Schema, then attacks missing/skipped/error stages, severity thresholds, duplicate stages,
-  unknown fields, malformed fingerprints/UUIDs, invalid counts, and caller collection mutation.
+  unknown/duplicate JSON fields, malformed fingerprints/non-canonical UUIDs, forged gate status/findings/
+  counts, optional-stage semantics, and caller collection mutation.
 
 The direct aligned Jackson dependencies intentionally precede Protégé's provided jars in `pom.xml`.
 Protégé's OSGi jar contains an old private `JsonFactory`; OSGi isolates it at runtime, but Surefire is a

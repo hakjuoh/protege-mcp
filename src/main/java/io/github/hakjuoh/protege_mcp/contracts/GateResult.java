@@ -3,19 +3,15 @@ package io.github.hakjuoh.protege_mcp.contracts;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * Strict, composable QC result. A required skipped/missing/errored stage yields {@link GateStatus#ERROR};
  * a completed policy violation yields {@link GateStatus#FAIL}.
  */
-@JsonIgnoreProperties(ignoreUnknown = false)
 public record GateResult(
         @JsonProperty("gate") GateStatus gate,
         @JsonProperty("policy_version") int policyVersion,
@@ -44,12 +40,68 @@ public record GateResult(
         if (stagesRan < 0 || stagesSkipped < 0 || stagesRan + stagesSkipped != stages.size()) {
             throw new IllegalArgumentException("stage counts must be non-negative and equal stages.size()");
         }
-        Set<String> names = new LinkedHashSet<>();
+        Map<String, StageResult> byName = new LinkedHashMap<>();
+        int actualRan = 0;
+        int actualSkipped = 0;
+        List<Finding> stagedFindings = new ArrayList<>();
         for (StageResult stage : stages) {
-            if (!names.add(stage.stage())) {
+            if (byName.putIfAbsent(stage.stage(), stage) != null) {
                 throw new IllegalArgumentException("duplicate stage result: " + stage.stage());
             }
+            if (stage.status() == StageStatus.SKIPPED) {
+                actualSkipped++;
+            } else {
+                actualRan++;
+            }
+            stagedFindings.addAll(stage.findings());
         }
+        if (stagesRan != actualRan || stagesSkipped != actualSkipped) {
+            throw new IllegalArgumentException("stage counts do not match stage statuses");
+        }
+        if (!findings.equals(stagedFindings)) {
+            throw new IllegalArgumentException("findings must equal the ordered findings from stages");
+        }
+
+        Object failOnValue = details.get("fail_on");
+        if (!(failOnValue instanceof String)) {
+            throw new IllegalArgumentException("details.fail_on must be info, warning, or error");
+        }
+        FindingSeverity failOn = FindingSeverity.fromJson((String) failOnValue);
+        List<String> missingRequired = new ArrayList<>();
+        boolean requiredExecutionError = false;
+        boolean requiredPolicyFailure = false;
+        for (String required : requiredStages) {
+            StageResult stage = byName.get(required);
+            if (stage == null) {
+                missingRequired.add(required);
+                requiredExecutionError = true;
+                continue;
+            }
+            if (stage.status() == StageStatus.ERROR || stage.status() == StageStatus.SKIPPED) {
+                requiredExecutionError = true;
+            }
+            if (stage.status() == StageStatus.FAIL
+                    || stage.findings().stream().anyMatch(f -> f.severity().reaches(failOn))) {
+                requiredPolicyFailure = true;
+            }
+        }
+        List<String> declaredMissing = detailStrings(details.get("missing_required_stages"));
+        if (!missingRequired.equals(declaredMissing)) {
+            throw new IllegalArgumentException("details.missing_required_stages must match absent required stages");
+        }
+        GateStatus expected = requiredExecutionError ? GateStatus.ERROR
+                : requiredPolicyFailure ? GateStatus.FAIL : GateStatus.PASS;
+        if (gate != expected) {
+            throw new IllegalArgumentException("gate must be " + expected.json()
+                    + " for the supplied required stages and fail_on threshold");
+        }
+        Map<String, Object> normalizedDetails = new LinkedHashMap<>(details);
+        normalizedDetails.put("fail_on", failOn.json());
+        if (normalizedDetails.containsKey("missing_required_stages")) {
+            normalizedDetails.put("missing_required_stages",
+                    Collections.unmodifiableList(new ArrayList<>(declaredMissing)));
+        }
+        details = Collections.unmodifiableMap(normalizedDetails);
     }
 
     /** Aggregate completed stage results under strict required-stage semantics. */
@@ -111,5 +163,22 @@ public record GateResult(
         }
         return new GateResult(gate, policyVersion, semanticFingerprint, required, ran, skipped,
                 stages, findings, Collections.emptyList(), details);
+    }
+
+    private static List<String> detailStrings(Object value) {
+        if (value == null) {
+            return Collections.emptyList();
+        }
+        if (!(value instanceof List<?>)) {
+            throw new IllegalArgumentException("details.missing_required_stages must be an array");
+        }
+        List<String> result = new ArrayList<>();
+        for (Object entry : (List<?>) value) {
+            if (!(entry instanceof String) || ((String) entry).trim().isEmpty()) {
+                throw new IllegalArgumentException("details.missing_required_stages entries must be strings");
+            }
+            result.add((String) entry);
+        }
+        return result;
     }
 }

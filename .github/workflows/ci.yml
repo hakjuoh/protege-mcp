@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 jobs:
@@ -15,6 +15,9 @@ jobs:
 
       - name: Check version consistency
         run: bash scripts/check-version-consistency.sh
+
+      - name: Verify advertised release asset exists
+        run: bash scripts/check-advertised-release.sh
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5

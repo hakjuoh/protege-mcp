@@ -4,11 +4,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /** Result of one validation stage before strict-gate aggregation. */
-@JsonIgnoreProperties(ignoreUnknown = false)
 public record StageResult(
         @JsonProperty("stage") String stage,
         @JsonProperty("status") StageStatus status,

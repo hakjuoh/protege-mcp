@@ -90,7 +90,7 @@ class ProjectPolicySchemaTest {
     @Test
     void rejectsUnsafeProjectRootsAndMalformedCoreTypes() throws IOException {
         Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
-        for (String path : List.of("../outside", "/tmp/project", "C:\\project")) {
+        for (String path : List.of("../outside", "/tmp/project", "C:\\project", "C:project")) {
             Map<String, Object> invalid = copy(base);
             invalid.put("project_root", path);
             assertInvalid(invalid, "project_root " + path);
@@ -99,6 +99,12 @@ class ProjectPolicySchemaTest {
         Map<String, Object> invalidIri = copy(base);
         invalidIri.put("root_ontology", "not an absolute IRI");
         assertInvalid(invalidIri, "root_ontology");
+
+        for (String iri : List.of("https://example.org/has space", "https://example.org/has\nnewline")) {
+            Map<String, Object> whitespaceIri = copy(base);
+            whitespaceIri.put("root_ontology", iri);
+            assertInvalid(whitespaceIri, "root_ontology whitespace");
+        }
 
         Map<String, Object> invalidFilesystem = copy(base);
         object(invalidFilesystem, "filesystem").put("allow_external_paths", "false");
@@ -140,6 +146,31 @@ class ProjectPolicySchemaTest {
     }
 
     @Test
+    void hostAllowlistSupportsDnsIpv4AndIpv6ButRejectsMalformedEntries() throws IOException {
+        Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
+        object(base, "network").put("allowed_hosts", List.of(
+                "ontology.example.org", "127.0.0.1", "::1", "2001:db8::1"));
+        assertValid(base, "valid host allowlist");
+
+        for (String host : List.of("...", "bad_host", "-example.org", "example..org", "::::")) {
+            Map<String, Object> invalid = readYaml(EXAMPLES.resolve("minimal.yaml"));
+            object(invalid, "network").put("allowed_hosts", List.of(host));
+            assertInvalid(invalid, "invalid allowed host " + host);
+        }
+    }
+
+    @Test
+    void waiverExpiryRequiresAnIsoDateShapeEvenWhenFormatIsAnnotationOnly() throws IOException {
+        Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
+        object(base, "validation").put("waivers", List.of(Map.of(
+                "rule_id", "annotation.definition.required",
+                "reason", "Migration window",
+                "owner", "ontology-team",
+                "expires", "banana")));
+        assertInvalid(base, "malformed waiver expiry");
+    }
+
+    @Test
     void lockedImportsAndRequiredAssetStagesFailClosedStructurally() throws IOException {
         Map<String, Object> base = readYaml(EXAMPLES.resolve("general-owl.yaml"));
 
@@ -170,6 +201,11 @@ class ProjectPolicySchemaTest {
     private static void assertInvalid(Map<String, Object> policy, String caseName) {
         ValidationResponse response = VALIDATOR.validate(schema, policy);
         assertFalse(response.valid(), () -> caseName + " unexpectedly passed");
+    }
+
+    private static void assertValid(Map<String, Object> policy, String caseName) {
+        ValidationResponse response = VALIDATOR.validate(schema, policy);
+        assertTrue(response.valid(), () -> caseName + ": " + response.errorMessage());
     }
 
     private static Map<String, Object> readYaml(Path path) throws IOException {

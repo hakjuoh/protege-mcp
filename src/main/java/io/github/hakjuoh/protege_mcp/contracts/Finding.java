@@ -2,11 +2,9 @@ package io.github.hakjuoh.protege_mcp.contracts;
 
 import java.util.Map;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /** Common validator finding with an escape hatch for lossless validator-specific detail. */
-@JsonIgnoreProperties(ignoreUnknown = false)
 public record Finding(
         @JsonProperty("id") String id,
         @JsonProperty("source") String source,

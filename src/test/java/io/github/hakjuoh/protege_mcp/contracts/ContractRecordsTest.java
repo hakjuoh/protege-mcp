@@ -27,7 +27,7 @@ import io.modelcontextprotocol.json.schema.jackson2.DefaultJsonSchemaValidator;
 /** Unit and adversarial tests for the surface-neutral M0 contract records. */
 class ContractRecordsTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = ContractJson.mapper();
     private static final DefaultJsonSchemaValidator VALIDATOR = new DefaultJsonSchemaValidator(JSON);
     private static final String WORKSPACE = "8a15d9e8-828f-4d94-9d45-0a31e92d28eb";
     private static final String HASH_A = "sha256:" + "a".repeat(64);
@@ -129,6 +129,18 @@ class ContractRecordsTest {
     }
 
     @Test
+    void optionalStageFindingsRemainVisibleButDoNotControlTheRequiredGate() {
+        Finding optionalError = new Finding("optional-error", "cqs", FindingSeverity.ERROR,
+                "An optional competency question failed.", null, null, null, null, null, Map.of());
+        GateResult result = GateResult.aggregate(1, HASH_A, List.of("profile"), List.of(
+                StageResult.pass("profile", Collections.emptyList()),
+                StageResult.fail("cqs", List.of(optionalError))), FindingSeverity.WARNING);
+
+        assertEquals(GateStatus.PASS, result.gate());
+        assertEquals(List.of(optionalError), result.findings());
+    }
+
+    @Test
     void executionErrorTakesPrecedenceOverASeparatePolicyFailure() {
         GateResult result = GateResult.aggregate(1, HASH_A, List.of("profile", "shacl"), List.of(
                 StageResult.fail("profile", List.of(warning())),
@@ -153,6 +165,8 @@ class ContractRecordsTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new ModelRevision("not-a-uuid", 0, HASH_A, HASH_B));
         assertThrows(IllegalArgumentException.class,
+                () -> new ModelRevision("1-2-3-4-5", 0, HASH_A, HASH_B));
+        assertThrows(IllegalArgumentException.class,
                 () -> new ModelRevision(WORKSPACE, -1, HASH_A, HASH_B));
         assertThrows(IllegalArgumentException.class,
                 () -> new ModelRevision(WORKSPACE, 0, "sha256:abc", HASH_B));
@@ -163,6 +177,63 @@ class ContractRecordsTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new GateResult(GateStatus.PASS, 1, HASH_A, List.of("profile"), 0, 0,
                         List.of(StageResult.pass("profile", List.of())), List.of(), List.of(), Map.of()));
+    }
+
+    @Test
+    void directAndJacksonConstructionCannotForgeAContradictoryGate() throws Exception {
+        StageResult pass = StageResult.pass("profile", List.of());
+        StageResult error = StageResult.error("profile", "Reasoner unavailable.");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> new GateResult(GateStatus.PASS, 1, HASH_A, List.of("profile"), 1, 0,
+                        List.of(error), List.of(), List.of(), Map.of("fail_on", "warning")));
+        assertThrows(IllegalArgumentException.class,
+                () -> new GateResult(GateStatus.PASS, 1, HASH_A, List.of("reasoner"), 1, 0,
+                        List.of(pass), List.of(), List.of(), Map.of("fail_on", "warning")));
+        assertThrows(IllegalArgumentException.class,
+                () -> new GateResult(GateStatus.PASS, 1, HASH_A, List.of("profile"), 0, 1,
+                        List.of(pass), List.of(), List.of(), Map.of("fail_on", "warning")));
+        assertThrows(IllegalArgumentException.class,
+                () -> new GateResult(GateStatus.PASS, 1, HASH_A, List.of("profile"), 1, 0,
+                        List.of(pass), List.of(warning()), List.of(), Map.of("fail_on", "warning")));
+        assertThrows(IllegalArgumentException.class,
+                () -> new GateResult(GateStatus.PASS, 1, HASH_A, List.of("profile"), 1, 0,
+                        List.of(pass), List.of(), List.of(), Map.of()));
+
+        GateResult forged = new GateResult(GateStatus.PASS, 1, HASH_A, List.of("profile"), 1, 0,
+                List.of(pass), List.of(), List.of(), Map.of("fail_on", "warning"));
+        String json = JSON.writeValueAsString(forged).replace("\"gate\":\"pass\"", "\"gate\":\"error\"");
+        assertThrows(JsonProcessingException.class, () -> JSON.readValue(json, GateResult.class));
+    }
+
+    @Test
+    void packagedSchemaRejectsNonCanonicalIdentityAndMissingGateThreshold() {
+        Map<String, Object> revision = JSON.convertValue(
+                new ModelRevision(WORKSPACE, 1, HASH_A, HASH_B), new TypeReference<>() { });
+        revision.put("workspace_id", "1-2-3-4-5");
+        assertSchemaInvalid(revision, "non-canonical workspace UUID");
+
+        GateResult gate = GateResult.aggregate(1, HASH_A, List.of("profile"),
+                List.of(StageResult.pass("profile", List.of())), FindingSeverity.WARNING);
+        Map<String, Object> gateJson = JSON.convertValue(gate, new TypeReference<>() { });
+        object(gateJson, "details").remove("fail_on");
+        assertSchemaInvalid(gateJson, "gate without fail_on");
+    }
+
+    @Test
+    void gateNormalizesThresholdAndProtectsSemanticDetailLists() {
+        List<String> declaredMissing = new ArrayList<>(List.of("reasoner"));
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("fail_on", "WARNING");
+        details.put("missing_required_stages", declaredMissing);
+        GateResult result = new GateResult(GateStatus.ERROR, 1, HASH_A, List.of("reasoner"),
+                0, 0, List.of(), List.of(), List.of(), details);
+
+        declaredMissing.clear();
+        assertEquals("warning", result.details().get("fail_on"));
+        assertEquals(List.of("reasoner"), result.details().get("missing_required_stages"));
+        assertThrows(UnsupportedOperationException.class,
+                () -> ((List<?>) result.details().get("missing_required_stages")).clear());
     }
 
     @Test
@@ -189,6 +260,10 @@ class ContractRecordsTest {
         String json = JSON.writeValueAsString(new ModelRevision(WORKSPACE, 1, HASH_A, HASH_B));
         String withUnknown = json.substring(0, json.length() - 1) + ",\"future\":true}";
         assertThrows(JsonProcessingException.class, () -> JSON.readValue(withUnknown, ModelRevision.class));
+
+        String duplicate = json.substring(0, json.length() - 1)
+                + ",\"workspace_id\":\"" + WORKSPACE + "\"}";
+        assertThrows(JsonProcessingException.class, () -> JSON.readValue(duplicate, ModelRevision.class));
     }
 
     @Test
@@ -211,5 +286,15 @@ class ContractRecordsTest {
         ValidationResponse response = VALIDATOR.validate(schema, json);
         assertTrue(response.valid(), () -> type.getSimpleName() + ": " + response.errorMessage());
         assertEquals(value, JSON.readValue(JSON.writeValueAsBytes(value), type));
+    }
+
+    private static void assertSchemaInvalid(Map<String, Object> value, String caseName) {
+        ValidationResponse response = VALIDATOR.validate(schema, value);
+        assertFalse(response.valid(), () -> caseName + " unexpectedly passed");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> object(Map<String, Object> value, String key) {
+        return (Map<String, Object>) value.get(key);
     }
 }

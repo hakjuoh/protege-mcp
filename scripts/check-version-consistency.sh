@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
-# Fail when release metadata no longer agrees with pom.xml's project version.
+# Check source-version mirrors and the independently published plugin descriptor.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+
+require_registry_current=0
+if [[ "${1:-}" == "--require-registry-current" ]]; then
+  require_registry_current=1
+  shift
+fi
+if (( $# != 0 )); then
+  echo "Usage: $0 [--require-registry-current]" >&2
+  exit 2
+fi
 
 version="$(python3 - <<'PY'
 import xml.etree.ElementTree as ET
@@ -17,6 +27,50 @@ if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   exit 1
 fi
 
+property() {
+  local key="$1"
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; found++ } END { if (found != 1) exit 1 }' \
+    update.properties
+}
+
+if ! registry_version="$(property version)" || ! registry_download="$(property download)"; then
+  echo "STALE: update.properties must contain exactly one version and download property." >&2
+  exit 1
+fi
+if [[ ! "$registry_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "STALE: update.properties version '$registry_version' must be a released major.minor.patch." >&2
+  exit 1
+fi
+expected_download="https://github.com/hakjuoh/protege-mcp/releases/download/v${registry_version}/protege-mcp-${registry_version}.jar"
+if [[ "$registry_download" != "$expected_download" ]]; then
+  echo "STALE: update.properties download must match its advertised version ${registry_version}." >&2
+  exit 1
+fi
+
+# A descriptor may intentionally lag source while a release candidate is being prepared, but it
+# must never advertise a version newer than the source tree. The stricter mode is used only after
+# the matching GitHub release asset exists and the descriptor is ready to be published on main.
+if ! python3 - "$registry_version" "$version" <<'PY'
+import re
+import sys
+
+def core(value):
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[.-].*)?", value)
+    if not match:
+        raise SystemExit(2)
+    return tuple(map(int, match.groups()))
+
+raise SystemExit(0 if core(sys.argv[1]) <= core(sys.argv[2]) else 1)
+PY
+then
+  echo "STALE: update.properties advertises ${registry_version}, newer than source ${version}." >&2
+  exit 1
+fi
+if (( require_registry_current != 0 )) && [[ "$registry_version" != "$version" ]]; then
+  echo "STALE: published registry is ${registry_version}; expected released source ${version}." >&2
+  exit 1
+fi
+
 failed=0
 expect_line() {
   local file="$1"
@@ -27,9 +81,6 @@ expect_line() {
   fi
 }
 
-expect_line update.properties "version=${version}"
-expect_line update.properties \
-  "download=https://github.com/hakjuoh/protege-mcp/releases/download/v${version}/protege-mcp-${version}.jar"
 expect_line src/main/java/io/github/hakjuoh/protege_mcp/server/McpServerManager.java \
   "    public static final String SERVER_VERSION = \"${version}\";"
 expect_line docs/_config.yml "version: ${version}"
@@ -57,12 +108,23 @@ for changelog in CHANGELOG.md docs/changelog.md; do
   fi
 done
 
-# These rendered docs must consume docs/_config.yml instead of duplicating a
-# literal that is easy to miss on the next release.
-if ! grep -qF 'v{{ site.version }}' docs/check-for-plugins.md; then
-  echo "STALE: docs/check-for-plugins.md must render site.version." >&2
+extract_current_changelog() {
+  local file="$1"
+  awk -v header="## [${version}]" '
+    index($0, header) == 1 { printing = 1 }
+    printing && index($0, "## [") == 1 && index($0, header) != 1 { exit }
+    printing { print }
+  ' "$file"
+}
+root_changelog="$(extract_current_changelog CHANGELOG.md)"
+docs_changelog="$(extract_current_changelog docs/changelog.md)"
+if [[ "$root_changelog" != "$docs_changelog" ]]; then
+  echo "STALE: CHANGELOG.md and docs/changelog.md ${version} sections differ." >&2
   failed=1
 fi
+
+# This rendered doc must consume docs/_config.yml instead of duplicating a
+# literal that is easy to miss on the next release.
 if ! grep -qF 'protege-mcp-{{ site.version }}.jar' docs/smoke-test.md; then
   echo "STALE: docs/smoke-test.md must render site.version." >&2
   failed=1
@@ -73,4 +135,8 @@ if (( failed != 0 )); then
   exit 1
 fi
 
-echo "Version consistency OK: release metadata agrees on ${version}."
+if [[ "$registry_version" == "$version" ]]; then
+  echo "Version consistency OK: source and advertised release agree on ${version}."
+else
+  echo "Version consistency OK: source is ${version}; registry safely remains on released ${registry_version}."
+fi

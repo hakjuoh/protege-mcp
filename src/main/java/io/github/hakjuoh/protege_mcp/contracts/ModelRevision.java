@@ -1,10 +1,8 @@
 package io.github.hakjuoh.protege_mcp.contracts;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /** Complete optimistic-concurrency envelope for one per-window ontology workspace. */
-@JsonIgnoreProperties(ignoreUnknown = false)
 public record ModelRevision(
         @JsonProperty("workspace_id") String workspaceId,
         @JsonProperty("session_revision") long sessionRevision,

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hakjuoh.github.io/protege-mcp/schema/ontology-engineering-contracts-v1.schema.json",
   "title": "Protégé MCP ontology-engineering contracts v1",
-  "description": "JSON contracts for the foundational project, revision, finding, stage and gate Java records. Unknown top-level fields are rejected.",
+  "description": "Structural JSON contracts for the foundational project, revision, finding, stage and gate Java records. Unknown top-level fields are rejected; cross-field gate semantics are additionally enforced by GateResult construction.",
   "oneOf": [
     {"$ref": "#/$defs/projectCoordinates"},
     {"$ref": "#/$defs/modelRevision"},
@@ -32,7 +32,11 @@
       "required": ["workspace_id", "session_revision", "semantic_fingerprint", "document_fingerprint"],
       "additionalProperties": false,
       "properties": {
-        "workspace_id": {"type": "string", "format": "uuid"},
+        "workspace_id": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+        },
         "session_revision": {"type": "integer", "minimum": 0},
         "semantic_fingerprint": {"$ref": "#/$defs/fingerprint"},
         "document_fingerprint": {"$ref": "#/$defs/fingerprint"}
@@ -115,7 +119,18 @@
           "type": "array",
           "items": {"$ref": "#/$defs/artifactReference"}
         },
-        "details": {"type": "object"}
+        "details": {
+          "type": "object",
+          "required": ["fail_on"],
+          "properties": {
+            "fail_on": {"enum": ["info", "warning", "error"]},
+            "missing_required_stages": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/nonEmptyString"},
+              "uniqueItems": true
+            }
+          }
+        }
       }
     },
     "nonEmptyString": {
@@ -126,7 +141,7 @@
     "iri": {
       "type": "string",
       "format": "uri",
-      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:"
+      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s\\u0000-\\u001F\\u007F]+$"
     },
     "fingerprint": {
       "type": "string",

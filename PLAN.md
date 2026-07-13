@@ -277,7 +277,8 @@ The common shape must not erase validator-specific detail. Original payloads rem
 The overall `gate` values are `pass`, `fail`, and `error`; individual stage status additionally permits
 `skipped`:
 
-- `pass`: every required stage completed and no finding reached its failure threshold.
+- `pass`: every required stage completed and no finding from a required stage reached its failure
+  threshold; optional-stage findings remain reportable but do not control the gate.
 - `fail`: a check ran and found a policy violation.
 - `error`: a required check could not complete or its input was invalid.
 - `skipped`: policy explicitly made the check optional or not applicable.

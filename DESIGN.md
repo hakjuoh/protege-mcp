@@ -949,7 +949,7 @@ offers an update.
 | **5. Security / settings** | **Expanded beyond the original MVP:** embedded OAuth 2.1 AS + static bearer, persistence across restarts, preferences | ✅ done |
 | **6. Status UI / multi-window / docs** | `McpServerView` with the connected-clients table + per-client revocation; per-window controllers | ✅ done |
 | **7. Shared broker** | one fixed MCP endpoint across windows and instances (§4.1 item 11); singleton lock, staged jar copies, refcount self-exit, session-pinned proxy | ✅ done |
-| **M0 contract foundations** | 0.5.0 public-contract goldens; policy v1/schema examples; surface-neutral project, revision, finding, stage, artifact, and strict gate contracts | ✅ done (0.5.1) |
+| **M0 contract subset** | 0.5.0 public-contract goldens; policy v1/schema examples; surface-neutral project, revision, finding, stage, artifact, and strict gate contracts. Workspace APIs and order-stable fingerprints remain in PLAN §6.3–6.4. | ◐ foundations delivered (0.5.1); M0 incomplete |
 | **8. Hardening** | deadlock/perf/OSGi regression coverage across all tool paths | ⏳ ongoing |
 
 **Architecture Approach B — delivered.** The in-Protégé chat assistant (§9): a `ChatView` + dedicated

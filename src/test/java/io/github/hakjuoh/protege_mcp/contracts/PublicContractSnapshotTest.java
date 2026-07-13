@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.contracts;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -27,6 +28,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.core.util.DefaultIndenter;
+import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -70,8 +73,15 @@ class PublicContractSnapshotTest {
     private static final Pattern CODE_SPAN = Pattern.compile("`([a-z][a-z0-9_]*)`");
     private static final Path CONTRACT_DIR = Path.of("src", "test", "resources", "contracts");
     private static final Path TOOL_DOCS_DIR = Path.of("docs", "tools");
+    private static final Path PROMPT_DOC = TOOL_DOCS_DIR.resolve("prompts.md");
+    /** Explicit review point for a future release that intentionally changes tool guidance. */
+    private static final Set<String> INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V050 = Set.of();
+    /** Explicit review point for titles, output schemas, annotations, metadata, or icons. */
+    private static final Set<String> INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050 = Set.of();
     /** Explicit review point for a future release that intentionally rewrites workflow guidance. */
     private static final Set<String> INTENTIONAL_PROMPT_TEXT_CHANGES_SINCE_V050 = Set.of();
+    /** Explicit review point for prompt titles, metadata, or icons. */
+    private static final Set<String> INTENTIONAL_PROMPT_METADATA_CHANGES_SINCE_V050 = Set.of();
 
     @SuppressWarnings("deprecation")
     private static final ObjectMapper JSON = new ObjectMapper()
@@ -90,8 +100,7 @@ class PublicContractSnapshotTest {
 
         String update = System.getProperty(UPDATE_PROPERTY);
         if (update != null && !update.isBlank()) {
-            assertTrue(RELEASE.matcher(update).matches(),
-                    () -> UPDATE_PROPERTY + " must be a major.minor.patch version");
+            validateUpdateVersion(update);
             Files.createDirectories(CONTRACT_DIR);
             Files.writeString(toolSnapshot(update), canonical(captureTools(update)), StandardCharsets.UTF_8);
             Files.writeString(promptSnapshot(update), canonical(capturePrompts(update)), StandardCharsets.UTF_8);
@@ -99,6 +108,13 @@ class PublicContractSnapshotTest {
 
         baselineTools = read(toolSnapshot(BASELINE));
         baselinePrompts = read(promptSnapshot(BASELINE));
+    }
+
+    @Test
+    void publishedBaselineCannotBeOverwrittenByTheUpdateSwitch() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> validateUpdateVersion(BASELINE));
+        assertTrue(error.getMessage().contains("immutable"));
     }
 
     @Test
@@ -122,6 +138,16 @@ class PublicContractSnapshotTest {
             assertNotNull(now, () -> "0.5.0 tool was removed: " + name);
             assertInputSchemaBackwardCompatible(name,
                     node(oldTool.get("input_schema")), node(now.get("input_schema")));
+            if (!INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V050.contains(name)) {
+                assertEquals(oldTool.get("description"), now.get("description"),
+                        () -> name + " changed its public tool description without review");
+            }
+            if (!INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050.contains(name)) {
+                for (String field : List.of("title", "output_schema", "annotations", "meta", "icons")) {
+                    assertEquals(oldTool.get(field), now.get(field),
+                            () -> name + " changed public tool field " + field + " without review");
+                }
+            }
 
             Set<String> oldFields = strings(oldTool.get("documented_result_fields"));
             Set<String> nowFields = strings(now.get("documented_result_fields"));
@@ -162,6 +188,12 @@ class PublicContractSnapshotTest {
                 assertEquals(oldPrompt.get("rendered_messages"), now.get("rendered_messages"),
                         () -> name + " changed its workflow instructions without review");
             }
+            if (!INTENTIONAL_PROMPT_METADATA_CHANGES_SINCE_V050.contains(name)) {
+                for (String field : List.of("title", "meta", "icons")) {
+                    assertEquals(oldPrompt.get(field), now.get(field),
+                            () -> name + " changed public prompt field " + field + " without review");
+                }
+            }
         }
     }
 
@@ -173,6 +205,16 @@ class PublicContractSnapshotTest {
             assertFalse(strings(tool.get("documented_result_fields")).isEmpty(),
                     () -> string(tool, "name") + " has no machine-captured **Returns** contract");
         }
+    }
+
+    @Test
+    void everyCurrentPromptHasExactlyOneDocumentationSection() throws IOException {
+        Set<String> runtime = entries(currentPrompts, "prompts").stream()
+                .map(prompt -> string(prompt, "name"))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> documented = documentedPromptNames();
+        assertEquals(runtime, documented, () -> "prompt documentation mismatch; missing="
+                + difference(runtime, documented) + ", extra=" + difference(documented, runtime));
     }
 
     private static Map<String, Object> captureTools(String productVersion) throws IOException {
@@ -311,6 +353,29 @@ class PublicContractSnapshotTest {
         }
     }
 
+    private static Set<String> documentedPromptNames() throws IOException {
+        assertTrue(Files.isRegularFile(PROMPT_DOC),
+                () -> "prompt documentation not found: " + PROMPT_DOC.toAbsolutePath());
+        Set<String> names = new LinkedHashSet<>();
+        for (String line : Files.readAllLines(PROMPT_DOC, StandardCharsets.UTF_8)) {
+            Matcher heading = TOOL_HEADING.matcher(line);
+            if (heading.matches()) {
+                assertTrue(names.add(heading.group(1)),
+                        () -> "duplicate prompt documentation: " + heading.group(1));
+            }
+        }
+        return names;
+    }
+
+    private static void validateUpdateVersion(String update) {
+        if (!RELEASE.matcher(update).matches()) {
+            throw new IllegalArgumentException(UPDATE_PROPERTY + " must be a major.minor.patch version");
+        }
+        if (BASELINE.equals(update)) {
+            throw new IllegalArgumentException("Published baseline " + BASELINE + " is immutable");
+        }
+    }
+
     private static void assertInputSchemaBackwardCompatible(String tool, JsonNode oldSchema,
             JsonNode currentSchema) {
         assertNotNull(currentSchema, () -> tool + " lost its input schema");
@@ -364,7 +429,9 @@ class PublicContractSnapshotTest {
     }
 
     private static String canonical(Object value) throws IOException {
-        return JSON.writerWithDefaultPrettyPrinter().writeValueAsString(value) + "\n";
+        DefaultPrettyPrinter printer = new DefaultPrettyPrinter();
+        printer.indentObjectsWith(new DefaultIndenter("  ", "\n"));
+        return JSON.writer(printer).writeValueAsString(value) + "\n";
     }
 
     private static JsonNode node(Object value) {

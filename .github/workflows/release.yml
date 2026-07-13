@@ -68,6 +68,11 @@ jobs:
             exit 1
           fi
 
+          if ! grep -Eq "^## \\[${project_version}\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md; then
+            echo "CHANGELOG.md must finalize ${project_version} from Unreleased to a YYYY-MM-DD date before tagging." >&2
+            exit 1
+          fi
+
           asset="target/protege-mcp-${project_version}.jar"
           echo "version=${project_version}" >> "$GITHUB_OUTPUT"
           echo "asset=${asset}" >> "$GITHUB_OUTPUT"
@@ -111,3 +116,5 @@ jobs:
           else
             gh release create "$TAG" "$ASSET" --title "protege-mcp $TAG" --generate-notes
           fi
+
+          echo "Release asset published. Now update update.properties on develop, run scripts/check-version-consistency.sh --require-registry-current, and only then advance main."

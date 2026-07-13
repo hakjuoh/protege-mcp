@@ -44,10 +44,13 @@ final class ContractValues {
     static String workspaceId(String value) {
         nonBlank(value, "workspace_id");
         try {
-            UUID.fromString(value);
-            return value;
+            String canonical = UUID.fromString(value).toString();
+            if (!canonical.equalsIgnoreCase(value)) {
+                throw new IllegalArgumentException("workspace_id must use canonical UUID syntax");
+            }
+            return canonical;
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("workspace_id must be a UUID", e);
+            throw new IllegalArgumentException("workspace_id must be a canonical UUID", e);
         }
     }
 
