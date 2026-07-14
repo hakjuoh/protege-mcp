@@ -76,12 +76,56 @@ jobs:
             exit 1
           fi
 
-          asset="target/protege-mcp-${project_version}.jar"
+          cli_asset="cli/target/protege-mcp-cli-${project_version}-all.jar"
           echo "version=${project_version}" >> "$GITHUB_OUTPUT"
-          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+          echo "cli_asset=${cli_asset}" >> "$GITHUB_OUTPUT"
 
       - name: Build, test, and enforce coverage
         run: mvn -B clean verify
+
+      - name: Locate plugin release asset
+        id: assets
+        env:
+          VERSION: ${{ steps.project.outputs.version }}
+        run: |
+          # Legacy tags (v0.1.0 through v0.5.1) predate the reactor split and build the plugin
+          # jar at the repository root target/. A workflow_dispatch republish of such a tag runs
+          # THIS workflow file (dispatch uses the selected branch's workflow, not the tag's), so
+          # fall back to the legacy path when the modern one is absent.
+          asset="plugin/target/protege-mcp-${VERSION}.jar"
+          if [ ! -f "$asset" ] && [ -f "target/protege-mcp-${VERSION}.jar" ]; then
+            asset="target/protege-mcp-${VERSION}.jar"
+          fi
+          test -f "$asset"
+          echo "asset=${asset}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify standalone CLI and prepare checksums/notices
+        env:
+          VERSION: ${{ steps.project.outputs.version }}
+          PLUGIN_ASSET: ${{ steps.assets.outputs.asset }}
+          CLI_ASSET: ${{ steps.project.outputs.cli_asset }}
+        run: |
+          test -f "$PLUGIN_ASSET"
+          # Checksums must verify with `sha256sum -c` after download, so record the bare basename
+          # rather than the CI-workspace-relative path.
+          ( cd "$(dirname "$PLUGIN_ASSET")" && sha256sum "$(basename "$PLUGIN_ASSET")" ) \
+            > "${PLUGIN_ASSET}.sha256"
+          # The cli module and THIRD_PARTY_NOTICES.md were introduced in 0.6.0. Legacy tags (v0.1.0
+          # through v0.5.1) can still be manually republished via workflow_dispatch, so treat the CLI
+          # artifact and notices as present-only, not hard requirements.
+          if [ -f "$CLI_ASSET" ]; then
+            if jar tf "$CLI_ASSET" | grep -q '^org/protege/'; then
+              echo "Standalone CLI unexpectedly contains Protégé editor classes." >&2
+              exit 1
+            fi
+            work="$(mktemp -d)"
+            (cd "$work" && java -jar "$GITHUB_WORKSPACE/$CLI_ASSET" --version)
+            ( cd "$(dirname "$CLI_ASSET")" && sha256sum "$(basename "$CLI_ASSET")" ) \
+              > "${CLI_ASSET}.sha256"
+          else
+            echo "No CLI artifact in this (legacy) tag; skipping the standalone CLI checks."
+          fi
+          cp LICENSE "protege-mcp-${VERSION}-LICENSE.txt"
 
       - name: Build release notes from CHANGELOG.md
         id: notes
@@ -111,19 +155,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release_tag.outputs.tag }}
-          ASSET: ${{ steps.project.outputs.asset }}
+          ASSET: ${{ steps.assets.outputs.asset }}
+          CLI_ASSET: ${{ steps.project.outputs.cli_asset }}
+          VERSION: ${{ steps.project.outputs.version }}
           HAVE_NOTES: ${{ steps.notes.outputs.have_notes }}
         run: |
           test -f "$ASSET"
+          # Assemble the asset list. The CLI artifact and THIRD_PARTY_NOTICES.md are 0.6.0+ additions;
+          # a legacy-tag republish has neither, so include each only when present.
+          assets=("$ASSET" "${ASSET}.sha256" "protege-mcp-${VERSION}-LICENSE.txt")
+          if [ -f "$CLI_ASSET" ]; then
+            assets+=("$CLI_ASSET" "${CLI_ASSET}.sha256")
+          fi
+          if [ -f THIRD_PARTY_NOTICES.md ]; then
+            assets+=(THIRD_PARTY_NOTICES.md)
+          fi
           # Re-cut friendly: a moved tag re-triggers this workflow when a release for $TAG may already
           # exist. Delete the existing release first (a no-op on a first release) so `gh release create`
           # always runs fresh and succeeds instead of failing with "release already exists". The git tag
           # itself is preserved (no --cleanup-tag), and the asset is rebuilt from the tagged commit above.
           gh release delete "$TAG" --yes 2>/dev/null || true
           if [ "$HAVE_NOTES" = "true" ]; then
-            gh release create "$TAG" "$ASSET" --title "protege-mcp $TAG" --notes-file RELEASE_NOTES.md
+            gh release create "$TAG" "${assets[@]}" --title "protege-mcp $TAG" --notes-file RELEASE_NOTES.md
           else
-            gh release create "$TAG" "$ASSET" --title "protege-mcp $TAG" --generate-notes
+            gh release create "$TAG" "${assets[@]}" --title "protege-mcp $TAG" --generate-notes
           fi
 
           echo "Release asset published. Now update update.properties on develop, run scripts/check-version-consistency.sh --require-registry-current, and only then advance main (whose CI enforces the strict registry gate)."

@@ -1,0 +1,448 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hakjuoh.github.io/protege-mcp/schema/project-policy-v1.schema.json",
+  "title": "Protégé MCP project policy v1",
+  "description": "Version-controlled ontology-project policy. Unknown fields are rejected in v1.",
+  "type": "object",
+  "required": ["version", "project_id", "root_ontology"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "project_id": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "root_ontology": {
+      "$ref": "#/$defs/iri"
+    },
+    "project_root": {
+      "$ref": "#/$defs/safeRelativePath",
+      "default": "."
+    },
+    "prefixes": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/iri"
+      },
+      "default": {}
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow_external_paths": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "default": {
+        "allow_external_paths": false
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "enum": ["deny", "allow"],
+          "default": "deny"
+        },
+        "allowed_hosts": {
+          "type": "array",
+          "description": "Each entry is an RFC 1123 hostname containing at least one letter (digits, dots, and hyphens allowed; underscores are intentionally rejected), a strict IPv4 address (all-numeric dotted entries are validated as IPv4, so 127.0.0.999 is rejected), or a textual IPv6 address per the RFC 3986 IPv6address grammar, which includes every IPv4-mapped and IPv4-embedded tail form.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "oneOf": [
+              {
+                "pattern": "^(?=.{1,253}$)(?=.*[A-Za-z])[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\\.?$"
+              },
+              {
+                "pattern": "^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
+              },
+              {
+                "pattern": "^(?:(?:[0-9A-Fa-f]{1,4}:){6}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))|::(?:[0-9A-Fa-f]{1,4}:){5}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))|(?:[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:){4}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))|(?:(?:[0-9A-Fa-f]{1,4}:)?[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:){3}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))|(?:(?:[0-9A-Fa-f]{1,4}:){0,2}[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:){2}(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))|(?:(?:[0-9A-Fa-f]{1,4}:){0,3}[0-9A-Fa-f]{1,4})?::[0-9A-Fa-f]{1,4}:(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))|(?:(?:[0-9A-Fa-f]{1,4}:){0,4}[0-9A-Fa-f]{1,4})?::(?:[0-9A-Fa-f]{1,4}:[0-9A-Fa-f]{1,4}|(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9]))|(?:(?:[0-9A-Fa-f]{1,4}:){0,5}[0-9A-Fa-f]{1,4})?::[0-9A-Fa-f]{1,4}|(?:(?:[0-9A-Fa-f]{1,4}:){0,6}[0-9A-Fa-f]{1,4})?::)$"
+              }
+            ]
+          },
+          "uniqueItems": true,
+          "default": []
+        }
+      },
+      "default": {
+        "default": "deny",
+        "allowed_hosts": []
+      }
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ontology_iri", "path"],
+        "additionalProperties": false,
+        "properties": {
+          "ontology_iri": {
+            "$ref": "#/$defs/iri"
+          },
+          "path": {
+            "$ref": "#/$defs/projectPath"
+          },
+          "owned_namespaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/iri"
+            },
+            "uniqueItems": true,
+            "default": []
+          }
+        }
+      },
+      "default": []
+    },
+    "reasoning": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reasoner": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "owl_profile": {
+          "enum": ["DL", "FULL", "EL", "QL", "RL", "NONE"],
+          "default": "DL"
+        },
+        "required": {
+          "type": "boolean",
+          "default": false
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000,
+          "default": 120000
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["required"],
+            "properties": {"required": {"const": true}}
+          },
+          "then": {"required": ["reasoner"]}
+        }
+      ]
+    },
+    "annotations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "properties": {
+              "$ref": "#/$defs/termReferences"
+            },
+            "required_languages": {
+              "$ref": "#/$defs/languages"
+            },
+            "one_preferred_per_language": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "definitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "properties": {
+              "$ref": "#/$defs/termReferences"
+            },
+            "required": {
+              "type": "boolean",
+              "default": false
+            },
+            "required_languages": {
+              "$ref": "#/$defs/languages"
+            }
+          }
+        },
+        "required": {
+          "$ref": "#/$defs/termReferences"
+        }
+      }
+    },
+    "iri_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required_namespaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/iri"
+          },
+          "uniqueItems": true
+        },
+        "pattern": {
+          "type": "string",
+          "minLength": 1,
+          "format": "regex"
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "required": ["status_property", "allowed_values"],
+      "additionalProperties": false,
+      "properties": {
+        "status_property": {"$ref": "#/$defs/nonEmptyString"},
+        "allowed_values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "deprecated_values": {
+          "type": "array",
+          "description": "When omitted, defaults to [\"deprecated\"] only if allowed_values contains \"deprecated\" (case-insensitive); otherwise defaults to an empty list so the default can never contradict the authored allowed_values.",
+          "items": {"$ref": "#/$defs/nonEmptyString"},
+          "uniqueItems": true
+        },
+        "replaced_by_properties": {
+          "$ref": "#/$defs/termReferences"
+        },
+        "require_replacement": {
+          "type": "boolean",
+          "description": "When omitted, defaults to true only if the effective deprecated_values list is non-empty; a lifecycle with nothing to deprecate does not have to declare replacement properties."
+        }
+      }
+    },
+    "imports": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": ["locked", "unlocked"],
+          "default": "unlocked"
+        },
+        "fail_on_missing": {
+          "type": "boolean",
+          "default": false
+        },
+        "lockfile": {
+          "$ref": "#/$defs/projectPath"
+        },
+        "network": {
+          "enum": ["deny", "allow"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["mode"],
+            "properties": {"mode": {"const": "locked"}}
+          },
+          "then": {"required": ["lockfile"]}
+        }
+      ]
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required_stages": {
+          "type": "array",
+          "items": {
+            "enum": ["reasoner", "profile", "governance", "structural", "invariants", "cqs", "shacl"]
+          },
+          "uniqueItems": true,
+          "default": ["reasoner", "profile", "governance", "structural"]
+        },
+        "fail_on": {
+          "$ref": "#/$defs/severity",
+          "default": "warning"
+        },
+        "structural": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "disabled": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/nonEmptyString"
+              },
+              "uniqueItems": true,
+              "default": []
+            },
+            "severity_overrides": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/severity"
+              },
+              "default": {}
+            }
+          }
+        },
+        "invariants": {
+          "type": "object",
+          "required": ["paths"],
+          "additionalProperties": false,
+          "properties": {
+            "paths": {
+              "$ref": "#/$defs/pathList"
+            }
+          }
+        },
+        "shacl": {
+          "type": "object",
+          "required": ["paths"],
+          "additionalProperties": false,
+          "properties": {
+            "paths": {
+              "$ref": "#/$defs/pathList"
+            }
+          }
+        },
+        "competency_questions": {
+          "type": "object",
+          "required": ["convention"],
+          "additionalProperties": false,
+          "properties": {
+            "convention": {
+              "enum": ["robot-sparql-dir", "sidecar-manifest", "ontology-annotations"]
+            },
+            "path": {
+              "$ref": "#/$defs/projectPath"
+            }
+          }
+        },
+        "waivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rule_id", "reason", "owner"],
+            "additionalProperties": false,
+            "properties": {
+              "rule_id": {
+                "$ref": "#/$defs/nonEmptyString"
+              },
+              "focus_iri": {
+                "$ref": "#/$defs/iri"
+              },
+              "reason": {
+                "$ref": "#/$defs/nonEmptyString"
+              },
+              "owner": {
+                "$ref": "#/$defs/nonEmptyString"
+              },
+              "expires": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:[0-9]{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12][0-9]|3[01])|(?:0[469]|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:[02468][048]|[13579][26])00)-02-29)$"
+              }
+            }
+          },
+          "default": []
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["required_stages"],
+            "properties": {"required_stages": {"contains": {"const": "invariants"}}}
+          },
+          "then": {"required": ["invariants"]}
+        },
+        {
+          "if": {
+            "required": ["required_stages"],
+            "properties": {"required_stages": {"contains": {"const": "cqs"}}}
+          },
+          "then": {"required": ["competency_questions"]}
+        },
+        {
+          "if": {
+            "required": ["required_stages"],
+            "properties": {"required_stages": {"contains": {"const": "shacl"}}}
+          },
+          "then": {"required": ["shacl"]}
+        }
+      ]
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": ["rdfxml", "turtle", "functional", "owlxml", "obo"],
+          "default": "turtle"
+        },
+        "output_dir": {
+          "$ref": "#/$defs/projectPath"
+        },
+        "require_version_iri": {
+          "type": "boolean",
+          "default": true
+        },
+        "require_clean_round_trip": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "iri": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^ \\u0000-\\u001F\\u007F]+$"
+    },
+    "safeRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![/\\\\])(?![A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"
+    },
+    "projectPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "severity": {
+      "enum": ["error", "warning", "info"]
+    },
+    "termReferences": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "pathList": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/projectPath"
+      },
+      "uniqueItems": true
+    }
+  }
+}

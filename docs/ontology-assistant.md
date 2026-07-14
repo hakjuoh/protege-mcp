@@ -32,6 +32,16 @@ So the assistant reads and edits through **exactly the same tools** an external 
 - The **read-only** and **confirm-each-write** gates still apply — the chat cannot escalate past them.
 - **No API key is stored by Protégé.** Each CLI uses your existing login (Claude subscription/keychain;
   `codex login`).
+- **Axiom edits default to the transactional change-set path.** Each Claude turn appends a write-workflow
+  steering system prompt, and each new Codex thread opens with the same preamble (a resumed thread
+  already carries it). It tells the model to preview each axiom edit with `preview_change_set` — or
+  `create_terms`/`create_properties` with `preview=true` — review the isolated policy/QC gate, and only
+  then `commit_change_set` against the exact revision it previewed. High-level operations without a
+  change-set equivalent (rename/move/deprecate/delete, document operations) keep their own previews, and
+  the direct axiom tools remain a disclosed fallback reserved for servers without the change-set tools
+  or an edit you explicitly direct; the steering grants no bypass — the read-only and confirm-each-write
+  gates apply to every write tool unchanged, whether the model follows it or not (the isolated QC and
+  revision re-checks are what the change-set path adds).
 
 ## Prerequisites
 

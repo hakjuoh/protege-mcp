@@ -1,6 +1,8 @@
 version: 1
 project_id: example-product-ontology
 root_ontology: https://example.org/ontology
+# '.' is the directory that contains .protege-mcp/ (or the policy's own directory elsewhere),
+# so ontology.ttl and modules/ sit beside .protege-mcp/, not inside it.
 project_root: .
 
 prefixes:
@@ -46,6 +48,13 @@ iri_policy:
   required_namespaces:
     - https://example.org/ontology/
   pattern: '^https://example[.]org/ontology/[A-Z][A-Za-z0-9_]+$'
+
+lifecycle:
+  status_property: ex:status
+  allowed_values: [active, deprecated]
+  deprecated_values: [deprecated]
+  replaced_by_properties: [dcterms:isReplacedBy]
+  require_replacement: true
 
 imports:
   mode: locked

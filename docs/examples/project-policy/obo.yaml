@@ -1,6 +1,7 @@
 version: 1
 project_id: example-obo-ontology
 root_ontology: http://purl.obolibrary.org/obo/example.owl
+# '.' is the directory that contains .protege-mcp/ (or the policy's own directory elsewhere).
 project_root: .
 
 prefixes:

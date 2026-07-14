@@ -81,8 +81,12 @@ expect_line() {
   fi
 }
 
-expect_line src/main/java/io/github/hakjuoh/protege_mcp/server/McpServerManager.java \
+expect_line plugin/src/main/java/io/github/hakjuoh/protege_mcp/server/McpServerManager.java \
   "    public static final String SERVER_VERSION = \"${version}\";"
+# The standalone CLI hard-codes its own version (it has no Protégé/Maven filtering); keep it in the gate
+# so a release cannot ship a stale `--version`.
+expect_line cli/src/main/java/io/github/hakjuoh/protege_mcp/cli/Main.java \
+  "    public static final String VERSION = \"${version}\";"
 expect_line docs/_config.yml "version: ${version}"
 
 if ! grep -qF "SERVER_VERSION=${version}" DESIGN.md; then

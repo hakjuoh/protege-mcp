@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **66 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **78 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -60,16 +60,17 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 `get_entity` · `get_axioms_for_entity`
 
 ### [Context & validation](context-validation.html)
-`get_ontology_context` · `get_entity_context` · `validate_ontology` · `validate_governance` ·
-`diff_ontologies`
+`get_ontology_context` · `get_entity_context` · `get_model_revision` · `validate_ontology` ·
+`validate_governance` · `diff_ontologies` · `semantic_diff`
 
 ### [Safe authoring & QC](quality.html)
-`verify_ontology` · `run_qc_suite` · `shacl_validate` · `add_competency_question` · `list_competency_questions` ·
+`get_project_policy` · `validate_project_policy` · `run_project_qc` · `verify_ontology` · `run_qc_suite` · `shacl_validate` · `add_competency_question` · `list_competency_questions` ·
 `remove_competency_question` · `run_competency_questions` *(plus `apply_changes verify=` and
 `search_entities` grounding — see their category pages)*
 
 ### [Editing — entities & axioms](editing.html)
-`preview_changes` · `apply_changes` · `create_class` · `create_entity` · `create_term` ·
+`preview_changes` · `apply_changes` · `preview_change_set` · `commit_change_set` ·
+`discard_change_set` · `create_class` · `create_entity` · `create_term` ·
 `create_terms` · `create_property` · `create_properties` · `add_subclass_of` · `add_annotation` · `set_label` · `add_axiom` ·
 `remove_axiom` · `rename_entity` · `delete_entity` · `deprecate_entity` · `move_class`
 
@@ -79,6 +80,7 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 
 ### [Documents](documents.html)
 `load_ontology` · `set_active_ontology` · `merge_ontology_document` · `create_ontology` ·
+`inspect_imports` · `write_import_lock` · `verify_import_lock` · `validate_catalog` ·
 `write_catalog` · `extract_module`
 
 ### [Rules (SWRL)](rules.html)

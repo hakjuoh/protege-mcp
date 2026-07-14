@@ -7,8 +7,9 @@ nav_order: 3
 # Safe authoring & QC
 {: .no_toc }
 
-The *safe, testable authoring* tools added in **0.4.0**: run project-defined SPARQL **invariants**, a
-re-runnable **competency-question** requirements suite, and one aggregate **quality-control gate**. They
+The safe, testable authoring tools: run project-defined SPARQL **invariants**, a re-runnable
+**competency-question** requirements suite, discover a version-controlled **project policy**, and execute
+either an interactive or strict reproducible **quality-control gate**. They
 close the **propose → ground → verify → confirm** loop — pair them with `apply_changes verify=`
 ([Editing](editing.html)) and `search_entities` grounding ([Explore & search](explore-search.html)).
 
@@ -29,11 +30,13 @@ violations**: any returned row (or `ASK` true) flags it, at the item's severity.
 The overall `gate` fails when a violation reaches `fail_on`. Queries run over a shared snapshot (asserted,
 or the reasoner's inferences for items with `include_inferred=true`); `UPDATE`/`SERVICE` are rejected, and
 violation rows are reported as raw SPARQL bindings (never rendered through the UI thread). A check that
-**cannot run** — a malformed/timed-out query, an `include_inferred` invariant with no classified reasoner,
+**cannot run** — a malformed/timed-out query, an `include_inferred` invariant with no usable reasoner,
 or a rejected non-`SELECT`/`ASK` form — fails **fail-closed**: it never silently degrades to the asserted
 triples and reports a false pass.
 
-*Read-only.* A persisted invariant `profile` is reserved for a later release; use inline `queries[]`.
+*Read-only.* Inline `queries[]` remain supported. A project policy can additionally reference persisted,
+ROBOT-compatible `.rq` files for [`run_project_qc`](#run_project_qc); their leading metadata comments are
+`# id:`, `# message:`, `# severity:`, and `# include_inferred:`.
 
 **Arguments**
 
@@ -60,7 +63,7 @@ triples and reports a false pass.
   also `violation_count`, `violations` (the raw `{type,value,lang?,datatype?}` bindings), and
   `truncated: true` when those rows were capped at `limit`; an **`ASK`**-true violation reports just
   `violation_count: 1` (no `violations`); or `error` when it could not run (a query error, an
-  `include_inferred` invariant with no classified reasoner, or a rejected non-`SELECT`/`ASK` form).
+  `include_inferred` invariant with no usable reasoner, or a rejected non-`SELECT`/`ASK` form).
   A `caveats` entry flags a *soft* qualifier such as truncated inferences.
 
 **Example**
@@ -77,17 +80,119 @@ triples and reports a false pass.
 }
 ```
 
+## `get_project_policy`
+
+Discover and return the effective project policy. An explicit local `policy_path` wins; otherwise the tool
+walks from the active ontology document upward for `.protege-mcp/project.yaml`. It strictly parses YAML,
+validates schema v1, applies deterministic defaults, and checks the active ontology IRI, installed required
+reasoner, CURIEs/regexes, referenced files, project-root confinement, and symlink escapes. No policy is a
+compatible interactive state: `policy_loaded=false` and `path_mode=legacy_local_admin_unrestricted` are
+reported explicitly. *Read-only.*
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `policy_path` | string | no | discovered | Explicit local `project.yaml`; no URL schemes. |
+
+**Returns**
+
+- `policy_loaded`: boolean; whether a file was selected.
+- `valid`: boolean; schema, semantic, live-context, and path validation outcome.
+- `discovery`: `explicit`, `discovered`, or `none`.
+- `path_mode`: `policy_confined` or the reported legacy compatibility mode.
+- `active_ontology_iri`: active ontology IRI, or null for an anonymous ontology.
+- `policy_path` / `project_root`: resolved local paths when loaded.
+- `policy_digest`: SHA-256 over canonical effective policy data (comments/key order do not change it).
+- `schema_version`: integer policy schema version.
+- `policy`: effective policy object with deterministic defaults.
+- `resolved_assets`: paths grouped as modules/import lock/invariants/SHACL/CQs/release output.
+- `errors` / `warnings`: structured `{severity, code, path?, message}` validation issues.
+
+## `validate_project_policy`
+
+Run the same strict discovery, schema, semantic, reasoner, and filesystem validation as
+`get_project_policy`, but require a policy: no discovered/explicit file makes `valid=false` with a structured
+`policy_not_found` error. It never edits the YAML or ontology. Arguments and return fields are identical to
+`get_project_policy`.
+
+**Returns**
+
+- `policy_loaded`: whether a policy file was found and read.
+- `valid`: the validation verdict.
+- `discovery`: how the policy was located.
+- `path_mode`: explicit or discovered.
+- `active_ontology_iri`: the ontology the policy was resolved against.
+- `policy_path`: the resolved policy file.
+- `project_root`: the effective project root.
+- `policy_digest`: canonical digest of the effective policy.
+- `schema_version`: its schema version.
+- `policy`: the effective (defaulted) policy object.
+- `resolved_assets`: the validation assets the policy references.
+- `errors`: structured validation errors.
+- `warnings`: non-fatal issues.
+
+## `run_project_qc`
+
+Execute the effective policy as a strict gate. Policy-referenced invariant globs are expanded in sorted,
+deduplicated order; multiple SHACL graphs are unioned without using Jena's URL resolver; the configured CQ
+convention/path is loaded fail-closed. Every `validation.required_stages` entry must run against the one
+captured ontology revision. Every stage reads one private, no-network copy; one configuration-equivalent
+private reasoner supplies the logical verdict and any requested inferred query graph.
+The governance stage also evaluates policy label-language/preferred cardinality, definition
+presence/language/datatype/placeholder, lifecycle status/replacement, and waiver rules against that snapshot.
+A live waiver suppresses only its matching rule/focus and remains visible; an expired waiver is itself a finding.
+A completed policy violation is `gate=fail`; invalid configuration, wrong/
+unavailable reasoner, classification failure/timeout, malformed asset, inference degradation, or a skipped/
+errored required stage is `gate=error` and takes precedence over a separate failure. *Read-only.*
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `policy_path` | string | no | discovered | Explicit local policy path. |
+| `limit` | integer | no | 25 | Samples per stage (0–10000). |
+
+**Returns**
+
+- `gate`: `pass`, `fail`, or `error`.
+- `policy_loaded`, `policy_version`, `policy_digest`, `project_id`, `policy_path`, `project_root`.
+- `semantic_fingerprint`: fingerprint of the exact shared ontology snapshot.
+- `fingerprint_stability`, `release_stable`, `fingerprint_warnings`: cross-restart guarantee; anonymous
+  individuals explicitly degrade the digest to a same-session token.
+- `reasoner`: the reasoner selected at the shared-snapshot boundary.
+- `required_stages`, `stages_ran`, `stages_skipped`, `fail_on`, and `stages` (each includes `required` and
+  strict `status`).
+- `details`: normalized gate metadata — `{fail_on, missing_required_stages?}`. A completed reasoner stage's details include `reasoner_configuration` with requested and
+  runtime-exposed parity/caveat fields.
+- `findings`: common finding objects with `id`, `source`, `severity`, `message`, `focus_iri`, `axiom`, `path`,
+  `rule_id`, `waiver`, and optional validator `details`.
+- `artifacts`: checksum artifact references (empty until release/report artifacts are requested).
+- `snapshot_consistent`: `true` when the complete gate used the captured revision; validation no longer has a
+  live-classification gap requiring a second ontology read.
+- `validation_snapshot`: `{mode, same_snapshot, semantic_fingerprint, closure_fingerprint, stages}`. `mode` is
+  `isolated`; `stages` names every stage (including `reasoner`) that completed on that copy. A policy or asset
+  error detected before capture reports `mode=none`, `same_snapshot=false`, and
+  `closure_fingerprint=null`.
+- `resolved_assets`: exact policy assets used.
+- `surface`: `run_project_qc` (or `run_qc_suite` when invoked through its `policy_path` compatibility entry).
+- `errors`: structured policy/configuration errors when validation cannot start.
+
 ## `run_qc_suite`
 
-One aggregate quality-control gate that composes the shipping cores over **one shared snapshot** and
-collapses them to a single verdict. Stages (default `reasoner` + `profile` + `structural`): `reasoner`
+One aggregate quality-control gate that composes every stage over **one isolated shared snapshot** and
+collapses them to a single verdict. The selected reasoner's exact Protégé plugin configuration and buffering
+mode are captured with the ontology; QC does not classify or query the live reasoner.
+Stages (default `reasoner` + `profile` + `structural`): `reasoner`
 (consistency + no unsatisfiable classes), `profile` (OWL 2 profile conformance), `structural`
 (`validate_ontology`'s modelling-quality checks — only *warning*-severity smells gate), `invariants`
 (`verify_ontology`-style SPARQL invariants — pass them in `invariants`), `cqs` (the competency-question
-suite), and `shacl` (validate against the SHACL shapes in `shacl_shapes` / `shacl_shapes_path`). A stage
-whose backing data is absent (no classified reasoner, no invariants, no CQs, no SHACL shapes) is
+suite), `governance` (IRI/annotation/import-layering policy), and `shacl` (validate against the SHACL shapes in `shacl_shapes` / `shacl_shapes_path`). A stage
+whose backing data is absent (no selected reasoner, no invariants, no CQs, no SHACL shapes) is
 **skipped with a reason, never an error**; the overall `gate` is the
-worst *ran* stage versus `fail_on`.
+worst *ran* stage versus `fail_on`. Legacy calls retain that behavior. Supplying `policy_path` delegates to
+the strict `run_project_qc` semantics; `required_stages` / `error_on_missing_required` also opt an inline
+call into missing-required-to-error behavior.
 
 *Read-only.*
 
@@ -95,14 +200,18 @@ worst *ran* stage versus `fail_on`.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `stages` | array | no | `["reasoner","profile","structural"]` | Subset of `reasoner`, `profile`, `structural`, `invariants`, `cqs`, `shacl`. |
+| `stages` | array | no | `["reasoner","profile","structural"]` | Subset of `reasoner`, `profile`, `governance`, `structural`, `invariants`, `cqs`, `shacl`. |
+| `required_stages` | array | no | — | Stages that must complete; they are scheduled even when absent from `stages`. |
+| `error_on_missing_required` | boolean | no | false | Treat all requested stages (or `required_stages`) as required and return `gate=error` if one cannot run. |
+| `policy_path` | string | no | — | Use strict project-policy discovery/assets/QC. |
 | `owl_profile` | string | no | `DL` | OWL 2 profile for the `profile` stage: `DL` \| `EL` \| `QL` \| `RL`. Pass `none` or `Full` to skip the `profile` stage (reported as a skipped stage, not an error). |
 | `invariants` | array | no | — | Invariants for the `invariants` stage (same shape as `verify_ontology`'s `queries[]`). |
 | `shacl_shapes` | string | no | — | SHACL shapes graph as Turtle (inline) for the `shacl` stage. |
 | `shacl_shapes_path` | string | no | — | Local file path to a SHACL shapes document for the `shacl` stage. |
+| `required_namespaces` / `iri_pattern` / `required_annotations` / `check_ownership` | mixed | no | — | Inline `governance` stage controls. |
 | `fail_on` | string | no | `error` | Gate severity: `none` \| `warn` \| `error`. |
 | `limit` | integer | no | 25 | Max samples per check. |
-| `timeout_ms` | integer | no | 120000 | Time budget for the SPARQL and SHACL stages. |
+| `timeout_ms` | integer | no | 120000 | Time budget for isolated reasoning, SPARQL, and SHACL stages. |
 
 **Returns**
 
@@ -110,7 +219,10 @@ worst *ran* stage versus `fail_on`.
 - `fail_on`: string, the effective gate severity.
 - `stages_ran`: integer, how many stages actually ran.
 - `stages`: array, per-stage `{stage, ran, verdict?, findings_summary?, reason?}` (`verdict` is
-  `pass`/`warn`/`fail` when it ran; `reason` explains a skip). The `reasoner` stage's
+  `pass`/`info`/`warn`/`fail` when it ran; `reason` explains a skip). Strict mode additively returns
+  `policy_loaded`, `semantic_fingerprint`, `required_stages`, `stages_skipped`, `findings`, `artifacts`,
+  `fingerprint_stability`, `release_stable`, `reasoner`, `snapshot_consistent`, `validation_snapshot`, and `details`, and each stage gains
+  `required` + `status`. The `reasoner` stage's
   `findings_summary` may carry a `warning` when the ontology has SWRL rules the selected reasoner
   silently ignores (ELK) — surfaced, deliberately **not** gated (an ELK + SWRL setup can be
   intentional, but a pass must never read as "the rules were checked").

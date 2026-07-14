@@ -16,14 +16,14 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Installation](https://hakjuoh.github.io/protege-mcp/installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](https://hakjuoh.github.io/protege-mcp/connect/) | The server model (ports, OAuth vs. token) + Claude Code, Codex CLI, VS Code, Claude Desktop recipes. |
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
-| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 66 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
-| [Project policy contracts](https://hakjuoh.github.io/protege-mcp/project-policy.html) | 0.5.1 policy/schema foundations, examples, common QC contracts, and current delivery status. |
+| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 78 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
+| [Project policy & QC](https://hakjuoh.github.io/protege-mcp/project-policy.html) | Policy v1 discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [Contributing](https://hakjuoh.github.io/protege-mcp/contributing.html) | Build from source, run the tests, and add a tool. |
 | [Versioning & releases](https://hakjuoh.github.io/protege-mcp/versioning.html) · [Changelog](https://hakjuoh.github.io/protege-mcp/changelog.html) | The release scheme and notes for every version. |
 
 ## Highlights
 
-- **66 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
+- **78 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
   govern, extract modules, run SWRL rules, SPARQL and SHACL, and reason.
 - **One endpoint, any number of windows** (`0.5.0`) — a shared **broker** owns the configured port
   across every Protégé window and instance and routes each MCP session to a live window, so one fixed
@@ -34,6 +34,14 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
   **`run_qc_suite`** gate rolls up reasoner + profile + structural + invariants + CQ checks; and
   `search_entities` now returns `score`/`match_kind` + `would_mint` so an assistant grounds a term before
   minting a new one.
+- **Reproducible project QC** (`0.6.0`) — discover and validate a checked-in policy, fingerprint the active
+  ontology and loaded imports, resolve persisted invariant/CQ/multi-SHACL assets inside a confined project
+  root, and run reasoner/profile/structural/governance/invariant/CQ/SHACL checks over one isolated snapshot
+  with distinct `pass` / policy `fail` / execution `error` outcomes. The selected reasoner's exact Protégé
+  configuration is preserved without classifying or mutating the live reasoner.
+- **Import integrity inspection** (`0.6.0`) — inspect deterministic direct/transitive import graphs,
+  missing documents, cycles, source locations, and version conflicts; document loads keep the compatible
+  warning default and support strict `missing_imports=error` for project/release workflows.
 - **Edits are GUI-visible and undoable** — every edit goes through Protégé's shared `OWLModelManager`,
   so it appears in the editor immediately and joins the **Edit ▸ Undo** stack.
 - **Safe by default** — a local server, bound to loopback (`127.0.0.1`) unless you change the
@@ -78,8 +86,10 @@ cd protege-mcp
 mvn clean package
 ```
 
-The `target/` directory will contain `protege-mcp-<version>.jar` — a self-contained OSGi bundle that
-inlines the MCP + Jetty + Jackson + Jena stack (Protégé/OWLAPI/Guava/SLF4J stay `provided`). See the
+The reactor produces `plugin/target/protege-mcp-<version>.jar` (the self-contained OSGi plugin) and
+`cli/target/protege-mcp-cli-<version>-all.jar` (an executable headless Java 17 CLI). The CLI supports
+`--version`, `validate-policy --project FILE`, and asserted `diff --left FILE --right FILE` without a
+Protégé installation. See the
 [Contributing guide](https://hakjuoh.github.io/protege-mcp/contributing.html) for project layout and how
 to add a tool.
 

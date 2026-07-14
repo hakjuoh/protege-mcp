@@ -16,6 +16,13 @@ target/
 # OS
 .DS_Store
 
-# Maven
-.mvn/
+# Maven — ignore .mvn contents but NOT the directory itself, so specific files below can be
+# re-included (git cannot re-include a file whose parent directory is excluded, so the wrapper
+# directory must be re-included before the file inside it).
+.mvn/*
+!.mvn/wrapper/
+.mvn/wrapper/*
 !.mvn/wrapper/maven-wrapper.properties
+# Tracked: anchors ${maven.multiModuleProjectDirectory} to the repo root (the plugin's surefire
+# working directory and the reactor's root-anchor enforcer rule both resolve against it).
+!.mvn/extensions.xml

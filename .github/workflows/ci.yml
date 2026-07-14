@@ -42,5 +42,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: jacoco-report
-          path: target/site/jacoco/
+          path: plugin/target/site/jacoco/
           if-no-files-found: ignore

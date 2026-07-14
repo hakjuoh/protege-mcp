@@ -1,20 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
     <groupId>io.github.hakjuoh</groupId>
-    <artifactId>protege-mcp</artifactId>
-    <version>0.5.1</version>
-    <packaging>bundle</packaging>
+    <artifactId>protege-mcp-parent</artifactId>
+    <version>0.6.0</version>
+    <packaging>pom</packaging>
+    <name>protege-mcp reactor</name>
 
-    <name>protege-mcp</name>
-    <description>Model Context Protocol (MCP) server plugin for Protege Desktop.
-        Exposes the live, active ontology of a running Protege instance to external MCP
-        clients (Claude Code/Desktop, Codex, VS Code MCP, ...) over a localhost HTTP transport,
-        so that LLM-driven reads/edits flow through the shared OWLModelManager, appear in the GUI
-        immediately, and join the user's undo stack.</description>
+    <modules>
+        <module>core</module>
+        <module>plugin</module>
+        <module>cli</module>
+    </modules>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -22,21 +21,21 @@
         <!-- Java 17 is required: the MCP SDK 2.0.0 public types (Tool, CallToolRequest,
              SyncToolSpecification, ...) are records, so referencing them needs java.lang.Record
              (Java 16+) on the compile bootclasspath; the embedded MCP/Jetty bytecode is Java 17;
-             and the OSGi manifest carries Require-Capability osgi.ee=JavaSE 17. Protege must
+             and the plugin's OSGi manifest carries Require-Capability osgi.ee=JavaSE 17. Protege must
              therefore be launched on a Java 17+ JVM. See README.md "Runtime requirements". -->
         <maven.compiler.release>17</maven.compiler.release>
 
-        <!-- provided by the Protege / OWLAPI OSGi runtime (NOT embedded) -->
+        <!-- Consumed at provided scope by the plugin (all four; the Protege / OWLAPI OSGi runtime
+             supplies them) and core (owlapi only); the CLI shades OWLAPI into its executable jar
+             instead. -->
         <protege.version>5.6.6</protege.version>
         <owlapi.version>4.5.29</owlapi.version>
         <guava.version>18.0</guava.version>
         <slf4j.version>1.7.36</slf4j.version>
 
         <!-- embedded MCP stack (versions exactly as resolved by the MCP 2.0.0 dependency tree).
-             Every jackson-* module is aligned by importing jackson-bom in <dependencyManagement>, so
-             the directly-declared jackson-dataformat-yaml (also pulled transitively by the schema
-             validator) tracks this same release train instead of lagging a couple of minors behind —
-             per Jackson's same-minor guidance. -->
+             snakeyaml/reactivestreams/itu arrive transitively; their properties here are
+             documentation-only pins of the embedded stack. -->
         <mcp.version>2.0.0</mcp.version>
         <jackson.version>2.20.1</jackson.version>
         <snakeyaml.version>2.4</snakeyaml.version>
@@ -61,7 +60,7 @@
             <!-- Align every jackson-* module (including the transitive jackson-dataformat-yaml pulled
                  in by json-schema-validator, which otherwise resolves two minors behind jackson-databind)
                  to a single release train. This removes the version skew rather than leaving it to
-                 nearest-wins mediation. -->
+                 nearest-wins mediation, per Jackson's same-minor guidance. -->
             <dependency>
                 <groupId>com.fasterxml.jackson</groupId>
                 <artifactId>jackson-bom</artifactId>
@@ -72,318 +71,47 @@
         </dependencies>
     </dependencyManagement>
 
-    <dependencies>
-
-        <!-- ===================================================================== -->
-        <!-- embedded Jackson, deliberately BEFORE the provided Protégé jars    -->
-        <!-- ===================================================================== -->
-        <!-- protege-editor-owl is an OSGi distribution jar that also contains old Jackson classes.
-             Protégé's OSGi runtime isolates those from the private Jackson packages in this bundle,
-             but Surefire uses one flat classpath and resolves the first class it sees. Keep the aligned
-             direct dependencies first so headless tests exercise one coherent Jackson 2.20.1 stack
-             instead of combining Protégé's old JsonFactory with the new databind/schema validator. -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-core</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-annotations</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.dataformat</groupId>
-            <artifactId>jackson-dataformat-yaml</artifactId>
-        </dependency>
-
-        <!-- ===================================================================== -->
-        <!-- provided: supplied by the Protege / OWLAPI OSGi runtime, NOT embedded  -->
-        <!-- ===================================================================== -->
-        <dependency>
-            <groupId>edu.stanford.protege</groupId>
-            <artifactId>protege-editor-core</artifactId>
-            <version>${protege.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>edu.stanford.protege</groupId>
-            <artifactId>protege-editor-owl</artifactId>
-            <version>${protege.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>net.sourceforge.owlapi</groupId>
-            <artifactId>owlapi-osgidistribution</artifactId>
-            <version>${owlapi.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-            <version>${guava.version}</version>
-            <scope>provided</scope>
-        </dependency>
-        <!-- slf4j is provided by Protege (1.7.36). Declaring it provided here means it is NOT
-             embedded even though MCP/Jetty pull slf4j-api 2.0.16 transitively (compile). -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>${slf4j.version}</version>
-            <scope>provided</scope>
-        </dependency>
-
-        <!-- ===================================================================== -->
-        <!-- compile + embed: the MCP stack (inlined into the bundle)               -->
-        <!-- ===================================================================== -->
-        <dependency>
-            <groupId>io.modelcontextprotocol.sdk</groupId>
-            <artifactId>mcp-core</artifactId>
-            <version>${mcp.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.modelcontextprotocol.sdk</groupId>
-            <artifactId>mcp-json-jackson2</artifactId>
-            <version>${mcp.version}</version>
-        </dependency>
-
-        <!-- Reactor (MCP transport runtime) -->
-        <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-core</artifactId>
-            <version>${reactor.version}</version>
-        </dependency>
-
-        <!-- json-schema-validator also pulls jackson-dataformat-yaml plus snakeyaml and itu;
-             dataformat-yaml is direct above for classpath order, while the rest is embedded via
-             Embed-Transitive. -->
-        <dependency>
-            <groupId>com.networknt</groupId>
-            <artifactId>json-schema-validator</artifactId>
-            <version>${jsv.version}</version>
-        </dependency>
-
-        <!-- Embedded servlet host: Jetty 12 ee10 (Jakarta Servlet 6). Pulls jetty-server/http/io/
-             util/security/session transitively (all embedded). -->
-        <dependency>
-            <groupId>org.eclipse.jetty.ee10</groupId>
-            <artifactId>jetty-ee10-servlet</artifactId>
-            <version>${jetty.version}</version>
-        </dependency>
-        <!-- Force jakarta.servlet-api 6.1.0 (MCP was compiled against 6.1) over Jetty's transitive
-             6.0.0; embedded into the bundle (Protege has no jakarta.servlet on the platform). -->
-        <dependency>
-            <groupId>jakarta.servlet</groupId>
-            <artifactId>jakarta.servlet-api</artifactId>
-            <version>${jakarta.servlet.version}</version>
-        </dependency>
-
-        <!-- SPARQL engine: Apache Jena ARQ, embedded so sparql_query runs in-process over the
-             active ontology's RDF rendering. jena-core/iri/base/shaded-guava come in transitively
-             and are inlined. The jena packages are private (inlined), so they are not imported;
-             a hand-merged META-INF/services/org.apache.jena.sys.JenaSubsystemLifecycle (in
-             src/main/resources) restores RIOT/ARQ init that bnd would otherwise clobber when
-             several jena jars ship the same service file. -->
-        <dependency>
-            <groupId>org.apache.jena</groupId>
-            <artifactId>jena-arq</artifactId>
-            <version>${jena.version}</version>
-        </dependency>
-
-        <!-- SHACL engine: Apache Jena SHACL, embedded so shacl_validate (and the run_qc_suite 'shacl'
-             stage) run in-process over the active ontology's RDF rendering. jena-shacl builds on the
-             already-embedded jena-arq/jena-core; its own JenaSubsystemLifecycle (InitShacl) is hand-merged
-             into the shared META-INF/services list (see that resource) so bnd's inline collision does not
-             drop SHACL init from JenaSystem.init(). -->
-        <dependency>
-            <groupId>org.apache.jena</groupId>
-            <artifactId>jena-shacl</artifactId>
-            <version>${jena.version}</version>
-        </dependency>
-
-        <!-- Markdown parser for the Ontology Assistant transcript: assistant replies stream in as
-             Markdown, and ChatMarkdown walks the commonmark AST to emit styled runs into the chat's
-             StyledDocument. Core is zero-dependency (~211 KB); the GFM tables extension (~23 KB)
-             depends only on the core. Both are inlined like the rest of the compile scope. -->
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark</artifactId>
-            <version>${commonmark.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.commonmark</groupId>
-            <artifactId>commonmark-ext-gfm-tables</artifactId>
-            <version>${commonmark.version}</version>
-        </dependency>
-
-        <!-- ===================================================================== -->
-        <!-- test-only (scope=test, so never embedded into the bundle)              -->
-        <!-- ===================================================================== -->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>6.1.1</version>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- A real OWL 2 DL reasoner (HermiT, OWLAPI 4.x line) for the headless tests that verify the
-             apply_changes(verify) rollback path actually detects a genuine unsatisfiable class /
-             inconsistent ontology — the one leg the headless StructuralReasoner (no inference) cannot
-             cover. Test-scoped, so it is NEVER embedded into the bundle (Protégé supplies its own
-             reasoner at runtime). Its transitive owlapi-distribution is excluded so the test classpath
-             keeps a single OWLAPI — the provided owlapi-osgidistribution ${owlapi.version}. -->
-        <dependency>
-            <groupId>net.sourceforge.owlapi</groupId>
-            <artifactId>org.semanticweb.hermit</artifactId>
-            <!-- 1.3.8.431 is the OWLAPI 4.x build (the 1.3.8.4xx suffix tracks owlapi 4.x, which uses
-                 guava Optional; the 1.3.8.5xx / 1.4.x builds target owlapi 5's java.util.Optional and
-                 would NoSuchMethodError against the provided owlapi-osgidistribution ${owlapi.version}). -->
-            <version>1.3.8.431</version>
-            <scope>test</scope>
-            <exclusions>
-                <exclusion>
-                    <groupId>net.sourceforge.owlapi</groupId>
-                    <artifactId>owlapi-distribution</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-    </dependencies>
-
     <build>
         <plugins>
+            <!-- Fail fast when ${maven.multiModuleProjectDirectory} does not point at the repository
+                 root. The plugin runs its tests with this property as the working directory (see
+                 .mvn/extensions.xml); a wrong or relative value re-roots that working directory and
+                 fails the tests that read repo-root fixtures (docs/tools, docs/examples,
+                 plugin/src/test/resources/contracts) with misleading missing-file errors.
+                 A relative value cannot false-pass: enforcer aligns relative <file> entries to each
+                 module basedir, so the first module fails the rule. Accepted limits of this rule
+                 (reviewed; do not re-chase): (1) requireFilesExist canonicalizes, so a checkout
+                 reached through a symlinked or case-variant path fails loudly even though the build
+                 would be correct — the message below gives the workaround; (2) deliberately pointing
+                 MAVEN_BASEDIR or -Dmaven.multiModuleProjectDirectory at ANOTHER protege-mcp clone
+                 passes the rule and builds that clone's sources — deliberate overrides are outside
+                 this guard's threat model; (3) a tree copied without its .mvn directory always fails,
+                 by design (module-dir builds of such a tree were the original silent failure). -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.15.0</version>
-                <configuration>
-                    <release>${maven.compiler.release}</release>
-                </configuration>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.felix</groupId>
-                <artifactId>maven-bundle-plugin</artifactId>
-                <version>5.1.9</version>
-                <extensions>true</extensions>
-                <configuration>
-                    <instructions>
-                        <Bundle-Name>Protege MCP Server</Bundle-Name>
-                        <Bundle-SymbolicName>io.github.hakjuoh.protege-mcp;singleton:=true</Bundle-SymbolicName>
-                        <Bundle-Vendor>protege-mcp</Bundle-Vendor>
-
-                        <!-- Inline every compile-scope jar (the whole MCP + Jetty stack) into the
-                             bundle so a single bundle classloader resolves all reflective / lazily
-                             bound dependencies. provided-scope (Protege/OWLAPI/guava/slf4j) is not
-                             embedded. -->
-                        <Embed-Dependency>*;scope=compile;inline=true</Embed-Dependency>
-                        <Embed-Transitive>true</Embed-Transitive>
-
-                        <!-- Honour jackson/reactor/snakeyaml META-INF/versions/* overlays. -->
-                        <Multi-Release>true</Multi-Release>
-
-                        <!-- Export only our own API. -->
-                        <Export-Package>io.github.hakjuoh.protege_mcp;version=${project.version}</Export-Package>
-
-                        <!-- Do NOT import the inlined libraries (they now live inside this bundle).
-                             DO import the Protege / OWLAPI / Swing / AWT / Eclipse-registry runtime
-                             that the platform provides, with guava pinned to the 18.x line and slf4j
-                             to the 1.7.x the platform ships. The trailing residual import is marked
-                             optional so the large transitive surface of the inlined Jetty/Jackson
-                             stack does not block OSGi resolution. -->
-                        <Import-Package>
-                            !com.fasterxml.jackson.*,
-                            !reactor.*,
-                            !org.reactivestreams.*,
-                            !io.modelcontextprotocol.*,
-                            !com.networknt.*,
-                            !com.ethlo.time.*,
-                            !org.yaml.snakeyaml.*,
-                            !org.eclipse.jetty.*,
-                            !jakarta.servlet.*,
-                            !org.commonmark.*,
-                            org.protege.editor.core.*,
-                            org.protege.editor.owl.*,
-                            org.semanticweb.owlapi.*,
-                            uk.ac.manchester.cs.owlapi.modularity,
-                            com.clarkparsia.owlapi.explanation,
-                            com.clarkparsia.owlapi.explanation.util,
-                            org.slf4j;version="[1.7,2)",
-                            com.google.common.*;version="[18.0,19)",
-                            javax.swing.*,
-                            javax.swing.border.*,
-                            java.awt.*,
-                            org.eclipse.core.runtime;registry=split,
-                            *;resolution:=optional
-                        </Import-Package>
-                    </instructions>
-                </configuration>
-            </plugin>
-
-            <!-- Run the JUnit 5 tests (junit-jupiter) in the test phase. -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.5.6</version>
-            </plugin>
-
-            <!-- Coverage: measure it (report) and gate it (check). jacoco's prepare-agent sets the
-                 surefire argLine, `report` writes target/site/jacoco/, and `check` (bound to verify)
-                 enforces a conservative floor on the headless-testable layers so coverage cannot silently
-                 regress. Deliberately does NOT gate ui/chat, which are EDT/subprocess-bound and only
-                 partially coverable headless. -->
-            <plugin>
-                <groupId>org.jacoco</groupId>
-                <artifactId>jacoco-maven-plugin</artifactId>
-                <version>0.8.15</version>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.6.2</version>
                 <executions>
                     <execution>
-                        <id>prepare-agent</id>
-                        <goals>
-                            <goal>prepare-agent</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>report</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>report</goal>
-                        </goals>
-                    </execution>
-                    <execution>
-                        <id>check</id>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>check</goal>
-                        </goals>
+                        <id>require-reactor-root-anchor</id>
+                        <goals><goal>enforce</goal></goals>
                         <configuration>
                             <rules>
-                                <rule>
-                                    <element>BUNDLE</element>
-                                    <includes>
-                                        <include>io.github.hakjuoh.protege_mcp.tools.*</include>
-                                        <include>io.github.hakjuoh.protege_mcp.prompts.*</include>
-                                        <include>io.github.hakjuoh.protege_mcp.server.*</include>
-                                        <include>io.github.hakjuoh.protege_mcp.oauth.*</include>
-                                    </includes>
-                                    <limits>
-                                        <!-- Floors set just below the current measured coverage of these
-                                             layers (line ~65%, branch ~62%) so they catch a regression
-                                             without failing today; ratchet them up as coverage grows. -->
-                                        <limit>
-                                            <counter>LINE</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>0.58</minimum>
-                                        </limit>
-                                        <limit>
-                                            <counter>BRANCH</counter>
-                                            <value>COVEREDRATIO</value>
-                                            <minimum>0.55</minimum>
-                                        </limit>
-                                    </limits>
-                                </rule>
+                                <requireFilesExist>
+                                    <files>
+                                        <file>${maven.multiModuleProjectDirectory}/.mvn/extensions.xml</file>
+                                    </files>
+                                    <message>maven.multiModuleProjectDirectory does not resolve to the
+                                        repository root (the directory containing .mvn/extensions.xml).
+                                        Building with a wrong or relative value would run the plugin's
+                                        tests with the wrong working directory and fail them with
+                                        misleading missing-file errors. Launch Maven from a checkout that
+                                        still contains the .mvn directory and do not override this
+                                        property. If your checkout path goes through a symlink (or a
+                                        case-variant path), build from the physical path (`cd "$(pwd -P)"`)
+                                        or run `mvn -f pom.xml ...`, which anchors to the physical
+                                        path.</message>
+                                </requireFilesExist>
                             </rules>
                         </configuration>
                     </execution>

@@ -1,2 +1,2 @@
-src/main/resources/schema/*.json text eol=lf
-src/test/resources/contracts/*.json text eol=lf
+core/src/main/resources/schema/*.json text eol=lf
+plugin/src/test/resources/contracts/*.json text eol=lf

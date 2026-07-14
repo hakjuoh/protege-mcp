@@ -92,6 +92,148 @@ reasoner selected in Protégé (warm = 1 classification, cold = 2).
 
 ---
 
+## `preview_change_set`
+
+Normalizes structured axiom operations, applies that exact delta to a private ontology snapshot, and
+runs project-policy QC — or, when no policy exists, the default gates: **reasoner** (whenever a
+reasoner is selected in Protégé), profile, governance, and structural. The reasoner gate evaluates the
+*result* state of the changed snapshot: inconsistency or any unsatisfiable class fails the gate and
+blocks the commit, which is stricter than `apply_changes verify=rollback`'s regression check (pass
+explicit `gates` to override). With no reasoner selected the preview still works and reports
+`satisfiability_checked=false`. It creates a memory-only, workspace-scoped preview; the live ontology
+and Undo history are untouched. Entries expire after 15 minutes by default and are bounded by
+per-entry/store size limits: at most 2,000 operations per preview, at most 8,000 normalized
+changes, and an estimated 2 MiB per cached entry (oversized requests are refused before the QC
+pass runs).
+
+*Read-only preview.* Use `commit_change_set` for the guarded live edit.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `operations` | object array | yes | — | Same structured operations accepted by `preview_changes`/`apply_changes`, capped at 2,000 per preview. |
+| `strict` | boolean | no | false | Reject operations that would mint an unrecognized entity. |
+| `policy_path` | string | no | discovered | Explicit project policy. |
+| `gates` | string array | no | reasoner (when selected), profile, governance, structural | No-policy QC stages. Explicitly listed stages become **required**: a listed stage that cannot run makes the preview uncommittable. |
+| `include_impact` | string | no | asserted | `asserted` or `none`; inferred impact is handled by `semantic_diff`. |
+| `ttl_seconds` | integer | no | 900 | Lifetime from 1 through 3600 seconds. |
+
+**Returns**
+
+- `change_set_id`: the memory-only preview identity.
+- `expires_at`: the preview expiry timestamp.
+- `base_revision`: complete `{workspace_id, session_revision, semantic_fingerprint, document_fingerprint}` envelope.
+- `normalized_changes`: the exact normalized delta size.
+- `operations`: the per-operation planning detail.
+- `summary`: the planning summary (including its final-set `no_ops` count).
+- `preflight`: strict QC result for the changed snapshot.
+- `committable`: the commit decision.
+- `committable_reasons`: the explanations behind that decision.
+- `satisfiability_checked`: whether a reasoner verdict gated this preview.
+- `satisfiability_note`: present when `false` — explains that consistency/satisfiability was not
+  checked and directs the caller to distinguish no selection, a policy-omitted stage, and reasoner
+  execution failure in `preflight` before retrying.
+- `include_impact`: the effective impact mode; the `operations` detail array is returned only when
+  it is `asserted`.
+- `policy_loaded`: whether a project policy governed the preflight.
+- `policy_digest`, `preflight_contract_digest`: the policy identity, when one is loaded.
+- `snapshot_consistent`: `true` for a valid cached preview.
+- `live_mutated`: `false` for a valid cached preview.
+- `preview_invalidated`: `true` on a race, with `error_code` (`revision_changed_during_preview`) and
+  `current_revision`; no change-set id is cached.
+
+**Example**
+
+```json
+{
+  "operations": [{"op": "add", "axiom_type": "subclass_of", "sub": "Widget", "super": "Product"}],
+  "ttl_seconds": 900
+}
+```
+
+## `commit_change_set`
+
+Commits a committable preview exactly once. Read-only state is checked before any confirmation prompt
+and again at apply time. The complete revision envelope (including live prefixes) and the effective
+policy with its policy/asset and import-lock digests are revalidated inside the single Protégé
+model-thread hop that applies the delta, with the policy verification running last, immediately before
+the `applyChanges` broadcast — so the only window a concurrent external rewrite (e.g. a VCS checkout)
+could slip through is that final instant, an inherent filesystem race no process can eliminate. The
+policy is re-resolved there exactly as the preview resolved it — with the preview's `policy_path`, or
+by re-running discovery when none was given — so a policy file created, edited, deleted, or shadowed
+by a closer `project.yaml` before that final check refuses the commit. A mismatch returns a conflict
+and applies nothing; there is no automatic merge. A successful non-empty delta is sent through one
+`applyChanges` broadcast so it remains visible to Protégé and its Undo manager; an all-no-op
+commit succeeds while applying nothing and reports `single_broadcast=false` and
+`undo_logged=false`.
+
+*Mutating and undoable.* Subject to read-only and confirm-each-write gates.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `change_set_id` | string | yes | — | Id returned by `preview_change_set` or a curation call with `preview=true`. |
+| `expected_revision` | object | yes | — | Exact four-field `base_revision` returned by the preview. |
+| `confirm_policy_digest` | string | no | — | Optionally pin the caller-observed policy digest. |
+
+**Returns**
+
+- `change_set_id`: the committed preview's identity.
+- `committed`: final boolean outcome.
+- `new_revision`: the complete post-commit revision envelope (success only).
+- `normalized_changes`: the previewed delta size.
+- `effective_changes`: the changes actually broadcast.
+- `single_broadcast`: whether a non-empty delta went through one `applyChanges` call.
+- `undo_logged`: whether exactly one Undo entry was logged.
+- `undo_depth_before`, `undo_depth_after`: the observed Undo-log depths.
+- `undo_log_warning`: present when listeners logged more than one Undo entry for the single
+  broadcast — a single Undo may not fully revert the commit.
+- `error_code`: on refusal/conflict — `unknown_change_set` (including expired or evicted previews),
+  `change_set_in_progress` (another commit of the same preview is in flight; the preview is not
+  consumed), `revision_conflict`, `policy_conflict` (the effective policy resolved to a different
+  file — created, deleted, or shadowed — since the preview), `policy_digest_conflict`,
+  `change_set_not_committable`, `read_only`, or `write_declined`.
+- `base_revision`, `current_revision`: the conflicting revision envelopes, when applicable.
+- `pinned_policy_path`, `effective_policy_path`: the policy-conflict paths, when applicable.
+- `reasons`: refusal explanations, when applicable.
+
+**Example**
+
+```json
+{
+  "change_set_id": "018f...",
+  "expected_revision": {
+    "workspace_id": "d819e905-10e7-4be3-9a21-6a3fb9fa67cb",
+    "session_revision": 12,
+    "semantic_fingerprint": "sha256:...",
+    "document_fingerprint": "sha256:..."
+  }
+}
+```
+
+## `discard_change_set`
+
+Removes an uncommitted memory-only preview from this Protégé window. It never changes ontology state.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `change_set_id` | string | yes | — | Preview id to discard. |
+
+**Returns**
+
+- `change_set_id`, `discarded`: requested id and whether a live preview was removed.
+- `error_code`: `unknown_change_set` when it was unknown, expired, committed, or currently committing.
+
+**Example**
+
+```json
+{ "change_set_id": "018f..." }
+```
+
 ## `create_class`
 
 Creates a named class. Give a full `iri`, or a `namespace` to mint the IRI in (IRI = `namespace` + `name` — useful when terms live in a shared namespace distinct from the ontology IRI), else the IRI is minted from `name` using Protégé's entity-creation settings. An `rdfs:label` (`label` or `name`, tagged with `label_lang`) is added unless `no_label`. Optionally attaches a `parent` superclass.
@@ -208,20 +350,31 @@ The batch form of `create_term`: creates many classes, each with its full curati
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `terms` | array | yes | — | Terms to create; each item mirrors `create_term`'s fields (`name` or a full `iri`, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`). |
+| `terms` | array | yes | — | Terms to create; each item mirrors `create_term`'s fields (`name` or a full `iri`, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`). Change-set previews accept at most 2,000 items, at most 8,000 normalized changes, and an estimated 2 MiB per cached entry. |
 | `namespace` | string | no | — | Default namespace to mint IRIs in, applied to any term that omits its own `namespace`. |
 | `definition_property` | string | no | `rdfs:comment` | Default definition annotation property, applied to any term that omits its own `definition_property`. |
 | `strict` | boolean | no | `false` | If true, fail instead of minting an unrecognised operand (aborts the whole batch). |
 | `verify` | string | no | `none` | `none` \| `report` \| `rollback` — reasoner-verify the batch (flag a newly unsatisfiable class or newly inconsistent ontology; `rollback` undoes the whole batch on a regression). Requires a reasoner selected in Protégé; `rollback` additionally refuses up front (applying nothing) when no pre-apply baseline classification can be established. |
 | `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). |
+| `preview` | boolean | no | false | Build a policy-QC change set instead of editing live. Cannot be combined with `verify`. |
+| `policy_path` | string | no | discovered | Explicit project policy used when `preview=true`. |
+| `gates` | string array | no | reasoner (when selected), profile, governance, structural | No-policy preview stages, as in `preview_change_set` — e.g. to preview in an ontology whose pre-existing unsatisfiable classes would fail the default reasoner stage. Explicitly listed stages become **required**. |
+| `ttl_seconds` | integer | no | 900 | Preview lifetime, 1 through 3600 seconds. |
+| `include_impact` | string | no | asserted | `asserted` or `none` for the preview. |
 
 **Returns**
 
-- `created`: array of the created classes as JSON objects, in batch order.
-- `count`: number of terms created.
-- `applied`: number of changes committed.
+- `created`: array of the created classes as JSON objects, in batch order; a term whose IRI
+  already existed carries `already_existed: true`.
+- `count`: number of terms in the batch.
+- `applied`: number of changes that actually landed.
+- `no_ops`: changes duplicated within the batch, already asserted, or cancelled — skipped, present
+  only when non-zero.
 - `new_entities`: array of entities the operands introduced (present only when non-empty).
 - `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}` — same shape as `apply_changes`.
+- With `preview=true`, returns the same shape as preview_change_set — `change_set_id`: preview id;
+  `base_revision`: revision envelope; `expires_at`: expiry; `summary`: normalized counts (including
+  `no_ops`); `preflight`: the gate; `committable`: the decision — and does not return live `created` rows.
 
 **Example**
 
@@ -297,21 +450,32 @@ Creates MANY object/data properties in ONE undoable transaction — the array fo
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `properties` | array | yes | — | The properties to create; each item is a `create_property` field set (only `name` is required). |
+| `properties` | array | yes | — | The properties to create; each item is a `create_property` field set (only `name` is required). Change-set previews accept at most 2,000 items, at most 8,000 normalized changes, and an estimated 2 MiB per cached entry. |
 | `namespace` | string | no | — | Default namespace for any item that gives neither its own `iri` nor `namespace`. |
 | `definition_property` | string | no | — | Default definition annotation property for any item that omits its own. |
 | `property_type` | string | no | `object` | Default `property_type` (`object`\|`data`) for any item that omits its own. |
 | `strict` | boolean | no | `false` | If true, fail the whole batch instead of minting an unrecognised operand. |
 | `verify` | string | no | `none` | `none` \| `report` \| `rollback` — reasoner-verify the batch (flag a newly unsatisfiable class or newly inconsistent ontology; `rollback` undoes the whole batch on a regression). Requires a reasoner selected in Protégé; `rollback` additionally refuses up front (applying nothing) when no pre-apply baseline classification can be established. |
 | `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). |
+| `preview` | boolean | no | false | Build a policy-QC change set instead of editing live. Cannot be combined with `verify`. |
+| `policy_path` | string | no | discovered | Explicit project policy used when `preview=true`. |
+| `gates` | string array | no | reasoner (when selected), profile, governance, structural | No-policy preview stages, as in `preview_change_set` — e.g. to preview in an ontology whose pre-existing unsatisfiable classes would fail the default reasoner stage. Explicitly listed stages become **required**. |
+| `ttl_seconds` | integer | no | 900 | Preview lifetime, 1 through 3600 seconds. |
+| `include_impact` | string | no | asserted | `asserted` or `none` for the preview. |
 
 **Returns**
 
-- `created`: array of the created properties as JSON objects.
-- `count`: number of properties created.
+- `created`: array of the created properties as JSON objects; a property whose IRI already
+  existed carries `already_existed: true`.
+- `count`: number of properties in the batch.
 - `new_entities`: array of entities the operands introduced (present only when non-empty).
-- `applied`: number of changes committed.
+- `applied`: number of changes that actually landed.
+- `no_ops`: changes duplicated within the batch, already asserted, or cancelled — skipped, present
+  only when non-zero.
 - `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}` — same shape as `apply_changes`.
+- With `preview=true`, returns the same shape as preview_change_set — `change_set_id`: preview id;
+  `base_revision`: revision envelope; `expires_at`: expiry; `summary`: normalized counts (including
+  `no_ops`); `preflight`: the gate; `committable`: the decision — and applies nothing live.
 
 **Example**
 

@@ -30,9 +30,9 @@ cd protege-mcp
 mvn clean package
 ```
 
-The `target/` directory will contain `protege-mcp-<version>.jar` — a self-contained OSGi bundle that
-**inlines** the MCP + Jetty + Jackson + Apache Jena stack. Protégé, the OWL API, Guava, and SLF4J are
-`provided` (supplied by the Protégé platform at runtime), so they are *not* bundled.
+The reactor produces `plugin/target/protege-mcp-<version>.jar` (the OSGi plugin) and
+`cli/target/protege-mcp-cli-<version>-all.jar` (the executable headless Java 17 CLI). The CLI embeds OWLAPI
+and contains no Protégé editor classes.
 
 To try your build, copy the jar into Protégé's `plugins/` folder (replacing any existing
 `protege-mcp-*.jar` / `io.github.hakjuoh.protege-mcp-*.jar`) and restart Protégé on a Java 17+ JVM. See the
@@ -59,7 +59,9 @@ or test will not be merged.
 
 ## Project layout
 
-Everything lives under `src/main/java/io/github/hakjuoh/protege_mcp/`:
+Plugin sources live under `plugin/src/main/java/io/github/hakjuoh/protege_mcp/`; the Protégé-free packages
+(`contracts`, `policy`, `core.diff`) live in the core module under `core/src/main/java/`, and the
+headless CLI under `cli/src/`:
 
 | Package | Responsibility |
 | --- | --- |
@@ -67,13 +69,13 @@ Everything lives under `src/main/java/io/github/hakjuoh/protege_mcp/`:
 | `oauth` | The embedded OAuth authorization server (dynamic client registration, PKCE, consent, token store). |
 | `tools` | The tool implementations. Each `*Tools.java` builds a list of `SyncToolSpecification`s; `ToolCatalog` aggregates them all. |
 | `prompts` | The guided MCP prompts. `Prompts.java` registers the templates; `PromptCatalog` aggregates the providers (mirrors the `tools` registry pattern). |
-| `contracts` | Versioned project/revision/finding/stage/gate records; matching JSON Schemas are packaged under `src/main/resources/schema`. |
+| `contracts` (core module) | Versioned project/revision/finding/stage/gate records; matching JSON Schemas are packaged under `core/src/main/resources/schema`. |
 | `chat` | The Ontology Assistant back end: the `ChatProvider` SPI and the Claude / Codex CLI providers + event parsers. |
 | `ui` | Swing views/panels: `McpServerView`, `McpPreferencesPanel`, `ChatView`, `ChatTab`, `ChatPreferencesPanel`. |
 | `config` | `McpConfig` — the settings snapshot backed by Protégé's preferences store. |
 
 The plugin's extension points (views, tabs, preference panels, the editor-kit hook) are declared in
-`src/main/resources/plugin.xml`.
+`plugin/src/main/resources/plugin.xml`.
 
 ## How to add a tool
 
@@ -87,7 +89,7 @@ The plugin's extension points (views, tabs, preference panels, the editor-kit ho
      **writes**, gate with the read-only / confirm-write check and apply via `applyChanges` so the edit
      is GUI-visible and undoable.
 2. **Register it.** Make sure your `*Tools.specs(ctx)` is added in
-   [`ToolCatalog.buildAll`](https://github.com/hakjuoh/protege-mcp/blob/main/src/main/java/io/github/hakjuoh/protege_mcp/tools/ToolCatalog.java).
+   [`ToolCatalog.buildAll`](https://github.com/hakjuoh/protege-mcp/blob/main/plugin/src/main/java/io/github/hakjuoh/protege_mcp/tools/ToolCatalog.java).
 3. **Test it.** Add a unit test for the core, and extend `ToolPipelineTest` if it participates in the
    end-to-end flow.
 4. **Document it.** Add the tool to the matching page under

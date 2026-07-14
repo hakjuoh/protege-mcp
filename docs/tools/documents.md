@@ -7,7 +7,7 @@ nav_order: 6
 # Documents
 {: .no_toc }
 
-Tools for loading whole OWL documents into the Protégé workspace, choosing the active edit target, minting new ontologies, writing an OASIS import catalog so a reconstructed module re-opens with its imports resolved offline, and extracting a signature-based locality module from the loaded ontologies.
+Tools for loading whole OWL documents into the Protégé workspace, choosing the active edit target, minting new ontologies, inspecting the resolved import graph, writing an OASIS import catalog so a reconstructed module re-opens with its imports resolved offline, and extracting a signature-based locality module from the loaded ontologies.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -19,7 +19,9 @@ Tools for loading whole OWL documents into the Protégé workspace, choosing the
 
 ## `load_ontology`
 
-Loads an OWL ontology document from a local path or document IRI/URL into the current Protégé workspace and makes the loaded ontology active. Unlike `merge_ontology_document`, this keeps the document as its own loaded ontology instead of copying its contents into the previous active ontology. GitHub blob URLs are converted to `raw.githubusercontent.com` URLs automatically, the document is fetched off the UI thread so a slow remote fetch does not freeze Protégé, and missing imports are skipped silently — though a sibling `catalog-v001.xml` next to a local-file document first resolves its imports to local files (offline), like Protégé's own File ▸ Open. Reach for it to open an ontology, or (with `keep_active=true`) to bring an imported document into the workspace to resolve an import without changing your current edit target.
+Loads an OWL ontology document from a local path or document IRI/URL into the current Protégé workspace and makes the loaded ontology active. Unlike `merge_ontology_document`, this keeps the document as its own loaded ontology instead of copying its contents into the previous active ontology. GitHub blob URLs are converted to `raw.githubusercontent.com` URLs automatically, and the document is fetched off the UI thread so a slow remote fetch does not freeze Protégé. A sibling `catalog-v001.xml` next to a local-file document first resolves its imports to local files (offline), like Protégé's own File ▸ Open.
+
+Missing imports use the backward-compatible `warn` mode by default: parsing succeeds and the missing IRIs are returned. Set `missing_imports=error` for a strict project/release load; any missing import aborts before the parsed ontology is attached to the workspace. File/http documents already loaded in the workspace are reused as resolution hints, while a sibling catalog remains the reproducible project source of truth; untitled in-memory ontologies cannot satisfy a strict document load. `silent` is available only as an explicit interactive choice and continues without returning the missing IRIs. Reach for this tool to open an ontology, or (with `keep_active=true`) to bring an imported document into the workspace without changing your current edit target.
 
 *Mutating (not undoable)* — a load is not an `applyChange` edit, so it does NOT join the shared undo stack and `undo_change` cannot revert it. It is still gated by the read-only / confirm-each-write preference switch.
 
@@ -30,6 +32,7 @@ Loads an OWL ontology document from a local path or document IRI/URL into the cu
 | `source` | string | yes | — | Local file path, `file:` IRI, http(s) document IRI, or GitHub blob URL. |
 | `keep_active` | boolean | no | `false` | Keep the current active ontology instead of switching to the loaded document. Use this to resolve an unresolved import without losing your edit target. |
 | `connection_timeout_ms` | integer | no | `15000` | Remote document connection timeout. |
+| `missing_imports` | string | no | `warn` | `warn` reports and continues; `error` fails before changing the workspace; `silent` continues without reporting missing IRIs. |
 
 **Returns**
 
@@ -43,7 +46,9 @@ Loads an OWL ontology document from a local path or document IRI/URL into the cu
 - `added_ontologies`: number — ontologies moved into the workspace by this load.
 - `already_loaded`: number — ontologies in the parsed closure that were already open.
 - `workspace_ontologies`: number — total ontologies now in the workspace.
-- `unresolved_imports`: array of strings — import IRIs that were silently skipped.
+- `missing_imports_mode`: string — effective `warn`, `error`, or `silent` policy (`error` only returns an error result when an import is missing).
+- `resolved_imports`: array of import-edge objects identifying every declaration resolved while loading, including source/target ontology and document IRIs, depth, and local/remote source type.
+- `unresolved_imports`: array of strings — import IRIs that could not load; empty in explicit `silent` mode.
 - `note`: string — reminder that loading is not on the undo stack.
 
 On invalid input (unreadable source, parse failure) the call fails with an error object of the form `{error: "..."}`.
@@ -54,7 +59,8 @@ On invalid input (unreadable source, parse failure) the call fails with an error
 {
   "source": "https://example.org/ontologies/upper.owl",
   "keep_active": true,
-  "connection_timeout_ms": 30000
+  "connection_timeout_ms": 30000,
+  "missing_imports": "error"
 }
 ```
 
@@ -103,6 +109,7 @@ Loads an OWL ontology document from a local path or document IRI/URL and copies 
 | `copy_ontology_id` | boolean | no | value of `replace_active` | Copy source ontology IRI/version to the active ontology. |
 | `preview` | boolean | no | `false` | Dry-run: report what the merge would copy/remove without applying anything (works in read-only mode). |
 | `connection_timeout_ms` | integer | no | `15000` | Remote document connection timeout. |
+| `missing_imports` | string | no | `warn` | `warn` reports and continues; `error` fails before changing the active ontology; `silent` continues without reporting missing IRIs. |
 
 **Returns**
 
@@ -112,7 +119,9 @@ Loads an OWL ontology document from a local path or document IRI/URL and copies 
 - `removed`: object (only present when `replace_active` is true) — `{axioms, imports, ontology_annotations}` counts removed.
 - `copied`: object — `{axioms, imports, ontology_annotations, ontology_id}`, where `ontology_id` is a boolean noting whether the source id was copied.
 - `skipped_ontology_id`: string (optional) — present when the id copy was skipped because of a collision; the collision message.
-- `unresolved_imports`: array of strings — import IRIs that were silently skipped during load.
+- `missing_imports_mode`: string — effective `warn`, `error`, or `silent` policy.
+- `resolved_imports`: array of import-edge objects identifying the imports actually resolved while parsing the source document.
+- `unresolved_imports`: array of strings — import IRIs that could not load; empty in explicit `silent` mode.
 - `active`: object — counts for the active ontology after the merge: `{axioms, logical_axioms, direct_imports, ontology_annotations}`.
 
 With `preview=true` (nothing is applied):
@@ -170,6 +179,151 @@ If the new id collides with a loaded ontology, or the target directory cannot be
   "version_iri": "https://example.org/mymodule/1.0.0",
   "path": "/tmp/mymodule/MyModule.rdf"
 }
+```
+
+## `inspect_imports`
+
+Inspects the active ontology's complete, currently loaded import graph without fetching documents or changing the workspace. It distinguishes direct from transitive declarations, records what each declaration resolves to, classifies target documents as local/remote/memory/other, and reports missing imports, strongly connected import-cycle components, multiple loaded versions of one logical ontology IRI, reused version IRIs, and reused document IRIs. Rows are deterministically ordered so repeated inspection of unchanged state produces stable JSON.
+
+`import_integrity_ok` is an import-integrity signal, not a complete release verdict: it is `false` when an import is missing or the loaded graph has an identity/version/document conflict. `missing_imports_clear` and `conflicts_clear` expose those two conditions separately. Cycles remain visible but do not by themselves make the aggregate false. Use `run_project_qc` for the complete policy gate.
+
+*Read-only.* No arguments. It only inspects the active ontology and already-loaded imports; it never performs network or filesystem I/O.
+
+**Returns**
+
+- `root`: object — the active ontology descriptor `{ref, ontology_iri, version_iri, document_iri, source_type, anonymous, depth, role}`.
+- `summary`: object — counts for ontologies, declarations, direct/transitive/resolved/missing imports, local/remote documents, cycles, and conflicts.
+- `ontologies`: array — deterministic root/direct/transitive ontology descriptors.
+- `imports`: array — every import declaration edge, including source coordinates, `import_iri`, `direct`, `depth`, `resolved`, and resolved target coordinates/source type when available.
+- `resolved_imports`: array — the resolved subset of `imports`.
+- `missing_imports`: array — the unresolved subset of `imports`.
+- `cycles`: array — strongly connected cyclic components as `{ontologies, size, self_loop}`.
+- `conflicts`: array — identity conflicts as `{type, field, value, ontologies}`; types are `multiple_versions`, `version_iri_collision`, and `document_iri_collision`.
+- `missing_imports_clear`: boolean — true when every declaration resolves.
+- `conflicts_clear`: boolean — true when no loaded identity/version/document conflict is present.
+- `import_integrity_ok`: boolean — true only when both preceding conditions are true.
+
+**Example**
+
+```json
+{}
+```
+
+## `write_import_lock`
+
+Writes a deterministic `imports.lock.json` for every currently resolved local import in the active
+ontology's loaded closure. Entries are sorted and record logical/version IRI, a lock-relative document
+path, SHA-256, and direct/transitive status. Missing, remote, or conflicted imports fail closed. The
+lock file is replaced atomically.
+
+Without `path` the policy decides the target — and it must decide cleanly: a policy that fails to load
+or validate (including a bad explicit `policy_path`), or one whose declared `imports.lockfile` does not
+resolve to a file (e.g. it does not exist yet), is refused with an error instead of silently writing
+beside the active document. To bootstrap a declared lockfile, pass `path` pointing at the declared
+location (or create an empty placeholder file there). Only a policy that declares no lockfile — or no
+policy at all — defaults to `imports.lock.json` beside the active document.
+
+*Filesystem mutation, not undoable.* Subject to read-only and confirm-each-write gates.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `path` | string | no | policy `imports.lockfile`; beside active document only when the policy declares none | Target lock path. Without it, an unloadable/invalid policy or an unresolved declared lockfile refuses (fail closed). |
+| `policy_path` | string | no | discovered | Explicit project policy. A path that fails to load refuses lock-path defaulting rather than falling back. |
+
+**Returns**
+
+- `written`: whether the lock was installed.
+- `valid`: integrity outcome (present on a refused capture).
+- `path`: the target lock path.
+- `entry_count`: locked import count.
+- `sha256`: digest of the written lock.
+- `lock`: the lock content (`{version: 1, imports: [...]}`).
+- `errors`: capture failures; the target is not replaced.
+- `error_code`: on a refused installation — `revision_conflict` (a concurrent workspace edit
+  between capture and install) or `policy_conflict` (the effective policy or lock target changed).
+  Nothing is written.
+- `base_revision`, `current_revision`: the conflicting envelopes on a `revision_conflict`.
+- `message`: the explanation on a `policy_conflict`.
+
+**Example**
+
+```json
+{ "path": "/workspace/imports.lock.json" }
+```
+
+## `verify_import_lock`
+
+Verifies a version-1 import lock without fetching anything. It strictly parses duplicate/unknown fields,
+confines documents below the lock directory, recomputes every loaded local artifact checksum, and compares
+the complete deterministic import coordinate set.
+
+The default lock path follows the same fail-closed rule as `write_import_lock`: without `path`, a policy
+that fails to load or validate, or whose declared `imports.lockfile` does not resolve to a file, is
+refused with an error — verification never silently targets a different file than the one the policy
+declares. Only a policy that declares no lockfile (or no policy at all) verifies `imports.lock.json`
+beside the active document.
+
+*Read-only and no-network.*
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `path` | string | no | policy `imports.lockfile`; beside active document only when the policy declares none | Lock to verify. Without it, an unloadable/invalid policy or an unresolved declared lockfile refuses (fail closed). |
+| `policy_path` | string | no | discovered | Explicit project policy. A path that fails to load refuses lock-path defaulting rather than falling back. |
+
+**Returns**
+
+- `valid`, `path`, `entry_count`: aggregate result and lock identity.
+- `sha256`: digest of the lock file when readable.
+- `errors`: parse, resolution, or hashing errors.
+- `missing_entries`, `extra_entries`, `mismatched_entries`: deterministic coordinate-key lists.
+
+**Example**
+
+```json
+{ "policy_path": "/workspace/.protege-mcp/project.yaml" }
+```
+
+## `validate_catalog`
+
+Parses an OASIS `catalog-v001.xml` with DTD/schema/external-entity access disabled. It reports malformed,
+duplicate, remote, and missing local URI mappings and can require every direct active import declaration
+to have a catalog entry.
+
+`<uri>` targets are resolved honoring `xml:base` per the OASIS spec — the nearest base on the entry, its
+enclosing `<group>`, or the catalog root, each relative base resolved against the next outer one and
+ultimately against the catalog file's URI — matching how Protégé itself resolves the catalog when loading.
+`<nextCatalog>` delegations are reported in `next_catalogs` but never followed (no chained parsing). With
+`compare_imports`, an import that has no local mapping while delegations exist is reported in
+`delegated_imports` (unverified) instead of failing as unmapped; without any delegation it remains a hard
+`unmapped_imports` failure.
+
+*Read-only and no-network.*
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `path` | string | no | beside active document | Catalog file. |
+| `compare_imports` | boolean | no | false | Require active import declarations to be mapped. |
+
+**Returns**
+
+- `valid`: aggregate result.
+- `catalog`: absolute catalog path.
+- `entries`: array `{name, uri, status}` where status is `local_ok`, `local_missing`, `remote_forbidden`, or `invalid_uri`.
+- `next_catalogs`: resolved `<nextCatalog>` targets — reported, never followed.
+- `errors`: parse/mapping failures.
+- `unmapped_imports`: active declarations absent from the catalog (no delegation present).
+- `delegated_imports`: with `compare_imports`, declarations unmapped locally while `next_catalogs` exist — possibly mapped down the chain, not verified here.
+
+**Example**
+
+```json
+{ "path": "/workspace/catalog-v001.xml", "compare_imports": true }
 ```
 
 ## `write_catalog`

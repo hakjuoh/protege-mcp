@@ -23,7 +23,7 @@ an assistant that edits it for you, without ever leaving Protégé.
 **Protégé MCP** is a plugin for [Protégé Desktop](https://protege.stanford.edu/) that runs a local
 **MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) server** inside Protégé. It exposes
 the **live, active ontology** — the one you have open in the editor — to any MCP-compatible AI client,
-so the client can *explore it and make edits for you* through **66 structured tools** and **11 guided
+so the client can *explore it and make edits for you* through **78 structured tools** and **11 guided
 prompts**.
 
 Two ways to use it:
@@ -60,7 +60,9 @@ Everything an AI client does flows through Protégé's own model manager, so:
 - **Reason and query.** Run the reasoner, explain entailments, find unsatisfiable classes, and run
   **SPARQL 1.1** over the active ontology and its imports — all through tools.
 - **Govern your project.** Audit modelling quality and **project-governance policy** (OWL 2 profile
-  conformance, IRI policy, required annotations, module ownership / import layering).
+  conformance, IRI policy, required annotations, module ownership / import layering), load persisted
+  invariants/CQs/SHACL from a checked-in policy, and distinguish a validation failure from a check that
+  could not run.
 - **No API key stored by Protégé.** The Ontology Assistant reuses your existing CLI login; nothing is
   kept in the plugin.
 
@@ -79,8 +81,9 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | [Installation](installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](connect/) | The server model (ports, OAuth vs. bearer token) and per-environment recipes for Claude Code, Codex CLI, VS Code, and Claude Desktop. |
 | [Ontology Assistant](ontology-assistant.html) | The in-Protégé chat: what it is, how it works, attachments, privacy, and settings. |
-| [Tools](tools/) | All 66 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
-| [Project policy contracts](project-policy.html) | Policy v1 schema/examples and common QC contracts introduced as 0.5.1 foundations. |
+| [Tools](tools/) | All 78 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
+| [Headless CLI](cli.html) | Run policy validation and asserted semantic diff without Protégé. |
+| [Project policy & QC](project-policy.html) | Policy discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [Contributing](contributing.html) | Build from source, run the tests, project layout, and how to add a tool. |
 | [Versioning & releases](versioning.html) | The SemVer + Keep-a-Changelog scheme and how releases are cut. |
 | [Changelog](changelog.html) | Release notes for every version. |

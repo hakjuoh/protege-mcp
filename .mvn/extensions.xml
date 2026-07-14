@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  This file exists so Maven always resolves ${maven.multiModuleProjectDirectory} to the repository
+  root. The plugin module runs its tests with this property as the working directory because several
+  of them read repo-root fixtures by relative path (docs/tools, docs/examples/project-policy,
+  plugin/src/test/resources/contracts). Maven derives the property by walking up from the invocation
+  directory to the nearest ancestor containing a .mvn directory; without this marker a build launched
+  from a module subdirectory would resolve it to the wrong directory and run those tests with the
+  wrong working directory. No core extensions are declared.
+-->
+<extensions/>

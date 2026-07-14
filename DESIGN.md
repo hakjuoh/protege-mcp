@@ -7,7 +7,7 @@
 > **Adopted: Architecture Approach A — in-Protégé MCP server.** External LLM clients (Claude Code/Desktop,
 > Codex CLI, VS Code MCP, other IDE extensions) read and edit the user's **live, open ontology** directly;
 > edits appear in the GUI immediately and join the user's **undo** stack. Architecture Approach A is **built and
-> shipping**: 66 structured tools + 11 guided prompts (§5) behind one fixed MCP endpoint that a shared broker
+> shipping**: 78 structured tools + 11 guided prompts (§5) behind one fixed MCP endpoint that a shared broker
 > keeps stable across every Protégé window and instance (§4.1 item 11).
 >
 > **Architecture Approach B — in-Protégé chat assistant — is also built.** A chat panel (and a
@@ -123,8 +123,10 @@ loopback), so B ships as a thin UI + subprocess driver with no API-key custody (
 
 ### 4.1 Components (as built)
 
-A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers three server extensions
-(`McpServerHook`, `McpServerView`, `McpPreferencesPanel`; the Approach B chat extensions are covered in §9). The server is composed of:
+A Maven reactor builds `core` (Protégé-free policy/contracts/diff jar), `plugin` (the
+`protege-mcp` OSGi bundle), and `cli` (the shaded headless executable), each from its own
+module source tree (`core/src`, `plugin/src`, `cli/src`). `plugin.xml` registers three server extensions (`McpServerHook`, `McpServerView`,
+`McpPreferencesPanel`; the Approach B chat extensions are covered in §9). The server is composed of:
 
 1. **`McpServerHook`** (`EditorKitHook`) — per-window lifecycle owner. `initialise()` builds an
    `OntologyAccess` and a `McpServerController`, registers the controller in `McpServerRegistry` keyed by the
@@ -167,7 +169,7 @@ A single Maven module `protege-mcp` (`packaging=bundle`). `plugin.xml` registers
    package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.5.1`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.6.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
@@ -287,21 +289,26 @@ window close → McpServerHook.dispose() → unregister + stop off-EDT (bounded 
               sessions to a remaining window (standalone: the port is handed off / promoted)
 ```
 
-The tool layer is `ToolCatalog` + `ToolSpecs` + `ToolContext` + `ReadTools` / `WriteTools` / `ReasonerTools`.
+The tool layer is `ToolCatalog` + `ToolRegistry` + `ToolSpecs` + `ToolContext` + the per-category
+`*Tools` providers (`ReadTools` / `WriteTools` / `ReasonerTools` / …, one `register` contribution each).
 
 ---
 
-## 5. MCP Tool Catalog (66 tools + 11 prompts)
+## 5. MCP Tool Catalog (78 tools + 11 prompts)
 
-Sixty-six tools — 7 read, 2 context, 20 edit/curation/history/persistence (incl. `preview_changes`,
-`apply_changes`, `set_label`, `create_term`, `create_terms`, `create_property`, `create_properties`, `deprecate_entity`,
-`move_class`), 6 ontology-header (incl. `set_prefix`), 5 document (incl. `set_active_ontology`,
-`create_ontology`, `write_catalog`), 1 module (`extract_module`), 3 rule
-(`list_rules`/`add_rule`/`remove_rule`), 9 reasoner (incl. `explain_inconsistency`), 3 SPARQL
-(`sparql_query`/`sparql_schema`/`sparql_validate`), 4 validation (incl. `diff_ontologies`,
-`validate_governance`, `shacl_validate`), and 6 safe/testable-authoring tools
+Seventy-eight tools — 7 read, 2 context, 1 revision (`get_model_revision`), 23
+edit/curation/history/persistence (incl. `preview_changes`, `apply_changes`, the staged change-set trio
+`preview_change_set` / `commit_change_set` / `discard_change_set`, `set_label`, `create_term`,
+`create_terms`, `create_property`, `create_properties`, `deprecate_entity`, `move_class`), 6
+ontology-header (incl. `set_prefix`), 9 document/import (incl. `set_active_ontology`, `create_ontology`,
+`inspect_imports`, `write_catalog`, `write_import_lock`, `verify_import_lock`, `validate_catalog`),
+1 module (`extract_module`), 3 rule (`list_rules`/`add_rule`/`remove_rule`), 9 reasoner (incl.
+`explain_inconsistency`), 3 SPARQL (`sparql_query`/`sparql_schema`/`sparql_validate`), 5 validation/diff
+(incl. `diff_ontologies`, `semantic_diff`, `validate_governance`, `shacl_validate`), and 9
+safe/testable-authoring/project-policy tools
 (`add_competency_question` / `list_competency_questions` / `remove_competency_question` /
-`run_competency_questions`, `verify_ontology`, `run_qc_suite`) — each defined by a `name`, a `description`, and a
+`run_competency_questions`, `verify_ontology`, `run_qc_suite`, `get_project_policy`,
+`validate_project_policy`, `run_project_qc`) — each defined by a `name`, a `description`, and a
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
 **Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
 serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results
@@ -388,17 +395,26 @@ reusing the shipping primitives (the single-undo transactional apply, the embedd
   convention-agnostic. Malformed input is isolated (a bad `.rq`/manifest entry is skipped-with-reason, never
   fatal); file/annotation writes go through `checkWriteAllowed`; ids are sanitised so a `.rq` filename can
   never traverse.
+- **Project-policy QC (0.6.0).** `ProjectPolicyLoader` performs strict YAML/schema/semantic validation,
+  deterministic defaulting/digesting, and real-path confinement before `ProjectQcTools` constructs a
+  `QcSuiteTools.RunConfig`. One EDT phase captures the semantic fingerprint, loaded closure, renderings,
+  prefixes, CQ inputs, and the selected reasoner's factory/exact plugin configuration/recommended buffering;
+  heavy execution continues off-EDT. One private reasoner over the flattened no-network closure supplies both
+  the logical gate and inferred SPARQL materialization, so every completed stage names the same snapshot.
+  Timeout/interrupt discards stale private results, and missing/degraded required stages become `gate=error`.
+  Fingerprint v1 separates semantic from document coordinates and marks anonymous-individual digests
+  `session_only`; ADR 0002 defines the reasoner parity boundary.
 - **`verify_ontology`**: run project-defined SPARQL **invariants** (ROBOT `verify` — patterns that must
   never appear; a returned row / ASK true is a *violation*, the inverse of a CQ) over the shared off-EDT
   snapshot, with a `fail_on` severity gate. Invariants must be `SELECT`/`ASK` (a graph-producing
   `CONSTRUCT`/`DESCRIBE` is not a detector and is rejected); a check that **cannot run** — a query error, or
-  an `include_inferred` invariant with no classified reasoner — fails **fail-closed** rather than silently
+  an `include_inferred` invariant with no usable reasoner — fails **fail-closed** rather than silently
   degrading to the asserted triples and reporting a false pass. Violation rows are reported in the
   `nodeJson` binding shape `sparql_query` already produces — **never** rendered through the EDT-only
   `mm.getRendering`.
 - **`run_qc_suite`**: one umbrella gate composing the shipping plain-data cores — `reasoner`,
   `profile`, `structural` (the `validate_ontology` checks), `invariants`, `cqs`, `shacl` (validate against supplied SHACL shapes) — over
-  one shared snapshot, collapsed to a single verdict. A stage whose backing data is absent (no classified
+  one private shared snapshot, collapsed to a single verdict. A stage whose backing data is absent (no selected
   reasoner, no invariants, no CQs, no SHACL shapes) is **skipped with a reason, never an error**; the gate is the
   worst *ran* stage versus `fail_on`.
 
@@ -411,7 +427,7 @@ set / blast radius without applying — the same computed change list the apply 
 takes `peek=true` (inspect the next-undo transaction via `HistoryManager.getLoggedChanges()`; the redo
 stack has no public accessor, so redo stays boolean) and both history tools report `undo_depth`;
 `run_reasoner` and the `run_qc_suite` reasoner stage warn when the ontology has SWRL rules the selected
-reasoner silently ignores (ELK — surfaced, deliberately not gated); `create_terms` / `create_properties`
+reasoner silently ignores (ELK; strict project QC treats the required stage as un-runnable); `create_terms` / `create_properties`
 take `apply_changes`-style `verify=report|rollback` (the `ApplyVerify` orchestration takes the batch
 as an injected applier); and **`explain_inconsistency`** finds a minimal jointly-inconsistent axiom set via
 a contraction-only search over a private closure copy — `OWLReasoner.isConsistent()` is the sole oracle
@@ -441,9 +457,10 @@ a pointed error naming `explain_inconsistency`.
 | `set_ontology_id` | `SetOntologyID` with collision guard against already-loaded ontologies |
 | `add_import` / `remove_import` | `AddImport` / `RemoveImport` over the active ontology |
 | `add_ontology_annotation` / `remove_ontology_annotation` | `AddOntologyAnnotation` / `RemoveOntologyAnnotation` over the active ontology |
-| `load_ontology` | parse off-EDT into a throwaway **concurrent** manager (explicit connection timeout, SILENT imports; for a local-file source — plain path **or** `file:` IRI, via the shared `localFile` helper — a sibling `catalog-v001.xml` is registered as an `XMLCatalogIRIMapper` so imports resolve to local files offline; the same `normalizeSource`/`addFolderCatalogMapper`/`documentSource` helpers back `merge_ontology_document` and `diff_ontologies`' `right_document`), then on the EDT `copyOntology(MOVE)` the closure into Protégé's manager + `setActiveOntology` + fire `ONTOLOGY_LOADED` (replicates `OntologyLoader` minus its modal UI; not undoable) |
+| `load_ontology` | parse off-EDT into a throwaway **concurrent** manager (explicit connection timeout; `missing_imports=warn` compatibility default, strict `error`, explicit `silent`; reusable file/http mappings are snapshotted from the workspace, then a source-adjacent `catalog-v001.xml` is registered last so it has priority; the same `normalizeSource`/`addFolderCatalogMapper`/`documentSource` helpers back `merge_ontology_document` and `diff_ontologies`' `right_document`), then on the EDT `copyOntology(MOVE)` the closure into Protégé's manager + `setActiveOntology` + fire `ONTOLOGY_LOADED` (replicates `OntologyLoader` minus its modal UI; not undoable) |
 | `merge_ontology_document` | load with a temporary OWLAPI manager, then copy axioms/imports/ontology annotations into the active ontology |
 | `create_ontology` | `OWLModelManager.createNewOntology(id, physicalURI)` (collision guard; sets active + fires `ONTOLOGY_CREATED`; optional `keep_active`; not undoable) |
+| `inspect_imports` | walk the already-loaded direct/transitive import graph without I/O; report deterministic resolution edges, document source types, missing imports, strongly connected cycles, and logical/version/document identity conflicts |
 | `write_catalog` | build an `org.protege.xmlcatalog.XMLCatalog` of `UriEntry`s mapping each `owl:imports` declaration IRI (and the resolved ontology's IRI/version) to its local file (relativized via `CatalogUtilities.relativize`), then `CatalogUtilities.save(catalog, catalog-v001.xml)` — a filesystem write, not undoable |
 | `list_rules` / `add_rule` / `remove_rule` | `getAxioms(AxiomType.SWRL_RULE)`; build `SWRLRule`s from structured body/head atoms via `getSWRL*` factory methods (`?name`/`?<IRI>` → `getSWRLVariable(IRI)` preserves named variable IRIs); rule annotations via `getSWRLRule(body, head, annotations)`; remove via `RemoveAxiom` |
 | `undo_change` / `redo_change` | `getHistoryManager().undo()/redo()` (shared with the GUI); both report `undo_depth` (`getLoggedChanges().size()`), and `undo_change peek=true` renders the last logged transaction without undoing |
@@ -454,13 +471,13 @@ a pointed error naming `explain_inconsistency`.
 | `get_inferred_superclasses` | superclasses / subclasses / equivalent / types / instances |
 | `execute_dl_query` | resolve a Manchester class expression, then `reasoner.getEquivalentClasses/getSubClasses/getSuperClasses/getInstances` (DL Query workbench) |
 | `explain_entailment` | `reasoner.isEntailed(axiom)` for a structured axiom |
-| `get_explanations` | `com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator.getExplanations(axiom, max)` — minimal justifications, using the selected reasoner's factory; for an axiom type the generator can't convert, falls back to an `isEntailed` check plus the related asserted axioms as structural context (capped) |
-| `explain_inconsistency` | contraction-only minimal-inconsistent-subset search over an `isolatedClosure` copy, `OWLReasoner.isConsistent()` as the sole oracle (fresh reasoner per probe, disposed), fast window pass + one-by-one pass, time-bounded off the EDT; renders on the EDT |
+| `get_explanations` | `com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator.getExplanations(axiom, max)` — minimal justifications over a private closure using the selected reasoner's exact plugin configuration; OWLAPI requires non-buffering here (reported caveat), timeout interrupts hidden private instances; unsupported axiom types fall back to `isEntailed` + capped structural context |
+| `explain_inconsistency` | contraction-only minimal-inconsistent-subset search over an `isolatedClosure` copy, `OWLReasoner.isConsistent()` as the sole oracle (fresh configuration-equivalent reasoner per probe, disposed), fast window pass + one-by-one pass, time-bounded off the EDT; renders on the EDT |
 | `diff_ontologies` | pure set difference over `getAxioms()` / `getLogicalAxioms()` (optionally imports closures) of two loaded ontologies, or the active ontology vs. a document loaded into a throwaway manager; `identical=true` ⇔ both sides empty (a faithful round-trip) |
 | `add_competency_question` / `list_competency_questions` / `remove_competency_question` | upsert / detect+union / remove CQs across the `CqStore` conventions (`robot-sparql-dir` `*.rq`, `sidecar-manifest` JSON, `ontology-annotations`); writes gated by `checkWriteAllowed`, ids sanitised, malformed entries skipped-with-reason |
 | `run_competency_questions` | load the matching CQs, build ONE `SuiteSnapshot` (asserted + at most one inferred materialisation), then judge each query off the EDT via `SparqlTools.execute` against its `Expectation` (`nonEmpty`/`empty`/`count`/`exactRows`); per-CQ pass + overall `{passed, failed, gate}`, open-world / truncation caveats surfaced |
 | `verify_ontology` | run project SPARQL invariants over the shared off-EDT snapshot — a returned row / ASK true is a violation at the item's severity; violations reported as `nodeJson` bindings (no EDT render); `fail_on` gate |
-| `run_qc_suite` | compose the shipping cores (`reasonerVerdict`, `GovernanceTools.profileCheck`, `ValidationTools.analyze`, `Invariants.run`, `CqRunner.run`) over one snapshot; each stage `{ran, verdict, findings_summary}`, absent backends skipped-with-reason, overall `gate` = worst ran stage vs `fail_on` |
+| `run_qc_suite` | capture the loaded closure + selected reasoner recipe once, then compose isolated reasoning, `GovernanceTools.profileCheck`, `ValidationTools.analyze`, `Invariants.run`, and `CqRunner.run` over that snapshot; each stage `{ran, verdict, findings_summary}`, absent backends skipped-with-reason, overall `gate` = worst ran stage vs `fail_on` |
 
 - **Ontology edits go through `OWLModelManager.applyChange` (singular, the majority) and `applyChanges`
   (plural, for `create_class` / `create_entity` / `rename_entity` / `delete_entity` / document merge).** Both
@@ -562,7 +579,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.5.1`**.
+  `artifactId protege-mcp`, version **`0.6.0`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing
@@ -949,17 +966,18 @@ offers an update.
 | **5. Security / settings** | **Expanded beyond the original MVP:** embedded OAuth 2.1 AS + static bearer, persistence across restarts, preferences | ✅ done |
 | **6. Status UI / multi-window / docs** | `McpServerView` with the connected-clients table + per-client revocation; per-window controllers | ✅ done |
 | **7. Shared broker** | one fixed MCP endpoint across windows and instances (§4.1 item 11); singleton lock, staged jar copies, refcount self-exit, session-pinned proxy | ✅ done |
-| **M0 contract subset** | 0.5.0 public-contract goldens; policy v1/schema examples; surface-neutral project, revision, finding, stage, artifact, and strict gate contracts. Workspace APIs and order-stable fingerprints remain in PLAN §6.3–6.4. | ◐ foundations delivered (0.5.1); M0 incomplete |
+| **M0/M1 policy slice** | 0.5.0 compatibility goldens; policy/contracts schemas; canonical fingerprints; policy discovery/validation; persisted QC assets; strict project QC; workspace revisions/change sets; lifecycle/language/waiver governance; import locks; verified saves; headless core/CLI. Automatic lock enforcement, universal path-capability enforcement, inferred diff, and release bundles remain in PLAN. | ◐ major runtime slice delivered (0.6.0); milestones incomplete |
 | **8. Hardening** | deadlock/perf/OSGi regression coverage across all tool paths | ⏳ ongoing |
 
 **Architecture Approach B — delivered.** The in-Protégé chat assistant (§9): a `ChatView` + dedicated
 **Ontology Assistant** tab, the `io.github.hakjuoh.protege_mcp.chat` provider/driver layer (Claude Code and Codex CLIs), and the
 event-stream parsers — built atop A's tool layer with no new embedded jars and no API-key custody.
 
-The M0 records and schemas are intentionally not wired into public tools yet. Policy discovery/execution,
-fingerprinting, preflight change sets, locked imports, verified release artifacts, and the headless adapter
-remain in [`PLAN.md`](PLAN.md); see the [policy-contract status page](docs/project-policy.md) for the precise
-0.5.1 boundary.
+The fingerprint/finding/gate foundations are wired into policy discovery and strict project QC; workspace
+revision APIs, preflight change sets, import-lock tools, verified saves, and the headless core/CLI prototype
+also ship in 0.6.0. Automatic locked-import enforcement, universal path-capability checks, inferred semantic
+diff, and complete release bundles remain in [`PLAN.md`](PLAN.md); see the
+[policy status page](docs/project-policy.md) for the precise boundary.
 
 **Next tracks:** the §9.9 items behind the `ChatProvider` SPI (a direct-API provider — kept only as a fallback,
 not a roadmap goal — and user-configured external MCP servers) and Architecture Approach C (§10). (The `fable`
@@ -1047,7 +1065,7 @@ model alias already ships, and long-context compaction is owned by the CLI's age
 | `tools/Tools`, `tools/ToolArgException` | shared OWLAPI/finder/render helpers; an invalid-argument signal turned into a non-fatal MCP error result |
 | `prompts/PromptCatalog`, `PromptSpecs`, `PromptProvider`, `PromptRegistry`, `PromptTemplate` | prompt aggregation, spec factory, provider SAM, fluent sink, render SAM (mirrors the tools registry pattern) |
 | `prompts/Prompts` | the guided-workflow prompt templates (§5) |
-| `contracts/*` | versioned project/revision/finding/stage/artifact/gate records and fail-closed pure aggregation; JSON schemas live under `src/main/resources/schema` |
+| `contracts/*` | versioned project/revision/finding/stage/artifact/gate records and fail-closed pure aggregation; JSON schemas live under `core/src/main/resources/schema` |
 | `config/McpConfig` | preferences snapshot (`io.github.hakjuoh.protege_mcp` / `server`); token + OAuth state keys |
 | `ui/McpServerView`, `ui/McpPreferencesPanel` | status view (connected-clients table) + settings panel |
 | `broker/McpBoot` | the single boot policy — broker-first, degrading to the standalone election + port fallback (§4.1 item 11) |

@@ -18,8 +18,9 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
 
-At the time of writing: **2,523 tests, green**, across `tools`, `prompts`, `contracts`, `oauth`, `server`,
-`chat`, `config`, and the pure helpers of `ui`. Coverage is measured by **JaCoCo** (`mvn verify`) and a floor on
+At the time of writing: **2,739 tests, green** (2,731 plugin tests plus 8 standalone-CLI tests), across
+`tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the pure helpers of `ui`, and the
+headless CLI. Coverage is measured by **JaCoCo** (`mvn verify`) and a floor on
 the `tools`/`server`/`oauth` layers gates against regressions; the EDT/subprocess-bound `ui`/`chat`
 surfaces are intentionally not gated.
 
@@ -29,8 +30,9 @@ Surefire XML reports after a clean build.
 
 ## Public-contract and policy-schema harnesses
 
-- `PublicContractSnapshotTest` pins the 0.5.0 baseline for all 66 runtime tool registrations and 11
-  prompt registrations. The tool goldens combine all MCP registration metadata and input schemas with
+- `PublicContractSnapshotTest` pins the immutable 0.5.0 baseline (66 tool registrations and 11
+  prompt registrations); the current 78-tool runtime surface is checked against it, allowing only
+  reviewed additive drift. The tool goldens combine all MCP registration metadata and input schemas with
   the manual's documented result fields; prompt goldens also render every template with deterministic
   sentinel arguments. Compatibility checks allow additive optional surface while rejecting
   removed/changed arguments, new required prompt arguments, dropped result fields, unreviewed descriptions,
@@ -44,6 +46,18 @@ Surefire XML reports after a clean build.
   packaged JSON Schema, then attacks missing/skipped/error stages, severity thresholds, duplicate stages,
   unknown/duplicate JSON fields, malformed fingerprints/non-canonical UUIDs, forged gate status/findings/
   counts, optional-stage semantics, and caller collection mutation.
+- The 0.6.0 runtime slice adds `OntologyFingerprintsTest`, `ProjectPolicyLoaderTest`,
+  `InvariantFilesTest`, and `ProjectQcToolsTest`, plus strict-suite and multi-file SHACL cases. They cover
+  canonical save/reload fingerprints, anonymous-individual stability, YAML/path/symlink attacks, persisted
+  asset failures, required-inference degradation, reasoner/ontology snapshot races, and the three-way gate.
+  `IsolatedValidationSnapshotTest` additionally mutates the live active ontology and an imported ontology after
+  capture, proving that profile/structural/governance/invariant/CQ/SHACL stages stay on one private revision,
+  imported declarations remain visible to checks without being replayed, closure-only edits change the race
+  token, and edits to the private preflight copy cannot leak into Protégé.
+- `IsolatedReasonerSpecTest` and `IsolatedReasonerQcTest` pin the ADR 0002 boundary: exact plugin
+  configuration-object identity, buffering-mode dispatch, default-overload injection, runtime policy caveats,
+  malformed plugin metadata, no live classification/query access, import-spanning unsatisfiability, adversarial
+  post-capture mutation, shared inferred materialization, and timeout interruption/stale-result rejection.
 
 The direct aligned Jackson dependencies intentionally precede Protégé's provided jars in `pom.xml`.
 Protégé's OSGi jar contains an old private `JsonFactory`; OSGi isolates it at runtime, but Surefire is a
@@ -70,12 +84,13 @@ the whole suite stays green after every step):
 
 ## The `FakeModelManager` harness
 
-`src/test/java/io/github/hakjuoh/protege_mcp/tools/FakeModelManager.java` is a `Proxy`-based test double for
+`plugin/src/test/java/io/github/hakjuoh/protege_mcp/tools/FakeModelManager.java` is a `Proxy`-based test double for
 `org.protege.editor.owl.model.OWLModelManager`, backed by a real in-memory `OWLOntology`. It
 implements only what the pure tool cores actually call — data factory, active ontology, a
 signature-backed entity finder, and short-form rendering — and **throws
 `UnsupportedOperationException` for everything else** (expression-checker factory, reasoner manager,
-workspace). This lets the many `mm`-taking tool helpers be tested for their full-IRI / declared-entity
+workspace). Tests that need a deliberate Protégé “None” selection opt into a purpose-built wrapper
+with a reasoner manager but no current factory. This lets the many `mm`-taking tool helpers be tested for their full-IRI / declared-entity
 operand paths (e.g. all ~38 `Axioms` axiom types), while any stray dependence on the live runtime
 fails loudly instead of silently NPE-ing.
 
@@ -101,6 +116,7 @@ real collaborator.
 | `ReasonerTools` | reasoner-injected cores `unsatisfiableClasses/inferredRelation/explainEntailment/dlQuery` (+ `structuralExplanation`/`relatedAssertedAxioms` made package-private) — driven by an OWL API `StructuralReasoner` | `ReasonerToolsSeamTest` |
 | `ValidationTools` | reasoner-injected `reasonerVerdict(mm, reasoner, limit)` | `ValidationToolsReasonerSeamTest` |
 | `SparqlTools` | reasoner-injected `snapshot(mm, reasoner, includeInferred)` — inferred-axiom materialisation tested with a `StructuralReasoner` | `SparqlToolsSeamTest` |
+| `IsolatedValidationSnapshot` | one private loaded-closure copy + explicit-closure structural/governance/SPARQL seams; read-only captured-rendering adapter avoids live Protégé access off the EDT | `IsolatedValidationSnapshotTest` |
 | `ui` pure logic | extracted `ServerViewText` (mask / date / connect-command) and `ChatText` (usage formatting / pasted-text heuristic / image classification); the Swing classes delegate | `ServerViewTextTest`, `ChatTextTest` |
 | `Tools.tryManchesterClassExpression` | widened to package-private — the OWL API (full-IRI) Manchester path is covered; bare-name resolution still needs Protégé's expression checker | `ManchesterClassExpressionSeamTest` |
 

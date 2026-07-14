@@ -14,7 +14,7 @@ counterpart — run it against the built `v{{ site.version }}` jar before publis
 
 ## Setup
 
-1. `mvn clean package` and copy `target/protege-mcp-{{ site.version }}.jar` into
+1. `mvn clean package` and copy `plugin/target/protege-mcp-{{ site.version }}.jar` into
    `/Applications/Protégé.app/Contents/plugins/` (replace the older versioned jar — keep exactly one).
 2. Launch Protégé on a **Java 17+** JVM (`PROTEGE_JAVA_HOME`), open the **MCP Server** view, and
    **Start** the server. Note the bound URL and bearer token.
@@ -85,7 +85,23 @@ counterpart — run it against the built `v{{ site.version }}` jar before publis
 | --- | --- | --- |
 | 39 | Connect a fresh MCP client and inspect initialize/list responses | server version is `0.5.1`; exactly 66 tools and 11 prompts are advertised, with the same required arguments as 0.5.0 |
 | 40 | Open a project containing a `.protege-mcp/project.yaml`, then use the existing context/QC tools | existing interactive behavior is unchanged; 0.5.1 does **not** auto-discover or execute the proposed policy and advertises no unfinished project-policy tools |
-| 41 | Inspect the built jar with `jar tf target/protege-mcp-{{ site.version }}.jar` | both `schema/project-policy-v1.schema.json` and `schema/ontology-engineering-contracts-v1.schema.json` are packaged |
+| 41 | Inspect the built jar with `jar tf plugin/target/protege-mcp-{{ site.version }}.jar` | both `schema/project-policy-v1.schema.json` and `schema/ontology-engineering-contracts-v1.schema.json` are packaged |
+
+### 0.6.0 — executable project policy and strict QC
+
+| # | Step | Expect |
+| --- | --- | --- |
+| 42 | Connect a fresh MCP client and inspect initialize/list responses | server version is `0.6.0`; exactly 78 tools and 11 prompts are advertised; the 0.5.0 required arguments remain compatible |
+| 43 | Save a valid `.protege-mcp/project.yaml` above the active ontology and call `get_project_policy`, then remove it and repeat | the first call reports the discovered path, deterministic defaults/digest, and `valid=true`; the second reports `policy_loaded=false` without changing legacy QC behavior |
+| 44 | Call `validate_project_policy` with a missing required asset, a traversal/URL path, and a symlink escaping the project root | every case is rejected before QC with a path-specific validation issue; no external file is read |
+| 45 | Run `run_project_qc` once with a clean required invariant, once with a matching violation, and once with a malformed or missing required invariant | the gates are respectively `pass`, `fail`, and `error`; malformed/missing execution never becomes a policy failure or vacuous pass |
+| 46 | Configure a required reasoner different from the selected reasoner; then select the required reasoner without classifying it and run QC while making a GUI edit | mismatch returns `gate=error`; the matching run uses the captured private reasoner, leaves the live reasoner status unchanged, reports `reasoner_configuration`, and consistently evaluates the pre-edit snapshot |
+| 47 | Run project QC over an ontology containing an anonymous individual | the result exposes `fingerprint_stability=session_only`, `release_stable=false`, and a warning without leaking a raw blank-node identifier |
+| 48 | Configure persisted invariant/CQ directories and SHACL files in more than one supported RDF format | every resolved asset is listed deterministically and evaluated; an inferred-required query that cannot obtain inferred data yields `gate=error` |
+| 49 | Inspect `plugin/target/protege-mcp-{{ site.version }}.jar` | both versioned schemas are packaged and the OSGi/MCP versions report `0.6.0` |
+| 50 | Run project QC with reasoner + profile + structural + governance + invariant + CQ + a deliberately slow SHACL stage, then make a GUI label edit after validation starts | the GUI remains responsive; `validation_snapshot.mode=isolated`, `same_snapshot=true`, and its `stages` list names all seven stages; the result reflects the pre-edit snapshot while the GUI edit remains live, never a mixture |
+| 51 | Set a short project reasoner timeout and run a deliberately slow/private test reasoner (or controlled slow fixture) | reasoner stage is `error`, the late private result is never accepted, the live ontology/reasoner/Undo history is unchanged, and a subsequent QC run is unaffected |
+| 52 | On the **real OSGi runtime** (not a headless test), call `preview_change_set` with any operation and `run_qc_suite stages=[structural]` | the preflight/isolated snapshot runs to a real `gate`, **never** `preflight_error: … referenced from a method is not visible from class loader …`. The isolated snapshot builds a JDK dynamic `Proxy` of `OWLModelManager`; under Felix that proxy must link every package in the interface's whole super-interface/signature closure, which bnd's `org.protege.editor.owl.*` wildcard only imports when statically referenced — so a Protégé upgrade adding a signature-only package silently reappears here and only here (flat-classpath unit tests always pass). The `Import-Package` force-imports in `plugin/pom.xml` list that closure; re-derive it if this fails |
 
 Any step that errors, freezes the UI, or does not appear in Protégé's editor/undo stack is a release
 blocker — capture the JSON error and the Protégé log. Steps 16–18 must **never** undo an unrelated edit:

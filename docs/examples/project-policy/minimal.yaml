@@ -1,6 +1,7 @@
 version: 1
 project_id: example-ontology
 root_ontology: https://example.org/ontology
+# '.' is the directory that contains .protege-mcp/ (or the policy's own directory elsewhere).
 project_root: .
 
 # These security defaults are explicit so a reviewed policy does not depend on
@@ -10,6 +11,12 @@ filesystem:
 network:
   default: deny
   allowed_hosts: []
+
+reasoning:
+  reasoner: HermiT
+  owl_profile: DL
+  required: true
+  timeout_ms: 120000
 
 imports:
   mode: unlocked

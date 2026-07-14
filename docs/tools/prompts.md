@@ -28,10 +28,12 @@ None.
 **Workflow**
 
 1. Call `get_ontology_context` to orient (size, roots, reasoner state).
-2. Call `validate_ontology` to collect modelling-quality findings, and `validate_governance` for OWL 2 profile conformance and import-layering/ownership issues that `validate_ontology` does not check.
-3. Call `run_reasoner` for logical problems. If it reports the ontology INCONSISTENT, call `explain_inconsistency` to find the contradicting axioms; otherwise call `get_unsatisfiable_classes`.
+2. Call `get_project_policy`; when loaded, run `run_project_qc` and treat `gate=error` as an incomplete audit, never a pass/fail policy verdict. With no policy, run the legacy `validate_ontology` + `validate_governance` audit and say that it is not a reproducible project gate.
+3. If project QC did not already run a current reasoner stage, call `run_reasoner` for logical problems. If it reports the ontology INCONSISTENT, call `explain_inconsistency` to find the contradicting axioms; otherwise call `get_unsatisfiable_classes`.
 4. For the most important findings, call `get_entity_context` on the offending terms to understand them before suggesting changes.
-5. Summarise the issues by severity and propose concrete fixes; use `preview_changes` to show the exact axioms before applying anything, and do not modify the ontology until you approve. After approval the batch is applied with `apply_changes` (the same operations array, one undoable transaction) with `verify=rollback`, so a fix that breaks satisfiability is undone automatically — or `verify=report` when repairing an already-inconsistent ontology, since rollback only detects new regressions (`run_reasoner` re-confirms the repair instead).
+5. Summarise the issues by severity and propose concrete fixes with `preview_change_set`. After approval,
+   pass its exact id/revision to `commit_change_set`; a revision conflict is reported rather than merged.
+   `preview_changes` then `apply_changes` with `verify=rollback` remains the older-server fallback.
 
 ---
 
@@ -56,7 +58,7 @@ Explains a single class in plain language — its definition, its neighbourhood 
 
 ## `add_subclass_safely`
 
-Adds a subclass relationship safely: it confirms both terms exist (to avoid minting a new entity from a typo), previews the change, then applies it atomically with automatic rollback if the edit breaks satisfiability. Reach for it when you want to assert `child SubClassOf parent` with full guardrails.
+Adds a subclass relationship safely: it confirms both terms exist (to avoid minting a new entity from a typo), previews the change with an isolated gate that — when a reasoner is selected — refuses to commit an edit that breaks satisfiability, then commits the reviewed preview (on servers without change sets it falls back to apply with automatic `verify=rollback`; with no reasoner available the edit is labelled UNVERIFIED). Reach for it when you want to assert `child SubClassOf parent` with full guardrails.
 
 **Arguments**
 
@@ -68,9 +70,9 @@ Adds a subclass relationship safely: it confirms both terms exist (to avoid mint
 **Workflow**
 
 1. Confirm both terms with `get_entity` (or `search_entities` if a name is ambiguous) — resolve to exact IRIs and avoid creating an unintended new entity from a typo.
-2. Call `preview_changes` with one operation `{op:add, axiom_type:subclass_of, sub:child, super:parent}` and show the diff and any new entities it would introduce.
-3. After you approve, apply the same operations array with `apply_changes` and `verify=rollback` — one undoable transaction that re-classifies the reasoner and automatically undoes the edit if it makes any class newly unsatisfiable or the ontology inconsistent — and report the verify verdict.
-4. If no reasoner is selected (`verify=rollback` refuses before applying anything), `set_reasoner` (`list_reasoners` shows the choices) and step 3 is retried; only if no reasoner is available at all is the edit applied with `add_subclass_of` and reported as unverified — the reasoner checks cannot run in that state.
+2. Call `preview_change_set` with `{op:add, axiom_type:subclass_of, sub:child, super:parent}` and show its normalized delta, complete base revision, and isolated preflight gate.
+3. After approval, call `commit_change_set` with the exact id/revision. Report its Undo/new-revision result or a conflict; never rebuild a stale preview automatically.
+4. If `satisfiability_checked=false`, inspect `policy_loaded` and the preflight reasoner row before retrying. With no policy, or when policy requires a reasoner but reports none/wrong selection, use `list_reasoners`/`set_reasoner` and create a fresh preview; fix a reported reasoner error first. If a loaded policy intentionally omits the reasoner stage, selecting a reasoner alone will not add it: disclose that satisfiability was not checked and ask whether to update/include the policy stage or explicitly approve committing the reviewed change set as **UNVERIFIED**. Use the same explicit approval when no reasoner is available. Only on a server without change-set tools fall back to `preview_changes` then `apply_changes verify=rollback`.
 
 ---
 
@@ -125,8 +127,8 @@ Models a described domain incrementally: it proposes a small set of terms that f
 
 1. Call `get_ontology_context` to see what already exists (reuse terms, match the naming and IRI style, don't duplicate).
 2. Propose a small set of classes, properties (with domains/ranges) and any individuals, explaining the modelling choices.
-3. Show the additions before applying: the new classes as a `create_terms` batch (name/label/definition/parents per item) and the new properties as a `create_properties` batch (domain/range/characteristics per item) — each batch is atomic and one undoable transaction — plus `preview_changes` for any remaining axioms (individuals, extra restrictions) as an operations array.
-4. After you approve, apply the batches with `strict=true` (refuses typo-minted entities) and `verify=report`, and the remaining operations array with `apply_changes`; then call `run_qc_suite` for a one-call quality gate (reasoner + profile + structural). Work in small, reviewable batches.
+3. Preview classes with `create_terms preview=true`, properties with `create_properties preview=true`, and remaining axioms with `preview_change_set`; show each complete base revision and preflight gate.
+4. After approval, commit each reviewed preview with `commit_change_set`, refreshing later previews after every commit. Older servers fall back to `preview_changes`/direct batches/`apply_changes`, followed by `run_project_qc` or no-policy `run_qc_suite`.
 
 ---
 
@@ -188,7 +190,9 @@ Renames, deprecates, deletes or moves a term the safe way: blast radius first, t
 
 1. Call `get_entity_context` and `get_axioms_for_entity` to establish the blast radius (how much references the term).
 2. Pick the right tool and confirm the semantics first: `rename_entity` rewrites every reference (if `new_iri` already exists in the signature the two entities MERGE); `deprecate_entity` keeps the term and its axioms, adds `owl:deprecated` plus an optional `replaced_by` pointer; `delete_entity` removes its declaration and every referencing axiom; `move_class` replaces its asserted named parents (unless `keep_other_parents=true`) and the subtree follows.
-3. Preview: `rename_entity` and `delete_entity` take `preview=true` — review the change count, the sample axioms, and (rename) the `new_iri_already_in_signature` flag; `move_class` and `deprecate_entity` have no preview, so the exact intended arguments are shown instead.
+3. Prefer `preview_change_set`/`commit_change_set` for exact axiom add/remove portions. For high-level macros,
+   `rename_entity` and `delete_entity` take `preview=true`; review their blast radius. Show exact arguments for
+   `move_class` and `deprecate_entity`, which do not yet emit change sets.
 4. Apply only after you approve; each operation is a single undo transaction, and `undo_change` with `peek=true` shows what an undo would revert.
 5. Verify with `run_reasoner` and `get_unsatisfiable_classes` (plus `validate_ontology` for a broad change), and report exactly what changed.
 
@@ -231,8 +235,8 @@ Runs the full quality gate over the active ontology — reasoner, OWL 2 profile,
 **Workflow**
 
 1. Call `get_ontology_context`, and `list_ontologies` to see which loaded ontologies have unsaved changes.
-2. Call `run_reasoner`; an error (failed classification) or warning (e.g. ELK ignoring SWRL rules) is a release finding, not a side note.
-3. Call `run_qc_suite` with `stages=["reasoner","profile","structural","cqs"]` and the project's `owl_profile`. A stage skipped for missing backing data is fine — the skip reason is reported. If the project has a SHACL shapes file, the `shacl` stage is added with `shacl_shapes_path`.
-4. Call `validate_governance` with the project's `owl_profile`, `required_annotations=["label","definition"]` and (when known) `required_namespaces` — policy violations are reported per check (profile leaks, wrong-namespace IRIs, missing annotations, import-layering).
+2. Call `get_project_policy`; if loaded, call `run_project_qc`. Any required stage that skips/errors, uses the wrong reasoner, or lacks an asset makes `gate=error` and the verdict DO NOT SHIP.
+3. Only when no policy exists, call `run_reasoner`, then `run_qc_suite` with `stages=["reasoner","profile","governance","structural","cqs"]`, the project's `owl_profile`, the same `required_stages`, and `error_on_missing_required=true`; do not waive missing backing data as a benign skip.
+4. In that no-policy fallback, call `validate_governance` with the project's `owl_profile`, `required_annotations=["label","definition"]` and (when known) `required_namespaces` — policy violations are reported per check.
 5. If the active ontology has a saved document, call `diff_ontologies` with `right_document=` that file to summarise exactly what changed since the last save.
 6. Summarise every gate and finding by severity with a clear ship / do-not-ship verdict. Nothing is saved until you approve; after approval, `save_ontology` (`all=true` if several ontologies are dirty) and — when there are locally-loaded imports — `write_catalog` so the module re-opens offline.

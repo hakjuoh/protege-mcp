@@ -74,9 +74,16 @@ open** — no per-window URLs to chase.
   when auto-start is on; connect a client to `/instances/{id}/mcp` to target a specific one.
 - Auth is unchanged (bearer token or OAuth) and the endpoint stays on `127.0.0.1` unless the
   **Bind address** preference says otherwise. The broker keeps its OAuth client registrations in
-  `~/.protege-mcp/oauth.json`; the **MCP Server** view's Connected-clients table applies to
-  standalone mode (a broker-mode client listing/revocation UI is a follow-up — to reset broker
-  clients, delete `oauth.json` while no broker is running).
+  `~/.protege-mcp/oauth.json`. Version 0.6 provides same-OS-user internal management APIs for a future
+  broker-mode UI: `GET /internal/clients`, `POST /internal/revoke-client` with `client_id`, and
+  `POST /internal/terminate-session` with `session_id`. They require the private directory-secret header,
+  are not MCP client endpoints, and never return tokens. Revocation invalidates tokens and pinned sessions;
+  the response explicitly reports `in_flight_termination=false` because this prototype cannot interrupt an
+  SSE response already being written. The current Connected-clients table still applies to standalone mode.
+- The broker resolves every accepted bearer token to a versioned authenticated principal and forwards that
+  principal only alongside the unguessable per-window broker secret. Client-supplied principal headers are
+  stripped. Backend MCP transport context receives the verified identity/capabilities, and session pins reject
+  replay from a different OAuth client or grant.
 - The toggle lives in **Settings ▸ MCP** ("Share one MCP endpoint…"). With it off — or when the broker
   cannot be spawned — the plugin falls back to the standalone behavior below.
 

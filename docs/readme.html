@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>66 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, SPARQL, and SHACL - every model
+    <li><b>78 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, SPARQL, SHACL, and project QC - every model
         edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
         the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>One <b>shared MCP endpoint</b> for every Prot&#233;g&#233; window and instance - a small broker
@@ -49,6 +49,20 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.6.0</h4>
+<ul>
+    <li>Project policy becomes executable: three new tools discover and validate strict
+        <code>.protege-mcp/project.yaml</code> files and run policy-driven QC with distinct pass, policy
+        failure, and execution-error outcomes.</li>
+    <li>Canonical semantic/document fingerprints detect concurrent edits and expose release stability;
+        persisted invariants, competency questions, and multi-file SHACL assets are resolved inside a
+        confined project root.</li>
+    <li>Required stages fail closed, configured reasoners are checked at both snapshot boundaries, and
+        governance/structural warnings gate by default. Import graphs can be inspected deterministically,
+        and document loads support a strict missing-import mode. The public surface grows from 66 to 78 tools while
+        existing interactive QC defaults remain compatible.</li>
+</ul>
 
 <h4>v0.5.1</h4>
 <ul>

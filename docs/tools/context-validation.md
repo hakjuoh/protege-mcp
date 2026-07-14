@@ -79,6 +79,36 @@ If no entity resolves, returns an error object (see the shared error shape) sugg
 { "entity": "Widget", "include_imports": true, "limit": 25 }
 ```
 
+## `get_model_revision`
+
+Returns the optimistic-concurrency envelope for this Protégé backend/window. The workspace UUID and
+monotonic session counter are combined with canonical semantic and live-document fingerprints. The
+document fingerprint is recomputed, so a prefix-only GUI edit is visible even when Protégé emits no
+ontology-change event. Use the returned `revision` unchanged with `commit_change_set`.
+
+*Read-only.*
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `policy_path` | string | no | discovered | Explicit project policy; otherwise discover upward from the active document. |
+
+**Returns**
+
+- `revision`: object `{workspace_id, session_revision, semantic_fingerprint, document_fingerprint}`.
+- `workspace_id`, `session_revision`, `semantic_fingerprint`, `document_fingerprint`: flattened copies of the revision coordinates.
+- `ontology`: object `{ontology_iri, version_iri, document_iri}`.
+- `dirty`: boolean; `reasoner`: selected-reasoner metadata.
+- `fingerprint_stability`, `release_stable`, `fingerprint_warnings`: canonicalization guarantees/caveats.
+- `policy_loaded`, `policy_valid`: booleans; optional `policy_path`, `policy_digest`, `policy_error`, and `import_lock_digest`.
+
+**Example**
+
+```json
+{ "policy_path": "/workspace/.protege-mcp/project.yaml" }
+```
+
 ## `validate_ontology`
 
 Audits the active ontology for modelling-quality issues — not logical consistency. It runs structural checks and reports, per check, a count, sample offenders, a severity, and a fix suggestion. The checks (in report order) are: `missing_label`, `missing_definition`, `duplicate_label`, `multiple_labels`, `deprecated_in_use`, `undeclared_entity`, `property_missing_domain`, `property_missing_range`, `self_subclass`, `subclass_cycle`, `isolated_class`. Imported terms declared upstream are not flagged for missing label/definition/domain/range when auditing the active ontology alone; set `include_imports=true` to audit the whole closure as owned. A clean audit is NOT proof of logical consistency — pass `with_reasoner=true` to also fold in the reasoner's verdict.
@@ -193,4 +223,47 @@ If neither `right` nor `right_document` is provided, if `left`/`right` names no 
   "logical_only": true,
   "include_imports": false
 }
+```
+
+## `semantic_diff`
+
+Classifies an asserted ontology diff into release-oriented categories while retaining
+`diff_ontologies` as the fast exact-axiom primitive. It reports header/import changes, entity adds and
+removals by type, conservative unique exact-label rename candidates, annotation/lifecycle/replacement
+deltas, and asserted axioms grouped by type and affected IRI. Rename rows are evidence, never automatic
+rewrite instructions. Import IRIs the `right_document` loader could not resolve are reported, and with
+`include_imports=true` they force `potentially_breaking`: a truncated right closure fails closed
+instead of passing a review gate as `metadata_only` or identical. The 0.6 prototype supports
+`mode=asserted`; `inferred` and `both` fail explicitly.
+
+*Read-only.* A `right_document` is loaded privately — resolving its imports through the workspace's
+known logical-to-document mappings and any sibling `catalog-v001.xml` — and is never attached to the
+workspace.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `left` | string | no | active | Loaded ontology IRI/version. |
+| `right` | string | conditional | — | Loaded ontology IRI/version; exactly one of this and `right_document`. |
+| `right_document` | string | conditional | — | Document loaded privately; exactly one of this and `right`. |
+| `include_imports` | boolean | no | false | Include each side's loaded imports closure. |
+| `mode` | string | no | asserted | Only `asserted` is supported in 0.6. |
+| `limit` | integer | no | 50 | Maximum samples per category. |
+
+**Returns**
+
+- `mode`, `include_imports`, `identical`: effective comparison mode/scope and exact aggregate equality.
+- `right_document_unresolved_imports`: array of import IRIs the right side's loader could not resolve (empty when everything resolved, or when `right` named an already-loaded ontology). With `include_imports=true` any entry forces `potentially_breaking` and is named in the caveat.
+- `ontology_id`, `imports`, `ontology_annotations`: `{changed, left, right}` pairs.
+- `entities`: object with typed `added` and `removed` groups and counts.
+- `rename_candidates`: array `{from, to, entity_type, evidence}`; emitted only for unambiguous exact-label pairs.
+- `annotation_changes`: array `{focus_iri, added, removed, categories}`.
+- `asserted_axioms`: `added`/`removed` objects with `count`, `groups`, and `truncated`.
+- `compatibility`: object `{classification, policy_driven, anonymous_individual_churn, caveat}`. The classification is conservative: `potentially_breaking` when the header changed (ontology id or imports declarations), any entity or logical axiom was removed, any logical axiom was added (OWL is monotonic — a new axiom such as a `DisjointClasses` can make previously consistent data inconsistent), or the right closure was truncated under `include_imports=true`; `metadata_only` when there is no logical change and no entity was added; `non_breaking` otherwise (new entities carrying only declarations and annotations). `anonymous_individual_churn` flags blank-node values — in axioms or ontology-header annotations — whose parse-local NodeIDs can make a re-parsed document look changed; the caveat then explains that such churn may be spurious.
+
+**Example**
+
+```json
+{ "right_document": "/workspace/releases/next.ttl", "mode": "asserted", "limit": 100 }
 ```

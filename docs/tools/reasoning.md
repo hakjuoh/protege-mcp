@@ -278,6 +278,13 @@ For any other `axiom_type` (structural-context fallback):
 - `note`: string — explains that no minimal justification is available for this axiom type.
 - `related_axioms`: axiom list `{count, items:[{axiom_type, rendering}...], truncated?}` — asserted logical axioms in the imports closure mentioning the same entities (a structural neighbourhood, not a minimal justification); present only when the axiom is entailed.
 
+The justification path also returns `reasoner_configuration`: selected reasoner/factory/configuration class,
+requested timeout/fresh-entity/individual-node policies, selected and actual buffering modes, and parity fields.
+OWLAPI's explanation algorithm requires non-buffering while it removes/restores private axioms; when the
+plugin recommends buffering this deliberate override appears as `buffering_caveat`. The exact plugin
+configuration object is still passed. Timeout interrupts the explanation engine's hidden private reasoners;
+no late result is accepted.
+
 If no reasoner is selected, the tool returns an error object `{error}`. Over an **inconsistent** ontology it returns a pointed error directing to `explain_inconsistency` (an inconsistent ontology entails everything, and reasoners refuse such queries).
 
 **Example**
@@ -317,6 +324,7 @@ When the ontology is inconsistent:
 - `axiom_count`: integer — the true size of the jointly inconsistent set (can exceed the rendered `justification` when the budget expired before minimization).
 - `justification`: axiom list `{count, items:[{axiom_type, rendering}...], truncated?}` — the jointly inconsistent asserted logical axioms, rendered up to a cap of 100.
 - `note`: string — how to read the set. When minimal: removing any one axiom breaks THIS contradiction (others may remain — fix and re-run), and a reasoner that ignores axioms it does not support (e.g. ELK) minimizes only what it sees. On a timeout: re-run with a larger `timeout_ms`, or `extract_module` around the suspect terms and diagnose the smaller module.
+- `reasoner_configuration`: the captured plugin configuration/buffering metadata used for every private probe.
 
 When the ontology is consistent: `{inconsistent: false, reasoner, note}` — there is no inconsistency to explain.
 

@@ -66,7 +66,7 @@ the official registry with nothing to fill in:
 
 If you fork the project and want to serve the plugin from **your** account instead:
 
-1. **Publish the jar.** Build (`mvn clean package`) and upload `target/protege-mcp-<v>.jar`
+1. **Publish the jar.** Build (`mvn clean package`) and upload `plugin/target/protege-mcp-<v>.jar`
    somewhere downloadable — e.g. attach it to a **GitHub Release** on your fork.
 2. **Repoint the URLs.** In `update.properties`, set `download=` (and `readme=`) to your fork's URLs;
    in `protege-mcp.repository`, change the raw URL so it resolves to your fork's `update.properties`.
@@ -88,10 +88,10 @@ Serve the repo over loopback HTTP and point a temporary jar URL at your build ou
 
 ```bash
 # from the repo root, after `mvn clean package`:
-python3 -m http.server 8000        # serves ./protege-mcp.repository, ./update.properties, ./target/...
+python3 -m http.server 8000        # serves ./protege-mcp.repository, ./update.properties, ./plugin/target/...
 ```
 
-Temporarily set `download=http://127.0.0.1:8000/target/protege-mcp-<v>.jar` in `update.properties`,
+Temporarily set `download=http://127.0.0.1:8000/plugin/target/protege-mcp-<v>.jar` in `update.properties`,
 then set the Plugin-registry preference to `http://127.0.0.1:8000/protege-mcp.repository` and run
 **Check for plugins**.
 

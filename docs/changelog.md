@@ -21,6 +21,162 @@ each section is also published as the body of its
 
 ---
 
+## [0.6.0] - 2026-07-13
+
+**Project policy is now an executable runtime contract: Protégé MCP discovers and validates checked-in
+policy, fingerprints the live ontology, resolves persisted validation assets, and produces a strict,
+reproducible project-QC gate.** The completed milestone now spans workspace-safe transactions, verified
+artifacts, semantic release diff, import locks, and headless reuse. The public surface grows from **66 to 78
+tools**; guided prompts remain 11.
+
+### Added
+- **Three project-policy tools:** `get_project_policy`, `validate_project_policy`, and `run_project_qc`.
+  Policy discovery walks upward from the active ontology (or accepts an explicit path), applies deterministic
+  defaults, validates YAML/schema/semantic constraints, and reports a canonical policy digest. Path resolution
+  rejects URLs, traversal, and symlink escapes before reading validation assets; glob results are sorted,
+  deduplicated, and bounded.
+- **Canonical ontology fingerprint v1**, specified in an ADR and exposed by project QC. Its semantic digest is
+  independent of axiom insertion order, prefixes, document location, and serialization-added declarations;
+  the separate document digest covers document coordinates, format, prefixes, and import-lock content.
+  Anonymous individuals are explicitly marked `session_only` and `release_stable=false` without exposing raw
+  blank-node identifiers.
+- **Policy-driven persisted QC assets:** ROBOT-style invariant files with strict headers, persisted competency
+  questions, and multi-file SHACL data across supported RDF formats. Required inferred checks fail closed when
+  inferred data cannot be produced. Project governance, reasoner/profile/structural checks, invariants,
+  competency questions, and SHACL all feed one `pass` / policy `fail` / execution `error` aggregate.
+- **One isolated validation snapshot, including reasoning:** every QC stage consumes one private copy of the
+  active ontology and its loaded imports. The selected reasoner's exact Protégé plugin configuration and
+  recommended buffering mode are captured with it; one private instance supplies consistency, unsatisfiable
+  classes, and inferred SPARQL materialization without classifying/querying the live reasoner. Import coordinates
+  remain no-network, timeout discards stale results, and configuration/runtime policy mismatches are explicit.
+- **Reasoner configuration-parity ADR and reusable construction path:** explanation and inconsistency tools now
+  pass the selected plugin's exact configuration rather than factory defaults. The explanation engine's required
+  non-buffering override is reported, and timed-out hidden reasoners are interrupted and confined to private data.
+- **Import integrity inspection and strict loading:** `inspect_imports` returns a deterministic direct/transitive
+  graph with resolved documents, local/remote source types, missing imports, strongly connected cycles, and
+  loaded identity/version/document conflicts. `load_ontology` and `merge_ontology_document` add
+  `missing_imports=warn|error|silent` and list the resolved imports actually used.
+- **Workspace revision and transactional editing:** `get_model_revision` exposes the complete workspace/session/
+  semantic/document envelope. `preview_change_set`, `commit_change_set`, and `discard_change_set` provide bounded,
+  memory-only isolated preflight, exact expected-revision commits, policy/asset revalidation, post-confirmation
+  read-only checks, and one-broadcast Undo logging. `create_terms` and `create_properties` can use the same path.
+- **Verified artifacts and semantic release evidence:** `save_ontology` adds strict temporary serialize/reload,
+  exact annotated-axiom/header comparison, atomic replacement, backups, checksums, and final live-revision checks.
+  `semantic_diff` classifies asserted header/entity/rename/annotation/lifecycle/axiom changes and conservative
+  compatibility without pretending inferred comparison ran.
+- **Deterministic import dependency controls:** `write_import_lock`, `verify_import_lock`, and `validate_catalog`
+  operate without network access, confine relative lock paths, reject duplicate/malformed content, hash local
+  artifacts, and report catalog/import disagreement.
+- **Reusable core and standalone CLI:** a Maven parent now enforces `core`, `plugin`, and `cli` boundaries. The
+  existing OSGi filename remains stable, while `protege-mcp-cli-0.6.0-all.jar` runs policy validation and asserted
+  semantic diff on Java 17 without Protégé. Release automation publishes both artifacts, SHA-256 sidecars, license,
+  and third-party notices and smoke-tests the CLI from a clean temporary directory.
+- **Trusted broker principal prototype:** broker-authenticated requests propagate a versioned, secret-free principal
+  only behind the per-window broker secret; spoofed client headers are stripped, sessions are pinned to client/grant,
+  and authenticated admin endpoints list/revoke clients and invalidate pinned sessions.
+- Adversarial coverage for policy discovery/defaulting, malformed and duplicate YAML, schema/semantic errors,
+  path and symlink confinement, oversized assets, deterministic fingerprints, save/reload stability,
+  anonymous individuals, required-stage degradation, concurrent edits, reasoner changes, and multi-format
+  SHACL unions, import graph ordering/cycles/conflicts, strict missing-import failure, workspace import reuse,
+  catalog precedence, live/import mutation after isolated capture, exact reasoner configuration identity,
+  buffering/fresh-entity policy mismatches, import-spanning unsatisfiability, inferred-data parity, and timeout
+  interruption. The clean release build contains
+  **2,739 tests** with zero failures, errors, or skips.
+
+### Changed
+- `run_qc_suite` accepts additive governance/required-stage controls and can return common strict-gate details;
+  its legacy arguments, default stages, and optional-stage behavior remain unchanged.
+- `audit_ontology`, `model_domain`, and `release_readiness_check` now prefer validated project policy and
+  `run_project_qc`, while retaining the existing interactive workflow when no policy exists.
+- Project-policy defaults gate at `warning`, so governance and structural warnings cannot silently pass. A
+  policy requiring a reasoner must name it explicitly; selection/configuration is captured atomically with the
+  ontology snapshot.
+- Policy governance now enforces configured label-language/preferred cardinality, definition
+  presence/language/string datatype/non-placeholder content, lifecycle status/replacement integrity, and visible
+  focus/global waivers; expired waivers become findings.
+- The `audit_ontology`, `add_subclass_safely`, `model_domain`, and `refactor_entity_safely` prompts prefer
+  revision → preview change set → commit, retaining the existing direct-edit workflow as a compatibility
+  fallback; `find_and_fix_unsatisfiable` deliberately stays on `apply_changes verify=report`, because
+  mid-repair commits on an already-broken ontology would fail the result-state preview gate.
+  `add_subclass_safely` now distinguishes a missing no-policy selection, a required-stage
+  error, and a policy that intentionally omits reasoning; the last case requests a policy decision or explicit
+  approval of the reviewed change set as unverified instead of looping through ineffective reasoner selection.
+  Existing required arguments and default direct behavior remain unchanged.
+- The Ontology Assistant now steers its CLI onto the same transactional path: each Claude invocation
+  appends a write-workflow system prompt, and each new Codex thread opens with the same preamble (a
+  resumed thread already carries it in its history). The steering directs axiom edits through
+  `preview_change_set`/batch `preview=true` → `commit_change_set` with the complete previewed revision as
+  `expected_revision`, keeps high-level operations without a change-set equivalent
+  (rename/move/deprecate/delete, document operations) on their own preview options, confines the direct
+  axiom-edit fallback to servers that lack the change-set tools — observed as unknown-tool failures,
+  never claimed by message content — or to an explicitly user-directed edit, always with an explicit
+  disclosure, and forbids workarounds of read-only mode, write confirmation, or a failed gate. The
+  steering grants no bypass and no new capability — the read-only/confirm-write gates apply to every
+  write tool unchanged; the isolated QC and revision re-checks are what the change-set path adds.
+- Document loading retains the existing continue-and-report behavior as the `warn` default. Strict `error`
+  aborts before workspace attachment or active-ontology mutation; `silent` requires an explicit request.
+
+### Fixed
+- Project QC no longer has a live-classification/snapshot gap: a concurrent active/import edit after capture
+  cannot alter the private reasoner or any other stage, and no before/after race comparison is needed.
+- Missing, malformed, skipped, timed-out, or inference-degraded required stages now remain execution errors;
+  they cannot be collapsed into violations or successful empty results.
+- Prefix-only GUI edits, edits during preflight, confirmation-time changes, changed policy assets/import locks, and
+  cross-principal broker session replay now fail closed without applying a partial ontology delta.
+- The headless asserted diff now satisfies every declared import from one shared private empty placeholder
+  (a single temporary file per document, however many imports are declared) instead of fetching it or relying
+  on silent missing-import handling, so an untrusted ontology cannot trigger HTTP, localhost, or
+  metadata-service access — and Manchester-syntax documents with imports (whose OWLAPI parser cannot
+  tolerate a missing import) still diff instead of aborting.
+- Import-lock generation now rechecks the live model revision, read-only setting, effective policy, and target path
+  immediately before atomic installation; stale off-thread captures fail closed without replacing either path. Both
+  hops share the long slow-but-succeeding EDT bound, and a timed-out install says the lock may still land.
+- `semantic_diff` now applies its shared output `limit` to rename-candidate samples as documented.
+- Live-smoke fix (OSGi-only, invisible to the flat-classpath test suite): the isolated validation
+  snapshot builds a JDK dynamic `Proxy` of `OWLModelManager`, whose generation links every package in
+  that interface's whole super-interface/signature closure. bnd's `org.protege.editor.owl.*` wildcard
+  imports only statically-referenced packages, so seven signature-only packages
+  (`org.protege.editor.core`, `…owl.model.hierarchy`, `…io`, `…library`, `…selection.ontologies`,
+  `…ui.error`, `…ui.explanation`, `…ui.renderer`) were absent from the bundle `Import-Package` and
+  `preview_change_set`/`run_qc_suite` structural failed under Felix with
+  "referenced from a method is not visible from class loader". They are now force-imported in the
+  plugin manifest. See smoke-test step 52.
+- The alternating adversarial review's follow-up round: `preview_change_set`'s summary `no_ops` now uses
+  the same final-set semantics as the batch paths (both halves of a cancelled add→remove pair count);
+  batch previews reject an oversized normalized change list before the set simulation runs; `ttl_seconds`
+  is validated before any QC work; cache-capacity eviction never evicts an entry that is mid-commit (the
+  new preview is refused instead of corrupting the in-flight commit); and the size-limit refusals name
+  the offending count and the limit.
+- The no-policy `preview_change_set` gate could pass an edit that made a class unsatisfiable, because the
+  default stages excluded the reasoner. The default gate now includes the reasoner stage whenever a
+  reasoner is selected — inconsistency or any unsatisfiable class in the changed snapshot refuses the
+  commit — and every preview shape (invalidated ones included) reports `satisfiability_checked`, with an
+  explicit note when no reasoner verdict gated it. A selected reasoner whose capture fails, or one
+  deselected between the preview's probe and its QC snapshot, fails the gate closed instead of silently
+  previewing without the verdict; a reasoner selected only after the probe still
+  gates, because the stage is always scheduled and evaluates whatever selection the QC snapshot captures. A
+  runtime failure to obtain the reasoner manager now fails closed too (only a successful lookup with no current
+  factory means Protégé's None selection), and the unchecked-preview note distinguishes missing/omitted
+  reasoning from a failed reasoner execution.
+- Batch change-set previews (`create_terms`/`create_properties` with `preview=true`) now normalize with
+  the same set simulation as operation previews: a duplicated axiom within the batch or an axiom already
+  asserted in the active ontology becomes a reported no-op instead of inflating
+  `normalized_changes`/`effective_changes` beyond the axioms that actually land. The direct (non-preview)
+  batch path reports the same honesty — `applied` counts only axioms that landed, `no_ops` appears when
+  any were skipped, and a re-created entity carries `already_existed` — the batch preview accepts the
+  same `gates` override as `preview_change_set`, and preview size accounting now includes every retained
+  structure (operation rows, reasons, and policy paths), so a mostly-no-op preview or a giant
+  caller-supplied path cannot bypass the per-entry memory limit. Add/remove cancellation now reports the same
+  final-set `no_ops` count in preview and direct batch paths. Known retained-size/change-count violations are
+  rejected before QC, and curation previews cap their new batch input at 2,000 items, so an inevitably refused
+  request cannot first consume an unbounded validation pass.
+
+### Compatibility
+- Existing tools and prompts keep their required arguments and legacy defaults. The new policy surface and
+  strict outputs are additive; projects without `.protege-mcp/project.yaml` continue to use the established
+  interactive tools. The public plugin descriptor intentionally remains on the published 0.5.1 asset until
+  the 0.6.0 release is uploaded.
+
 ## [0.5.1] - 2026-07-13
 
 **A compatibility-and-contract hardening release: the 0.5.0 MCP surface is now guarded by machine-readable
