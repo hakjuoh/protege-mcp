@@ -47,7 +47,7 @@ compatibility requirements:
 - A local authenticated MCP endpoint, shared broker, and in-Protégé Ontology Assistant.
 - Version-controlled project policy (`get_project_policy`, `validate_project_policy`) and the strict
   `run_project_qc` gate with the additive `governance` stage and missing-required-to-`error` semantics.
-- Canonical fingerprint v1 (ADR 0001), workspace-scoped revision envelopes, and the
+- Canonical fingerprint v2 (ADR 0001), workspace-scoped revision envelopes, and the
   `preview_change_set` / `commit_change_set` / `discard_change_set` transactional path, including
   `preview=true` on the batch curation tools and the Ontology Assistant's provider-level steering onto
   that path.
@@ -306,7 +306,8 @@ Verified round-trip comparison shipped; the remaining safeguards:
 - Warn or fail when the chosen format cannot represent the ontology without loss, by default rather than
   only when `verify_round_trip` is requested.
 - OBO export runs an OBO compatibility report before replacement.
-- Detect blank-node instability separately from semantic axiom loss.
+- Keep blank-node instability distinct from semantic axiom loss; verified save rejects such
+  parser-local identities before writing while fingerprints remain explicit `session_only` tokens.
 - Clearly distinguish byte-for-byte, axiom-identical, and logically equivalent round trips.
 - In release mode, verification/atomic/backup default to strict; existing interactive calls retain current
   defaults until a major version permits a safer default change.

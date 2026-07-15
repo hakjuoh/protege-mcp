@@ -43,6 +43,7 @@ import org.semanticweb.owlapi.model.parameters.OntologyCopy;
 import org.semanticweb.owlapi.util.SimpleIRIMapper;
 
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
 
 /**
  * Tools that load complete OWL documents into the workspace: {@code load_ontology} opens a document
@@ -333,15 +334,14 @@ public final class OntologyDocumentTools {
             addFolderCatalogMapper(manager, normalized);
             OWLOntology primary = manager.loadOntologyFromOntologyDocument(documentSource(normalized), config);
             finishUnsupportedImports(primary, fallback, unresolvedImports, missingImports, normalized);
-            ImportTools.ImportReport imports = ImportTools.analyze(primary);
             return new LoadedDocument(normalized, manager, primary,
                     manager.getOntologyDocumentIRI(primary), unresolvedImports,
-                    imports.resolvedImports, missingImports);
+                    resolvedImportEdges(manager), missingImports);
         } catch (UnloadableImportException e) {
             throw strictImportFailure(normalized, e);
         } catch (OWLOntologyCreationException e) {
             throw new ToolArgException("Could not load ontology document '" + normalized + "': "
-                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                    + OwlParsingErrors.conciseMessage(e));
         }
     }
 
@@ -358,6 +358,16 @@ public final class OntologyDocumentTools {
         OWLOntology primaryManaged = null;
         int moved = 0;
         int alreadyLoaded = 0;
+        for (ResolvedImport edge : doc.resolvedEdges) {
+            OWLOntology existing = target.getImportedOntology(edge.declaration);
+            if (existing != null && !existing.getOntologyID().equals(edge.targetId)) {
+                throw new ToolArgException("Could not attach the loaded import closure: import '"
+                        + edge.declaration.getIRI() + "' already resolves in the workspace to "
+                        + ontologyLabel(existing.getOntologyID()) + " instead of "
+                        + ontologyLabel(edge.targetId) + ".");
+            }
+        }
+        List<OWLOntology> movedOntologies = new ArrayList<>();
         // Snapshot the closure before moving (MOVE removes ontologies from the loading manager).
         for (OWLOntology parsed : new ArrayList<>(doc.manager.getOntologies())) {
             boolean isPrimary = parsed.getOntologyID().equals(primaryId);
@@ -375,6 +385,7 @@ public final class OntologyDocumentTools {
                             + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
                 }
                 moved++;
+                movedOntologies.add(parsed);
                 if (isPrimary) {
                     primaryManaged = parsed;
                     if (doc.documentIri != null) {
@@ -388,15 +399,36 @@ public final class OntologyDocumentTools {
             primaryManaged = byId != null ? byId : doc.primary;
         }
 
+        List<OWLOntologyIRIMapper> attachedMappers = new ArrayList<>();
+        try {
+            restoreResolvedImportEdges(mm, doc.resolvedEdges, attachedMappers);
+        } catch (RuntimeException failure) {
+            attachedMappers.forEach(target.getIRIMappers()::remove);
+            // Activation has not happened yet. Move only the ontologies added by this call back into
+            // their throwaway manager so an attachment failure leaves the live workspace unchanged.
+            for (int i = movedOntologies.size() - 1; i >= 0; i--) {
+                OWLOntology movedOntology = movedOntologies.get(i);
+                OWLOntology managed = managedById(mm, movedOntology.getOntologyID());
+                if (managed != null) {
+                    try {
+                        doc.manager.copyOntology(managed, OntologyCopy.MOVE);
+                    } catch (OWLOntologyCreationException rollbackFailure) {
+                        failure.addSuppressed(rollbackFailure);
+                    }
+                }
+            }
+            throw failure;
+        }
+
         // Activate the loaded primary FIRST: a real setActiveOntology recomputes Protégé's
         // active-ontologies (imports-closure) cache that the entity finder and renderers read. A no-op
         // setActiveOntology to the already-active ontology does NOT recompute it — which is why merely
         // firing ACTIVE_ONTOLOGY_CHANGED while keeping the active ontology is not enough.
         mm.setActiveOntology(primaryManaged);
         mm.fireEvent(EventType.ONTOLOGY_LOADED);
-        // Register the logical -> document IRI mapping so re-resolution (and save) finds the document.
+        // Register the primary logical -> document IRI mapping so later direct loads/save find it.
         if (!primaryId.isAnonymous() && doc.documentIri != null && primaryId.getDefaultDocumentIRI().isPresent()) {
-            target.getIRIMappers().add(new SimpleIRIMapper(primaryId.getDefaultDocumentIRI().get(), doc.documentIri));
+            addSimpleMapperIfNeeded(target, primaryId.getDefaultDocumentIRI().get(), doc.documentIri);
         }
         // keep_active: switch BACK to the caller's prior edit target. This SECOND real setActiveOntology
         // recomputes the closure for prevActive — now including the just-loaded document — so its
@@ -412,6 +444,7 @@ public final class OntologyDocumentTools {
         active.put("logical_axioms", finalActive.getLogicalAxiomCount());
         active.put("direct_imports", finalActive.getImportsDeclarations().size());
         active.put("ontology_annotations", finalActive.getAnnotations().size());
+        ImportTools.ImportReport workspaceImports = ImportTools.analyze(primaryManaged);
         return Tools.json()
                 .put("loaded_document", doc.normalized)
                 .put("loaded_ontology", ontologyLabel(primaryManaged.getOntologyID()))
@@ -424,7 +457,7 @@ public final class OntologyDocumentTools {
                 .put("already_loaded", alreadyLoaded)
                 .put("workspace_ontologies", mm.getOntologies().size())
                 .put("missing_imports_mode", doc.missingImports.value())
-                .put("resolved_imports", doc.resolvedImports)
+                .put("resolved_imports", workspaceImports.resolvedImports)
                 .put("unresolved_imports", doc.missingImports.reported(doc.unresolvedImports))
                 .put("note", keptActive
                         ? "Loaded into the workspace; active ontology unchanged. Loading is not on the "
@@ -443,24 +476,133 @@ public final class OntologyDocumentTools {
         return null;
     }
 
+    /** Snapshot the loader manager's declaration-to-target cache before MOVE discards it. */
+    private static List<ResolvedImport> resolvedImportEdges(OWLOntologyManager manager) {
+        List<ResolvedImport> edges = new ArrayList<>();
+        List<OWLOntology> sources = new ArrayList<>(manager.getOntologies());
+        sources.sort((left, right) -> ontologyLabel(left.getOntologyID())
+                .compareTo(ontologyLabel(right.getOntologyID())));
+        for (OWLOntology source : sources) {
+            List<OWLImportsDeclaration> declarations = new ArrayList<>(source.getImportsDeclarations());
+            declarations.sort((left, right) -> left.getIRI().toString()
+                    .compareTo(right.getIRI().toString()));
+            for (OWLImportsDeclaration declaration : declarations) {
+                OWLOntology imported = manager.getImportedOntology(declaration);
+                if (imported != null) {
+                    edges.add(new ResolvedImport(source.getOntologyID(), declaration,
+                            imported.getOntologyID()));
+                }
+            }
+        }
+        return List.copyOf(edges);
+    }
+
+    /** Rebuild the declaration cache that OWLAPI's {@code copyOntology(MOVE)} does not transfer. */
+    private static void restoreResolvedImportEdges(OWLModelManager mm, List<ResolvedImport> edges,
+            List<OWLOntologyIRIMapper> addedMappers) {
+        OWLOntologyManager manager = mm.getOWLOntologyManager();
+        OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
+                .setMissingImportHandlingStrategy(
+                        org.semanticweb.owlapi.model.MissingImportHandlingStrategy.THROW_EXCEPTION)
+                .setFollowRedirects(false);
+        for (ResolvedImport edge : edges) {
+            OWLOntology expected = managedById(mm, edge.targetId);
+            if (expected == null) {
+                throw new ToolArgException("Could not attach the loaded import closure: resolved target "
+                        + ontologyLabel(edge.targetId) + " is absent from the workspace.");
+            }
+            OWLOntology actual = manager.getImportedOntology(edge.declaration);
+            if (actual == null) {
+                IRI document = manager.getOntologyDocumentIRI(expected);
+                OWLOntologyIRIMapper mapper = addSimpleMapperIfNeeded(
+                        manager, edge.declaration.getIRI(), document);
+                if (mapper != null) {
+                    addedMappers.add(mapper);
+                }
+                manager.makeLoadImportRequest(edge.declaration, config);
+                actual = manager.getImportedOntology(edge.declaration);
+                if (actual == null) {
+                    actual = retryAfterClearingStaleImportMarker(mm, manager, edge, config);
+                }
+            }
+            if (actual == null || !actual.getOntologyID().equals(edge.targetId)) {
+                throw new ToolArgException("Could not attach the loaded import closure: import '"
+                        + edge.declaration.getIRI() + "' did not reconnect to "
+                        + ontologyLabel(edge.targetId) + ". Likely cause: an earlier failed load of "
+                        + "that import IRI left a stale failed-import marker on this workspace "
+                        + "manager, which turns later load requests for the IRI into silent no-ops.");
+            }
+        }
+    }
+
+    /**
+     * Clear a stale failed-import marker and retry the reconnect once. In OWLAPI 4.5.29,
+     * {@code OWLOntologyManagerImpl.makeLoadImportRequest} is entirely guarded by
+     * {@code !importedIRIs.containsKey(iri)}, and a FAILED live-manager load of an import IRI leaves
+     * a permanent raw marker under that key (the put precedes {@code loadImports}; failure never
+     * removes it, and {@code removeOntology} only clears OntologyID values) — so a later request for
+     * the same IRI is a silent no-op. The only change that clears the key is a {@code RemoveImport}
+     * (see {@code checkForImportsChange}); re-adding the declaration restores the source ontology
+     * unchanged WITHOUT triggering a load (an {@code AddImport} only re-maps against
+     * already-managed ontologies), after which the load request can finally run.
+     */
+    private static OWLOntology retryAfterClearingStaleImportMarker(OWLModelManager mm,
+            OWLOntologyManager manager, ResolvedImport edge, OWLOntologyLoaderConfiguration config) {
+        OWLOntology sourceOntology = managedById(mm, edge.sourceId);
+        if (sourceOntology == null
+                || !sourceOntology.getImportsDeclarations().contains(edge.declaration)) {
+            return null;
+        }
+        manager.applyChanges(List.of(
+                new RemoveImport(sourceOntology, edge.declaration),
+                new AddImport(sourceOntology, edge.declaration)));
+        manager.makeLoadImportRequest(edge.declaration, config);
+        return manager.getImportedOntology(edge.declaration);
+    }
+
+    /** Add a highest-priority exact mapper unless the currently effective mapping is already exact. */
+    private static OWLOntologyIRIMapper addSimpleMapperIfNeeded(OWLOntologyManager manager,
+            IRI logical, IRI document) {
+        for (OWLOntologyIRIMapper existing : manager.getIRIMappers()) {
+            IRI mapped;
+            try {
+                mapped = existing.getDocumentIRI(logical);
+            } catch (RuntimeException ignored) {
+                continue;
+            }
+            if (mapped != null) {
+                if (document.equals(mapped)) {
+                    return null;
+                }
+                break;
+            }
+        }
+        SimpleIRIMapper mapper = new SimpleIRIMapper(logical, document);
+        manager.getIRIMappers().add(mapper);
+        return mapper;
+    }
+
+    private record ResolvedImport(OWLOntologyID sourceId, OWLImportsDeclaration declaration,
+            OWLOntologyID targetId) { }
+
     private static final class LoadedDocument {
         final String normalized;
         final OWLOntologyManager manager;
         final OWLOntology primary;
         final IRI documentIri;
         final List<String> unresolvedImports;
-        final List<Map<String, Object>> resolvedImports;
+        final List<ResolvedImport> resolvedEdges;
         final MissingImportsMode missingImports;
 
         LoadedDocument(String normalized, OWLOntologyManager manager, OWLOntology primary,
                 IRI documentIri, List<String> unresolvedImports,
-                List<Map<String, Object>> resolvedImports, MissingImportsMode missingImports) {
+                List<ResolvedImport> resolvedEdges, MissingImportsMode missingImports) {
             this.normalized = normalized;
             this.manager = manager;
             this.primary = primary;
             this.documentIri = documentIri;
             this.unresolvedImports = unresolvedImports;
-            this.resolvedImports = resolvedImports;
+            this.resolvedEdges = resolvedEdges;
             this.missingImports = missingImports;
         }
     }
@@ -502,7 +644,7 @@ public final class OntologyDocumentTools {
             throw strictImportFailure(normalized, e);
         } catch (OWLOntologyCreationException e) {
             throw new ToolArgException("Could not load ontology document '" + normalized + "': "
-                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                    + OwlParsingErrors.conciseMessage(e));
         }
     }
 
@@ -532,7 +674,8 @@ public final class OntologyDocumentTools {
                 try {
                     uri = logical.toURI();
                 } catch (RuntimeException invalid) {
-                    return null;
+                    unresolved.add(logical.toString());
+                    return placeholderIri;
                 }
                 if (hasUrlHandler(uri)) {
                     return null;
@@ -594,13 +737,22 @@ public final class OntologyDocumentTools {
     private static void finishUnsupportedImports(OWLOntology primary,
             UnsupportedImportFallback fallback, List<String> unresolvedImports,
             MissingImportsMode mode, String normalized) {
-        List<String> unsupported = fallback.unresolved().stream()
-                // RDF/XML and Turtle can encounter a self-import before their streaming parser
-                // assigns the root's ontology ID. The fallback is consulted at that point, but once
-                // parsing finishes the root itself genuinely resolves the declaration.
-                .filter(iri -> !ontologyIdContains(primary.getOntologyID(), iri))
-                .toList();
         fallback.removePlaceholderOntology();
+        // Streaming parsers can encounter a URN before assigning the importing ontology's ID, not
+        // only for the root but for any closure member. Judge the completed graph after removing the
+        // private placeholder so a child self-import or a URN-before-document import is not reported
+        // as both resolved and unresolved.
+        Set<String> resolved = new LinkedHashSet<>();
+        for (Map<String, Object> row : ImportTools.analyze(primary).resolvedImports) {
+            Object iri = row.get("import_iri");
+            if (iri != null) {
+                resolved.add(String.valueOf(iri));
+            }
+        }
+        unresolvedImports.removeIf(resolved::contains);
+        List<String> unsupported = fallback.unresolved().stream()
+                .filter(iri -> !resolved.contains(iri))
+                .toList();
         for (String iri : unsupported) {
             if (!unresolvedImports.contains(iri)) {
                 unresolvedImports.add(iri);
@@ -613,18 +765,12 @@ public final class OntologyDocumentTools {
         }
     }
 
-    private static boolean ontologyIdContains(OWLOntologyID id, String iri) {
-        return id.getOntologyIRI().isPresent() && id.getOntologyIRI().get().toString().equals(iri)
-                || id.getVersionIRI().isPresent() && id.getVersionIRI().get().toString().equals(iri);
-    }
-
     private static ToolArgException strictImportFailure(String normalized,
             UnloadableImportException failure) {
         String importIri = failure.getImportsDeclaration() == null
                 ? "(unknown)" : failure.getImportsDeclaration().getIRI().toString();
         OWLOntologyCreationException cause = failure.getOntologyCreationException();
-        String detail = cause == null || cause.getMessage() == null
-                ? failure.getMessage() : cause.getMessage();
+        String detail = OwlParsingErrors.conciseMessage(cause == null ? failure : cause);
         return new ToolArgException("Could not load ontology document '" + normalized
                 + "': required import '" + importIri + "' could not be loaded"
                 + (detail == null ? "." : ": " + detail));

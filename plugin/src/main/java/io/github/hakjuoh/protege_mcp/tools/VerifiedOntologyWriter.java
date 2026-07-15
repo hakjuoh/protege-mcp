@@ -26,7 +26,8 @@ import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 
-import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
+import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSemantics;
+import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
 
 /** Protégé-free temporary serialization, isolated reload, normalized comparison and atomic install. */
 final class VerifiedOntologyWriter {
@@ -54,6 +55,11 @@ final class VerifiedOntologyWriter {
     }
 
     static Prepared prepare(Snapshot snapshot, Path target) {
+        if (OwlDocumentSemantics.hasAnonymousIndividuals(snapshot.ontology)) {
+            throw new ToolArgException("Verified save does not support anonymous individuals: OWLAPI "
+                    + "blank-node identifiers are session-local and cannot be compared exactly after reload. "
+                    + "Use an unverified plain save or replace blank nodes with named individuals.");
+        }
         Path absolute = target.toAbsolutePath().normalize();
         Path directory = absolute.getParent();
         if (directory == null) {
@@ -160,9 +166,10 @@ final class VerifiedOntologyWriter {
                     OntologyDocumentTools.documentSource(temp.toString()), config);
             boolean id = ontologyIdMatches(expected.getOntologyID(), actual.getOntologyID());
             boolean imports = expected.getImportsDeclarations().equals(actual.getImportsDeclarations());
-            boolean annotations = expected.getAnnotations().equals(actual.getAnnotations());
+            boolean annotations = OwlDocumentSemantics.normalizedAnnotations(expected)
+                    .equals(OwlDocumentSemantics.normalizedAnnotations(actual));
             boolean axioms = normalizedAxioms(expected).equals(normalizedAxioms(actual));
-            boolean anonymous = !expected.getAnonymousIndividuals().isEmpty();
+            boolean anonymous = OwlDocumentSemantics.hasAnonymousIndividuals(expected);
             Map<String, Object> mismatch = new LinkedHashMap<>();
             if (!id) mismatch.put("ontology_id", false);
             if (!imports) mismatch.put("imports", false);
@@ -174,7 +181,8 @@ final class VerifiedOntologyWriter {
             throw new ToolArgException("Could not prepare isolated import handling for strict reload: "
                     + message(e));
         } catch (OWLOntologyCreationException e) {
-            throw new ToolArgException("Strict reload of temporary ontology failed: " + message(e));
+            throw new ToolArgException("Strict reload of temporary ontology failed: "
+                    + OwlParsingErrors.conciseMessage(e));
         } finally {
             if (placeholder != null) {
                 try {
@@ -188,17 +196,14 @@ final class VerifiedOntologyWriter {
 
     /**
      * OWL serializers may materialize otherwise implicit, unannotated declarations on save. Compare
-     * the same normalized axiom set as fingerprint v1: add one unannotated declaration for every
-     * non-built-in entity used by this document's own axioms or ontology annotations. Annotated
+     * the same normalized axiom set as the current fingerprint: add one unannotated declaration for
+     * every entity used by this document's own axioms or ontology annotations, including built-ins.
+     * Annotated
      * declarations remain distinct, and a declaration for an otherwise-unused entity is still
      * load-bearing because it participates in the document signature itself.
      */
     static Set<OWLAxiom> normalizedAxioms(OWLOntology ontology) {
-        Set<OWLAxiom> normalized = new LinkedHashSet<>(ontology.getAxioms());
-        OwlDocumentSignature.of(ontology).stream().filter(entity -> !entity.isBuiltIn())
-                .map(ontology.getOWLOntologyManager().getOWLDataFactory()::getOWLDeclarationAxiom)
-                .forEach(normalized::add);
-        return normalized;
+        return OwlDocumentSemantics.normalizedAxioms(ontology);
     }
 
     /**

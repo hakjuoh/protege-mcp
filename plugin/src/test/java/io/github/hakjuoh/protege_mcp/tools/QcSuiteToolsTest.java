@@ -20,6 +20,7 @@ import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.model.AddOntologyAnnotation;
 
 /** Method-level tests for the F5 aggregate gate {@link QcSuiteTools} (stages composed headless). */
 class QcSuiteToolsTest {
@@ -32,6 +33,73 @@ class QcSuiteToolsTest {
     void stagesDefaultToReasonerProfileStructural() {
         assertEquals(new java.util.LinkedHashSet<>(Arrays.asList("reasoner", "profile", "structural")),
                 QcSuiteTools.normalizeStages(null));
+    }
+
+    @Test
+    void legacyLimitUsesTheSameBoundsAsProjectQc() {
+        assertThrows(ToolArgException.class,
+                () -> QcSuiteTools.RunConfig.legacy(Map.of("limit", -1)));
+        assertThrows(ToolArgException.class,
+                () -> QcSuiteTools.RunConfig.legacy(Map.of("limit", 10_001)));
+    }
+
+    @Test
+    void explicitRequiredStagesStayNarrowWhenStrictMissingIsAlsoSet() {
+        QcSuiteTools.RunConfig explicit = QcSuiteTools.RunConfig.legacy(Map.of(
+                "stages", List.of("structural", "cqs"),
+                "required_stages", List.of("structural")));
+        assertEquals(Set.of("structural"), QcSuiteTools.legacyRequiredStages(explicit, true));
+
+        QcSuiteTools.RunConfig fallback = QcSuiteTools.RunConfig.legacy(Map.of(
+                "stages", List.of("structural", "cqs")));
+        assertEquals(Set.of("structural", "cqs"),
+                QcSuiteTools.legacyRequiredStages(fallback, true));
+    }
+
+    @Test
+    void truncatedRequiredCountCqBecomesAnErroredFailClosedStage() throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology ontology = manager.createOntology(IRI.create(NS + "cq-truncation"));
+        for (int i = 0; i < 1001; i++) {
+            var cls = manager.getOWLDataFactory().getOWLClass(IRI.create(NS + "C" + i));
+            manager.addAxiom(ontology, manager.getOWLDataFactory().getOWLDeclarationAxiom(cls));
+        }
+        SuiteSnapshot snapshot = SuiteSnapshot.captureIsolated(ontology, Set.of(ontology), Map.of());
+        CompetencyQuestion cq = new CompetencyQuestion();
+        cq.id = "bounded-count";
+        cq.query = "SELECT ?s WHERE { ?s a <http://www.w3.org/2002/07/owl#Class> }";
+        cq.includeInferred = false;
+        cq.expected = Expectation.count("<=", 1000);
+        cq.convention = Cq.CONV_MANIFEST;
+
+        QcSuiteTools.StageResult stage = QcSuiteTools.cqsStage(snapshot, List.of(cq), 1000, 30_000);
+
+        assertEquals("fail", stage.verdict);
+        assertEquals(1, stage.summary.get("errors"));
+    }
+
+    @Test
+    void projectAnnotationCqsRejectMalformedEntriesAndDuplicateIds() throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology ontology = manager.createOntology(IRI.create(NS + "annotation-cqs"));
+        var df = manager.getOWLDataFactory();
+        var property = df.getOWLAnnotationProperty(IRI.create(Cq.ANNOTATION_IRI));
+        String valid = "{\"id\":\"same\",\"query\":\"ASK {}\",\"expected\":\"nonEmpty\"}";
+        manager.applyChange(new AddOntologyAnnotation(ontology,
+                df.getOWLAnnotation(property, df.getOWLLiteral(valid))));
+        manager.applyChange(new AddOntologyAnnotation(ontology,
+                df.getOWLAnnotation(property, df.getOWLLiteral("not-json"))));
+        assertThrows(ToolArgException.class,
+                () -> QcSuiteTools.loadAnnotationCqs(FakeModelManager.over(ontology)));
+
+        manager.applyChange(new org.semanticweb.owlapi.model.RemoveOntologyAnnotation(ontology,
+                df.getOWLAnnotation(property, df.getOWLLiteral("not-json"))));
+        String duplicate = "{\"id\":\"same\",\"text\":\"duplicate\","
+                + "\"query\":\"ASK {}\",\"expected\":\"nonEmpty\"}";
+        manager.applyChange(new AddOntologyAnnotation(ontology,
+                df.getOWLAnnotation(property, df.getOWLLiteral(duplicate))));
+        assertThrows(ToolArgException.class,
+                () -> QcSuiteTools.loadAnnotationCqs(FakeModelManager.over(ontology)));
     }
 
     @Test

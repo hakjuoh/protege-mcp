@@ -19,7 +19,7 @@ tools**; guided prompts remain 11.
   defaults, validates YAML/schema/semantic constraints, and reports a canonical policy digest. Path resolution
   rejects URLs, traversal, and symlink escapes before reading validation assets; glob results are sorted,
   deduplicated, and bounded.
-- **Canonical ontology fingerprint v1**, specified in an ADR and exposed by project QC. Its semantic digest is
+- **Canonical ontology fingerprint v2**, specified in an ADR and exposed by project QC. Its semantic digest is
   independent of axiom insertion order, prefixes, document location, and serialization-added declarations;
   the separate document digest covers document coordinates, format, prefixes, and import-lock content.
   Anonymous individuals are explicitly marked `session_only` and `release_stable=false` without exposing raw
@@ -65,7 +65,7 @@ tools**; guided prompts remain 11.
   catalog precedence, live/import mutation after isolated capture, exact reasoner configuration identity,
   buffering/fresh-entity policy mismatches, import-spanning unsatisfiability, inferred-data parity, and timeout
   interruption. The clean release build contains
-  **2,754 tests** with zero failures, errors, or skips.
+  **2,790 tests** with zero failures, errors, or skips.
 
 ### Changed
 - `run_qc_suite` accepts additive governance/required-stage controls and can return common strict-gate details;
@@ -155,7 +155,7 @@ tools**; guided prompts remain 11.
   rejected before QC, and curation previews cap their new batch input at 2,000 items, so an inevitably refused
   request cannot first consume an unbounded validation pass.
 - Live IOF Biopharma validation exposed three OWLAPI-boundary defects: ontology-level profile violations
-  with no backing axiom no longer abort `run_project_qc`; fingerprint v1 derives implicit declarations only
+  with no backing axiom no longer abort `run_project_qc`; the fingerprint derives implicit declarations only
   from the active document's own axioms/ontology annotations, so loaded import content cannot change its
   semantic digest; and `semantic_diff include_imports=false` now keeps imported entities out of entity,
   rename, annotation, and compatibility classification. `get_model_revision` and `undo_change` also state
@@ -177,10 +177,33 @@ tools**; guided prompts remain 11.
   `missing_imports=warn|error|silent` contract instead of escaping OWLAPI as an unchecked
   `OWLOntologyFactoryNotFoundException`; workspace and sibling-catalog mappings still take precedence,
   and a streaming-parser fallback does not misreport a valid URN self-import as missing.
+- Catalog aliases whose import IRI differs from the imported ontology/version IRI now survive the loader's
+  temporary-manager-to-workspace MOVE boundary. The declaration-to-target edges are restored and verified
+  before activation, so strict loading, `inspect_imports`, and the live closure agree instead of silently
+  dropping imported axioms. Edge restoration also clears a stale failed-import marker left on the workspace
+  manager by an earlier failed load, instead of refusing the project for the rest of the session.
+  Resolved non-primary URNs are also removed from fallback missing reports, and
+  malformed IRIs containing URI-illegal characters stay inside the `warn|error|silent` contract.
 - Verified save reload now blocks the import closure behind one private empty document, so verification cannot
   contact the network or exhaust memory by loading a release-scale closure. It still compares every direct import
   declaration exactly, and it normalizes only serializer-materialized, unannotated declarations implied by the
   document's own signature, avoiding false RDF/XML mismatches without hiding unrelated declaration changes.
+- Verified save and fingerprint v2 now normalize Manchester's materialized built-in frames and OWLAPI 4's
+  RDF 1.1-equivalent plain / `xsd:string` datatype declarations. Manchester and Turtle artifacts therefore no
+  longer false-fail or change their semantic digest. Verified/atomic/backup save explicitly rejects anonymous
+  individuals before writing because parser-local blank-node ids cannot support exact round-trip comparison.
+- `semantic_diff` uses the same declaration normalization without reporting synthetic declarations as changes,
+  renders annotation assertions canonically instead of through identity hash strings, applies `limit=0` to
+  annotation changes, and uses locale-independent entity/type keys. A verified artifact now self-diffs as
+  identical without declaration noise.
+- QC fail-closed behavior now covers indeterminate truncated `COUNT` / `EXACT_ROWS` competency-question
+  results — an exact graph count or an already-satisfied lower bound still passes, with a caveat — plus
+  malformed or duplicate ontology-annotation CQs, strict required-stage selection, and legacy limit bounds.
+  Import-lock verification rejects unknown root fields and concurrent workspace drift, and runs its revision
+  pins under the same extended wait bound as writes. Parser aggregates are bounded to actionable samples in
+  parser try order instead of forwarding every parser stack trace.
+- Release workflow-dispatch tags are passed through environment variables and syntax-validated before any shell
+  use, preventing expression-injected shell commands.
 
 ### Compatibility
 - Existing tools and prompts keep their required arguments and legacy defaults. The new policy surface and

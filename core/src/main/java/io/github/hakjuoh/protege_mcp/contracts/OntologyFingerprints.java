@@ -1,6 +1,5 @@
 package io.github.hakjuoh.protege_mcp.contracts;
 
-import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -12,20 +11,13 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
-import org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat;
-import org.semanticweb.owlapi.functional.renderer.FunctionalSyntaxObjectRenderer;
 import org.semanticweb.owlapi.model.IRI;
-import org.semanticweb.owlapi.model.OWLAnnotation;
-import org.semanticweb.owlapi.model.OWLAxiom;
-import org.semanticweb.owlapi.model.OWLDeclarationAxiom;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLObject;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
-import org.semanticweb.owlapi.util.DefaultPrefixManager;
-
-import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
+import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSemantics;
 
 /**
  * Canonical semantic and live-document fingerprints for an OWLAPI ontology.
@@ -38,13 +30,13 @@ import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
  *
  * <p>Objects are rendered independently using OWL Functional Syntax with one fixed, empty prefix manager,
  * normalized for line endings, and then sorted. Consequently neither ontology collection iteration order
- * nor the user's renderer/prefix configuration participates in the semantic digest. This is version 1 of
+ * nor the user's renderer/prefix configuration participates in the semantic digest. This is version 2 of
  * the algorithm; changing any byte-level rule requires a new version.
  */
 public final class OntologyFingerprints {
 
-    public static final int CANONICALIZATION_VERSION = 1;
-    private static final String HEADER = "protege-mcp-ontology-fingerprint-v1";
+    public static final int CANONICALIZATION_VERSION = 2;
+    private static final String HEADER = "protege-mcp-ontology-fingerprint-v2";
     private static final String ANONYMOUS_WARNING = "Anonymous individuals are present. OWLAPI NodeIDs are "
             + "not stable across parse/restart boundaries, so this digest is a same-session conflict token "
             + "only and must not be used in a strict release manifest.";
@@ -84,29 +76,10 @@ public final class OntologyFingerprints {
         byte[] semanticBytes = semanticBytes(ontology, importIriOverride);
         String semantic = digest(semanticBytes);
         String document = digest(documentBytes(ontology, semantic, importLockDigest));
-        boolean stable = !hasAnonymousIndividuals(ontology);
+        boolean stable = !OwlDocumentSemantics.hasAnonymousIndividuals(ontology);
         return new OntologyFingerprint(CANONICALIZATION_VERSION, semantic, document,
                 stable ? "cross_restart" : "session_only", stable,
                 stable ? Collections.emptyList() : List.of(ANONYMOUS_WARNING));
-    }
-
-    /**
-     * True when a parser-local anonymous NodeID participates in the digest. OWLAPI's
-     * {@code getAnonymousIndividuals()} reports only individuals referenced by <em>axioms</em>, but the
-     * semantic digest also renders every ontology annotation, and an ontology-header annotation value
-     * can be an anonymous individual (e.g. a blank-node {@code dct:creator} in a Turtle header). Those
-     * NodeIDs are not stable across parse/restart, so the fingerprint must fall to {@code session_only}.
-     */
-    private static boolean hasAnonymousIndividuals(OWLOntology ontology) {
-        if (!ontology.getAnonymousIndividuals().isEmpty()) {
-            return true;
-        }
-        for (OWLAnnotation annotation : ontology.getAnnotations()) {
-            if (!annotation.getAnonymousIndividuals().isEmpty()) {
-                return true;
-            }
-        }
-        return false;
     }
 
     static byte[] semanticBytes(OWLOntology ontology) {
@@ -132,15 +105,9 @@ public final class OntologyFingerprints {
         imports.forEach(v -> out.add("import", v));
 
         canonicalObjects(ontology, ontology.getAnnotations()).forEach(v -> out.add("ontology_annotation", v));
-        // OWL serializers commonly materialize otherwise implicit, unannotated Declaration axioms on
-        // save. Normalize that non-semantic difference by always contributing one unannotated declaration
-        // for every non-built-in signature entity, while retaining annotated declarations as distinct
-        // curation-bearing axioms. This is what makes a normal save/reload cycle fingerprint-stable.
-        List<OWLAxiom> normalizedAxioms = new ArrayList<>(ontology.getAxioms());
-        OwlDocumentSignature.of(ontology).stream().filter(entity -> !entity.isBuiltIn())
-                .map(ontology.getOWLOntologyManager().getOWLDataFactory()::getOWLDeclarationAxiom)
-                .forEach(normalizedAxioms::add);
-        canonicalObjects(ontology, new java.util.LinkedHashSet<>(normalizedAxioms))
+        // Include the shared artifact-boundary normalization. Built-in entities are intentional here:
+        // Manchester materializes rdfs/xsd frames just as RDF/XML materializes project declarations.
+        canonicalObjects(ontology, OwlDocumentSemantics.normalizedAxioms(ontology))
                 .forEach(v -> out.add("axiom", v));
         return out.bytes();
     }
@@ -168,23 +135,10 @@ public final class OntologyFingerprints {
             Iterable<? extends OWLObject> objects) {
         List<String> rendered = new ArrayList<>();
         for (OWLObject object : objects) {
-            rendered.add(render(context, object));
+            rendered.add(OwlDocumentSemantics.render(context, object));
         }
         Collections.sort(rendered);
         return rendered;
-    }
-
-    private static String render(OWLOntology context, OWLObject object) {
-        StringWriter writer = new StringWriter();
-        FunctionalSyntaxDocumentFormat format = new FunctionalSyntaxDocumentFormat();
-        format.clear();
-        FunctionalSyntaxObjectRenderer renderer = new FunctionalSyntaxObjectRenderer(context, format, writer);
-        DefaultPrefixManager prefixes = new DefaultPrefixManager();
-        prefixes.clear();
-        renderer.setPrefixManager(prefixes);
-        renderer.setAddMissingDeclarations(false);
-        object.accept(renderer);
-        return writer.toString().replace("\r\n", "\n").replace('\r', '\n').trim();
     }
 
     private static String optionalIri(IRI iri) {

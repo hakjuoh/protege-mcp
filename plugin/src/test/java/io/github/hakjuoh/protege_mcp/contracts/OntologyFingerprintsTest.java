@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.FunctionalSyntaxDocumentFormat;
+import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.AddImport;
 import org.semanticweb.owlapi.model.IRI;
@@ -28,7 +29,7 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.util.SimpleIRIMapper;
 
-/** Ordering, round-trip, document-coordinate, and degraded-guarantee tests for fingerprint v1. */
+/** Ordering, round-trip, document-coordinate, and degraded-guarantee tests for fingerprint v2. */
 class OntologyFingerprintsTest {
 
     private static final String NS = "https://example.org/fingerprint/";
@@ -129,6 +130,30 @@ class OntologyFingerprintsTest {
         assertEquals(expected, result.semanticFingerprint());
         assertTrue(result.releaseStable());
         assertEquals("cross_restart", result.stability());
+    }
+
+    @Test
+    void manchesterBuiltInDeclarationsKeepTheV2SemanticFingerprintStable(@TempDir Path temp)
+            throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology ontology = manager.createOntology(IRI.create(NS + "manchester"));
+        OWLDataFactory df = manager.getOWLDataFactory();
+        OWLClass cls = df.getOWLClass(IRI.create(NS + "ManchesterClass"));
+        manager.addAxiom(ontology, df.getOWLDeclarationAxiom(cls));
+        manager.addAxiom(ontology, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), cls.getIRI(), df.getOWLLiteral("Class label")));
+        manager.addAxiom(ontology, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSComment(), cls.getIRI(), df.getOWLLiteral("Language label", "en")));
+        OntologyFingerprint before = OntologyFingerprints.compute(ontology);
+        assertEquals(2, before.canonicalizationVersion());
+
+        Path saved = temp.resolve("fingerprint.omn");
+        manager.saveOntology(ontology, new ManchesterSyntaxDocumentFormat(), IRI.create(saved.toUri()));
+        OWLOntology reloaded = OWLManager.createOWLOntologyManager()
+                .loadOntologyFromOntologyDocument(saved.toFile());
+
+        assertEquals(before.semanticFingerprint(),
+                OntologyFingerprints.compute(reloaded).semanticFingerprint());
     }
 
     @Test

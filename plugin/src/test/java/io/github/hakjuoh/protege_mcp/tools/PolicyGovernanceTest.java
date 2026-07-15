@@ -74,6 +74,32 @@ class PolicyGovernanceTest {
         assertEquals(1, count(checks, "validation.waiver.expired"));
     }
 
+    @Test
+    void globalWaiverAppliesOnlyToItsExactRuleAndExpiryIsInclusive() throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = manager.getOWLDataFactory();
+        OWLOntology ontology = manager.createOntology(IRI.create("https://example.org/o"));
+        manager.addAxiom(ontology, df.getOWLDeclarationAxiom(df.getOWLClass(TERM)));
+        manager.addAxiom(ontology, df.getOWLDeclarationAxiom(df.getOWLClass(REPLACEMENT)));
+        LocalDate today = LocalDate.of(2026, 7, 15);
+        List<PolicyGovernance.Waiver> waivers = List.of(
+                new PolicyGovernance.Waiver("annotation.definition.required", null,
+                        "global migration", "ontology-team", today),
+                new PolicyGovernance.Waiver("lifecycle.status.allowed", null,
+                        "different rule", "ontology-team", today.plusDays(1)));
+
+        List<Map<String, Object>> checks = PolicyGovernance.checks(ontology, Set.of(ontology),
+                rules(waivers), today, 25);
+        Map<String, Object> definitions = check(checks, "annotation.definition.required");
+
+        assertEquals(0, definitions.get("count"));
+        assertEquals(2, definitions.get("waived_count"));
+        assertEquals(2, count(checks, "annotation.label.language"),
+                "a waiver for another rule must not broaden its scope");
+        assertEquals(0, count(checks, "validation.waiver.expired"),
+                "a waiver remains active through its expiry date");
+    }
+
     private static PolicyGovernance.Rules rules(List<PolicyGovernance.Waiver> waivers) {
         return new PolicyGovernance.Rules(List.of(LABEL), Set.of("en", "fr"), true,
                 List.of(DEFINITION), true, Set.of("en"), STATUS,

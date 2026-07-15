@@ -63,7 +63,7 @@ a `sidecar-manifest` entry uses:
 | `query_lang` | string | no | Defaults to `sparql` (the only supported value; a DL path is reserved). |
 | `query` | string | yes | Executable SPARQL 1.1 `SELECT` or `ASK`. |
 | `include_inferred` | boolean | no | Run over inferred triples too (default `true`). |
-| `expected` | object | no | Pass condition (default `{"kind":"nonEmpty"}`), one of: `{"kind":"nonEmpty"}`, `{"kind":"empty"}`, `{"kind":"count","op":">=","value":N}` (`op` ∈ `>=`, `<=`, `==`, `>`, `<`), `{"kind":"exactRows","rows":[…]}`. On load a compact string is also accepted (`"nonEmpty"` \| `"empty"` \| `"count >= 3"`); the plugin always writes the object form. |
+| `expected` | object | no | Pass condition (default `{"kind":"nonEmpty"}`), one of: `{"kind":"nonEmpty"}`, `{"kind":"empty"}`, `{"kind":"count","op":">=","value":N}` (`op` ∈ `>=`, `<=`, `==`, `>`, `<`), `{"kind":"exactRows","rows":[…]}`. `exactRows` compares an order- and duplicate-insensitive row set; use query-level aggregation when multiplicity matters. On load a compact string is also accepted (`"nonEmpty"` \| `"empty"` \| `"count >= 3"`); the plugin always writes the object form. |
 | `tags` | array | no | Free-form tags. |
 
 An annotation whose literal does not parse as a JSON object describing a valid CQ — a non-empty

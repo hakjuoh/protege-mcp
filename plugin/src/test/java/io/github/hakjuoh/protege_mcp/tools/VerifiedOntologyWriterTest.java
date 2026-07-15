@@ -18,7 +18,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
+import org.semanticweb.owlapi.formats.ManchesterSyntaxDocumentFormat;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
+import org.semanticweb.owlapi.io.StringDocumentSource;
 import org.semanticweb.owlapi.model.AddImport;
 import org.semanticweb.owlapi.model.AddOntologyAnnotation;
 import org.semanticweb.owlapi.model.IRI;
@@ -113,6 +115,78 @@ class VerifiedOntologyWriterTest {
                     "serializer-added unannotated declarations are normalized on both sides");
             assertTrue(prepared.verification.axiomsIncludingAnnotations());
         }
+    }
+
+    @Test
+    void manchesterBuiltInFramesDoNotFalseFailVerifiedSave() throws Exception {
+        var manager = OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(IRI.create("urn:verified:manchester"));
+        var df = manager.getOWLDataFactory();
+        var cls = df.getOWLClass(IRI.create("urn:verified:manchester#A"));
+        manager.addAxiom(ontology, df.getOWLDeclarationAxiom(cls));
+        manager.addAxiom(ontology, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSComment(), cls.getIRI(), df.getOWLLiteral("hello")));
+        manager.addAxiom(ontology, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), cls.getIRI(), df.getOWLLiteral("hello", "en")));
+
+        try (var prepared = VerifiedOntologyWriter.prepare(
+                VerifiedOntologyWriter.snapshot(ontology, new ManchesterSyntaxDocumentFormat()),
+                temp.resolve("builtins.omn"))) {
+            assertTrue(prepared.verification.identical(),
+                    "Manchester rdfs/xsd frames are serializer declarations, not semantic changes");
+        }
+    }
+
+    @Test
+    void turtlePlainAndXsdStringHeaderLiteralsCompareAsRdf11Equivalent() throws Exception {
+        String rdfXml = """
+                <?xml version="1.0"?>
+                <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+                         xmlns:owl="http://www.w3.org/2002/07/owl#"
+                         xmlns:dct="http://purl.org/dc/terms/">
+                  <owl:Ontology rdf:about="urn:verified:plain-header">
+                    <dct:creator>One</dct:creator>
+                    <dct:contributor>Two</dct:contributor>
+                  </owl:Ontology>
+                </rdf:RDF>
+                """;
+        var ontology = OWLManager.createOWLOntologyManager()
+                .loadOntologyFromOntologyDocument(new StringDocumentSource(rdfXml));
+
+        try (var prepared = VerifiedOntologyWriter.prepare(
+                VerifiedOntologyWriter.snapshot(ontology, new TurtleDocumentFormat()),
+                temp.resolve("plain-header.ttl"))) {
+            assertTrue(prepared.verification.ontologyAnnotations(),
+                    "OWLAPI TreeSet ordering must not make equivalent plain/xsd:string values unequal");
+            assertTrue(prepared.verification.identical());
+        }
+    }
+
+    @Test
+    void verifiedSaveExplicitlyRejectsAnonymousIndividualsInAxiomsOrHeader() throws Exception {
+        var manager = OWLManager.createOWLOntologyManager();
+        var df = manager.getOWLDataFactory();
+        var axiomOntology = manager.createOntology(IRI.create("urn:verified:anonymous-axiom"));
+        manager.addAxiom(axiomOntology, df.getOWLClassAssertionAxiom(
+                df.getOWLThing(), df.getOWLAnonymousIndividual()));
+        Path existing = temp.resolve("anonymous-axiom.ttl");
+        Files.writeString(existing, "sentinel");
+
+        ToolArgException axiom = assertThrows(ToolArgException.class, () ->
+                VerifiedOntologyWriter.prepare(VerifiedOntologyWriter.snapshot(
+                        axiomOntology, new TurtleDocumentFormat()), existing));
+        assertTrue(axiom.getMessage().contains("does not support anonymous individuals"));
+        assertEquals("sentinel", Files.readString(existing));
+
+        var headerOntology = manager.createOntology(IRI.create("urn:verified:anonymous-header"));
+        manager.applyChange(new AddOntologyAnnotation(headerOntology,
+                df.getOWLAnnotation(df.getRDFSComment(), df.getOWLAnonymousIndividual())));
+        Path absent = temp.resolve("anonymous-header.ttl");
+        ToolArgException header = assertThrows(ToolArgException.class, () ->
+                VerifiedOntologyWriter.prepare(VerifiedOntologyWriter.snapshot(
+                        headerOntology, new TurtleDocumentFormat()), absent));
+        assertTrue(header.getMessage().contains("does not support anonymous individuals"));
+        assertFalse(Files.exists(absent));
     }
 
     @Test

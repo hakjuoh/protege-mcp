@@ -78,6 +78,9 @@ final class CqRunner {
         caveats.addAll(judged.caveats);
         Map<String, Object> r = base(cq, caveats);
         r.put("pass", judged.pass);
+        if (judged.error != null) {
+            r.put("error", judged.error);
+        }
         r.put("actual_summary", judged.summary);
         r.put("ms", millis(start));
         return r;
@@ -113,8 +116,31 @@ final class CqRunner {
             case COUNT: {
                 long n = count(exec);
                 if (truncated) {
-                    caveats.add("results truncated at limit " + limit + "; the true count may be higher — "
-                            + "raise 'limit' for a reliable COUNT");
+                    if (!"SELECT".equals(exec.get("query_type"))) {
+                        // CONSTRUCT/DESCRIBE truncation cuts only the returned Turtle sample;
+                        // 'count' stays the exact graph size, so the comparison judges the true count.
+                        caveats.add("returned triples truncated at limit " + limit
+                                + "; the count is the exact graph size, so the COUNT check is unaffected");
+                        return new Judged(compare(n, expected.op, expected.value), n + " rows ("
+                                + expected.op + " " + expected.value + ")", caveats);
+                    }
+                    // SELECT caps 'count' at the row limit, so n is a lower bound on the true count:
+                    // a '>='/'>' already met by n provably holds; every other case stays indeterminate.
+                    if ((">=".equals(expected.op) || ">".equals(expected.op))
+                            && compare(n, expected.op, expected.value)) {
+                        caveats.add("results truncated at limit " + limit + "; the capped count is a "
+                                + "lower bound on the true count, and " + n + " already satisfies "
+                                + expected.op + " " + expected.value);
+                        return new Judged(true, n + "+ rows (" + expected.op + " " + expected.value
+                                + ")", caveats);
+                    }
+                    String error = "results truncated at limit " + limit
+                            + "; the true count is unknown — raise 'limit' (project QC and the QC "
+                            + "suite cap it at 10000) or rewrite the query so the complete result "
+                            + "fits for a reliable COUNT";
+                    caveats.add(error);
+                    return new Judged(false, n + "+ rows (indeterminate " + expected.op + " "
+                            + expected.value + ")", caveats, error);
                 }
                 return new Judged(compare(n, expected.op, expected.value), n + " rows ("
                         + expected.op + " " + expected.value + ")", caveats);
@@ -140,14 +166,19 @@ final class CqRunner {
                     + "rewrite the query to project stable IRIs/literals");
             return new Judged(false, bindings.size() + " rows (contain blank nodes)", caveats);
         }
-        if (truncated || bindings.size() >= limit) {
-            caveats.add("results reached the limit " + limit + "; raise 'limit' above the declared row "
-                    + "count for a reliable EXACT_ROWS check");
+        if (truncated) {
+            String error = "results truncated at limit " + limit
+                    + "; raise 'limit' (project QC and the QC suite cap it at 10000) or narrow the "
+                    + "query so the complete result fits for a reliable EXACT_ROWS check";
+            caveats.add(error);
+            return new Judged(false, bindings.size() + "+ rows (incomplete)", caveats, error);
         }
         Set<String> got = canonicalizeRows(bindings);
         Set<String> want = canonicalizeRows(expected.rows);
-        return new Judged(got.equals(want), got.size() + " of " + want.size() + " declared rows matched",
-                caveats);
+        Set<String> matched = new TreeSet<>(got);
+        matched.retainAll(want);
+        return new Judged(got.equals(want), matched.size() + " of " + want.size()
+                + " declared rows matched (" + got.size() + " distinct rows returned)", caveats);
     }
 
     /** Order-insensitive canonical form of a SELECT result set: each row → a sorted var=cell string. */
@@ -160,21 +191,30 @@ final class CqRunner {
     }
 
     private static String canonicalRow(Map<String, Object> row) {
-        Set<String> cells = new TreeSet<>();
-        for (Map.Entry<String, Object> e : row.entrySet()) {
-            cells.add(e.getKey() + "=" + canonicalCell(e.getValue()));
+        Map<String, Object> cells = new java.util.TreeMap<>(row);
+        StringBuilder encoded = new StringBuilder();
+        for (Map.Entry<String, Object> entry : cells.entrySet()) {
+            encoded.append(component(entry.getKey())).append(component(canonicalCell(entry.getValue())));
         }
-        return String.join("", cells);
+        return encoded.toString();
     }
 
     @SuppressWarnings("unchecked")
     private static String canonicalCell(Object cell) {
         if (!(cell instanceof Map)) {
-            return "literal|" + String.valueOf(cell) + "||";
+            return component("literal") + component(String.valueOf(cell))
+                    + component("") + component("");
         }
         Map<String, Object> m = (Map<String, Object>) cell;
-        return str(m.get("type"), "literal") + "|" + str(m.get("value"), "") + "|"
-                + str(m.get("lang"), "") + "|" + str(m.get("datatype"), "");
+        return component(str(m.get("type"), "literal"))
+                + component(str(m.get("value"), ""))
+                + component(str(m.get("lang"), "").toLowerCase(Locale.ROOT))
+                + component(str(m.get("datatype"), ""));
+    }
+
+    /** Collision-free length prefix for caller-controlled variable names and literal lexical forms. */
+    private static String component(String value) {
+        return value.length() + ":" + value;
     }
 
     // ================================================================== result predicates
@@ -259,11 +299,17 @@ final class CqRunner {
         final boolean pass;
         final String summary;
         final List<String> caveats;
+        final String error;
 
         Judged(boolean pass, String summary, List<String> caveats) {
+            this(pass, summary, caveats, null);
+        }
+
+        Judged(boolean pass, String summary, List<String> caveats, String error) {
             this.pass = pass;
             this.summary = summary;
             this.caveats = caveats;
+            this.error = error;
         }
     }
 }

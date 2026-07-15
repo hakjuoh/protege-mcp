@@ -81,11 +81,13 @@ public final class ImportLockTools {
     }
 
     /**
-     * EDT wait bound for the capture and install hops. Each hop runs a WorkspaceRevisionTracker
-     * fingerprint (two full canonical-serialization renders), which on a large ontology legitimately
-     * outlives the default 30 s wait — and the install hop replaces the lock file, so a wait that
-     * expires after its body starts would report a failure while the lock still lands. Kept equal to
-     * the change-set commit bound, which exists for the same slow-but-succeeding reason.
+     * EDT wait bound shared by every lock-tool revision hop: write's capture and install hops AND
+     * verify's two coordinate hops. Each hop runs a WorkspaceRevisionTracker fingerprint (two full
+     * canonical-serialization renders), which on a large ontology legitimately outlives the default
+     * 30 s wait — a default-bound verify would spuriously time out against the very lock write just
+     * installed — and the install hop replaces the lock file, so a wait that expires after its body
+     * starts would report a failure while the lock still lands. Kept equal to the change-set commit
+     * bound, which exists for the same slow-but-succeeding reason.
      */
     static final long WRITE_HOP_TIMEOUT_MS = ChangeSetTools.COMMIT_TIMEOUT_MS;
 
@@ -223,12 +225,31 @@ public final class ImportLockTools {
     }
 
     static CallToolResult verify(ToolContext ctx, Map<String, Object> arguments) {
+        return verify(ctx, arguments, () -> { });
+    }
+
+    /** Test seam for a concurrent model/import change after off-thread hashing. */
+    static CallToolResult verify(ToolContext ctx, Map<String, Object> arguments, Runnable afterCapture) {
         RevisionTools.PolicyState policy = RevisionTools.resolvePolicy(ctx,
                 Tools.optString(arguments, "policy_path"));
-        Coordinates coordinates = ctx.access().compute(mm -> gather(mm,
-                resolveLockPath(mm, policy, Tools.optString(arguments, "path"))));
-        LockCapture current = capture(coordinates); // hashes off the model thread
+        VerifyCoordinates initial = ctx.access().compute(mm -> {
+            Coordinates coordinates = gather(mm,
+                    resolveLockPath(mm, policy, Tools.optString(arguments, "path")));
+            ModelRevision revision = ctx.revisions().current(mm, null, policy.policy().digest()).revision();
+            return new VerifyCoordinates(coordinates, revision);
+        }, WRITE_HOP_TIMEOUT_MS);
+        LockCapture current = capture(initial.coordinates); // hashes off the model thread
+        afterCapture.run();
+        VerifyCoordinates finalState = ctx.access().compute(mm -> new VerifyCoordinates(
+                gather(mm, initial.coordinates.path),
+                ctx.revisions().current(mm, null, policy.policy().digest()).revision()),
+                WRITE_HOP_TIMEOUT_MS);
         List<String> errors = new ArrayList<>(current.errors);
+        if (!initial.revision.equals(finalState.revision)
+                || !initial.coordinates.equals(finalState.coordinates)) {
+            errors.add("ontology/import state changed while the lock was being verified; retry against "
+                    + "a stable workspace revision");
+        }
         Map<String, LockEntry> expected = new LinkedHashMap<>();
         String lockDigest = null;
         try {
@@ -241,6 +262,11 @@ public final class ImportLockTools {
             lockDigest = RevisionTools.sha256(bytes);
             @SuppressWarnings("unchecked")
             Map<String, Object> parsed = JSON.readValue(bytes, LinkedHashMap.class);
+            Set<String> unknownFields = new LinkedHashSet<>(parsed.keySet());
+            unknownFields.removeAll(Set.of("version", "imports"));
+            if (!unknownFields.isEmpty()) {
+                errors.add("unknown top-level lock field(s): " + unknownFields);
+            }
             if (!Integer.valueOf(1).equals(parsed.get("version"))) {
                 errors.add("lock version must be integer 1");
             }
@@ -624,6 +650,9 @@ public final class ImportLockTools {
     /** Initial model-thread coordinates pinned across the off-thread file-hashing phase. */
     private record WriteCoordinates(Coordinates coordinates, ModelRevision revision,
             String policyPath, String policyDigest) { }
+
+    /** Coordinates and revision pinned around verify's off-thread file hashing. */
+    private record VerifyCoordinates(Coordinates coordinates, ModelRevision revision) { }
 
     /** Model-thread capture: the lock path, its directory, raw import rows, and fail-closed errors. */
     private record Coordinates(Path path, Path lockDir, List<RawImport> raw, List<String> errors) { }

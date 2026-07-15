@@ -14,7 +14,7 @@ import org.semanticweb.owlapi.model.OWLOntology;
  * document load: {@code OWLOntology#getSignature()} answers from a cached set that the manager's
  * illegal-punning repair pass ({@code REPAIR_ILLEGAL_PUNNINGS}, on by default) mutates with the whole
  * loaded imports closure while the document is being parsed — so even an {@code Imports.EXCLUDED} query
- * can report imported entities. Every consumer that promises active-document scope (fingerprint v1,
+ * can report imported entities. Every consumer that promises active-document scope (fingerprints,
  * {@code semantic_diff}, summaries, signature audits) must derive the signature from the document's own
  * axioms and annotations instead.
  */

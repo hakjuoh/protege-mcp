@@ -379,6 +379,7 @@ public final class WriteTools {
                         + "fail-closed artifact pipeline set verify_round_trip=true: it writes beside "
                         + "the target, reloads without fetching the import closure, compares ontology "
                         + "id/direct imports/ontology and axiom annotations/normalized asserted axioms, "
+                        + "rejects anonymous individuals whose blank-node ids cannot survive reload, "
                         + "rechecks the live revision, and only then replaces the target. atomic=true "
                         + "requires an atomic filesystem move; "
                         + "backup=true preserves the previous artifact as <path>.bak.",
@@ -389,7 +390,8 @@ public final class WriteTools {
                                 + "'path' — ontologies without a file are reported as skipped).")
                         .bool("verify_round_trip", "Use a temporary isolated reload and normalized "
                                 + "document comparison before replacing the target; imports are not "
-                                + "fetched (default false for compatibility).")
+                                + "fetched and anonymous individuals are unsupported "
+                                + "(default false for compatibility).")
                         .bool("atomic", "Require atomic target replacement; implies verify_round_trip.")
                         .bool("backup", "Copy an existing target to <path>.bak before replacement; "
                                 + "implies verify_round_trip.")

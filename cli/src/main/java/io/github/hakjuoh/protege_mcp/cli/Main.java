@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 import io.github.hakjuoh.protege_mcp.core.diff.SemanticDiffService;
+import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
 
 /** Minimal Java 17 headless surface proving the core has no Protégé runtime dependency. */
 public final class Main {
@@ -148,6 +149,6 @@ public final class Main {
     }
 
     private static String message(Throwable error) {
-        return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+        return OwlParsingErrors.conciseMessage(error);
     }
 }

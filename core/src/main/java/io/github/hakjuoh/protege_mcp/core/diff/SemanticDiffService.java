@@ -6,12 +6,14 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
 import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationAssertionAxiom;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLEntity;
@@ -20,6 +22,7 @@ import org.semanticweb.owlapi.model.OWLObject;
 import org.semanticweb.owlapi.model.OWLOntology;
 
 import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
+import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSemantics;
 
 /** Deterministic asserted semantic categories over two OWLAPI ontology snapshots. */
 public final class SemanticDiffService {
@@ -41,10 +44,17 @@ public final class SemanticDiffService {
      */
     public static Map<String, Object> diff(OWLOntology left, OWLOntology right, boolean includeImports,
             int limit, Collection<String> rightUnresolvedImports) {
-        Set<OWLAxiom> leftAxioms = axioms(left, includeImports);
-        Set<OWLAxiom> rightAxioms = axioms(right, includeImports);
-        Set<OWLAxiom> removedAxioms = difference(leftAxioms, rightAxioms);
-        Set<OWLAxiom> addedAxioms = difference(rightAxioms, leftAxioms);
+        Set<OWLAxiom> leftAxioms = assertedAxioms(left, includeImports);
+        Set<OWLAxiom> rightAxioms = assertedAxioms(right, includeImports);
+        Set<OWLAxiom> normalizedLeftAxioms = normalizedAxioms(left, includeImports);
+        Set<OWLAxiom> normalizedRightAxioms = normalizedAxioms(right, includeImports);
+        // Only report axioms that were actually asserted in the source document, but compare them
+        // against the other side's normalized view. This suppresses serializer-materialized
+        // declarations without inventing extra declaration rows for genuinely added entities.
+        Set<OWLAxiom> removedAxioms = difference(leftAxioms, normalizedRightAxioms);
+        Set<OWLAxiom> addedAxioms = difference(rightAxioms, normalizedLeftAxioms);
+        Set<OWLAnnotation> leftAnnotations = OwlDocumentSemantics.normalizedAnnotations(left);
+        Set<OWLAnnotation> rightAnnotations = OwlDocumentSemantics.normalizedAnnotations(right);
 
         Set<EntityKey> leftEntities = entities(left, includeImports);
         Set<EntityKey> rightEntities = entities(right, includeImports);
@@ -56,8 +66,8 @@ public final class SemanticDiffService {
         // re-parsed document mints fresh NodeIDs, so such header values compare unequal exactly like
         // axiom-level anonymous individuals and deserve the same caveat.
         boolean anonymousChurn = hasAnonymousIndividual(addedAxioms) || hasAnonymousIndividual(removedAxioms)
-                || hasAnonymousIndividual(difference(left.getAnnotations(), right.getAnnotations()))
-                || hasAnonymousIndividual(difference(right.getAnnotations(), left.getAnnotations()));
+                || hasAnonymousIndividual(difference(leftAnnotations, rightAnnotations))
+                || hasAnonymousIndividual(difference(rightAnnotations, leftAnnotations));
         List<String> unresolvedImports = rightUnresolvedImports.stream().distinct().sorted().toList();
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -71,7 +81,9 @@ public final class SemanticDiffService {
         ontologyIdPair.put("changed", idChanged);
         result.put("ontology_id", ontologyIdPair);
         result.put("imports", pair(strings(left.getImportsDeclarations()), strings(right.getImportsDeclarations())));
-        result.put("ontology_annotations", pair(strings(left.getAnnotations()), strings(right.getAnnotations())));
+        result.put("ontology_annotations", pair(
+                canonicalStrings(left, leftAnnotations), canonicalStrings(right, rightAnnotations),
+                !leftAnnotations.equals(rightAnnotations)));
         result.put("entities", Map.of(
                 "added", entityGroups(addedEntities, limit),
                 "removed", entityGroups(removedEntities, limit)));
@@ -126,7 +138,7 @@ public final class SemanticDiffService {
         result.put("identical", removedAxioms.isEmpty() && addedAxioms.isEmpty()
                 && !idChanged
                 && left.getImportsDeclarations().equals(right.getImportsDeclarations())
-                && left.getAnnotations().equals(right.getAnnotations()));
+                && leftAnnotations.equals(rightAnnotations));
         return result;
     }
 
@@ -151,17 +163,28 @@ public final class SemanticDiffService {
     }
 
     private static Map<String, Object> pair(Object left, Object right) {
+        return pair(left, right, !java.util.Objects.equals(left, right));
+    }
+
+    private static Map<String, Object> pair(Object left, Object right, boolean changed) {
         Map<String, Object> pair = new LinkedHashMap<>();
-        pair.put("changed", !java.util.Objects.equals(left, right));
+        pair.put("changed", changed);
         pair.put("left", left);
         pair.put("right", right);
         return pair;
     }
 
-    private static Set<OWLAxiom> axioms(OWLOntology ontology, boolean closure) {
+    private static Set<OWLAxiom> assertedAxioms(OWLOntology ontology, boolean closure) {
         Set<OWLAxiom> result = new LinkedHashSet<>();
         Collection<OWLOntology> ontologies = closure ? ontology.getImportsClosure() : Set.of(ontology);
         ontologies.forEach(item -> result.addAll(item.getAxioms()));
+        return result;
+    }
+
+    private static Set<OWLAxiom> normalizedAxioms(OWLOntology ontology, boolean closure) {
+        Set<OWLAxiom> result = new LinkedHashSet<>();
+        Collection<OWLOntology> ontologies = closure ? ontology.getImportsClosure() : Set.of(ontology);
+        ontologies.forEach(item -> result.addAll(OwlDocumentSemantics.normalizedAxioms(item)));
         return result;
     }
 
@@ -306,7 +329,7 @@ public final class SemanticDiffService {
                     if (!axiom.getProperty().isLabel() || !axiom.getValue().asLiteral().isPresent()) continue;
                     OWLLiteral literal = axiom.getValue().asLiteral().get();
                     result.computeIfAbsent(entity, ignored -> new TreeSet<>())
-                            .add(literal.getLiteral() + "@" + literal.getLang().toLowerCase());
+                            .add(literal.getLiteral() + "@" + literal.getLang().toLowerCase(Locale.ROOT));
                 }
             }
         }
@@ -315,33 +338,53 @@ public final class SemanticDiffService {
 
     private static List<Map<String, Object>> annotationChanges(OWLOntology left, OWLOntology right,
             boolean includeImports, Set<EntityKey> leftEntities, Set<EntityKey> rightEntities, int limit) {
+        int bounded = Math.max(limit, 0);
+        if (bounded == 0) {
+            return List.of();
+        }
         Set<String> commonIris = new TreeSet<>();
         leftEntities.stream().filter(rightEntities::contains).forEach(key -> commonIris.add(key.iri));
         List<Map<String, Object>> rows = new ArrayList<>();
         for (String iri : commonIris) {
-            Set<String> before = annotationStrings(left, includeImports, IRI.create(iri));
-            Set<String> after = annotationStrings(right, includeImports, IRI.create(iri));
-            if (before.equals(after)) continue;
-            Set<String> removed = difference(before, after);
-            Set<String> added = difference(after, before);
+            Map<String, String> before = annotationStrings(left, includeImports, IRI.create(iri));
+            Map<String, String> after = annotationStrings(right, includeImports, IRI.create(iri));
+            if (before.keySet().equals(after.keySet())) continue;
+            Set<String> removed = difference(before.keySet(), after.keySet());
+            Set<String> added = difference(after.keySet(), before.keySet());
             rows.add(Map.of("focus_iri", iri, "added", new ArrayList<>(added),
-                    "removed", new ArrayList<>(removed), "categories", annotationCategories(added, removed)));
-            if (rows.size() >= Math.max(limit, 0)) break;
+                    "removed", new ArrayList<>(removed), "categories", annotationCategories(
+                            added.stream().map(after::get).toList(),
+                            removed.stream().map(before::get).toList())));
+            if (rows.size() >= bounded) break;
         }
         return rows;
     }
 
-    private static Set<String> annotationStrings(OWLOntology ontology, boolean closure, IRI subject) {
-        Set<String> result = new TreeSet<>();
+    /**
+     * Each annotation assertion on {@code subject}, keyed by its canonical rendering (the displayed
+     * added/removed string, which includes the subject IRI) and mapped to the property-and-value
+     * scan text used for category detection. The scan text deliberately excludes the subject: a
+     * subject IRI like {@code http://example.org/resource/Widget} contains "source", which would
+     * otherwise tag a pure rdfs:label edit with a spurious provenance category.
+     */
+    private static Map<String, String> annotationStrings(OWLOntology ontology, boolean closure,
+            IRI subject) {
+        Map<String, String> result = new TreeMap<>();
         Collection<OWLOntology> ontologies = closure ? ontology.getImportsClosure() : Set.of(ontology);
         for (OWLOntology item : ontologies) {
-            item.getAnnotationAssertionAxioms(subject).forEach(axiom -> result.add(
-                    axiom.getProperty().getIRI() + "=" + axiom.getValue()));
+            item.getAnnotationAssertionAxioms(subject).forEach(axiom ->
+                    result.put(OwlDocumentSemantics.render(item, axiom),
+                            axiom.getProperty().getIRI() + "=" + axiom.getValue()));
         }
         return result;
     }
 
-    private static List<String> annotationCategories(Set<String> added, Set<String> removed) {
+    /**
+     * Keyword categories over the property-and-value scan texts only, never the displayed rendering
+     * (whose subject IRI would leak path segments like "/resource/" or "status" into the scan).
+     * Property IRIs that genuinely carry a keyword (rdfs:label, dct:source, ...) still match.
+     */
+    private static List<String> annotationCategories(Collection<String> added, Collection<String> removed) {
         String joined = String.join("\n", added) + "\n" + String.join("\n", removed);
         List<String> categories = new ArrayList<>();
         if (joined.contains("label") || joined.contains("prefLabel") || joined.contains("altLabel"))
@@ -365,6 +408,13 @@ public final class SemanticDiffService {
         return result;
     }
 
+    private static Set<String> canonicalStrings(OWLOntology context,
+            Collection<? extends OWLObject> values) {
+        Set<String> result = new TreeSet<>();
+        values.forEach(value -> result.add(OwlDocumentSemantics.render(context, value)));
+        return result;
+    }
+
     private static <T> Set<T> difference(Set<T> left, Set<T> right) {
         Set<T> result = new LinkedHashSet<>(left);
         result.removeAll(right);
@@ -377,7 +427,8 @@ public final class SemanticDiffService {
 
     private record EntityKey(String type, String iri) implements Comparable<EntityKey> {
         static EntityKey of(OWLEntity entity) {
-            return new EntityKey(entity.getEntityType().getName().toLowerCase(), entity.getIRI().toString());
+            return new EntityKey(entity.getEntityType().getName().toLowerCase(Locale.ROOT),
+                    entity.getIRI().toString());
         }
 
         @Override

@@ -21,12 +21,21 @@ jobs:
     steps:
       - name: Resolve release tag
         id: release_tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            tag="$REF_NAME"
           fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag '$tag' is not a valid version tag." >&2
+            exit 1
+          fi
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v7
         with:
@@ -51,6 +60,8 @@ jobs:
 
       - name: Verify tag matches Maven version
         id: project
+        env:
+          ACTUAL_TAG: ${{ steps.release_tag.outputs.tag }}
         run: |
           project_version="$(python3 - <<'PY'
           import xml.etree.ElementTree as ET
@@ -61,7 +72,7 @@ jobs:
           PY
           )"
           expected_tag="v${project_version}"
-          actual_tag="${{ steps.release_tag.outputs.tag }}"
+          actual_tag="$ACTUAL_TAG"
 
           if [ "$actual_tag" != "$expected_tag" ]; then
             echo "Release tag '$actual_tag' does not match Maven version '$project_version' (expected '$expected_tag')." >&2

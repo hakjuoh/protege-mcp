@@ -124,7 +124,7 @@ ontology with unsaved changes to its own existing document (`list_ontologies` sh
 | --- | --- | --- | --- | --- |
 | `path` | string | no | — | File path to save to (save-as), e.g. `/tmp/pets.ttl`. Omit to write to the existing document. |
 | `all` | boolean | no | `false` | Save every dirty ontology to its existing document instead of just the active one. Cannot be combined with `path` (a save-as targets only the active ontology); ontologies without a file are reported as skipped. |
-| `verify_round_trip` | boolean | no | `false` | Serialize beside the target, isolated-reload without fetching imports, and compare ontology id, direct imports, ontology annotations, normalized axioms, and axiom annotations before replacement. |
+| `verify_round_trip` | boolean | no | `false` | Serialize beside the target, isolated-reload without fetching imports, and compare ontology id, direct imports, ontology annotations, normalized axioms, and axiom annotations before replacement. Anonymous individuals are unsupported because their blank-node ids change on reload. |
 | `atomic` | boolean | no | `false` | Require atomic replacement; implies `verify_round_trip`. |
 | `backup` | boolean | no | `false` | Preserve an existing target as `<path>.bak`; implies `verify_round_trip`. |
 
@@ -138,7 +138,10 @@ With verified save (`verify_round_trip`, `atomic`, or `backup`):
 
 The reload never dereferences the import closure; every direct import declaration is still compared exactly.
 Unannotated declarations that the serializer materializes for entities already used by this document are
-normalized on both sides. Unrelated declarations and annotated declarations remain exact comparison inputs.
+normalized on both sides, including built-in Manchester frames and RDF 1.1-equivalent plain-string datatypes.
+Unrelated declarations and annotated declarations remain exact comparison inputs. An ontology containing an
+anonymous individual is rejected before any temporary or target artifact is written; use a plain unverified
+save or replace the blank node with a named individual.
 
 - `verified`: boolean round-trip verdict.
 - `bytes`: artifact size.

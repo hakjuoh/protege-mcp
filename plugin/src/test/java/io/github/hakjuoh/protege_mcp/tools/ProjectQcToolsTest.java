@@ -75,6 +75,44 @@ class ProjectQcToolsTest {
     }
 
     @Test
+    void persistedInvariantCqAndShaclAssetsRunTogetherThroughProjectQc(@TempDir Path temp)
+            throws Exception {
+        Files.createDirectories(temp.resolve("quality/invariants"));
+        Files.createDirectories(temp.resolve("cqs"));
+        Files.writeString(temp.resolve("quality/invariants/no-nothing.rq"),
+                "# id: no-nothing\n# severity: error\nASK { ?s a owl:Nothing }\n");
+        Files.writeString(temp.resolve("cqs/CQ-1.rq"), "# id: CQ-1\n"
+                + "# expected: nonEmpty\n# include_inferred: false\n\n"
+                + "PREFIX owl: <http://www.w3.org/2002/07/owl#>\n"
+                + "SELECT ?c WHERE { ?c a owl:Class }\n");
+        Files.writeString(temp.resolve("quality/shapes.ttl"), """
+                @prefix sh: <http://www.w3.org/ns/shacl#> .
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+                [] a sh:NodeShape ;
+                   sh:targetClass owl:Class ;
+                   sh:property [ sh:path rdfs:label ; sh:minCount 1 ] .
+                """);
+        Path policy = writePolicy(temp, "[invariants, cqs, shacl]", """
+                  invariants:
+                    paths: [quality/invariants/*.rq]
+                  competency_questions:
+                    convention: robot-sparql-dir
+                    path: cqs
+                  shacl:
+                    paths: [quality/shapes.ttl]
+                """, "error");
+
+        Map<String, Object> result = run(temp, policy, true);
+
+        assertEquals("fail", result.get("gate"), () -> result.toString());
+        assertEquals(3, result.get("stages_ran"));
+        assertEquals(0, result.get("stages_skipped"));
+        assertTrue(String.valueOf(result.get("resolved_assets")).contains("shapes.ttl"));
+        assertTrue(String.valueOf(result.get("findings")).contains("shacl"));
+    }
+
+    @Test
     void requiredInferredCompetencyQuestionCannotDegradeToAssertedData(@TempDir Path temp) throws Exception {
         Path cqs = temp.resolve("cqs");
         Files.createDirectories(cqs);

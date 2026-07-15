@@ -80,6 +80,62 @@ class OntologyDocumentMissingImportsTest {
     }
 
     @Test
+    void malformedImportIrisStillObeyWarnSilentAndErrorModes(@TempDir Path dir) throws Throwable {
+        for (String malformed : List.of("urn:test:bad{brace}",
+                "file:/nonexistent/test-bad{brace}.owl")) {
+            Path document = dir.resolve("malformed-" + Math.abs(malformed.hashCode()) + ".ofn");
+            Files.writeString(document, "Ontology(<urn:test:malformed-root> Import(<"
+                    + malformed + ">))");
+            for (Method method : new Method[] {
+                    loader("load", String.class, int.class, MissingImportsMode.class, List.class),
+                    loader("fetch", String.class, int.class, MissingImportsMode.class, List.class) }) {
+                Object warned = invoke(method, document.toString(), 1_000,
+                        MissingImportsMode.WARN, List.of());
+                assertTrue(unresolved(warned).contains(malformed));
+                Object silent = invoke(method, document.toString(), 1_000,
+                        MissingImportsMode.SILENT, List.of());
+                assertTrue(unresolved(silent).contains(malformed));
+                Throwable strict = assertThrows(Throwable.class, () -> invoke(method,
+                        document.toString(), 1_000, MissingImportsMode.ERROR, List.of()));
+                assertInstanceOf(ToolArgException.class, strict);
+                assertTrue(strict.getMessage().contains("required import '" + malformed + "'"),
+                        strict.getMessage());
+            }
+        }
+    }
+
+    @Test
+    void nonPrimaryUrnSelfImportAndUrnBeforeDocumentAreResolvedCold(@TempDir Path dir)
+            throws Throwable {
+        String childIri = "urn:test:closure-child";
+        Path child = dir.resolve("child.rdf");
+        Files.writeString(child, """
+                <?xml version="1.0"?>
+                <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+                         xmlns:owl="http://www.w3.org/2002/07/owl#">
+                  <owl:Ontology rdf:about="%s"><owl:imports rdf:resource="%s"/></owl:Ontology>
+                </rdf:RDF>
+                """.formatted(childIri, childIri));
+        Path childSelfRoot = dir.resolve("child-self-root.ofn");
+        Files.writeString(childSelfRoot, "Ontology(<urn:test:root-self> Import(<"
+                + child.toUri() + ">))");
+        Path urnFirstRoot = dir.resolve("urn-first-root.ofn");
+        Files.writeString(urnFirstRoot, "Ontology(<urn:test:root-order> Import(<" + childIri
+                + ">) Import(<" + child.toUri() + ">))");
+
+        for (Path root : List.of(childSelfRoot, urnFirstRoot)) {
+            for (Method method : new Method[] {
+                    loader("load", String.class, int.class, MissingImportsMode.class, List.class),
+                    loader("fetch", String.class, int.class, MissingImportsMode.class, List.class) }) {
+                Object loaded = invoke(method, root.toString(), 1_000,
+                        MissingImportsMode.ERROR, List.of());
+                assertTrue(unresolved(loaded).isEmpty(),
+                        "a completed non-primary ontology resolves the fallback URN");
+            }
+        }
+    }
+
+    @Test
     void siblingCatalogStillResolvesAnOpaqueUrnBeforeTheFallback(@TempDir Path dir) throws Throwable {
         String importedIri = "urn:example:catalog-imported";
         Path importedDocument = dir.resolve("urn-catalog-imported.rdf");

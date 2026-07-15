@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.junit.jupiter.api.Test;
@@ -161,6 +162,155 @@ class SemanticDiffServiceTest {
         Map<String, Object> diff = SemanticDiffService.diff(left, right, false, 50);
         assertEquals("metadata_only",
                 ((Map<String, Object>) diff.get("compatibility")).get("classification"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void serializerMaterializedDeclarationsDoNotMakeASelfDiffNonIdentical() throws Exception {
+        var lm = OWLManager.createOWLOntologyManager();
+        var rm = OWLManager.createOWLOntologyManager();
+        var left = lm.createOntology(IRI.create("urn:diff:declarations"));
+        var right = rm.createOntology(IRI.create("urn:diff:declarations"));
+        var lc = lm.getOWLDataFactory().getOWLClass(IRI.create("urn:diff:declarations#A"));
+        var rc = rm.getOWLDataFactory().getOWLClass(IRI.create("urn:diff:declarations#A"));
+        lm.addAxiom(left, lm.getOWLDataFactory().getOWLSubClassOfAxiom(lc,
+                lm.getOWLDataFactory().getOWLThing()));
+        rm.addAxiom(right, rm.getOWLDataFactory().getOWLSubClassOfAxiom(rc,
+                rm.getOWLDataFactory().getOWLThing()));
+        rm.addAxiom(right, rm.getOWLDataFactory().getOWLDeclarationAxiom(rc));
+
+        Map<String, Object> diff = SemanticDiffService.diff(left, right, false, 50);
+        assertTrue((Boolean) diff.get("identical"));
+        Map<String, Object> asserted = (Map<String, Object>) diff.get("asserted_axioms");
+        assertEquals(0, ((Map<String, Object>) asserted.get("added")).get("count"));
+        assertEquals(0, ((Map<String, Object>) asserted.get("removed")).get("count"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void annotationLimitZeroReturnsNoRowsAndHashCollidingLiteralsStillDiff() throws Exception {
+        var lm = OWLManager.createOWLOntologyManager();
+        var rm = OWLManager.createOWLOntologyManager();
+        var left = lm.createOntology(IRI.create("urn:diff:annotations"));
+        var right = rm.createOntology(IRI.create("urn:diff:annotations"));
+        var ldf = lm.getOWLDataFactory();
+        var rdf = rm.getOWLDataFactory();
+        IRI iri = IRI.create("urn:diff:annotations#A");
+        lm.addAxiom(left, ldf.getOWLDeclarationAxiom(ldf.getOWLClass(iri)));
+        rm.addAxiom(right, rdf.getOWLDeclarationAxiom(rdf.getOWLClass(iri)));
+        // "Aa" and "BB" have the same Java String hash. Rendering values as Object@hash used to
+        // collapse this real change to no annotation_changes row.
+        lm.addAxiom(left, ldf.getOWLAnnotationAssertionAxiom(ldf.getRDFSComment(), iri,
+                ldf.getOWLLiteral("Aa")));
+        rm.addAxiom(right, rdf.getOWLAnnotationAssertionAxiom(rdf.getRDFSComment(), iri,
+                rdf.getOWLLiteral("BB")));
+
+        Map<String, Object> bounded = SemanticDiffService.diff(left, right, false, 0);
+        assertTrue(((List<?>) bounded.get("annotation_changes")).isEmpty());
+
+        Map<String, Object> diff = SemanticDiffService.diff(left, right, false, 10);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) diff.get("annotation_changes");
+        assertEquals(1, rows.size());
+        assertTrue(String.valueOf(rows.get(0).get("removed")).contains("Aa"));
+        assertTrue(String.valueOf(rows.get(0).get("added")).contains("BB"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void labelEditOnSubjectIriContainingSourceIsNotProvenance() throws Exception {
+        // The subject IRI belongs in the DISPLAYED canonical rendering but must stay out of category
+        // detection: ".../resource/Widget" contains "source", which used to tag a pure rdfs:label
+        // edit with a spurious provenance category.
+        var lm = OWLManager.createOWLOntologyManager();
+        var rm = OWLManager.createOWLOntologyManager();
+        var left = lm.createOntology(IRI.create("http://example.org/scan"));
+        var right = rm.createOntology(IRI.create("http://example.org/scan"));
+        var ldf = lm.getOWLDataFactory();
+        var rdf = rm.getOWLDataFactory();
+        IRI subject = IRI.create("http://example.org/resource/Widget");
+        lm.addAxiom(left, ldf.getOWLDeclarationAxiom(ldf.getOWLClass(subject)));
+        rm.addAxiom(right, rdf.getOWLDeclarationAxiom(rdf.getOWLClass(subject)));
+        lm.addAxiom(left, ldf.getOWLAnnotationAssertionAxiom(ldf.getRDFSLabel(), subject,
+                ldf.getOWLLiteral("Old name")));
+        rm.addAxiom(right, rdf.getOWLAnnotationAssertionAxiom(rdf.getRDFSLabel(), subject,
+                rdf.getOWLLiteral("New name")));
+
+        Map<String, Object> diff = SemanticDiffService.diff(left, right, false, 10);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) diff.get("annotation_changes");
+        assertEquals(1, rows.size());
+        assertEquals(List.of("label_or_synonym"), rows.get(0).get("categories"),
+                "the subject IRI's /resource/ segment must not add a provenance category");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void propertyIriGenuinelyContainingSourceStillYieldsProvenance() throws Exception {
+        var lm = OWLManager.createOWLOntologyManager();
+        var rm = OWLManager.createOWLOntologyManager();
+        var left = lm.createOntology(IRI.create("http://example.org/scan"));
+        var right = rm.createOntology(IRI.create("http://example.org/scan"));
+        var ldf = lm.getOWLDataFactory();
+        var rdf = rm.getOWLDataFactory();
+        IRI subject = IRI.create("http://example.org/scan#Widget");
+        lm.addAxiom(left, ldf.getOWLDeclarationAxiom(ldf.getOWLClass(subject)));
+        rm.addAxiom(right, rdf.getOWLDeclarationAxiom(rdf.getOWLClass(subject)));
+        rm.addAxiom(right, rdf.getOWLAnnotationAssertionAxiom(
+                rdf.getOWLAnnotationProperty(IRI.create("http://purl.org/dc/terms/source")),
+                subject, rdf.getOWLLiteral("ISO 10303")));
+
+        Map<String, Object> diff = SemanticDiffService.diff(left, right, false, 10);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) diff.get("annotation_changes");
+        assertEquals(1, rows.size());
+        assertEquals(List.of("provenance"), rows.get(0).get("categories"),
+                "dct:source as the PROPERTY is genuine provenance and must keep matching");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void subjectIriContainingStatusKeepsOtherAnnotationFallback() throws Exception {
+        // A "status" segment in the SUBJECT IRI used to fake a lifecycle category, which in turn
+        // suppressed the other_annotation fallback for this keyword-free custom property.
+        var lm = OWLManager.createOWLOntologyManager();
+        var rm = OWLManager.createOWLOntologyManager();
+        var left = lm.createOntology(IRI.create("http://example.org/scan"));
+        var right = rm.createOntology(IRI.create("http://example.org/scan"));
+        var ldf = lm.getOWLDataFactory();
+        var rdf = rm.getOWLDataFactory();
+        IRI subject = IRI.create("http://example.org/status/Thing");
+        lm.addAxiom(left, ldf.getOWLDeclarationAxiom(ldf.getOWLClass(subject)));
+        rm.addAxiom(right, rdf.getOWLDeclarationAxiom(rdf.getOWLClass(subject)));
+        rm.addAxiom(right, rdf.getOWLAnnotationAssertionAxiom(
+                rdf.getOWLAnnotationProperty(IRI.create("http://example.org/vocab#editorNote")),
+                subject, rdf.getOWLLiteral("internal")));
+
+        Map<String, Object> diff = SemanticDiffService.diff(left, right, false, 10);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) diff.get("annotation_changes");
+        assertEquals(1, rows.size());
+        assertEquals(List.of("other_annotation"), rows.get(0).get("categories"),
+                "the subject IRI's /status/ segment must not fake a lifecycle category");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void entityAndLanguageCaseFoldingIsLocaleIndependent() throws Exception {
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+            var lm = OWLManager.createOWLOntologyManager();
+            var rm = OWLManager.createOWLOntologyManager();
+            var left = lm.createOntology(IRI.create("urn:diff:locale"));
+            var right = rm.createOntology(IRI.create("urn:diff:locale"));
+            var individual = rm.getOWLDataFactory().getOWLNamedIndividual(
+                    IRI.create("urn:diff:locale#Individual"));
+            rm.addAxiom(right, rm.getOWLDataFactory().getOWLDeclarationAxiom(individual));
+
+            Map<String, Object> diff = SemanticDiffService.diff(left, right, false, 10);
+            Map<String, Object> added = (Map<String, Object>)
+                    ((Map<String, Object>) diff.get("entities")).get("added");
+            assertTrue(added.containsKey("namedindividual"), () -> added.toString());
+        } finally {
+            Locale.setDefault(previous);
+        }
     }
 
     @Test

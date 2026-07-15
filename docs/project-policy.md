@@ -145,14 +145,16 @@ The JSON Schema enforces structure; Java consumers must also construct records t
 constructor and use `ContractJson.mapper()` so semantic contradictions, unknown fields, and duplicate
 JSON keys are rejected.
 
-## Fingerprint v1
+## Fingerprint v2
 
-Fingerprint v1 covers ontology/version IRIs, direct import declarations, ontology annotations, and active
+Fingerprint v2 covers ontology/version IRIs, direct import declarations, ontology annotations, and active
 ontology axioms including axiom annotations. It normalizes serializer-added unannotated declarations and
 sorts fixed-prefix Functional Syntax object encodings before SHA-256. The document fingerprint additionally
 covers document IRI, format, sorted live prefixes, and an optional import-lock digest. Imported content is
 not silently folded in; direct import coordinates are, and later locked-import manifests carry dependency
-content checksums.
+content checksums. Version 2 includes built-in properties/datatypes and RDF 1.1 plain-string equivalence, so
+Manchester and Turtle/RDF/XML round trips do not change the semantic digest. Version 1 digests are not
+cross-version comparable.
 
 OWLAPI anonymous-individual `NodeID`s are parser-local. An ontology containing anonymous individuals gets a
 hashed same-session conflict token with `stability=session_only` and `release_stable=false`; raw NodeIDs are

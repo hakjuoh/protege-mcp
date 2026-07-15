@@ -198,6 +198,60 @@ class BrokerWiredTest {
     }
 
     @Test
+    void clientCannotSmuggleBrokerTrustHeadersToTheWindow() throws Exception {
+        FakeBackend backend = startBackend("header-guard");
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(backend, "w-guard", 1)));
+        String forged = AuthenticatedPrincipal.oauthAdmin(
+                "attacker", "Forged admin", "forged-grant").encode();
+
+        HttpResponse<String> response = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/mcp"))
+                .header("Authorization", "Bearer " + STATIC_TOKEN)
+                .header(AuthenticatedPrincipal.BROKER_HEADER, forged)
+                .header(InternalApiServlet.SECRET_HEADER, "forged-directory-secret")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, response.statusCode());
+        AuthenticatedPrincipal forwarded = AuthenticatedPrincipal.decode(
+                backend.lastHeaders.get(AuthenticatedPrincipal.BROKER_HEADER.toLowerCase()));
+        assertEquals("static-local-admin", forwarded.clientId(),
+                "the broker must replace, not forward, a client-supplied principal");
+        assertFalse(backend.lastHeaders.containsKey(
+                InternalApiServlet.SECRET_HEADER.toLowerCase(java.util.Locale.ROOT)));
+    }
+
+    @Test
+    void oauthSessionCannotBeReplayedByAnotherAuthenticatedPrincipal() throws Exception {
+        FakeBackend backend = startBackend("oauth-owner");
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(backend, "w-oauth", 1)));
+        OAuthStore.Client owner = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/owner"), "owner-client");
+        OAuthStore.Tokens ownerTokens = broker.oauthStore().issueTokens(owner.clientId, "mcp", null);
+        OAuthStore.Client attacker = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/attacker"), "attacker-client");
+        OAuthStore.Tokens attackerTokens = broker.oauthStore().issueTokens(
+                attacker.clientId, "mcp", null);
+
+        HttpResponse<String> opened = call("POST", "/mcp", ownerTokens.accessToken);
+        assertEquals(200, opened.statusCode());
+        AuthenticatedPrincipal forwarded = AuthenticatedPrincipal.decode(
+                backend.lastHeaders.get(AuthenticatedPrincipal.BROKER_HEADER.toLowerCase()));
+        assertEquals(owner.clientId, forwarded.clientId());
+
+        HttpResponse<String> replay = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/mcp"))
+                .header("Authorization", "Bearer " + attackerTokens.accessToken)
+                .header("Mcp-Session-Id", "session-of-oauth-owner")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(403, replay.statusCode());
+        assertTrue(replay.body().contains("session_principal_mismatch"));
+    }
+
+    @Test
     void sessionStaysPinnedToItsWindowEvenWhenFocusMoves() throws Exception {
         FakeBackend first = startBackend("first");
         BrokerClient c = client();

@@ -6,8 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAxiom;
@@ -51,5 +54,19 @@ class DiffToolsTest {
         DiffTools.Diff d = DiffTools.diff(left, new LinkedHashSet<>(left));
         assertTrue(d.onlyLeft.isEmpty() && d.onlyRight.isEmpty(),
                 "identical axiom sets diff to empty (a faithful round-trip)");
+    }
+
+    @Test
+    void comparisonDocumentParserErrorsAreBounded(@TempDir Path temp) throws Exception {
+        Path bad = temp.resolve("bad.txt");
+        Files.writeString(bad, "not an ontology");
+
+        ToolArgException error = org.junit.jupiter.api.Assertions.assertThrows(ToolArgException.class,
+                () -> DiffTools.loadDocument(bad.toString(), java.util.List.of(),
+                        new java.util.ArrayList<>()));
+
+        assertTrue(error.getMessage().contains("registered parsers"), error.getMessage());
+        assertFalse(error.getMessage().contains("Detailed logs:"), error.getMessage());
+        assertTrue(error.getMessage().length() < 2_000);
     }
 }

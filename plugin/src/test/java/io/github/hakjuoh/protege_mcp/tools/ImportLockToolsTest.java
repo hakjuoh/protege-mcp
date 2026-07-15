@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -44,6 +45,64 @@ class ImportLockToolsTest {
         Map<String, Object> unknown = entry("imports/upper.ttl");
         unknown.put("surprise", true);
         assertThrows(IOException.class, () -> ImportLockTools.parseEntry(unknown, temp));
+    }
+
+    @Test
+    void verifyRejectsUnknownTopLevelFields() throws Exception {
+        Path lock = temp.resolve("imports.lock.json");
+        Files.writeString(lock, "{\"version\":1,\"imports\":[],\"surprise\":true}\n");
+
+        Map<String, Object> result = structured(ImportLockTools.verify(
+                context(), Map.of("path", lock.toString())));
+
+        assertEquals(false, result.get("valid"));
+        assertTrue(String.valueOf(result.get("errors")).contains("unknown top-level"));
+    }
+
+    @Test
+    void verifyRefusesAStalePassWhenImportsChangeDuringHashing() throws Exception {
+        Path lock = temp.resolve("imports.lock.json");
+        Files.writeString(lock, "{\"version\":1,\"imports\":[]}\n");
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology active = manager.createOntology(IRI.create("https://example.org/active"));
+        ToolContext ctx = new ToolContext(HeadlessAccess.over(FakeModelManager.over(active)), null);
+
+        Map<String, Object> result = structured(ImportLockTools.verify(ctx,
+                Map.of("path", lock.toString()), () -> manager.applyChange(
+                        new org.semanticweb.owlapi.model.AddImport(active,
+                                manager.getOWLDataFactory().getOWLImportsDeclaration(
+                                        IRI.create("urn:test:concurrent-import"))))));
+
+        assertEquals(false, result.get("valid"));
+        assertTrue(String.valueOf(result.get("errors")).contains("state changed"),
+                () -> result.toString());
+    }
+
+    @Test
+    void bothVerifyHopsPassTheirExplicitLongBoundToTheEdtWait() throws Exception {
+        // verify() performs exactly three EDT dispatches: the policy-resolution read, the initial
+        // coordinate hop, and the post-hashing recheck hop. Dispatches 2 and 3 start their bodies
+        // only after a stall that exceeds the access's DEFAULT wait bound, so this verify succeeds
+        // only because both hops hand WRITE_HOP_TIMEOUT_MS to the bounded compute — each runs the
+        // same two-render revision fingerprint as the write hops, so a hop regressing to the
+        // default-bound compute(fn) would spuriously time out on a large ontology right after a
+        // successful write_import_lock. Under the stall that regression expires before its queued
+        // body starts, the body is then skipped, and the verify fails instead of reporting the lock.
+        Path lock = temp.resolve("imports.lock.json");
+        Files.writeString(lock, "{\"version\":1,\"imports\":[]}\n");
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology active = manager.createOntology(IRI.create("https://example.org/active"));
+        AtomicInteger dispatches = new AtomicInteger();
+        ToolContext ctx = new ToolContext(
+                HeadlessAccess.overStalledDispatches(FakeModelManager.over(active),
+                        150L, 1_000L, 2, dispatches), null);
+
+        Map<String, Object> result = structured(ImportLockTools.verify(ctx,
+                Map.of("path", lock.toString())));
+
+        assertEquals(true, result.get("valid"), () -> result.toString());
+        assertEquals(3, dispatches.get(), "policy resolution + initial coordinates + final recheck;"
+                + " update the stalled-dispatch script if verify()'s hop structure changes");
     }
 
     private static Map<String, Object> entry(String document) {

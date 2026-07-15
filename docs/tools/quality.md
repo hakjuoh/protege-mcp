@@ -268,7 +268,7 @@ under the [`cq:competencyQuestion`](../cq.html#competencyQuestion) property — 
 | `type` | string | no | — | Optional category, e.g. `Scoping` \| `Validating`. |
 | `query_lang` | string | no | `sparql` | Only `sparql` is supported. |
 | `include_inferred` | boolean | no | true | Run over inferred triples when the suite runs. |
-| `expected` | string | no | `nonEmpty` | Pass condition: `nonEmpty` \| `empty` \| `count OP N` (`OP` ∈ `>=,<=,==,>,<`). `exactRows` is authored in a `sidecar-manifest`. |
+| `expected` | string | no | `nonEmpty` | Pass condition: `nonEmpty` \| `empty` \| `count OP N` (`OP` ∈ `>=,<=,==,>,<`). `exactRows` is authored in a `sidecar-manifest` and compares an order- and duplicate-insensitive row set. |
 | `tags` | array | no | — | Optional tags. |
 | `convention` | string | no | *(auto)* | `robot-sparql-dir` \| `sidecar-manifest` \| `ontology-annotations`. |
 

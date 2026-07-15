@@ -402,7 +402,7 @@ reusing the shipping primitives (the single-undo transactional apply, the embedd
   heavy execution continues off-EDT. One private reasoner over the flattened no-network closure supplies both
   the logical gate and inferred SPARQL materialization, so every completed stage names the same snapshot.
   Timeout/interrupt discards stale private results, and missing/degraded required stages become `gate=error`.
-  Fingerprint v1 separates semantic from document coordinates and marks anonymous-individual digests
+  Fingerprint v2 separates semantic from document coordinates and marks anonymous-individual digests
   `session_only`; ADR 0002 defines the reasoner parity boundary.
 - **`verify_ontology`**: run project-defined SPARQL **invariants** (ROBOT `verify` — patterns that must
   never appear; a returned row / ASK true is a *violation*, the inverse of a CQ) over the shared off-EDT

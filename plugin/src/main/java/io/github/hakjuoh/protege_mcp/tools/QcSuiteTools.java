@@ -96,12 +96,17 @@ public final class QcSuiteTools {
         SuiteExecution execution = execute(ctx, config);
         boolean strictMissing = Tools.optBool(a, "error_on_missing_required", false);
         if (strictMissing || !config.requiredStages.isEmpty()) {
-            Set<String> required = config.requiredStages.isEmpty() && strictMissing
-                    ? config.stages : config.requiredStages;
+            Set<String> required = legacyRequiredStages(config, strictMissing);
             return Tools.ok(strictResult(execution, required, config.failOn,
                     0, null, false));
         }
         return aggregate(execution.results, config.failOn);
+    }
+
+    /** Explicit required_stages wins; strict mode promotes all requested stages only as a fallback. */
+    static Set<String> legacyRequiredStages(RunConfig config, boolean strictMissing) {
+        return config.requiredStages.isEmpty() && strictMissing
+                ? config.stages : config.requiredStages;
     }
 
     /** Shared orchestration used by legacy run_qc_suite and strict run_project_qc. */
@@ -734,10 +739,27 @@ public final class QcSuiteTools {
     }
 
     /** Project-mode ontology-annotations convention: load only the in-ontology annotation CQ store. */
-    private static List<CompetencyQuestion> loadAnnotationCqs(OWLModelManager mm) {
+    static List<CompetencyQuestion> loadAnnotationCqs(OWLModelManager mm) {
         CqContext c = CqContext.of(mm);
         CqStore store = CqStores.byId(Cq.CONV_ANNOTATIONS);
-        return store.detect(c) ? new ArrayList<>(store.load(c).ok) : new ArrayList<>();
+        if (!store.detect(c)) {
+            return new ArrayList<>();
+        }
+        CqStore.LoadResult loaded = store.load(c);
+        if (!loaded.skipped.isEmpty()) {
+            List<String> errors = loaded.skipped.stream()
+                    .map(warning -> warning.source + ": " + warning.reason).toList();
+            throw new ToolArgException("Ontology-annotation competency questions contain unreadable "
+                    + "entries: " + String.join("; ", errors));
+        }
+        Set<String> ids = new LinkedHashSet<>();
+        for (CompetencyQuestion cq : loaded.ok) {
+            if (!ids.add(cq.id)) {
+                throw new ToolArgException("Duplicate ontology-annotation competency-question id: "
+                        + cq.id);
+            }
+        }
+        return new ArrayList<>(loaded.ok);
     }
 
     /** Validate the captured data snapshot against the supplied SHACL shapes (graceful when none). */
@@ -1171,6 +1193,9 @@ public final class QcSuiteTools {
             stages.addAll(required);
             String profile = GovernanceTools.normalizeProfile(Tools.optString(a, "owl_profile"));
             int limit = Tools.optInt(a, "limit", 25);
+            if (limit < 0 || limit > 10_000) {
+                throw new ToolArgException("limit must be between 0 and 10000.");
+            }
             int timeout = Tools.optInt(a, "timeout_ms", 120_000);
             timeout = timeout <= 0 ? 120_000 : timeout;
             List<Invariants.Invariant> invariants = stages.contains(INVARIANTS)

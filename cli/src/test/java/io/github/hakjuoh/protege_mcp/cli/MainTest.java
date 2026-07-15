@@ -59,6 +59,22 @@ class MainTest {
     }
 
     @Test
+    void unparsableDocumentsReturnABoundedActionableError() throws Exception {
+        Path bad = temp.resolve("not-an-ontology.txt");
+        Files.writeString(bad, "this is not OWL");
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+
+        assertEquals(3, Main.run(new String[] {"diff", "--left", bad.toString(),
+                "--right", bad.toString()}, new PrintStream(new ByteArrayOutputStream()),
+                new PrintStream(err)));
+
+        String message = err.toString(StandardCharsets.UTF_8);
+        assertTrue(message.contains("none of") && message.contains("registered parsers"), message);
+        assertFalse(message.contains("Detailed logs:"), message);
+        assertTrue(message.length() < 2_000, "parser errors must stay bounded, got " + message.length());
+    }
+
+    @Test
     void diffToleratesUnresolvableImportsAndReportsThem() throws Exception {
         // The import IRI names a file that is never created, so it cannot resolve — deterministically
         // and without any network access. The asserted-only diff must survive it, not exit 3.

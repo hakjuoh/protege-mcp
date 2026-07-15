@@ -18,6 +18,8 @@ import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.util.SimpleIRIMapper;
 
+import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
+
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.github.hakjuoh.protege_mcp.core.diff.SemanticDiffService;
 
@@ -242,7 +244,7 @@ public final class DiffTools {
                     OntologyDocumentTools.documentSource(normalized), config);
         } catch (OWLOntologyCreationException e) {
             throw new ToolArgException("Could not load comparison document '" + normalized + "': "
-                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                    + OwlParsingErrors.conciseMessage(e));
         }
     }
 
