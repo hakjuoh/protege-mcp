@@ -377,17 +377,19 @@ public final class WriteTools {
                         + "Pass all=true to instead save EVERY ontology with unsaved changes to its "
                         + "own existing document (list_ontologies shows which are dirty). For a "
                         + "fail-closed artifact pipeline set verify_round_trip=true: it writes beside "
-                        + "the target, strictly reloads and compares ontology id/imports/ontology and "
-                        + "axiom annotations/exact axioms, rechecks the live revision, and only then "
-                        + "replaces the target. atomic=true requires an atomic filesystem move; "
+                        + "the target, reloads without fetching the import closure, compares ontology "
+                        + "id/direct imports/ontology and axiom annotations/normalized asserted axioms, "
+                        + "rechecks the live revision, and only then replaces the target. atomic=true "
+                        + "requires an atomic filesystem move; "
                         + "backup=true preserves the previous artifact as <path>.bak.",
                 Tools.schema()
                         .str("path", "Optional file path to save to (save-as), e.g. /tmp/pets.ttl.")
                         .bool("all", "Save every dirty ontology to its existing document instead of "
                                 + "just the active one (default false; cannot be combined with "
                                 + "'path' — ontologies without a file are reported as skipped).")
-                        .bool("verify_round_trip", "Use temporary strict reload/exact comparison before "
-                                + "replacing the target (default false for compatibility).")
+                        .bool("verify_round_trip", "Use a temporary isolated reload and normalized "
+                                + "document comparison before replacing the target; imports are not "
+                                + "fetched (default false for compatibility).")
                         .bool("atomic", "Require atomic target replacement; implies verify_round_trip.")
                         .bool("backup", "Copy an existing target to <path>.bak before replacement; "
                                 + "implies verify_round_trip.")

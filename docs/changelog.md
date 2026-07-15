@@ -81,7 +81,7 @@ tools**; guided prompts remain 11.
   catalog precedence, live/import mutation after isolated capture, exact reasoner configuration identity,
   buffering/fresh-entity policy mismatches, import-spanning unsatisfiability, inferred-data parity, and timeout
   interruption. The clean release build contains
-  **2,749 tests** with zero failures, errors, or skips.
+  **2,754 tests** with zero failures, errors, or skips.
 
 ### Changed
 - `run_qc_suite` accepts additive governance/required-stage controls and can return common strict-gate details;
@@ -188,6 +188,15 @@ tools**; guided prompts remain 11.
   shared core helper: `summarize_ontology` and match-all `search_entities` no longer list loaded-import
   entities for the active scope, and `validate_ontology`'s audit signature cannot flag an import's
   used-but-undeclared term against the active ontology.
+- Import IRIs with unsupported URL schemes (including opaque `urn:` / `tag:` IRIs) now obey
+  `load_ontology` / `merge_ontology_document`'s documented
+  `missing_imports=warn|error|silent` contract instead of escaping OWLAPI as an unchecked
+  `OWLOntologyFactoryNotFoundException`; workspace and sibling-catalog mappings still take precedence,
+  and a streaming-parser fallback does not misreport a valid URN self-import as missing.
+- Verified save reload now blocks the import closure behind one private empty document, so verification cannot
+  contact the network or exhaust memory by loading a release-scale closure. It still compares every direct import
+  declaration exactly, and it normalizes only serializer-materialized, unannotated declarations implied by the
+  document's own signature, avoiding false RDF/XML mismatches without hiding unrelated declaration changes.
 
 ### Compatibility
 - Existing tools and prompts keep their required arguments and legacy defaults. The new policy surface and

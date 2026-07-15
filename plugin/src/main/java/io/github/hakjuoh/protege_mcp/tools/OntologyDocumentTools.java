@@ -3,6 +3,9 @@ package io.github.hakjuoh.protege_mcp.tools;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -30,6 +33,7 @@ import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.model.OWLOntologyIRIMapper;
 import org.semanticweb.owlapi.model.RemoveAxiom;
 import org.semanticweb.owlapi.model.RemoveImport;
 import org.semanticweb.owlapi.model.RemoveOntologyAnnotation;
@@ -322,12 +326,13 @@ public final class OntologyDocumentTools {
                 .setMissingImportHandlingStrategy(missingImports.strategy())
                 .setFollowRedirects(true)
                 .setConnectionTimeout(timeoutMs);
-        addWorkspaceImportMappers(manager, workspaceMappings);
-        // Register the source-adjacent catalog last: OWLAPI gives the most recently-added mapper
-        // priority, so version-controlled project resolution overrides stale interactive hints.
-        addFolderCatalogMapper(manager, normalized);
-        try {
+        try (UnsupportedImportFallback fallback = UnsupportedImportFallback.install(manager)) {
+            addWorkspaceImportMappers(manager, workspaceMappings);
+            // Register the source-adjacent catalog last: OWLAPI gives the most recently-added mapper
+            // priority, so version-controlled project resolution overrides stale interactive hints.
+            addFolderCatalogMapper(manager, normalized);
             OWLOntology primary = manager.loadOntologyFromOntologyDocument(documentSource(normalized), config);
+            finishUnsupportedImports(primary, fallback, unresolvedImports, missingImports, normalized);
             ImportTools.ImportReport imports = ImportTools.analyze(primary);
             return new LoadedDocument(normalized, manager, primary,
                     manager.getOntologyDocumentIRI(primary), unresolvedImports,
@@ -478,12 +483,13 @@ public final class OntologyDocumentTools {
                 .setMissingImportHandlingStrategy(missingImports.strategy())
                 .setFollowRedirects(true)
                 .setConnectionTimeout(timeoutMs);
-        addWorkspaceImportMappers(manager, workspaceMappings);
-        // The sibling catalog is the project source of truth and must override workspace hints.
-        addFolderCatalogMapper(manager, normalized);
-        try {
+        try (UnsupportedImportFallback fallback = UnsupportedImportFallback.install(manager)) {
+            addWorkspaceImportMappers(manager, workspaceMappings);
+            // The sibling catalog is the project source of truth and must override workspace hints.
+            addFolderCatalogMapper(manager, normalized);
             OWLOntology sourceOntology = manager.loadOntologyFromOntologyDocument(
                     documentSource(normalized), config);
+            finishUnsupportedImports(sourceOntology, fallback, unresolvedImports, missingImports, normalized);
             ImportTools.ImportReport imports = ImportTools.analyze(sourceOntology);
             return new LoadedOntology(
                     normalized,
@@ -498,6 +504,118 @@ public final class OntologyDocumentTools {
             throw new ToolArgException("Could not load ontology document '" + normalized + "': "
                     + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         }
+    }
+
+    /**
+     * OWLAPI 4 applies {@link MissingImportHandlingStrategy} to ordinary document failures, but an
+     * import IRI with no URL/document handler (for example {@code urn:example:missing}) escapes earlier
+     * as an unchecked
+     * {@code OWLOntologyFactoryNotFoundException}. Let higher-priority workspace/catalog mappers resolve
+     * it first; if none does, this last-resort mapper temporarily satisfies only unsupported schemes from one
+     * private empty document. After the root parse completes the placeholder is removed and every such
+     * IRI is restored to the caller's unresolved-import list, so warn/silent/error retain their documented
+     * semantics and no placeholder can enter the Protégé workspace.
+     */
+    private static final class UnsupportedImportFallback implements AutoCloseable {
+        private final OWLOntologyManager manager;
+        private final Path placeholder;
+        private final IRI placeholderIri;
+        private final Set<String> unresolved = new LinkedHashSet<>();
+        private final OWLOntologyIRIMapper mapper;
+
+        private UnsupportedImportFallback(OWLOntologyManager manager, Path placeholder) {
+            this.manager = manager;
+            this.placeholder = placeholder;
+            this.placeholderIri = IRI.create(placeholder.toUri());
+            this.mapper = logical -> {
+                URI uri;
+                try {
+                    uri = logical.toURI();
+                } catch (RuntimeException invalid) {
+                    return null;
+                }
+                if (hasUrlHandler(uri)) {
+                    return null;
+                }
+                unresolved.add(logical.toString());
+                return placeholderIri;
+            };
+            // Added FIRST. OWLAPI's priority collection consults later workspace/catalog mappers first,
+            // so a legitimate local mapping for a URN wins and never reaches this fallback.
+            manager.getIRIMappers().add(mapper);
+        }
+
+        private static boolean hasUrlHandler(URI uri) {
+            try {
+                // URI.toURL() resolves the protocol handler but does not open a connection. This
+                // matches OWLAPI's supported http/https/file/ftp/jar boundary without network I/O.
+                uri.toURL();
+                return true;
+            } catch (IOException | IllegalArgumentException unsupported) {
+                return false;
+            }
+        }
+
+        static UnsupportedImportFallback install(OWLOntologyManager manager) {
+            try {
+                Path placeholder = Files.createTempFile("protege-mcp-unsupported-import-", ".ofn");
+                Files.writeString(placeholder, "Ontology()\n", StandardCharsets.UTF_8);
+                return new UnsupportedImportFallback(manager, placeholder);
+            } catch (IOException e) {
+                throw new ToolArgException("Could not prepare isolated missing-import handling: "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            }
+        }
+
+        List<String> unresolved() {
+            return List.copyOf(unresolved);
+        }
+
+        void removePlaceholderOntology() {
+            for (OWLOntology ontology : new ArrayList<>(manager.getOntologies())) {
+                if (placeholderIri.equals(manager.getOntologyDocumentIRI(ontology))) {
+                    manager.removeOntology(ontology);
+                }
+            }
+        }
+
+        @Override
+        public void close() {
+            manager.getIRIMappers().remove(mapper);
+            removePlaceholderOntology();
+            try {
+                Files.deleteIfExists(placeholder);
+            } catch (IOException ignored) {
+                // Private empty file only; cleanup must not mask the actual ontology result.
+            }
+        }
+    }
+
+    private static void finishUnsupportedImports(OWLOntology primary,
+            UnsupportedImportFallback fallback, List<String> unresolvedImports,
+            MissingImportsMode mode, String normalized) {
+        List<String> unsupported = fallback.unresolved().stream()
+                // RDF/XML and Turtle can encounter a self-import before their streaming parser
+                // assigns the root's ontology ID. The fallback is consulted at that point, but once
+                // parsing finishes the root itself genuinely resolves the declaration.
+                .filter(iri -> !ontologyIdContains(primary.getOntologyID(), iri))
+                .toList();
+        fallback.removePlaceholderOntology();
+        for (String iri : unsupported) {
+            if (!unresolvedImports.contains(iri)) {
+                unresolvedImports.add(iri);
+            }
+        }
+        if (mode == MissingImportsMode.ERROR && !unsupported.isEmpty()) {
+            throw new ToolArgException("Could not load ontology document '" + normalized
+                    + "': required import '" + unsupported.get(0)
+                    + "' could not be loaded: no OWL document factory can dereference that IRI.");
+        }
+    }
+
+    private static boolean ontologyIdContains(OWLOntologyID id, String iri) {
+        return id.getOntologyIRI().isPresent() && id.getOntologyIRI().get().toString().equals(iri)
+                || id.getVersionIRI().isPresent() && id.getVersionIRI().get().toString().equals(iri);
     }
 
     private static ToolArgException strictImportFailure(String normalized,

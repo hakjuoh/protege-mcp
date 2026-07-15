@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.formats.RDFXMLDocumentFormat;
 import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
 import org.semanticweb.owlapi.model.AddImport;
 import org.semanticweb.owlapi.model.AddOntologyAnnotation;
@@ -63,22 +64,54 @@ class VerifiedOntologyWriterTest {
     }
 
     @Test
-    void strictMissingImportFailurePreservesExistingArtifactAndCleansTemporaryFile() throws Exception {
+    void verificationDoesNotDereferenceUnavailableImportsAndCleansTemporaryFile() throws Exception {
         var manager = OWLManager.createOWLOntologyManager();
         var ontology = manager.createOntology(IRI.create("http://example.org/missing-import"));
-        var missing = manager.getOWLDataFactory().getOWLImportsDeclaration(
+        var firstMissing = manager.getOWLDataFactory().getOWLImportsDeclaration(
                 IRI.create(temp.resolve("does-not-exist.ttl").toUri()));
-        manager.applyChange(new AddImport(ontology, missing));
+        var secondMissing = manager.getOWLDataFactory().getOWLImportsDeclaration(
+                IRI.create("https://127.0.0.1:1/must-not-be-contacted"));
+        manager.applyChange(new AddImport(ontology, firstMissing));
+        manager.applyChange(new AddImport(ontology, secondMissing));
         Path target = temp.resolve("locked.ttl");
         Files.writeString(target, "previous-release");
 
-        assertThrows(ToolArgException.class, () -> VerifiedOntologyWriter.prepare(
-                VerifiedOntologyWriter.snapshot(ontology, new TurtleDocumentFormat()), target));
+        try (var prepared = VerifiedOntologyWriter.prepare(
+                VerifiedOntologyWriter.snapshot(ontology, new TurtleDocumentFormat()), target)) {
+            assertTrue(prepared.verification.identical(),
+                    "all direct import declarations are compared without loading their documents");
+            assertEquals("previous-release", Files.readString(target),
+                    "prepare still must not replace the target before install");
+        }
 
         assertEquals("previous-release", Files.readString(target));
         try (var files = Files.list(temp)) {
             assertEquals(Set.of("locked.ttl"),
                     files.map(path -> path.getFileName().toString()).collect(java.util.stream.Collectors.toSet()));
+        }
+    }
+
+    @Test
+    void rdfXmlSerializerAddedHeaderPropertyDeclarationsDoNotFalseFail() throws Exception {
+        var manager = OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(IRI.create("urn:example:fibo-header"));
+        var df = manager.getOWLDataFactory();
+        var copyright = df.getOWLAnnotationProperty(
+                IRI.create("https://www.omg.org/spec/Commons/AnnotationVocabulary/copyright"));
+        var modified = df.getOWLAnnotationProperty(IRI.create("http://purl.org/dc/terms/modified"));
+        manager.applyChange(new AddOntologyAnnotation(ontology,
+                df.getOWLAnnotation(copyright, df.getOWLLiteral("Copyright EDM Council"))));
+        manager.applyChange(new AddOntologyAnnotation(ontology,
+                df.getOWLAnnotation(modified, df.getOWLLiteral("2026-07-15"))));
+        assertTrue(ontology.getAxioms().isEmpty(),
+                "the FIBO-shaped fixture deliberately has header annotations but no declarations");
+
+        Path target = temp.resolve("fibo-header.rdf");
+        try (var prepared = VerifiedOntologyWriter.prepare(
+                VerifiedOntologyWriter.snapshot(ontology, new RDFXMLDocumentFormat()), target)) {
+            assertTrue(prepared.verification.identical(),
+                    "serializer-added unannotated declarations are normalized on both sides");
+            assertTrue(prepared.verification.axiomsIncludingAnnotations());
         }
     }
 

@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -8,12 +9,15 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
 import org.semanticweb.owlapi.model.AddImport;
 import org.semanticweb.owlapi.model.AddOntologyAnnotation;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.MissingImportHandlingStrategy;
+import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
@@ -22,7 +26,9 @@ import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 
-/** Protégé-free temporary serialization, strict reload, exact comparison and atomic install. */
+import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
+
+/** Protégé-free temporary serialization, isolated reload, normalized comparison and atomic install. */
 final class VerifiedOntologyWriter {
 
     /** Longest symlink chain {@link #resolveNewTarget} follows before failing closed. */
@@ -136,17 +142,26 @@ final class VerifiedOntologyWriter {
 
     private static Verification verify(OWLOntology expected, Path temp) {
         OWLOntologyManager manager = OwlManagers.create();
-        OntologyDocumentTools.addFolderCatalogMapper(manager, temp.toString());
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.THROW_EXCEPTION)
                 .setFollowRedirects(false);
+        // Verification compares this document's ID, header and asserted axioms only. Loading the import
+        // closure is both irrelevant and dangerous: a save-as away from its catalog could contact the
+        // network, and a release-scale aggregate (or hostile import fan-out) can exhaust memory. Satisfy
+        // every declared import from ONE private anonymous empty document, exactly as the asserted-only
+        // CLI diff does. The declarations themselves are still parsed and compared exactly below.
+        Path placeholder = null;
         try {
+            placeholder = Files.createTempFile("protege-mcp-verified-save-imports-", ".ofn");
+            Files.writeString(placeholder, "Ontology()\n", StandardCharsets.UTF_8);
+            IRI placeholderIri = IRI.create(placeholder.toUri());
+            manager.getIRIMappers().add(importIri -> placeholderIri);
             OWLOntology actual = manager.loadOntologyFromOntologyDocument(
                     OntologyDocumentTools.documentSource(temp.toString()), config);
             boolean id = ontologyIdMatches(expected.getOntologyID(), actual.getOntologyID());
             boolean imports = expected.getImportsDeclarations().equals(actual.getImportsDeclarations());
             boolean annotations = expected.getAnnotations().equals(actual.getAnnotations());
-            boolean axioms = expected.getAxioms().equals(actual.getAxioms());
+            boolean axioms = normalizedAxioms(expected).equals(normalizedAxioms(actual));
             boolean anonymous = !expected.getAnonymousIndividuals().isEmpty();
             Map<String, Object> mismatch = new LinkedHashMap<>();
             if (!id) mismatch.put("ontology_id", false);
@@ -155,9 +170,35 @@ final class VerifiedOntologyWriter {
             if (!axioms) mismatch.put("axioms_including_annotations", false);
             if (anonymous) mismatch.put("anonymous_individuals", "present_session_ids_not_release_stable");
             return new Verification(id, imports, annotations, axioms, anonymous, mismatch);
+        } catch (IOException e) {
+            throw new ToolArgException("Could not prepare isolated import handling for strict reload: "
+                    + message(e));
         } catch (OWLOntologyCreationException e) {
             throw new ToolArgException("Strict reload of temporary ontology failed: " + message(e));
+        } finally {
+            if (placeholder != null) {
+                try {
+                    Files.deleteIfExists(placeholder);
+                } catch (IOException ignored) {
+                    // Cleanup of a private empty file must not mask the verification result.
+                }
+            }
         }
+    }
+
+    /**
+     * OWL serializers may materialize otherwise implicit, unannotated declarations on save. Compare
+     * the same normalized axiom set as fingerprint v1: add one unannotated declaration for every
+     * non-built-in entity used by this document's own axioms or ontology annotations. Annotated
+     * declarations remain distinct, and a declaration for an otherwise-unused entity is still
+     * load-bearing because it participates in the document signature itself.
+     */
+    static Set<OWLAxiom> normalizedAxioms(OWLOntology ontology) {
+        Set<OWLAxiom> normalized = new LinkedHashSet<>(ontology.getAxioms());
+        OwlDocumentSignature.of(ontology).stream().filter(entity -> !entity.isBuiltIn())
+                .map(ontology.getOWLOntologyManager().getOWLDataFactory()::getOWLDeclarationAxiom)
+                .forEach(normalized::add);
+        return normalized;
     }
 
     /**

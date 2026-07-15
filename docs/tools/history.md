@@ -124,7 +124,7 @@ ontology with unsaved changes to its own existing document (`list_ontologies` sh
 | --- | --- | --- | --- | --- |
 | `path` | string | no | — | File path to save to (save-as), e.g. `/tmp/pets.ttl`. Omit to write to the existing document. |
 | `all` | boolean | no | `false` | Save every dirty ontology to its existing document instead of just the active one. Cannot be combined with `path` (a save-as targets only the active ontology); ontologies without a file are reported as skipped. |
-| `verify_round_trip` | boolean | no | `false` | Serialize beside the target, strict-reload, and compare ontology id, imports, ontology annotations, exact axioms, and axiom annotations before replacement. |
+| `verify_round_trip` | boolean | no | `false` | Serialize beside the target, isolated-reload without fetching imports, and compare ontology id, direct imports, ontology annotations, normalized axioms, and axiom annotations before replacement. |
 | `atomic` | boolean | no | `false` | Require atomic replacement; implies `verify_round_trip`. |
 | `backup` | boolean | no | `false` | Preserve an existing target as `<path>.bak`; implies `verify_round_trip`. |
 
@@ -135,6 +135,10 @@ ontology with unsaved changes to its own existing document (`list_ontologies` sh
 - `format`: string — the serialization format used (the format class's simple name); present only on a save-as.
 
 With verified save (`verify_round_trip`, `atomic`, or `backup`):
+
+The reload never dereferences the import closure; every direct import declaration is still compared exactly.
+Unannotated declarations that the serializer materializes for entities already used by this document are
+normalized on both sides. Unrelated declarations and annotated declarations remain exact comparison inputs.
 
 - `verified`: boolean round-trip verdict.
 - `bytes`: artifact size.
