@@ -15,9 +15,45 @@ import org.junit.jupiter.api.io.TempDir;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.io.StringDocumentSource;
 import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.util.SimpleIRIMapper;
 import io.github.hakjuoh.protege_mcp.core.diff.SemanticDiffService;
 
 class SemanticDiffServiceTest {
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void entityDiffExcludesImportsUnlessRequested(@TempDir Path temp) throws Exception {
+        var lm = OWLManager.createOWLOntologyManager();
+        var rm = OWLManager.createOWLOntologyManager();
+        IRI rootIri = IRI.create("http://example.org/scoped-diff");
+        IRI importIri = IRI.create("http://example.org/scoped-import");
+        Path leftImport = temp.resolve("left-import.ofn");
+        Path rightImport = temp.resolve("right-import.ofn");
+        Path leftRoot = temp.resolve("left-root.ofn");
+        Path rightRoot = temp.resolve("right-root.ofn");
+        Files.writeString(leftImport, "Ontology(<" + importIri + "> Declaration(Class(<"
+                + importIri + "#LeftOnly>)))");
+        Files.writeString(rightImport, "Ontology(<" + importIri + "> Declaration(Class(<"
+                + importIri + "#RightOnly>)))");
+        String rootDocument = "Ontology(<" + rootIri + "> Import(<" + importIri + ">))";
+        Files.writeString(leftRoot, rootDocument);
+        Files.writeString(rightRoot, rootDocument);
+        lm.getIRIMappers().add(new SimpleIRIMapper(importIri, IRI.create(leftImport.toUri())));
+        rm.getIRIMappers().add(new SimpleIRIMapper(importIri, IRI.create(rightImport.toUri())));
+        var left = lm.loadOntologyFromOntologyDocument(leftRoot.toFile());
+        var right = rm.loadOntologyFromOntologyDocument(rightRoot.toFile());
+
+        Map<String, Object> asserted = SemanticDiffService.diff(left, right, false, 50);
+        Map<String, Object> assertedEntities = (Map<String, Object>) asserted.get("entities");
+        assertEquals(0, ((Map<String, Object>) assertedEntities.get("added")).get("count"));
+        assertEquals(0, ((Map<String, Object>) assertedEntities.get("removed")).get("count"));
+        assertTrue((Boolean) asserted.get("identical"));
+
+        Map<String, Object> closure = SemanticDiffService.diff(left, right, true, 50);
+        Map<String, Object> closureEntities = (Map<String, Object>) closure.get("entities");
+        assertEquals(1, ((Map<String, Object>) closureEntities.get("added")).get("count"));
+        assertEquals(1, ((Map<String, Object>) closureEntities.get("removed")).get("count"));
+    }
 
     @Test
     @SuppressWarnings("unchecked")

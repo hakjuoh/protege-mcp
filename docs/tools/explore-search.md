@@ -88,7 +88,9 @@ Produces a signature-and-axiom overview of the active ontology: counts of entiti
 - `logical_axioms`: integer — logical axioms in scope.
 - `ontology_annotations`: integer — count of ontology-level annotations.
 - `import_declarations`: integer — count of import declarations.
-- `signature_entities`: integer — number of distinct entities in the signature.
+- `signature_entities`: integer — number of distinct entities the scope's own axioms and ontology
+  annotations reference. Loaded-but-out-of-scope imports never count, and neither do the implicit
+  datatypes of plain literals (OWLAPI's cached signature reports both).
 - `entity_types`: object — a map of entity-type name to count (sorted).
 - `axiom_types`: object — a map of axiom-type name to count, capped at `limit` rows.
 - `axiom_types_truncated`: integer — present only when the axiom-type map was capped; how many rows were omitted.
@@ -135,7 +137,10 @@ A totally-ordered (display, then IRI) page of the class list:
 
 ## `search_entities`
 
-Searches entities by name or IRI fragment across the loaded ontologies. Filter by `type` (`class`, `object_property`, `data_property`, `annotation_property`, `individual`, `datatype`, or `all`). A plain fragment matches as a substring and `*` acts as a wildcard; an empty or wildcard-only `query` lists the active ontology's whole signature (narrowed to `type`). This is the general-purpose lookup when you know part of a name but not its exact rendering or IRI.
+Searches entities by name or IRI fragment across the loaded ontologies. Filter by `type` (`class`, `object_property`, `data_property`, `annotation_property`, `individual`, `datatype`, or `all`). A plain fragment matches as a substring and `*` acts as a wildcard; an empty or wildcard-only `query` lists the active ontology's own signature (narrowed to `type`; loaded
+imports are not listed). One asymmetry: a wildcard `type=datatype` query reads OWLAPI's per-type
+accessor and so still lists the implicit datatypes of plain literals (e.g. `xsd:string`), which the
+`type=all` listing derives from the document's own content and therefore omits. This is the general-purpose lookup when you know part of a name but not its exact rendering or IRI.
 
 **Grounding-aware (0.4.0).** Results are **ranked**: each hit carries a `score` and a `match_kind`
 (`exact` \| `prefix` \| `substring` \| `fuzzy` — the *exact* tier considers every `rdfs:label` language

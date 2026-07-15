@@ -25,6 +25,8 @@ import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.util.DefaultPrefixManager;
 
+import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
+
 /**
  * Canonical semantic and live-document fingerprints for an OWLAPI ontology.
  *
@@ -135,7 +137,7 @@ public final class OntologyFingerprints {
         // for every non-built-in signature entity, while retaining annotated declarations as distinct
         // curation-bearing axioms. This is what makes a normal save/reload cycle fingerprint-stable.
         List<OWLAxiom> normalizedAxioms = new ArrayList<>(ontology.getAxioms());
-        ontology.getSignature().stream().filter(entity -> !entity.isBuiltIn())
+        OwlDocumentSignature.of(ontology).stream().filter(entity -> !entity.isBuiltIn())
                 .map(ontology.getOWLOntologyManager().getOWLDataFactory()::getOWLDeclarationAxiom)
                 .forEach(normalizedAxioms::add);
         canonicalObjects(ontology, new java.util.LinkedHashSet<>(normalizedAxioms))

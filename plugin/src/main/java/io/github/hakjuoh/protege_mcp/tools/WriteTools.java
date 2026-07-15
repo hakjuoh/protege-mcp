@@ -330,13 +330,19 @@ public final class WriteTools {
                         long before = totalAxioms(mm);
                         hm.undo();
                         long after = totalAxioms(mm);
+                        boolean dirty = mm.getDirtyOntologies().contains(mm.getActiveOntology());
                         return Tools.json().put("undone", true)
                                 .put("message", "Undid the last change.")
                                 .put("axioms_before", before)
                                 .put("axioms_after", after)
                                 .put("net_axiom_change", after - before)
                                 .put("undo_depth", hm.getLoggedChanges().size())
-                                .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
+                                .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo())
+                                .put("dirty", dirty)
+                                .put("dirty_note", "Protégé keeps the ontology marked dirty after "
+                                        + "Undo until the next save, even when content returns to its "
+                                        + "loaded fingerprint.")
+                                .result();
                     });
                 }));
 

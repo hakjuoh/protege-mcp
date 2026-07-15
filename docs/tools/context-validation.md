@@ -99,7 +99,9 @@ ontology-change event. Use the returned `revision` unchanged with `commit_change
 - `revision`: object `{workspace_id, session_revision, semantic_fingerprint, document_fingerprint}`.
 - `workspace_id`, `session_revision`, `semantic_fingerprint`, `document_fingerprint`: flattened copies of the revision coordinates.
 - `ontology`: object `{ontology_iri, version_iri, document_iri}`.
-- `dirty`: boolean; `reasoner`: selected-reasoner metadata.
+- `dirty`: boolean; Protégé's saved-state flag, which remains true after Undo until the next save even
+  when `semantic_fingerprint` returns to the loaded content. `dirty_semantics` states this explicitly.
+  `reasoner`: selected-reasoner metadata.
 - `fingerprint_stability`, `release_stable`, `fingerprint_warnings`: canonicalization guarantees/caveats.
 - `policy_loaded`, `policy_valid`: booleans; optional `policy_path`, `policy_digest`, `policy_error`, and `import_lock_digest`.
 
@@ -163,7 +165,7 @@ Audits the active ontology against PROJECT GOVERNANCE rules — a configurable p
 - `scope`: string, `"imports_closure"` or `"active"`.
 - `profile`: string, the effective profile name (e.g. `"DL"`, `"EL"`, or `"none"`).
 - `total_violations`: integer, summed `count` across all included checks.
-- `checks`: array of per-check rows. The profile check is `{id: "owl_profile", severity: "error", title, in_profile, count, suggestion, examples}` and, when truncated, `truncated` (the number of violations beyond `examples`). Each governance finding is `{id, severity, title, count, suggestion}` plus, when present, `examples` (entity rows), `axioms` (axiom rows — used by the `import_layering` finding), and `details` (human-readable lines). Finding ids include `iri_policy`, `required_annotations`, and `import_layering`.
+- `checks`: array of per-check rows. The profile check is `{id: "owl_profile", severity: "error", title, in_profile, owned_in_profile, count, suggestion, examples}` plus, when present, `imported_violations` and `truncated` (the number of violations beyond `examples`). `in_profile` covers the whole audited closure while `count`/`owned_in_profile` cover only the violations attributable to the audited scope — its own axioms, and for the ontology-header violations OWLAPI reports without a backing axiom (an undeclared property/entity used in a header annotation, a reserved or relative ontology IRI), the scope's own header; header violations attributable only to an import stay in `imported_violations`, and an unattributable kind fails closed into the owned count. Each governance finding is `{id, severity, title, count, suggestion}` plus, when present, `examples` (entity rows), `axioms` (axiom rows — used by the `import_layering` finding), and `details` (human-readable lines). Finding ids include `iri_policy`, `required_annotations`, and `import_layering`.
 - `notes`: present only when phase 1 collected config problems (e.g. a `required_annotations` reference that could not be resolved); array of strings.
 - `note`: string guidance pointer.
 

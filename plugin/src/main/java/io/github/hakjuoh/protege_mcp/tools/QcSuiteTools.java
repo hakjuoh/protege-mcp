@@ -574,7 +574,8 @@ public final class QcSuiteTools {
         }
         Map<String, Object> check = GovernanceTools.profileCheck(profile, profileName,
                 p1.validationSnapshot.queries().assertedOntology(),
-                p1.validationSnapshot.active().getAxioms(), limit);
+                p1.validationSnapshot.active().getAxioms(),
+                p1.validationSnapshot.active().getAnnotations(), limit);
         // Gate on OWNED conformance: a module that merely imports a non-DL upstream (e.g. BFO) must not fail
         // this stage — only its OWN axioms leaving the profile should. Imported violations are context only.
         boolean ownedInProfile = Boolean.TRUE.equals(check.get("owned_in_profile"));

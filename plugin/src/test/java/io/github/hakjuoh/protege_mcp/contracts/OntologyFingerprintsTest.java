@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -25,6 +26,7 @@ import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLImportsDeclaration;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.util.SimpleIRIMapper;
 
 /** Ordering, round-trip, document-coordinate, and degraded-guarantee tests for fingerprint v1. */
 class OntologyFingerprintsTest {
@@ -162,6 +164,64 @@ class OntologyFingerprintsTest {
                 "an import-stripped copy fingerprinted with the captured imports matches the declared one");
         assertNotEquals(OntologyFingerprints.compute(stripped).semanticFingerprint(), withOverride,
                 "without the override the stripped copy fingerprints differently (imports are semantic)");
+    }
+
+    @Test
+    void semanticFingerprintExcludesImportedSignatureContent(@TempDir Path temp) throws Exception {
+        IRI rootIri = IRI.create(NS + "root");
+        IRI importedIri = IRI.create(NS + "imported");
+        Path populatedImport = temp.resolve("populated-import.ofn");
+        Path emptyImport = temp.resolve("empty-import.ofn");
+        Path populatedRootDocument = temp.resolve("populated-root.ofn");
+        Path emptyRootDocument = temp.resolve("empty-root.ofn");
+        Files.writeString(populatedImport, "Ontology(<" + importedIri + "> Declaration(Class(<"
+                + NS + "ImportedOnly>)))");
+        Files.writeString(emptyImport, "Ontology(<" + importedIri + ">)");
+        String rootDocument = "Ontology(<" + rootIri + "> Import(<" + importedIri + ">))";
+        Files.writeString(populatedRootDocument, rootDocument);
+        Files.writeString(emptyRootDocument, rootDocument);
+
+        OWLOntologyManager populatedManager = OWLManager.createOWLOntologyManager();
+        populatedManager.getIRIMappers().add(new SimpleIRIMapper(
+                importedIri, IRI.create(populatedImport.toUri())));
+        OWLOntology populatedRoot = populatedManager.loadOntologyFromOntologyDocument(
+                populatedRootDocument.toFile());
+
+        OWLOntologyManager emptyManager = OWLManager.createOWLOntologyManager();
+        emptyManager.getIRIMappers().add(new SimpleIRIMapper(
+                importedIri, IRI.create(emptyImport.toUri())));
+        OWLOntology emptyRoot = emptyManager.loadOntologyFromOntologyDocument(
+                emptyRootDocument.toFile());
+
+        assertEquals(OntologyFingerprints.compute(emptyRoot).semanticFingerprint(),
+                OntologyFingerprints.compute(populatedRoot).semanticFingerprint(),
+                "import coordinates affect the active digest, but imported content belongs to its own artifact");
+    }
+
+    @Test
+    void semanticFingerprintReturnsAfterRevertingAnEditWithLoadedImports(@TempDir Path temp)
+            throws Exception {
+        IRI rootIri = IRI.create(NS + "undo-root");
+        IRI importedIri = IRI.create(NS + "undo-imported");
+        Path importedDocument = temp.resolve("undo-imported.ofn");
+        Path rootDocument = temp.resolve("undo-root.ofn");
+        Files.writeString(importedDocument, "Ontology(<" + importedIri + "> Declaration(Class(<"
+                + NS + "ImportedOnly>)))");
+        Files.writeString(rootDocument, "Ontology(<" + rootIri + "> Import(<" + importedIri + ">))");
+
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        manager.getIRIMappers().add(new SimpleIRIMapper(importedIri, IRI.create(importedDocument.toUri())));
+        OWLOntology root = manager.loadOntologyFromOntologyDocument(rootDocument.toFile());
+        String before = OntologyFingerprints.compute(root).semanticFingerprint();
+        OWLAxiom edit = manager.getOWLDataFactory().getOWLDeclarationAxiom(
+                manager.getOWLDataFactory().getOWLClass(IRI.create(NS + "TemporaryEdit")));
+
+        manager.addAxiom(root, edit);
+        assertNotEquals(before, OntologyFingerprints.compute(root).semanticFingerprint());
+        manager.removeAxiom(root, edit);
+
+        assertEquals(before, OntologyFingerprints.compute(root).semanticFingerprint(),
+                "reverting the active document edit must restore its content fingerprint");
     }
 
     @Test

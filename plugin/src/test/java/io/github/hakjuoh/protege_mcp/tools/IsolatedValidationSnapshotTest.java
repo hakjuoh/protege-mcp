@@ -59,7 +59,8 @@ class IsolatedValidationSnapshotTest {
                 "the snapshot keeps the pre-mutation revision token");
 
         Map<String, Object> profile = GovernanceTools.profileCheck(Profiles.OWL2_EL, "EL",
-                snapshot.queries().assertedOntology(), snapshot.active().getAxioms(), 25);
+                snapshot.queries().assertedOntology(), snapshot.active().getAxioms(),
+                snapshot.active().getAnnotations(), 25);
         assertEquals(false, profile.get("owned_in_profile"), "profile sees the removed-from-live axiom");
 
         QcSuiteTools.StageResult structural = QcSuiteTools.structuralStage(snapshot,

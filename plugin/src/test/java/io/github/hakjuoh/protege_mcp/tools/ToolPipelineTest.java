@@ -82,7 +82,7 @@ class ToolPipelineTest {
         assertFalse(hasEntity(finding(findings, "missing_label"), dog.getIRI()), "Dog is labelled");
 
         // --- govern: the ontology stays in OWL 2 DL and has no import-layering violations (no imports).
-        OWLOntology flat = GovernanceTools.flatten(o.getImportsClosure());
+        OWLOntology flat = GovernanceTools.flatten(o.getOntologyID(), o.getImportsClosure());
         assertTrue((boolean) GovernanceTools.profileCheck(Profiles.OWL2_DL, "DL", flat, 25).get("in_profile"),
                 "still OWL 2 DL after the edit");
         assertTrue(GovernanceTools.foreignDeclaredEntities(o).isEmpty(),

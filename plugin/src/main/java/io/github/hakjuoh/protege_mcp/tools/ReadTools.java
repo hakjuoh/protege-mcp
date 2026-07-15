@@ -19,6 +19,8 @@ import org.semanticweb.owlapi.model.OWLOntologyID;
 
 import com.google.common.base.Optional;
 
+import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
+
 /** Read-only tools: list/inspect ontologies, classes, entities and their axioms. All return JSON. */
 public final class ReadTools {
 
@@ -268,7 +270,9 @@ public final class ReadTools {
         int importDeclarations = 0;
         for (OWLOntology o : scope) {
             axioms.addAll(o.getAxioms());
-            signature.addAll(o.getSignature());
+            // Not o.getSignature(): OWLAPI 4's cached signature can hold loaded-import entities even for
+            // an active-only scope, which would contradict the active-only axiom counts in this response.
+            signature.addAll(OwlDocumentSignature.of(o));
             ontologyAnnotations += o.getAnnotations().size();
             importDeclarations += o.getImportsDeclarations().size();
         }
@@ -350,7 +354,10 @@ public final class ReadTools {
             case "datatypes":
                 return o.getDatatypesInSignature();
             default:
-                return o.getSignature();
+                // The per-type accessors above build fresh sets, but getSignature() answers from a cache
+                // that a document load pollutes with imported entities — derive the all-kinds signature
+                // from the active document's own content instead.
+                return OwlDocumentSignature.of(o);
         }
     }
 

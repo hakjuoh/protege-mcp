@@ -68,7 +68,7 @@ class GovernanceToolsTest {
         // A UNION is expressible in OWL 2 DL but NOT in OWL 2 EL (all classes declared → DL-clean).
         m.addAxiom(o, df.getOWLSubClassOfAxiom(a, df.getOWLObjectUnionOf(b, c)));
 
-        OWLOntology flat = GovernanceTools.flatten(o.getImportsClosure());
+        OWLOntology flat = GovernanceTools.flatten(o.getOntologyID(), o.getImportsClosure());
         assertTrue((boolean) GovernanceTools.profileCheck(Profiles.OWL2_DL, "DL", flat, 25)
                 .get("in_profile"), "the union is fine in DL");
         assertFalse((boolean) GovernanceTools.profileCheck(Profiles.OWL2_EL, "EL", flat, 25)

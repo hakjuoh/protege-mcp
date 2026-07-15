@@ -19,6 +19,8 @@ import org.semanticweb.owlapi.model.OWLLiteral;
 import org.semanticweb.owlapi.model.OWLObject;
 import org.semanticweb.owlapi.model.OWLOntology;
 
+import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
+
 /** Deterministic asserted semantic categories over two OWLAPI ontology snapshots. */
 public final class SemanticDiffService {
 
@@ -167,7 +169,7 @@ public final class SemanticDiffService {
         Set<EntityKey> result = new TreeSet<>();
         Collection<OWLOntology> ontologies = closure ? ontology.getImportsClosure() : Set.of(ontology);
         for (OWLOntology item : ontologies) {
-            item.getSignature().stream().filter(entity -> !entity.isBuiltIn())
+            OwlDocumentSignature.of(item).stream().filter(entity -> !entity.isBuiltIn())
                     .forEach(entity -> result.add(EntityKey.of(entity)));
         }
         return result;

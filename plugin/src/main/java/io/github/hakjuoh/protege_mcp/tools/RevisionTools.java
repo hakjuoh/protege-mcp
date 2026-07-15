@@ -63,7 +63,11 @@ public final class RevisionTools {
             result.put("semantic_fingerprint", snapshot.revision().semanticFingerprint());
             result.put("document_fingerprint", snapshot.revision().documentFingerprint());
             result.put("ontology", ontology);
-            result.put("dirty", mm.getDirtyOntologies().contains(active));
+            boolean dirty = mm.getDirtyOntologies().contains(active);
+            result.put("dirty", dirty);
+            result.put("dirty_semantics", "Protégé saved-state flag: true means the ontology was "
+                    + "edited since its last load/save. Protégé does not clear this flag when Undo "
+                    + "restores identical content; compare semantic_fingerprint for content identity.");
             result.put("reasoner", ProjectPolicyTools.selectedReasoner(mm));
             result.put("fingerprint_stability", snapshot.fingerprint().stability());
             result.put("release_stable", snapshot.fingerprint().releaseStable());

@@ -29,8 +29,7 @@ import org.semanticweb.owlapi.model.OWLNaryClassAxiom;
 import org.semanticweb.owlapi.model.OWLNaryPropertyAxiom;
 import org.semanticweb.owlapi.model.OWLObjectPropertyExpression;
 import org.semanticweb.owlapi.model.OWLOntology;
-import org.semanticweb.owlapi.model.OWLOntologyCreationException;
-import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.model.OWLPropertyDomainAxiom;
 import org.semanticweb.owlapi.model.OWLPropertyRangeAxiom;
 import org.semanticweb.owlapi.model.OWLSubClassOfAxiom;
@@ -41,6 +40,7 @@ import org.semanticweb.owlapi.model.OWLUnaryPropertyAxiom;
 import org.semanticweb.owlapi.profiles.OWLProfileReport;
 import org.semanticweb.owlapi.profiles.OWLProfileViolation;
 import org.semanticweb.owlapi.profiles.Profiles;
+import org.semanticweb.owlapi.profiles.violations.UndeclaredEntityViolation;
 import org.semanticweb.owlapi.search.EntitySearcher;
 
 /**
@@ -152,7 +152,7 @@ public final class GovernanceTools {
                     // Phase 2 (off the EDT): the heavy OWL 2 profile check on the private snapshot.
                     if (profile != null && p1.profileSnapshot != null) {
                         Map<String, Object> profileCheck = profileCheck(profile, profileName,
-                                p1.profileSnapshot, p1.ownedAxioms, limit);
+                                p1.profileSnapshot, p1.ownedAxioms, p1.ownedAnnotations, limit);
                         totalViolations += (int) profileCheck.get("count");
                         checks.add(profileCheck);
                     }
@@ -189,13 +189,16 @@ public final class GovernanceTools {
         final OWLOntology profileSnapshot;
         /** Axioms the audited scope owns — lets the profile check attribute violations to owned vs imports. */
         final Set<OWLAxiom> ownedAxioms;
+        /** The scope's ontology-header annotations — attributes the axiomless header violations. */
+        final Set<OWLAnnotation> ownedAnnotations;
         final List<String> notes;
 
         Phase1(List<Map<String, Object>> checks, OWLOntology profileSnapshot, Set<OWLAxiom> ownedAxioms,
-                List<String> notes) {
+                Set<OWLAnnotation> ownedAnnotations, List<String> notes) {
             this.checks = checks;
             this.profileSnapshot = profileSnapshot;
             this.ownedAxioms = ownedAxioms;
+            this.ownedAnnotations = ownedAnnotations;
             this.notes = notes;
         }
     }
@@ -227,9 +230,12 @@ public final class GovernanceTools {
         for (GovFinding f : findings) {
             rendered.add(f.toJson(limit));
         }
-        OWLOntology snapshot = profile != null ? flatten(active.getImportsClosure()) : null;
+        OWLOntology snapshot = profile != null
+                ? flatten(active.getOntologyID(), active.getImportsClosure()) : null;
         Set<OWLAxiom> owned = profile != null ? axiomsOf(scope) : Collections.emptySet();
-        return new Phase1(rendered, snapshot, owned, notes);
+        Set<OWLAnnotation> ownedAnnotations = profile != null
+                ? annotationsOf(scope) : Collections.emptySet();
+        return new Phase1(rendered, snapshot, owned, ownedAnnotations, notes);
     }
 
     /**
@@ -273,6 +279,15 @@ public final class GovernanceTools {
         Set<OWLAxiom> out = new HashSet<>();
         for (OWLOntology o : scope) {
             out.addAll(o.getAxioms());
+        }
+        return out;
+    }
+
+    /** The union of the ontology-header annotations of every ontology in {@code scope}. */
+    private static Set<OWLAnnotation> annotationsOf(Set<OWLOntology> scope) {
+        Set<OWLAnnotation> out = new HashSet<>();
+        for (OWLOntology o : scope) {
+            out.addAll(o.getAnnotations());
         }
         return out;
     }
@@ -552,33 +567,40 @@ public final class GovernanceTools {
      */
     static Map<String, Object> profileCheck(Profiles profile, String profileName, OWLOntology snapshot,
             int limit) {
-        // Back-compat overload: with no owned-axiom set, treat every snapshot axiom as owned — the historical
+        // Back-compat overload: with no owned sets, treat the whole snapshot as owned — the historical
         // whole-closure behaviour, still exercised by unit tests over import-less ontologies.
-        return profileCheck(profile, profileName, snapshot, snapshot.getAxioms(), limit);
+        return profileCheck(profile, profileName, snapshot, snapshot.getAxioms(),
+                snapshot.getAnnotations(), limit);
     }
 
     /**
      * Run the OWL 2 profile check on {@code snapshot} (a flattened imports closure) and render the
-     * violations, PARTITIONED into those the audited scope OWNS ({@code ownedAxioms}) versus those inherited
-     * from imported ontologies. Profile conformance is a closure property, so the check must see the whole
+     * violations, PARTITIONED into those the audited scope OWNS ({@code ownedAxioms} and, for the
+     * axiomless ontology-annotation violations, {@code ownedAnnotations}) versus those inherited from
+     * imported ontologies. Profile conformance is a closure property, so the check must see the whole
      * closure; but a module author cares whether THEIR axioms leave the profile — an imported non-DL
      * upstream (e.g. BFO's undeclared-annotation-property axioms) must not drown out, or fail, their own
      * status. So {@code count}/{@code examples}/{@code owned_in_profile} report the OWNED violations (the
      * actionable ones), while the inherited ones are surfaced only as {@code imported_violations} context.
-     * A violation with no attributable axiom is counted as inherited (never fails the owned gate). Pure OWL
-     * API — safe off the model thread, unit-tested directly.
+     * Pure OWL API — safe off the model thread, unit-tested directly.
      */
     static Map<String, Object> profileCheck(Profiles profile, String profileName, OWLOntology snapshot,
-            Set<OWLAxiom> ownedAxioms, int limit) {
+            Set<OWLAxiom> ownedAxioms, Set<OWLAnnotation> ownedAnnotations, int limit) {
         OWLProfileReport report = profile.checkOntology(snapshot);
+        Set<OWLEntity> ownedHeaderSignature = new HashSet<>();
+        for (OWLAnnotation annotation : ownedAnnotations) {
+            ownedHeaderSignature.addAll(annotation.getSignature());
+        }
         List<OWLProfileViolation> ownedViolations = new ArrayList<>();
         int importedCount = 0;
         for (OWLProfileViolation v : report.getViolations()) {
-            OWLAxiom ax = v.getAxiom();
-            if (ax != null && ownedAxioms.contains(ax)) {
+            OWLAxiom ax = violationAxiomOrNull(v);
+            boolean owned = ax != null ? ownedAxioms.contains(ax)
+                    : axiomlessIsOwned(v, ownedHeaderSignature);
+            if (owned) {
                 ownedViolations.add(v);
             } else {
-                importedCount++;   // inherited from an import, or not attributable to a single axiom
+                importedCount++;   // inherited from an import's axioms or its ontology header
             }
         }
         List<String> samples = new ArrayList<>();
@@ -601,9 +623,11 @@ public final class GovernanceTools {
         }
         m.put("suggestion", ownedInProfile
                 ? (report.isInProfile() ? "In profile."
-                        : "The audited scope's own axioms are in profile; the " + importedCount
-                                + " remaining violation(s) are inherited from imported ontologies.")
-                : "Remove or rewrite the offending owned axioms, or target a less restrictive profile.");
+                        : "The audited scope's own axioms and header are in profile; the " + importedCount
+                                + " remaining violation(s) are inherited from imported ontologies "
+                                + "(their axioms or their ontology headers).")
+                : "Remove or rewrite the offending owned axioms or header annotations, or target a "
+                        + "less restrictive profile.");
         m.put("examples", samples);
         if (ownedViolations.size() > samples.size()) {
             m.put("truncated", ownedViolations.size() - samples.size());
@@ -611,19 +635,45 @@ public final class GovernanceTools {
         return m;
     }
 
-    /** Merge an imports closure into a single private ontology (conformance-equivalent, no imports). */
-    static OWLOntology flatten(Set<OWLOntology> closure) {
-        Set<OWLAxiom> axioms = new HashSet<>();
-        for (OWLOntology o : closure) {
-            axioms.addAll(o.getAxioms());
-        }
-        OWLOntologyManager priv = OwlManagers.create();
+    /**
+     * OWLAPI 4 annotates the profile-violation axiom as nullable, but its public getter verifies
+     * non-null and throws for ontology-level violations — a reserved/relative ontology IRI, or an
+     * undeclared entity used inside an ontology-header annotation. Those must be attributed by
+     * {@link #axiomlessIsOwned} instead of aborting the QC gate.
+     */
+    private static OWLAxiom violationAxiomOrNull(OWLProfileViolation violation) {
         try {
-            return priv.createOntology(axioms);
-        } catch (OWLOntologyCreationException e) {
-            throw new ToolArgException("Could not prepare a governance workspace: "
-                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            return violation.getAxiom();
+        } catch (IllegalStateException noAxiom) {
+            return null;
         }
+    }
+
+    /**
+     * Attribute a violation that carries no axiom. An undeclared-entity violation here comes from an
+     * ontology-header annotation; the violation does not expose which header, so it is owned when the
+     * audited scope's own header references that entity (per-entity attribution — a shared undeclared
+     * term also used by an import's header still charges the scope, which can repair every instance by
+     * declaring it). Every other axiomless kind is about the ontology ID, and both snapshot builders
+     * carry only the audited root's ID — so it is owned, and unknown future kinds fail closed into the
+     * owned gate rather than silently passing as "imported".
+     */
+    private static boolean axiomlessIsOwned(OWLProfileViolation violation,
+            Set<OWLEntity> ownedHeaderSignature) {
+        if (violation instanceof UndeclaredEntityViolation undeclared) {
+            return ownedHeaderSignature.contains(undeclared.getEntity());
+        }
+        return true;
+    }
+
+    /**
+     * Merge an imports closure into a single private ontology (conformance-equivalent, no imports) via
+     * the shared QC snapshot builder, keeping the audited root's {@link OWLOntologyID} and every
+     * member's ontology-header annotations — an anonymous axiom-only merge would silently drop the
+     * ontology-ID and header profile violations from the audit.
+     */
+    static OWLOntology flatten(OWLOntologyID activeId, Set<OWLOntology> closure) {
+        return SparqlTools.buildSnapshotOntology(OwlManagers.create(), activeId, closure);
     }
 
     // ================================================================== profile name mapping

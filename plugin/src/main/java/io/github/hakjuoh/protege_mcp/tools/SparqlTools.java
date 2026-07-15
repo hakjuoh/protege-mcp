@@ -245,7 +245,7 @@ public final class SparqlTools {
             iso = priv.createOntology(activeId != null && !activeId.isAnonymous()
                     ? activeId : new OWLOntologyID());
         } catch (OWLOntologyCreationException e) {
-            throw new ToolArgException("Could not prepare a SPARQL workspace: "
+            throw new ToolArgException("Could not prepare an isolated ontology workspace: "
                     + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
         }
         for (OWLOntology o : closure) {

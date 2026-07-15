@@ -26,6 +26,8 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.search.EntitySearcher;
 
+import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
+
 /**
  * A modelling-quality audit (the layer that the reasoner-centric tools don't cover): missing/duplicate
  * labels, missing definitions, deprecated-but-still-used terms, undeclared entities, properties with no
@@ -604,9 +606,12 @@ public final class ValidationTools {
 
         static Signature of(Set<OWLOntology> scope, Set<OWLOntology> closure) {
             Signature s = new Signature();
-            // Full referenced signature (declared OR merely used) for the axiom-structural checks.
+            // Full referenced signature (declared OR merely used) for the axiom-structural checks —
+            // derived from each scope member's own content, because OWLAPI 4's cached getSignature()
+            // can hold loaded-import entities that would then be flagged (e.g. by undeclared_entity)
+            // against a scope that never references them.
             for (OWLOntology o : scope) {
-                s.all.addAll(o.getSignature());
+                s.all.addAll(OwlDocumentSignature.of(o));
             }
             for (OWLOntology o : scope) {
                 for (OWLClass c : o.getClassesInSignature()) {

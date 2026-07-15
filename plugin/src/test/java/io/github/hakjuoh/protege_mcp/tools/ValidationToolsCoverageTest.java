@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.AddOntologyAnnotation;
@@ -273,6 +274,35 @@ class ValidationToolsCoverageTest {
     }
 
     // ============================================================ Signature.of
+
+    @Test
+    void signatureOfActiveScopeExcludesLoadedImportEntities(@TempDir java.nio.file.Path temp)
+            throws Exception {
+        // Load from an actual document: OWLAPI 4's loader pollutes the root's cached getSignature()
+        // with the imported entities, and an active-only audit signature must not inherit them —
+        // otherwise undeclared_entity flags an import's used-but-undeclared term against this scope.
+        String ns = "http://example.org/sig-leak#";
+        IRI rootIri = IRI.create(ns + "root");
+        IRI importedIri = IRI.create(ns + "imported");
+        java.nio.file.Path importedDocument = temp.resolve("imported.ofn");
+        java.nio.file.Path rootDocument = temp.resolve("root.ofn");
+        java.nio.file.Files.writeString(importedDocument, "Ontology(<" + importedIri
+                + "> SubClassOf(<" + ns + "ImpUsedOnly> owl:Thing))");
+        java.nio.file.Files.writeString(rootDocument, "Ontology(<" + rootIri + "> Import(<"
+                + importedIri + ">) Declaration(Class(<" + ns + "RootOnly>)))");
+        OWLOntologyManager m = mgr();
+        m.getIRIMappers().add(new org.semanticweb.owlapi.util.SimpleIRIMapper(importedIri,
+                IRI.create(importedDocument.toUri())));
+        OWLOntology root = m.loadOntologyFromOntologyDocument(rootDocument.toFile());
+        OWLDataFactory df = m.getOWLDataFactory();
+
+        ValidationTools.Signature s = ValidationTools.Signature.of(Collections.singleton(root));
+
+        assertTrue(s.all.contains(df.getOWLClass(IRI.create(ns + "RootOnly"))),
+                "the root's own class is in the audit signature");
+        assertFalse(s.all.contains(df.getOWLClass(IRI.create(ns + "ImpUsedOnly"))),
+                "the import's undeclared-but-used class must not enter the active-only signature");
+    }
 
     @Test
     void signatureOfEmptyScopeHasAllEmptyPartitions() {

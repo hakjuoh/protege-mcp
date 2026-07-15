@@ -153,7 +153,7 @@ class GovernanceToolsCoverageTest {
         m.addAxiom(o, df.getOWLDeclarationAxiom(b));
         m.addAxiom(o, df.getOWLSubClassOfAxiom(a, b)); // trivially EL-clean
 
-        OWLOntology flat = GovernanceTools.flatten(o.getImportsClosure());
+        OWLOntology flat = GovernanceTools.flatten(o.getOntologyID(), o.getImportsClosure());
         Map<String, Object> check = GovernanceTools.profileCheck(Profiles.OWL2_EL, "EL", flat, 25);
 
         assertTrue((boolean) check.get("in_profile"), "a plain subclass axiom is in EL");
@@ -169,7 +169,7 @@ class GovernanceToolsCoverageTest {
         OWLOntology o = m.createOntology(IRI.create("http://example.org/prof-shape"));
         OWLClass a = cls(df, "A");
         m.addAxiom(o, df.getOWLDeclarationAxiom(a));
-        OWLOntology flat = GovernanceTools.flatten(o.getImportsClosure());
+        OWLOntology flat = GovernanceTools.flatten(o.getOntologyID(), o.getImportsClosure());
 
         Map<String, Object> check = GovernanceTools.profileCheck(Profiles.OWL2_DL, "DL", flat, 25);
         assertEquals("owl_profile", check.get("id"));
@@ -181,6 +181,28 @@ class GovernanceToolsCoverageTest {
         assertTrue(check.containsKey("examples"));
         assertEquals("In profile.", check.get("suggestion"),
                 "an in-profile ontology gets the reassuring suggestion");
+    }
+
+    @Test
+    void profileCheckOwnsOntologyLevelViolationWithoutAxiom()
+            throws OWLOntologyCreationException {
+        OWLOntologyManager m = mgr();
+        // UseOfReservedVocabularyForOntologyIRI is an OWLAPI profile violation whose backing axiom is null
+        // (OWLProfileViolation#getAxiom() throws instead of returning null). It is about the snapshot's
+        // ontology ID, which both snapshot builders take from the audited root — so it must FAIL the owned
+        // gate rather than pass mislabelled as inherited from an import.
+        OWLOntology reserved = m.createOntology(
+                IRI.create("http://www.w3.org/2002/07/owl#Ontology"));
+
+        Map<String, Object> check = GovernanceTools.profileCheck(Profiles.OWL2_DL, "DL", reserved,
+                reserved.getAxioms(), reserved.getAnnotations(), 25);
+
+        assertFalse((boolean) check.get("in_profile"));
+        assertFalse((boolean) check.get("owned_in_profile"),
+                "the audited root's own header violates the profile — the owned gate fails closed");
+        assertTrue((int) check.get("count") > 0, "the header violation is owned and counted");
+        assertNull(check.get("imported_violations"),
+                "nothing here is inherited from an import");
     }
 
     @Test
@@ -234,7 +256,7 @@ class GovernanceToolsCoverageTest {
             m.addAxiom(o, df.getOWLDeclarationAxiom(c));
             m.addAxiom(o, df.getOWLSubClassOfAxiom(a, df.getOWLObjectUnionOf(b, c)));
         }
-        return GovernanceTools.flatten(o.getImportsClosure());
+        return GovernanceTools.flatten(o.getOntologyID(), o.getImportsClosure());
     }
 
     // ============================================================ flatten
@@ -251,7 +273,7 @@ class GovernanceToolsCoverageTest {
         OWLAxiom sub = df.getOWLSubClassOfAxiom(a, b);
         m.addAxiom(o, sub);
 
-        OWLOntology flat = GovernanceTools.flatten(Collections.singleton(o));
+        OWLOntology flat = GovernanceTools.flatten(o.getOntologyID(), Collections.singleton(o));
         assertTrue(flat.containsAxiom(sub), "the subclass axiom survives the flatten");
         assertEquals(o.getAxiomCount(), flat.getAxiomCount(), "same number of axioms");
         assertTrue(flat.getImportsDeclarations().isEmpty(), "the flat copy has no imports");
@@ -272,7 +294,7 @@ class GovernanceToolsCoverageTest {
         m.addAxiom(o2, onlyB);
 
         Set<OWLOntology> closure = new LinkedHashSet<>(Arrays.asList(o1, o2));
-        OWLOntology flat = GovernanceTools.flatten(closure);
+        OWLOntology flat = GovernanceTools.flatten(o1.getOntologyID(), closure);
         assertTrue(flat.containsAxiom(shared), "the shared axiom is present");
         assertTrue(flat.containsAxiom(onlyB), "the axiom only in o2 is merged in");
         assertEquals(2, flat.getAxiomCount(),
@@ -281,7 +303,7 @@ class GovernanceToolsCoverageTest {
 
     @Test
     void flattenEmptyClosureYieldsEmptyOntology() {
-        OWLOntology flat = GovernanceTools.flatten(Collections.emptySet());
+        OWLOntology flat = GovernanceTools.flatten(null, Collections.emptySet());
         assertEquals(0, flat.getAxiomCount(), "no source axioms => empty flattened ontology");
     }
 

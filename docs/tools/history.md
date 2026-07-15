@@ -45,6 +45,9 @@ works even in read-only mode.
 - `undo_depth`: integer — how many undoable transactions remain on the stack after the undo.
 - `can_undo`: boolean — whether more undo steps remain.
 - `can_redo`: boolean — whether a redo is now available.
+- `dirty`: boolean — Protégé's saved-state flag after the undo.
+- `dirty_note`: string — explains that Protégé keeps this flag true until the next save even when
+  the undo restored the loaded semantic fingerprint.
 
 With `peek=true` (nothing is undone):
 

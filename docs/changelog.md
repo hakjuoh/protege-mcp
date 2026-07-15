@@ -81,7 +81,7 @@ tools**; guided prompts remain 11.
   catalog precedence, live/import mutation after isolated capture, exact reasoner configuration identity,
   buffering/fresh-entity policy mismatches, import-spanning unsatisfiability, inferred-data parity, and timeout
   interruption. The clean release build contains
-  **2,739 tests** with zero failures, errors, or skips.
+  **2,749 tests** with zero failures, errors, or skips.
 
 ### Changed
 - `run_qc_suite` accepts additive governance/required-stage controls and can return common strict-gate details;
@@ -170,6 +170,24 @@ tools**; guided prompts remain 11.
   final-set `no_ops` count in preview and direct batch paths. Known retained-size/change-count violations are
   rejected before QC, and curation previews cap their new batch input at 2,000 items, so an inevitably refused
   request cannot first consume an unbounded validation pass.
+- Live IOF Biopharma validation exposed three OWLAPI-boundary defects: ontology-level profile violations
+  with no backing axiom no longer abort `run_project_qc`; fingerprint v1 derives implicit declarations only
+  from the active document's own axioms/ontology annotations, so loaded import content cannot change its
+  semantic digest; and `semantic_diff include_imports=false` now keeps imported entities out of entity,
+  rename, annotation, and compatibility classification. `get_model_revision` and `undo_change` also state
+  Protégé's saved-state dirty semantics explicitly: Undo restores content but Protégé keeps the dirty flag
+  until the next save.
+- The independent verification of that round hardened the same OWLAPI boundary further. Profile violations
+  with no backing axiom are now attributed instead of silently counted as imported: one on the audited
+  ontology's own header (an undeclared annotation property used in its header annotations, a reserved or
+  relative ontology IRI) fails the owned profile gate fail-closed, while an import-header violation stays
+  `imported_violations` context. `run_governance_audit`'s profile snapshot now keeps the audited root's
+  ontology ID and every closure member's header annotations (previously an anonymous axiom-only merge, so
+  ontology-ID and header violations were silently invisible to that tool while `run_project_qc` reported
+  them). And the remaining cached-signature surfaces derive from the document's own content through one
+  shared core helper: `summarize_ontology` and match-all `search_entities` no longer list loaded-import
+  entities for the active scope, and `validate_ontology`'s audit signature cannot flag an import's
+  used-but-undeclared term against the active ontology.
 
 ### Compatibility
 - Existing tools and prompts keep their required arguments and legacy defaults. The new policy surface and

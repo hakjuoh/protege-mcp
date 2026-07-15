@@ -184,7 +184,9 @@ One aggregate quality-control gate that composes every stage over **one isolated
 collapses them to a single verdict. The selected reasoner's exact Protégé plugin configuration and buffering
 mode are captured with the ontology; QC does not classify or query the live reasoner.
 Stages (default `reasoner` + `profile` + `structural`): `reasoner`
-(consistency + no unsatisfiable classes), `profile` (OWL 2 profile conformance), `structural`
+(consistency + no unsatisfiable classes), `profile` (OWL 2 profile conformance — gated on the violations
+the active ontology OWNS, including ontology-header violations OWLAPI reports without a backing axiom;
+violations inherited from imports are surfaced as `imported_violations` context only), `structural`
 (`validate_ontology`'s modelling-quality checks — only *warning*-severity smells gate), `invariants`
 (`verify_ontology`-style SPARQL invariants — pass them in `invariants`), `cqs` (the competency-question
 suite), `governance` (IRI/annotation/import-layering policy), and `shacl` (validate against the SHACL shapes in `shacl_shapes` / `shacl_shapes_path`). A stage

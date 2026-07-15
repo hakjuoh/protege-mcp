@@ -9,6 +9,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -19,6 +21,7 @@ import java.util.Set;
 import java.util.TreeMap;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.protege.editor.owl.model.OWLModelManager;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.IRI;
@@ -33,6 +36,7 @@ import org.semanticweb.owlapi.model.OWLObjectProperty;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.util.SimpleIRIMapper;
 
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
@@ -290,19 +294,31 @@ class ReadToolsTest {
 
     // ================================================================== signature
 
+    /**
+     * The contract for all-kinds listings: the entities the active document's own axioms and
+     * ontology annotations reference. Unlike OWLAPI's cached {@code getSignature()}, this holds no
+     * loaded-import entities and no implicit literal datatypes (e.g. {@code rdf:PlainLiteral}).
+     */
+    private static Set<OWLEntity> documentSignature(OWLOntology o) {
+        Set<OWLEntity> expected = new LinkedHashSet<>();
+        o.getAxioms().forEach(ax -> expected.addAll(ax.getSignature()));
+        o.getAnnotations().forEach(ann -> expected.addAll(ann.getSignature()));
+        return expected;
+    }
+
     @Test
     void signatureNullTypeReturnsFullSignature() throws Exception {
         OWLOntology o = populated();
         OWLModelManager mm = FakeModelManager.over(o);
-        assertEquals(o.getSignature(), callSignature(mm, null),
-                "a null type returns the whole signature");
+        assertEquals(documentSignature(o), new LinkedHashSet<>(callSignature(mm, null)),
+                "a null type returns the document's whole signature");
     }
 
     @Test
     void signatureAllTypeReturnsFullSignature() throws Exception {
         OWLOntology o = populated();
-        assertEquals(o.getSignature(), callSignature(FakeModelManager.over(o), "all"),
-                "type=all returns the whole signature");
+        assertEquals(documentSignature(o), new LinkedHashSet<>(callSignature(FakeModelManager.over(o), "all")),
+                "type=all returns the document's whole signature");
     }
 
     @Test
@@ -368,8 +384,9 @@ class ReadToolsTest {
     @Test
     void signatureUnknownTypeDefaultsToFullSignature() throws Exception {
         OWLOntology o = populated();
-        assertEquals(o.getSignature(), callSignature(FakeModelManager.over(o), "bogus"),
-                "an unrecognised type falls back to the whole signature");
+        assertEquals(documentSignature(o),
+                new LinkedHashSet<>(callSignature(FakeModelManager.over(o), "bogus")),
+                "an unrecognised type falls back to the document's whole signature");
     }
 
     @Test
@@ -387,29 +404,29 @@ class ReadToolsTest {
     @Test
     void searchNullQueryEnumeratesWholeSignature() throws Exception {
         OWLOntology o = populated();
-        assertEquals(o.getSignature(), callSearch(FakeModelManager.over(o), null, null),
-                "a null query lists the active ontology's whole signature");
+        assertEquals(documentSignature(o), new LinkedHashSet<>(callSearch(FakeModelManager.over(o), null, null)),
+                "a null query lists the active document's whole signature");
     }
 
     @Test
     void searchEmptyQueryEnumeratesWholeSignature() throws Exception {
         OWLOntology o = populated();
-        assertEquals(o.getSignature(), callSearch(FakeModelManager.over(o), "", "all"),
-                "an empty query lists the whole signature");
+        assertEquals(documentSignature(o), new LinkedHashSet<>(callSearch(FakeModelManager.over(o), "", "all")),
+                "an empty query lists the document's whole signature");
     }
 
     @Test
     void searchWhitespaceQueryEnumeratesWholeSignature() throws Exception {
         OWLOntology o = populated();
-        assertEquals(o.getSignature(), callSearch(FakeModelManager.over(o), "   ", null),
-                "a blank (trimmed-empty) query lists the whole signature");
+        assertEquals(documentSignature(o), new LinkedHashSet<>(callSearch(FakeModelManager.over(o), "   ", null)),
+                "a blank (trimmed-empty) query lists the document's whole signature");
     }
 
     @Test
     void searchWildcardOnlyQueryEnumeratesWholeSignature() throws Exception {
         OWLOntology o = populated();
-        assertEquals(o.getSignature(), callSearch(FakeModelManager.over(o), "*", null),
-                "a single '*' lists the whole signature");
+        assertEquals(documentSignature(o), new LinkedHashSet<>(callSearch(FakeModelManager.over(o), "*", null)),
+                "a single '*' lists the document's whole signature");
         assertEquals(o.getClassesInSignature(), callSearch(FakeModelManager.over(o), "***", "class"),
                 "a wildcard-only query still honours the type filter");
     }
@@ -444,8 +461,8 @@ class ReadToolsTest {
         assertEquals("active", body.get("scope"), "includeImports=false reports the active scope");
         assertEquals(1, body.get("ontologies"), "a lone ontology counts as one");
         assertEquals(o.getAxioms().size(), body.get("axioms"), "total axiom count is reported");
-        assertEquals(o.getSignature().size(), body.get("signature_entities"),
-                "signature size is reported");
+        assertEquals(documentSignature(o).size(), body.get("signature_entities"),
+                "the document's signature size is reported");
     }
 
     @Test
@@ -533,6 +550,54 @@ class ReadToolsTest {
         assertTrue(((Number) closure.get("signature_entities")).intValue()
                         >= ((Number) activeOnly.get("signature_entities")).intValue(),
                 "the closure signature is at least as large as the active-only signature");
+    }
+
+    // ================================================================== loaded-import isolation
+
+    /**
+     * A root loaded from an actual document with a populated import: OWLAPI 4's signature cache then
+     * already holds the imported entities (the loader's illegal-punning repair pass reads the INCLUDED
+     * signature into the root's cache), so every active-only surface must derive its own signature.
+     */
+    private OWLOntology loadedRootWithPopulatedImport(Path temp) throws Exception {
+        IRI rootIri = IRI.create(NS + "polluted-root");
+        IRI importedIri = IRI.create(NS + "polluted-import");
+        Path importedDocument = temp.resolve("imported.ofn");
+        Path rootDocument = temp.resolve("root.ofn");
+        Files.writeString(importedDocument, "Ontology(<" + importedIri + "> Declaration(Class(<"
+                + NS + "ImportedOnly>)))");
+        Files.writeString(rootDocument, "Ontology(<" + rootIri + "> Import(<" + importedIri + ">)"
+                + " Declaration(Class(<" + NS + "RootOnly>)))");
+        OWLOntologyManager m = mgr();
+        m.getIRIMappers().add(new SimpleIRIMapper(importedIri, IRI.create(importedDocument.toUri())));
+        return m.loadOntologyFromOntologyDocument(rootDocument.toFile());
+    }
+
+    @Test
+    void summarizeActiveScopeExcludesLoadedImportEntities(@TempDir Path temp) throws Exception {
+        OWLOntology root = loadedRootWithPopulatedImport(temp);
+        Map<String, Object> body = structured(callSummarize(root, false, 80));
+        assertEquals(1, body.get("signature_entities"),
+                "an active-only summary reports only the root document's own entity");
+        @SuppressWarnings("unchecked")
+        Map<String, Integer> entityTypes = (Map<String, Integer>) body.get("entity_types");
+        assertEquals(Integer.valueOf(1), entityTypes.get("Class"),
+                "the loaded import's class must not leak into an active-only summary");
+    }
+
+    @Test
+    void signatureAndBlankSearchExcludeLoadedImportEntities(@TempDir Path temp) throws Exception {
+        OWLOntology root = loadedRootWithPopulatedImport(temp);
+        OWLDataFactory df = root.getOWLOntologyManager().getOWLDataFactory();
+        OWLClass rootOnly = df.getOWLClass(IRI.create(NS + "RootOnly"));
+        OWLClass importedOnly = df.getOWLClass(IRI.create(NS + "ImportedOnly"));
+
+        Set<? extends OWLEntity> all = callSignature(FakeModelManager.over(root), "all");
+        assertTrue(all.contains(rootOnly), "the root's own class is listed");
+        assertFalse(all.contains(importedOnly),
+                "the all-kinds signature is documented as the active ontology's — no import leak");
+        assertFalse(callSearch(FakeModelManager.over(root), "*", null).contains(importedOnly),
+                "a match-all search with no type filter lists only the active ontology's entities");
     }
 
     // ------------------------------------------------------------------ helpers
