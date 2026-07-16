@@ -23,6 +23,7 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
 import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
+import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /** End-to-end strict policy/QC tests over the headless Protégé adapter. */
@@ -36,15 +37,16 @@ class ProjectQcToolsTest {
         Map<String, Object> result = run(temp, policy, false);
         assertEquals("pass", result.get("gate"), () -> result.toString());
         assertEquals(true, result.get("policy_loaded"));
-        assertEquals(2, result.get("stages_ran"));
+        assertEquals(3, result.get("stages_ran"));
         assertEquals(0, result.get("stages_skipped"));
         assertEquals(true, result.get("snapshot_consistent"));
         @SuppressWarnings("unchecked")
         Map<String, Object> snapshot = (Map<String, Object>) result.get("validation_snapshot");
         assertEquals("isolated", snapshot.get("mode"));
         assertEquals(true, snapshot.get("same_snapshot"));
-        assertEquals(List.of("governance", "structural"), snapshot.get("stages"));
+        assertEquals(List.of("interoperability", "governance", "structural"), snapshot.get("stages"));
         assertTrue(String.valueOf(result.get("semantic_fingerprint")).startsWith("sha256:"));
+        assertTrue(String.valueOf(result.get("rdf_dataset_fingerprint")).startsWith("sha256:"));
     }
 
     @Test
@@ -106,7 +108,7 @@ class ProjectQcToolsTest {
         Map<String, Object> result = run(temp, policy, true);
 
         assertEquals("fail", result.get("gate"), () -> result.toString());
-        assertEquals(3, result.get("stages_ran"));
+        assertEquals(4, result.get("stages_ran"));
         assertEquals(0, result.get("stages_skipped"));
         assertTrue(String.valueOf(result.get("resolved_assets")).contains("shapes.ttl"));
         assertTrue(String.valueOf(result.get("findings")).contains("shacl"));
@@ -138,8 +140,9 @@ class ProjectQcToolsTest {
         assertNull(noSnapshot.get("closure_fingerprint"));
 
         Path mismatch = temp.resolve("mismatch.yaml");
-        Files.writeString(mismatch, "version: 1\nproject_id: mismatch\n"
+        ProjectPolicyFixtures.writePolicy(mismatch, "version: 1\nproject_id: mismatch\n"
                 + "root_ontology: https://example.org/wrong\n"
+                + ProjectPolicyFixtures.interoperabilityYaml("ontology.ttl", "ro-crate-1.1")
                 + "validation:\n  required_stages: [structural]\n");
         Map<String, Object> result = structured(ProjectQcTools.run(context(temp, false),
                 Map.of("policy_path", mismatch.toString()), true));
@@ -160,8 +163,9 @@ class ProjectQcToolsTest {
     @Test
     void defaultPolicyThresholdFailsGovernanceWarnings(@TempDir Path temp) throws Exception {
         Path policy = temp.resolve("default-threshold.yaml");
-        Files.writeString(policy, "version: 1\nproject_id: default-threshold\n"
+        ProjectPolicyFixtures.writePolicy(policy, "version: 1\nproject_id: default-threshold\n"
                 + "root_ontology: " + ONTOLOGY_IRI + "\n"
+                + ProjectPolicyFixtures.interoperabilityYaml("ontology.ttl", "ro-crate-1.1")
                 + "iri_policy:\n  required_namespaces: [https://example.org/allowed/]\n"
                 + "validation:\n  required_stages: [governance]\n");
         Map<String, Object> result = structured(ProjectQcTools.run(context(temp, true),
@@ -225,9 +229,8 @@ class ProjectQcToolsTest {
 
     private static Path writePolicy(Path temp, String stages, String extra, String failOn) throws Exception {
         Path policy = temp.resolve("policy.yaml");
-        Files.writeString(policy, "version: 1\n"
-                + "project_id: test\n"
-                + "root_ontology: " + ONTOLOGY_IRI + "\n"
+        ProjectPolicyFixtures.writePolicy(policy,
+                ProjectPolicyFixtures.minimalPolicy("test", ONTOLOGY_IRI)
                 + "validation:\n"
                 + "  required_stages: " + stages + "\n"
                 + "  fail_on: " + failOn + "\n"

@@ -247,7 +247,7 @@ class IsolatedReasonerQcTest {
                 "SELECT ?x WHERE { ?x a <https://example.org/test#Missing> }", true));
         return new QcSuiteTools.RunConfig(Set.of("invariants"), Set.of("invariants"), "error", "DL",
                 25, 30_000, invariants, null, null, null, List.of(), null, List.of(), List.of(),
-                true, PolicyGovernance.Rules.empty(), Set.of(), Map.of(), true, null, null);
+                true, PolicyGovernance.Rules.empty(), Set.of(), Map.of(), true, null, null, null);
     }
 
     private static QcSuiteTools.SuiteExecution execute(OWLOntology ontology,

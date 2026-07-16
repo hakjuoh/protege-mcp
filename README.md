@@ -18,6 +18,7 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
 | [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 78 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
 | [Project policy & QC](https://hakjuoh.github.io/protege-mcp/project-policy.html) | Policy v1 discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
+| [Commercial platforms](https://hakjuoh.github.io/protege-mcp/commercial-platforms.html) | Current standards-based interoperability, product profiles, limitations, and the planned connector boundary. |
 | [Contributing](https://hakjuoh.github.io/protege-mcp/contributing.html) | Build from source, run the tests, and add a tool. |
 | [Versioning & releases](https://hakjuoh.github.io/protege-mcp/versioning.html) · [Changelog](https://hakjuoh.github.io/protege-mcp/changelog.html) | The release scheme and notes for every version. |
 

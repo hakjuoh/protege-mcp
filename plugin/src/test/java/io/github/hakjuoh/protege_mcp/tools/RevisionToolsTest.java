@@ -14,6 +14,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
 
 /** Method-level tests for the shared policy/preflight capture helpers in {@link RevisionTools}. */
 class RevisionToolsTest {
@@ -49,9 +50,8 @@ class RevisionToolsTest {
                     "# id: CQ-" + i + "\n# expected: nonEmpty\nASK { ?s ?p ?o }\n");
         }
         Path policyFile = temp.resolve("policy.yaml");
-        Files.writeString(policyFile, "version: 1\n"
-                + "project_id: walk-cap\n"
-                + "root_ontology: " + ONTOLOGY_IRI + "\n"
+        ProjectPolicyFixtures.writePolicy(policyFile,
+                ProjectPolicyFixtures.minimalPolicy("walk-cap", ONTOLOGY_IRI)
                 + "validation:\n"
                 + "  required_stages: [cqs]\n"
                 + "  competency_questions:\n"

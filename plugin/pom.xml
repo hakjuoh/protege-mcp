@@ -261,6 +261,7 @@
                             !org.eclipse.jetty.*,
                             !jakarta.servlet.*,
                             !org.commonmark.*,
+                            !com.apicatalog.*,
                             org.protege.editor.core.*,
                             org.protege.editor.owl.*,
                             <!--

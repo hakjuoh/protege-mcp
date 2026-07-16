@@ -158,6 +158,9 @@ errored required stage is `gate=error` and takes precedence over a separate fail
 - `gate`: `pass`, `fail`, or `error`.
 - `policy_loaded`, `policy_version`, `policy_digest`, `project_id`, `policy_path`, `project_root`.
 - `semantic_fingerprint`: fingerprint of the exact shared ontology snapshot.
+- `rdf_dataset_fingerprint`, `rdf_dataset_identity`: W3C RDFC-1.0 + SHA-256 identity of the asserted
+  root ontology RDF dataset, plus the selected RO-Crate/profile/canonicalization coordinates. This is
+  distinct from the editor/revision-oriented `semantic_fingerprint`.
 - `fingerprint_stability`, `release_stable`, `fingerprint_warnings`: cross-restart guarantee; anonymous
   individuals explicitly degrade the digest to a same-session token.
 - `reasoner`: the reasoner selected at the shared-snapshot boundary.
@@ -183,7 +186,8 @@ errored required stage is `gate=error` and takes precedence over a separate fail
 One aggregate quality-control gate that composes every stage over **one isolated shared snapshot** and
 collapses them to a single verdict. The selected reasoner's exact Protégé plugin configuration and buffering
 mode are captured with the ontology; QC does not classify or query the live reasoner.
-Stages (default `reasoner` + `profile` + `structural`): `reasoner`
+Stages (default `reasoner` + `profile` + `structural`): `interoperability` (policy mode only: validated
+RO-Crate plus the W3C RDFC-1.0 root-dataset identity), `reasoner`
 (consistency + no unsatisfiable classes), `profile` (OWL 2 profile conformance — gated on the violations
 the active ontology OWNS, including ontology-header violations OWLAPI reports without a backing axiom;
 violations inherited from imports are surfaced as `imported_violations` context only), `structural`
@@ -202,7 +206,7 @@ call into missing-required-to-error behavior.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `stages` | array | no | `["reasoner","profile","structural"]` | Subset of `reasoner`, `profile`, `governance`, `structural`, `invariants`, `cqs`, `shacl`. |
+| `stages` | array | no | `["reasoner","profile","structural"]` | Subset of `interoperability`, `reasoner`, `profile`, `governance`, `structural`, `invariants`, `cqs`, `shacl`. `interoperability` needs a validated `policy_path`. |
 | `required_stages` | array | no | — | Stages that must complete; they are scheduled even when absent from `stages`. |
 | `error_on_missing_required` | boolean | no | false | Treat all requested stages (or `required_stages`) as required and return `gate=error` if one cannot run. |
 | `policy_path` | string | no | — | Use strict project-policy discovery/assets/QC. |

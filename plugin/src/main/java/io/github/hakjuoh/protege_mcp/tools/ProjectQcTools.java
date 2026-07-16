@@ -122,10 +122,28 @@ final class ProjectQcTools {
         Set<String> disabled = new LinkedHashSet<>(strings(structural.get("disabled")));
         Map<String, String> severity = stringMap(object(structural, "severity_overrides"));
 
+        Map<String, Object> interoperability = object(root, "interoperability");
+        Map<String, Object> metadata = object(interoperability, "metadata");
+        Map<String, Object> canonicalization = object(interoperability, "canonicalization");
+        List<Path> manifests = policy.assets().getOrDefault(
+                "interoperability_manifest", Collections.emptyList());
+        if (manifests.size() != 1) {
+            throw new ToolArgException("Exactly one RO-Crate metadata file must resolve.");
+        }
+        QcSuiteTools.InteroperabilityConfig interopConfig =
+                new QcSuiteTools.InteroperabilityConfig(
+                        string(interoperability, "profile"),
+                        strings(interoperability.get("additional_profiles")),
+                        string(metadata, "format"), manifests.get(0).toString(),
+                        string(interoperability, "root_artifact"),
+                        string(canonicalization, "algorithm"),
+                        string(canonicalization, "hash"), string(canonicalization, "scope"),
+                        integer(canonicalization.get("timeout_ms"), 120_000));
+
         return new QcSuiteTools.RunConfig(stages, required, failOn, profile, limit, timeout,
                 invariants, cqs, null, null, shacl, iriPattern, namespaces,
                 requiredAnnotations, true, governanceRules(root), disabled, severity, true, configuredReasoner,
-                string(root, "root_ontology"));
+                string(root, "root_ontology"), interopConfig);
     }
 
     /**

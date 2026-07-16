@@ -42,3 +42,9 @@ Apache Jena ARQ/SHACL (including transitive Apache Commons libraries) are used
 under their respective licenses — Apache License 2.0 and, for Jetty, the
 Eclipse Public License 2.0 / Apache License 2.0 dual license. See each
 project's distribution for the authoritative license texts.
+
+Titanium RDF Dataset Canonicalization
+-------------------------------------
+Titanium RDFC 2.0.0, Titanium RDF API, and Titanium RDF N-Quads are embedded
+under the Apache License 2.0. The 2.x line is used because this bundle supports
+Java 17; Titanium RDFC 3.0.0 requires Java 21.

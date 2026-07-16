@@ -1,0 +1,17 @@
+version: 1
+project_id: cli-smoke
+root_ontology: https://example.org/cli-smoke
+interoperability:
+  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+  additional_profiles: []
+  root_artifact: ontology.ttl
+  metadata:
+    path: ro-crate-metadata.json
+    format: ro-crate-1.1
+  canonicalization:
+    algorithm: RDFC-1.0
+    hash: SHA-256
+    scope: root-ontology
+    timeout_ms: 120000
+reasoning:
+  reasoner: HermiT

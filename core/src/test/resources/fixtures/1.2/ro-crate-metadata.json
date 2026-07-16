@@ -1,0 +1,7 @@
+{"@context":"https://w3id.org/ro/crate/1.2/context","@graph":[
+  {"@id":"ro-crate-metadata.json","@type":"CreativeWork","about":{"@id":"./"},"conformsTo":{"@id":"https://w3id.org/ro/crate/1.2"}},
+  {"@id":"./","@type":"Dataset","name":"Example ontology project","identifier":"example","conformsTo":{"@id":"https://example.org/profiles/project-v1/"},"mainEntity":{"@id":"ontology.ttl"},"hasPart":{"@id":"ontology.ttl"},"description":"Example ontology project pinning cross-version profile conformance.","datePublished":"2026-07-15","license":"https://www.apache.org/licenses/LICENSE-2.0"},
+  {"@id":"https://example.org/profiles/project-v1/","@type":["CreativeWork","Profile"],"name":"Example project profile"},
+  {"@id":"ontology.ttl","@type":"File","encodingFormat":"text/turtle","about":{"@id":"https://example.org/ontology"}},
+  {"@id":"https://example.org/ontology","@type":"Dataset","conformsTo":{"@id":"https://www.w3.org/TR/owl2-overview/"}}
+]}

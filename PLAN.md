@@ -24,11 +24,13 @@ artifacts, and a headless core with a first CLI. The destination is unchanged:
 4. Diffs describe semantic and curation impact, not just changed axiom strings.
 5. The same checks run in Protégé, headlessly, and in CI.
 6. Reviews, approvals, provenance, and releases leave an auditable trail.
+7. A verified release can be published to an external ontology or knowledge-graph platform without
+   confusing that platform's revision, inference, or approval semantics with Protégé MCP's contracts.
 
 Goals 1–3 are substantially delivered for interactive use. This plan defines the remaining path: closing
 the policy-coverage and change-set gaps, impact-aware diffs, a real release workflow, full headless/CI
-operation, and governed collaboration — with the compatibility constraints, acceptance criteria, and
-principal risks for each.
+operation, governed collaboration, and standards-first external-platform delivery — with the compatibility
+constraints, acceptance criteria, and principal risks for each.
 
 ## 2. Baseline and remaining gaps
 
@@ -99,6 +101,10 @@ close:
 - Long-running classification, validation, extraction, and diff work has no common
   job/progress/cancellation model.
 - Live Protégé/OSGi/reasoner/GUI integration remains substantially dependent on manual smoke testing.
+- No commercial-platform adapter is present. OWL/RDF, SHACL, and SPARQL assets can be exchanged manually,
+  but `.protege-mcp/project.yaml`, fingerprint v2, import locks, workspace revisions, and change sets have
+  no automatic mapping to TopBraid EDG, metaphactory, PoolParty, GraphDB, Stardog, or Semaphore. The
+  current product matrix and evidence boundary are documented in `docs/commercial-platforms.md`.
 
 ## 3. Product principles
 
@@ -171,6 +177,9 @@ MCP tools / guided prompts / Protégé UI / CLI / CI
                     /                 \
        Protégé workspace adapter    headless workspace adapter
        EDT + undo + renderer        files + atomic replace + stdio
+                                             |
+                                  external delivery adapters
+                              standard RDF protocols / vendor APIs
 ```
 
 As of `0.6.0` the repository is a Maven reactor with `core` (headless, Protégé-API-free), `plugin` (the
@@ -184,6 +193,9 @@ architectural work:
 - Introduce a shared project-relative `ArtifactStore` (atomic replacement, checksums) for report, release,
   and audit writes, plus `Clock`/`IdGenerator` seams so audit records and manifests are deterministically
   testable.
+- Define external delivery behind a narrow adapter SPI. Vendor SDKs, credentials, remote revisions, and
+  API-specific models stay outside the ontology-engineering core; the core consumes only capability,
+  publish-plan, receipt, and verification contracts.
 - Introduce finer module boundaries (`core-model`, `core-owl`, adapters) only when a dependency boundary
   becomes enforceable; the three-module split is the mandatory minimum, not the end state.
 
@@ -204,11 +216,12 @@ explicitly degraded (`session_only`), never reported as stable.
 | M6. Reuse, mappings, and lifecycle | P1 | Synonym-aware reuse, SSSOM, governed term lifecycle | M1R, M2R |
 | M7R. Audit, approvals, and authorization | P1 | Capability enforcement, audit trail, approvals, revocation termination | M2R, M4R (audit slice independent) |
 | M8. Rules, async jobs, performance, integration | P1 | Predictable long-running work and stronger live-runtime confidence | cross-cutting |
+| M9. Commercial platform interoperability | P2 | Verified, drift-safe publication and round-trip verification through standards-first target profiles | M3R, M4R, M5R; M7R for remote writes |
 
 The `R` suffix marks milestones whose first tranche shipped in `0.6.0`; their sections below list only what
 remains. Milestones may overlap after their data contracts stabilize, and dependencies bind only the halves
 that need them: the M4R diff/impact half and the first M7R audit slice are dependency-free and ship earlier
-(§14). M1R–M5R form the remaining minimum path from an interactive assistant to an ontology DevOps workflow.
+(§15). M1R–M5R form the remaining minimum path from an interactive assistant to an ontology DevOps workflow.
 
 ## 6. M1R — Policy coverage completion
 
@@ -340,7 +353,7 @@ Complete `semantic_diff` (asserted-only today; it rejects `mode=inferred|both`) 
   breaking for one downstream application but acceptable for another.
 - Rename/merge/split candidates stay labelled as candidates unless backed by an explicit mapping.
 
-The entailment set for inferred diff is an open design decision (§19) and needs a short ADR first.
+The entailment set for inferred diff is an open design decision (§20) and needs a short ADR first.
 
 ### 9.2 Impact analysis
 
@@ -817,7 +830,140 @@ packaging and macOS/Windows behavior.
 - The automated live harness executes the critical load/read/write/reason/undo flow against the built
   bundle.
 
-## 14. Delivery sequence and tentative releases
+## 14. M9 — Commercial platform interoperability
+
+The product landscape, current 0.6.0 boundary, primary vendor sources, and feature-by-feature portability
+matrix are maintained in `docs/commercial-platforms.md`. M9 turns that documented manual boundary into a
+governed delivery surface. It does not make Protégé MCP a triple-store server, reproduce each vendor's
+authoring UI, or claim a distributed transaction across independent MCP servers.
+
+### 14.0 Standards foundation established in policy v1 (0.6.0)
+
+- `project.yaml` v1 requires a portable RO-Crate project profile and supports Recommendations 1.0–1.3
+  with exact version-specific contexts, descriptor filenames, and profile rules. RO-Crate 1.1 is the
+  broad-compatibility default; 1.2/1.3 may be selected explicitly or inferred from an existing crate's
+  unambiguous normative context.
+- W3C RDFC-1.0 + SHA-256 identifies the asserted root-ontology RDF dataset. This standard digest is
+  separate from fingerprint v2, which remains the local OWL/editor revision token.
+- RO-Crate version/profile parsing is isolated in core's dependency-clean `ro_crate` package behind public,
+  host-independent request/result types. The module bans Protégé, OWLAPI, MCP, and core dependencies so
+  it can move into a separate Git project without moving the project-policy loader or adapters.
+- Future target adapters consume the portable RO-Crate/RDFC layer first. The YAML execution overlay and
+  fingerprint v2 may accompany a release as evidence but are never presented as vendor-neutral formats.
+
+### 14.1 Adapter boundary and capability profiles
+
+Start with vendor-neutral contracts in an adapter module outside the ontology-engineering core:
+
+- `TargetCapabilities`: supported RDF/OWL serializations, graph/repository addressing, transaction and
+  optimistic-lock support, maximum request sizes, import behavior, reasoning/SHACL modes, staging/promote,
+  read-back/export, and delete/replace semantics.
+- `PublishPlan`: immutable release-manifest digest, target identity, base remote revision, operation mode
+  (`create`, `replace`, or an explicitly supported atomic promotion), bounded change/count summary,
+  warnings, and required capability.
+- `PublishReceipt`: target product/profile/API version, repository/graph, principal id, request id,
+  before/after remote revision, uploaded artifact digest, read-back verification, and rollback/staging
+  references.
+- `TargetProfile`: declarative mapping from a detected capability set to supported operations and known
+  semantic caveats. Unknown product/API versions fail closed for writes but may allow bounded inspection.
+
+Initial user-facing names are provisional and require a short contract ADR before implementation:
+`inspect_target`, `plan_publish`, `publish_release`, `verify_publish`, and `pull_snapshot`. Read and write
+operations remain separate tools/capabilities. No connector receives an `OWLOntology` to mutate directly;
+it receives a verified release artifact plus manifest and returns immutable evidence.
+
+Configuration stores endpoint aliases, repository/graph coordinates, profile, and secret **references**.
+Credentials never appear in project policy, ontology annotations, release manifests, logs, or MCP results.
+
+### 14.2 Governed publication workflow
+
+The first supported workflow is release publication, not arbitrary remote triple editing:
+
+1. Run the M4R/M5R release gate and produce a verified artifact and release manifest.
+2. Discover the target's capabilities and exact product/API version without mutation.
+3. Capture a target revision, ETag, snapshot digest, or the strongest honest concurrency token the target
+   provides. If none exists, report that limitation and restrict the initial profile to create-only/staged
+   publication rather than pretending replacement is race-free.
+4. Produce a bounded publish plan. Destructive replacement, inferred/materialized graph inclusion, or a
+   lossy serialization is visible and requires explicit policy plus confirmation.
+5. Re-check local artifact/manifest digests, authorization, endpoint policy, and remote revision immediately
+   before mutation.
+6. Upload to a staging graph/repository where the target supports it, read back an asserted snapshot, and
+   run semantic comparison. Evaluate inference and SHACL parity separately with the target's exact settings.
+7. Promote atomically only through a documented target operation. Otherwise retain staging and return a
+   receipt that says promotion is manual; never emulate atomicity with a delete-then-add sequence.
+8. Append the redacted publish plan, receipt, and verification result to the M7R audit stream.
+
+Publication cannot weaken or replace the local release gate. A successful HTTP response is transport
+success, not semantic verification.
+
+### 14.3 Delivery sequence by platform class
+
+Implement and validate the least product-specific path first:
+
+1. **Verified file/bundle exchange** — keep the 0.6.0 manual workflow documented, add repeatable export and
+   read-back recipes, and pin cross-format fixtures. This path covers every product without claiming API
+   compatibility.
+2. **Vendor-neutral RDF repository adapter** — target a standards-based graph/repository protocol with
+   create/stage/read-back behavior, then validate named GraphDB Enterprise and Stardog profiles against
+   licensed test environments. Product-specific administration remains outside the generic protocol.
+3. **Authoring/governance product profiles** — validate file/API round trips for TopBraid EDG and
+   metaphactory, and taxonomy/ontology profiles for PoolParty and Progress Semaphore. A profile records
+   supported constructs and losses; it does not silently coerce expressive OWL into SKOS or vendor models.
+4. **Native workflow adapters** — add revision, approval, promote, and rollback integration only where an
+   official, licensed API and a maintainable automated test environment exist.
+
+Products and ordering are not endorsements. Availability, edition, API stability, licensing, and access to
+non-production test environments are explicit go/no-go inputs for each profile.
+
+### 14.4 Reverse flow and multi-MCP use
+
+`pull_snapshot` is read-only: it exports one immutable remote asserted snapshot, records target coordinates
+and revision evidence, and hands the file to the existing semantic-diff/release machinery. Applying remote
+changes to the live Protégé workspace still requires local entity grounding, a change-set preview, project
+QC, an exact expected revision, and an explicit commit.
+
+An AI client may connect to Protégé MCP and a platform-provided MCP server such as GraphDB's, but the two
+servers retain independent authentication, authorization, sessions, revisions, and audit trails. The client
+may orchestrate a workflow; Protégé MCP must not call it atomic or synchronized unless a later coordinator
+protocol supplies prepare/commit/abort semantics accepted by both servers.
+
+### 14.5 Security and network posture
+
+- Reuse the M1R/M3R/M7R filesystem, endpoint allowlist, network, and capability policies; remote publishing
+  is never enabled merely by loading a project policy from an untrusted branch.
+- Require TLS except for an explicit loopback test profile. Pin the effective destination after redirects
+  and prevent DNS rebinding/private-address escalation according to the network-policy ADR.
+- Separate `target:inspect`, `target:pull`, `target:plan`, `target:publish`, `target:replace`, and
+  `target:admin`. The desktop local-admin compatibility profile does not automatically gain remote-write
+  authority.
+- Bound uploads, downloads, redirects, response bodies, retries, and total deadlines. Retry only operations
+  with documented idempotency or an explicit idempotency key.
+- Redact authorization headers, tokens, vendor error bodies, query content, and ontology fragments according
+  to policy while retaining actionable status, request ids, and target coordinates.
+- Keep vendor/network tests opt-in, scheduled, or release-gated. Normal unit tests and `mvn clean verify`
+  remain offline-capable.
+
+### 14.6 Acceptance criteria
+
+- The adapter SPI has contract tests proving that an implementation cannot mutate before a successful
+  publish plan, confirmation/capability check, local digest recheck, and remote-drift recheck.
+- Each supported target/profile publishes a checked-in interoperability fixture and reads it back; asserted
+  differences are zero or are enumerated as reviewed, machine-readable capability losses.
+- Ontology/version IRIs, imports, annotated axioms, language tags, lifecycle annotations, SHACL assets, and
+  one construct near the target's OWL boundary are covered by every applicable round-trip fixture.
+- Reasoner and SHACL parity results name both engines/configurations and never infer parity from asserted
+  graph identity.
+- Credentials are absent from policy, artifacts, logs, exceptions, receipts, and MCP results, with tests for
+  common vendor error/redirect paths.
+- Remote drift or an unavailable concurrency primitive cannot yield a falsely successful replace. Profiles
+  without safe replacement remain create-only or staging-only.
+- A platform-provided MCP server remains explicitly independent; documentation and results never claim
+  distributed atomicity or shared authorization.
+- The public compatibility matrix and primary-source review date are updated whenever a profile or supported
+  vendor API version changes.
+
+## 15. Delivery sequence and tentative releases
 
 `0.6.0` pulled forward prototypes originally scheduled later (change sets, import locks, verified saves,
 the asserted semantic-diff prototype, the CLI split, broker principals), so the remaining grouping is
@@ -852,9 +998,20 @@ Exit condition: a clean checkout can validate and build a verifiable ontology re
 Exit condition: project roles and lifecycle rules are enforced consistently in interactive and automated
 workflows, with a traceable release history.
 
-## 15. Testing strategy
+### Tentative post-`0.9.x`: external platform delivery
 
-### 15.1 Unit and property tests
+- M9 first half: adapter contracts, verified exchange fixtures, and a vendor-neutral RDF repository
+  publication path.
+- Validated GraphDB Enterprise and Stardog target profiles, subject to licensed test environments.
+- File/API capability profiles for TopBraid EDG, metaphactory, PoolParty, and Progress Semaphore; native
+  workflow adapters only where official API access and repeatable tests permit support.
+
+Exit condition: a release that passed Protégé MCP's gate can be planned, published to staging, read back,
+semantically verified, and audited without exposing credentials or claiming unsupported remote atomicity.
+
+## 16. Testing strategy
+
+### 16.1 Unit and property tests
 
 - Policy migrations and the new M1R path/ownership resolution.
 - Change normalization for rebase and `verify=` migration.
@@ -868,7 +1025,7 @@ workflows, with a traceable release history.
 Use generated ontologies/property-style fixtures for ordering, punning, annotations, blank nodes, cycles,
 language tags, and format round trips.
 
-### 15.2 Cross-component pipeline tests
+### 16.2 Cross-component pipeline tests
 
 Extend the pipeline tests toward the full project/release flow:
 
@@ -879,7 +1036,7 @@ load project -> resolve policy/import lock -> preview change -> full QC
 
 Run the same fixture through the Protégé fake adapter and headless adapter where possible.
 
-### 15.3 Real reasoner tests
+### 16.3 Real reasoner tests
 
 - Satisfiable, newly unsatisfiable, and inconsistent cases.
 - Lost and gained entailments.
@@ -889,7 +1046,7 @@ Run the same fixture through the Protégé fake adapter and headless adapter whe
 
 Reasoner-specific expectations must be tagged and must not silently become general OWL semantics.
 
-### 15.4 Filesystem and network tests
+### 16.4 Filesystem and network tests
 
 - Atomic replace and rollback after failure.
 - Locked imports in offline mode.
@@ -899,7 +1056,7 @@ Reasoner-specific expectations must be tagged and must not silently become gener
 
 Network tests should use local controlled servers; normal unit tests remain offline-capable.
 
-### 15.5 Compatibility tests
+### 16.5 Compatibility tests
 
 - The committed `0.5.0` golden-snapshot harness (tool schemas, result fields, prompt contracts) stays
   authoritative; commit a `0.6.0` baseline when it is released, and route every intentional public-surface
@@ -908,7 +1065,18 @@ Network tests should use local controlled servers; normal unit tests remain offl
 - Verify policy schema migrations from every released schema version.
 - Ensure plugin and headless outputs agree on identity, counts, and gate outcome.
 
-## 16. Documentation and migration
+### 16.6 External platform adapter tests
+
+- Run pure contract tests against an in-process fake target that models revisions, drift, staging,
+  idempotency, read-back corruption, partial failure, redirects, and secret-bearing error bodies.
+- Keep one vendor-neutral RDF repository fixture usable by every target profile and compare the read-back
+  asserted graph with `semantic_diff`.
+- Run licensed/vendor network suites only in opt-in, scheduled, or release workflows with least-privilege
+  ephemeral credentials and isolated test repositories.
+- Record target product, edition, API version, and capability snapshot with every result so an API upgrade
+  cannot silently inherit an older compatibility claim.
+
+## 17. Documentation and migration
 
 Every milestone must update:
 
@@ -918,6 +1086,8 @@ Every milestone must update:
 - `docs/smoke-test.md` live acceptance flow.
 - `TESTING.md` current test counts and integration boundaries.
 - `CHANGELOG.md` compatibility and migration notes.
+- `docs/commercial-platforms.md` capability matrix, primary-source review date, tested product/API versions,
+  and known semantic or operational losses when an external profile changes.
 - Guided prompts affected by the milestone, with prompt contract/golden tests pinning the new guidance.
 
 Migration rules:
@@ -932,7 +1102,7 @@ Migration rules:
 - Release mode may be stricter than interactive mode, but the mode and policy source must always be
   explicit in results.
 
-## 17. Definition of done for every milestone
+## 18. Definition of done for every milestone
 
 A milestone is complete only when:
 
@@ -947,7 +1117,7 @@ A milestone is complete only when:
 - User documentation and changelog are updated in the same change.
 - `mvn clean verify` and the version-consistency check pass.
 
-## 18. Principal risks and mitigations
+## 19. Principal risks and mitigations
 
 | Risk | Consequence | Mitigation |
 | --- | --- | --- |
@@ -964,8 +1134,12 @@ A milestone is complete only when:
 | Revocation cannot stop an in-flight operation | Revoked client's work still lands | Terminate pinned SSE streams; where interruption is impossible, report it and block the result from committing |
 | Untrusted PR policy weakens its own gate | False CI pass or credential exposure | Base-branch trusted policy, no-network/external-path overrides, least privilege, artifact-plus-workflow_run annotations |
 | Multi-user expectations exceed desktop design | Unsafe remote operation | Keep loopback default; separate remote-server profile and threat model |
+| Vendor API or edition changes | A connector mutates with stale assumptions or stops preserving semantics | Versioned capability profiles, unknown-version write refusal, official-source review dates, licensed conformance suites |
+| Remote reasoning/SHACL differs from the local release gate | A byte-identical upload behaves differently in production | Record both configurations; separate asserted read-back identity from inference/SHACL parity; fail required parity closed |
+| Target lacks optimistic concurrency or atomic promotion | A concurrent remote edit is overwritten or a partial release is exposed | Create/staging-only profile, explicit limitation, product-supported promotion only; never emulate atomicity |
+| Connector leaks credentials or ontology content | Security/privacy incident | Secret references, endpoint allowlists, redaction tests, bounded error bodies, least-privilege ephemeral credentials |
 
-## 19. Open design decisions
+## 20. Open design decisions
 
 Resolve these with short architecture decision records before implementation:
 
@@ -982,8 +1156,15 @@ Resolve these with short architecture decision records before implementation:
 8. Reference performance fixtures and environments used for regression gates.
 9. The mechanism used to terminate revoked pinned sessions and in-flight SSE streams (the principal
    encoding/integrity itself was decided and shipped in `0.6.0`).
+10. The vendor-neutral publication protocol and minimum concurrency primitive required for a writable
+    profile; decide whether standards-based Graph Store/RDF4J behavior belongs in one generic adapter or
+    separate profiles.
+11. The canonical mapping of ontology/release identity to repository, named graph, and vendor project
+    coordinates, including whether imports are published separately or remain release artifacts only.
+12. Whether governed reverse synchronization is part of the first M9 delivery or remains read-only snapshot
+    acquisition until rebase, release, and audit contracts have field experience.
 
-## 20. Immediate next issues
+## 21. Immediate next issues
 
 The next implementation cycle should create small, independently reviewable issues in this order:
 
@@ -1008,7 +1189,14 @@ The next implementation cycle should create small, independently reviewable issu
 12. Consume the propagated broker principal for per-tool capability enforcement, add the audit stream
     (its change-set-aware audit-records portion is the first slice, targeted at `0.7.x`), the short-lived
     assistant principal, and active termination of revoked SSE streams.
+13. After the release manifest contract stabilizes, write the M9 adapter-contract ADR and implement the
+    fake-target conformance kit (`TargetCapabilities`, plan, receipt, read-back verification, drift).
+14. Implement the vendor-neutral create/stage/read-back RDF repository adapter, then validate explicit
+    GraphDB Enterprise and Stardog profiles in licensed, isolated test environments.
+15. Run evidence/API/licensing spikes for TopBraid EDG, metaphactory, PoolParty, and Progress Semaphore;
+    publish file/API capability profiles before accepting any native workflow-adapter commitment.
 
 Issues 1–5 harden what `0.6.0` shipped; issues 6–7 deliver the impact half of M4R; issues 8–11 build the
-release/headless workflow on top of it; issue 12 opens the governed-collaboration track. The order is
-thematic, not chronological — it deliberately does not track the tentative release boundaries in §14.
+release/headless workflow on top of it; issue 12 opens the governed-collaboration track; issues 13–15 begin
+M9 only after the release evidence boundary is stable. The order is thematic, not chronological — it
+deliberately does not track the tentative release boundaries in §15.

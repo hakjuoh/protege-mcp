@@ -5,6 +5,19 @@ root_ontology: https://example.org/ontology
 # so ontology.ttl and modules/ sit beside .protege-mcp/, not inside it.
 project_root: .
 
+interoperability:
+  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+  additional_profiles: []
+  root_artifact: ontology.ttl
+  metadata:
+    path: ro-crate-metadata.json
+    format: ro-crate-1.1
+  canonicalization:
+    algorithm: RDFC-1.0
+    hash: SHA-256
+    scope: root-ontology
+    timeout_ms: 120000
+
 prefixes:
   ex: https://example.org/ontology/
   dcterms: http://purl.org/dc/terms/
@@ -63,7 +76,7 @@ imports:
   network: deny
 
 validation:
-  required_stages: [reasoner, profile, governance, structural, invariants, cqs, shacl]
+  required_stages: [interoperability, reasoner, profile, governance, structural, invariants, cqs, shacl]
   fail_on: warning
   structural:
     disabled: [property_missing_domain, property_missing_range]

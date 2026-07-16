@@ -71,6 +71,31 @@ class ProjectPolicySchemaTest {
     }
 
     @Test
+    void supportsEveryRoCrateRecommendationWithItsNormativeMetadataFilename() throws IOException {
+        for (String version : List.of("1.0", "1.1", "1.2", "1.3")) {
+            Map<String, Object> policy = readYaml(EXAMPLES.resolve("minimal.yaml"));
+            Map<String, Object> metadata = object(object(policy, "interoperability"), "metadata");
+            metadata.put("format", "ro-crate-" + version);
+            metadata.put("path", "1.0".equals(version)
+                    ? "ro-crate-metadata.jsonld" : "ro-crate-metadata.json");
+            assertValid(policy, "RO-Crate " + version);
+        }
+
+        Map<String, Object> mismatched = readYaml(EXAMPLES.resolve("minimal.yaml"));
+        Map<String, Object> metadata = object(object(mismatched, "interoperability"), "metadata");
+        metadata.put("format", "ro-crate-1.0");
+        metadata.put("path", "ro-crate-metadata.json");
+        assertInvalid(mismatched, "RO-Crate 1.0 metadata filename mismatch");
+
+        Map<String, Object> defaulted = readYaml(EXAMPLES.resolve("minimal.yaml"));
+        Map<String, Object> defaultedMetadata = object(
+                object(defaulted, "interoperability"), "metadata");
+        defaultedMetadata.remove("format");
+        defaultedMetadata.remove("path");
+        assertValid(defaulted, "omitted metadata version uses the loader's 1.1 default");
+    }
+
+    @Test
     void rejectsMissingIdentityFutureVersionAndUnknownTopLevelFields() throws IOException {
         Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
 

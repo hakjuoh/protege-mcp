@@ -110,6 +110,24 @@
                             </arguments>
                         </configuration>
                     </execution>
+                    <execution>
+                        <!-- validate-policy transits the ro_crate package and titanium inside the
+                             shaded jar; the version smoke alone cannot catch a shade/resource
+                             regression on that path. -->
+                        <id>smoke-shaded-validate-policy</id>
+                        <phase>verify</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>${java.home}/bin/java</executable>
+                            <arguments>
+                                <argument>-jar</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}-all.jar</argument>
+                                <argument>validate-policy</argument>
+                                <argument>--project</argument>
+                                <argument>${project.basedir}/src/smoke/policy.yaml</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
             <plugin>

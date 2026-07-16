@@ -135,6 +135,11 @@ final class IsolatedValidationSnapshot {
         return importCoordinates;
     }
 
+    /** Direct import IRIs captured from the live active ontology before declarations were stripped. */
+    List<String> activeImportIris() {
+        return importCoordinates.getOrDefault(ontologyKey(active), Collections.emptyList());
+    }
+
     OWLModelManager modelManager() {
         return modelManager;
     }

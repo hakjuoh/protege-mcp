@@ -35,6 +35,25 @@ tools**; guided prompts remain 11.
   defaults, validates YAML/schema/semantic constraints, and reports a canonical policy digest. Path resolution
   rejects URLs, traversal, and symlink escapes before reading validation assets; glob results are sorted,
   deduplicated, and bounded.
+- **Standards interoperability in project-policy v1:** every policy carries an attached ontology-project
+  RO-Crate and a required `interoperability` QC stage. Recommendations 1.0, 1.1, 1.2, and 1.3 are validated
+  with their exact contexts, on-disk metadata filenames, version-appropriate profile entities, the base
+  specifications' root-entity requirements (`description`, ISO 8601 `datePublished`, `license`), and
+  string-only unambiguous `@context` declarations; 1.1 is the broad-compatibility default, while 1.2/1.3
+  can be selected explicitly or inferred from an existing crate's unambiguous normative context (legacy
+  contexts are never silently adopted). W3C RDFC-1.0 + SHA-256 supplies a serializer/blank-node-independent
+  root RDF dataset fingerprint distinct from fingerprint v2, pinned to the official W3C rdf-canon vectors
+  with code-point-ordered canonical quads and a timeout that bounds the whole computation. The serialized
+  dataset is verified assertion-by-assertion before hashing: rootless anonymous-individual structures the
+  OWL RDF rendering drops silently (unanchored reference cycles, anonymous inverse-property pairs, negative assertions among
+  unanchored anonymous individuals) fail
+  the digest closed, because distinct datasets would otherwise fingerprint identically, while faithfully
+  rendered shapes (anchored cycles, self-loops, trees) keep fingerprinting.
+- **Extractable RO-Crate validation package:** bounded, offline project-profile validation lives behind
+  public library-owned types in core's dependency-clean `ro_crate` package (JDK + Jackson only — no
+  Protégé, OWLAPI, or MCP imports, pinned by a seam test), preserving a clean future split into its
+  own Git project. Titanium RDFC stays on the Java-17-compatible
+  2.0.0 line because 3.0.0 requires Java 21.
 - **Canonical ontology fingerprint v2**, specified in an ADR and exposed by project QC. Its semantic digest is
   independent of axiom insertion order, prefixes, document location, and serialization-added declarations;
   the separate document digest covers document coordinates, format, prefixes, and import-lock content.
@@ -67,7 +86,8 @@ tools**; guided prompts remain 11.
 - **Deterministic import dependency controls:** `write_import_lock`, `verify_import_lock`, and `validate_catalog`
   operate without network access, confine relative lock paths, reject duplicate/malformed content, hash local
   artifacts, and report catalog/import disagreement.
-- **Reusable core and standalone CLI:** a Maven parent now enforces `core`, `plugin`, and `cli` boundaries. The
+- **Reusable core and standalone CLI:** a Maven parent now enforces `core`, `plugin`, and `cli`
+  boundaries. The
   existing OSGi filename remains stable, while `protege-mcp-cli-0.6.0-all.jar` runs policy validation and asserted
   semantic diff on Java 17 without Protégé. Release automation publishes both artifacts, SHA-256 sidecars, license,
   and third-party notices and smoke-tests the CLI from a clean temporary directory.
@@ -81,7 +101,7 @@ tools**; guided prompts remain 11.
   catalog precedence, live/import mutation after isolated capture, exact reasoner configuration identity,
   buffering/fresh-entity policy mismatches, import-spanning unsatisfiability, inferred-data parity, and timeout
   interruption. The clean release build contains
-  **2,790 tests** with zero failures, errors, or skips.
+  **2,830 tests** with zero failures, errors, or skips.
 
 ### Changed
 - `run_qc_suite` accepts additive governance/required-stage controls and can return common strict-gate details;

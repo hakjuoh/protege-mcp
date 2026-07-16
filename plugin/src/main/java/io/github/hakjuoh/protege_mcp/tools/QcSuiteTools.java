@@ -27,6 +27,8 @@ import org.semanticweb.owlapi.reasoner.OWLReasoner;
 
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprints;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint;
+import io.github.hakjuoh.protege_mcp.contracts.RdfDatasetFingerprint;
+import io.github.hakjuoh.protege_mcp.contracts.RdfDatasetFingerprints;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -48,6 +50,7 @@ public final class QcSuiteTools {
     private QcSuiteTools() {
     }
 
+    private static final String INTEROPERABILITY = "interoperability";
     private static final String REASONER = "reasoner";
     private static final String PROFILE = "profile";
     private static final String GOVERNANCE = "governance";
@@ -57,7 +60,7 @@ public final class QcSuiteTools {
     private static final String SHACL = "shacl";
 
     private static final List<String> ALL_STAGES = Arrays.asList(
-            REASONER, PROFILE, GOVERNANCE, STRUCTURAL, INVARIANTS, CQS, SHACL);
+            INTEROPERABILITY, REASONER, PROFILE, GOVERNANCE, STRUCTURAL, INVARIANTS, CQS, SHACL);
     private static final List<String> DEFAULT_STAGES = Arrays.asList(REASONER, PROFILE, STRUCTURAL);
 
     static final String PASS = "pass";
@@ -68,7 +71,9 @@ public final class QcSuiteTools {
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("run_qc_suite",
                 "Run an aggregate quality-control gate over the active ontology and collapse it to ONE "
-                        + "verdict. Composable stages (default reasoner + profile + structural): 'reasoner' "
+                        + "verdict. Composable stages (default reasoner + profile + structural): "
+                        + "'interoperability' (project-policy RO-Crate contract plus W3C RDFC-1.0 "
+                        + "root-dataset fingerprint), 'reasoner' "
                         + "(consistency + no unsatisfiable classes), 'profile' (OWL 2 profile conformance, "
                         + "owl_profile default DL), 'structural' (validate_ontology's modelling-quality "
                         + "checks), 'governance' (IRI/annotation/import-layering project rules), "
@@ -127,6 +132,9 @@ public final class QcSuiteTools {
         ReasoningOutcome reasoning = runIsolatedReasoner(p1, config);
         p1.validationSnapshot = reasoning.snapshot;
         List<StageResult> results = new ArrayList<>();
+        if (config.stages.contains(INTEROPERABILITY)) {
+            results.add(interoperabilityStage(p1.validationSnapshot, config.interoperability));
+        }
         // reasoning.stage is non-null when the stage was scheduled, and ALSO when an inferences-only
         // run (needInferred without the reasoner stage) produced a project-mode gate error — e.g. SWRL
         // rules the selected reasoner silently ignores. That error must surface and gate even though
@@ -435,6 +443,41 @@ public final class QcSuiteTools {
     }
 
     private record ReasoningOutcome(StageResult stage, IsolatedValidationSnapshot snapshot) { }
+
+    static StageResult interoperabilityStage(IsolatedValidationSnapshot snapshot,
+            InteroperabilityConfig interoperability) {
+        if (interoperability == null) {
+            return StageResult.skipped(INTEROPERABILITY,
+                    "interoperability requires a validated project policy");
+        }
+        try {
+            if (!RdfDatasetFingerprints.CANONICALIZATION_ALGORITHM.equals(
+                    interoperability.canonicalizationAlgorithm)
+                    || !RdfDatasetFingerprints.HASH_ALGORITHM.equals(interoperability.hashAlgorithm)
+                    || !RdfDatasetFingerprints.SCOPE.equals(interoperability.scope)) {
+                return StageResult.errored(INTEROPERABILITY,
+                        "unsupported RDF dataset identity contract");
+            }
+            RdfDatasetFingerprint fingerprint = RdfDatasetFingerprints.compute(snapshot.active(),
+                    snapshot.activeImportIris(), interoperability.timeoutMs);
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("profile", interoperability.profile);
+            summary.put("additional_profiles", interoperability.additionalProfiles);
+            summary.put("ro_crate_format", interoperability.roCrateFormat);
+            summary.put("manifest_path", interoperability.manifestPath);
+            summary.put("root_artifact", interoperability.rootArtifact);
+            summary.put("canonicalization_algorithm", fingerprint.canonicalizationAlgorithm());
+            summary.put("hash_algorithm", fingerprint.hashAlgorithm());
+            summary.put("scope", fingerprint.scope());
+            summary.put("rdf_dataset_fingerprint", fingerprint.rdfDatasetFingerprint());
+            summary.put("canonical_nquads_bytes", fingerprint.canonicalNQuadsBytes());
+            return new StageResult(INTEROPERABILITY, true, PASS, summary, null);
+        } catch (RuntimeException e) {
+            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            return StageResult.errored(INTEROPERABILITY,
+                    "RDF dataset canonicalization failed: " + message);
+        }
+    }
 
     // ================================================================== stages
 
@@ -979,6 +1022,13 @@ public final class QcSuiteTools {
             result.put("policy_digest", policyDigest);
         }
         result.put("semantic_fingerprint", execution.fingerprint.semanticFingerprint());
+        StageResult interoperability = byStage.get(INTEROPERABILITY);
+        if (interoperability != null && interoperability.ran && !interoperability.executionError
+                && interoperability.summary != null) {
+            result.put("rdf_dataset_fingerprint",
+                    interoperability.summary.get("rdf_dataset_fingerprint"));
+            result.put("rdf_dataset_identity", interoperability.summary);
+        }
         result.put("fingerprint_stability", execution.fingerprint.stability());
         result.put("release_stable", execution.fingerprint.releaseStable());
         result.put("fingerprint_warnings", execution.fingerprint.warnings());
@@ -1154,6 +1204,7 @@ public final class QcSuiteTools {
         final boolean projectMode;
         final String requiredReasoner;
         final String requiredOntologyIri;
+        final InteroperabilityConfig interoperability;
 
         RunConfig(Set<String> stages, Set<String> requiredStages, String failOn, String profileName,
                 int limit, int timeout, List<Invariants.Invariant> invariants,
@@ -1162,7 +1213,8 @@ public final class QcSuiteTools {
                 List<String> requiredAnnotations, boolean checkOwnership,
                 PolicyGovernance.Rules policyGovernance,
                 Set<String> disabledStructural, Map<String, String> structuralSeverity,
-                boolean projectMode, String requiredReasoner, String requiredOntologyIri) {
+                boolean projectMode, String requiredReasoner, String requiredOntologyIri,
+                InteroperabilityConfig interoperability) {
             this.stages = Collections.unmodifiableSet(new LinkedHashSet<>(stages));
             this.requiredStages = Collections.unmodifiableSet(new LinkedHashSet<>(requiredStages));
             this.failOn = failOn;
@@ -1185,6 +1237,7 @@ public final class QcSuiteTools {
             this.projectMode = projectMode;
             this.requiredReasoner = requiredReasoner;
             this.requiredOntologyIri = requiredOntologyIri;
+            this.interoperability = interoperability;
         }
 
         static RunConfig legacy(Map<String, Object> a) {
@@ -1209,7 +1262,33 @@ public final class QcSuiteTools {
                     Tools.stringList(a, "required_annotations"),
                     Tools.optBool(a, "check_ownership", true), PolicyGovernance.Rules.empty(),
                     Collections.emptySet(),
-                    Collections.emptyMap(), false, null, null);
+                    Collections.emptyMap(), false, null, null, null);
+        }
+    }
+
+    static final class InteroperabilityConfig {
+        final String profile;
+        final List<String> additionalProfiles;
+        final String roCrateFormat;
+        final String manifestPath;
+        final String rootArtifact;
+        final String canonicalizationAlgorithm;
+        final String hashAlgorithm;
+        final String scope;
+        final int timeoutMs;
+
+        InteroperabilityConfig(String profile, List<String> additionalProfiles,
+                String roCrateFormat, String manifestPath, String rootArtifact,
+                String canonicalizationAlgorithm, String hashAlgorithm, String scope, int timeoutMs) {
+            this.profile = profile;
+            this.additionalProfiles = List.copyOf(additionalProfiles);
+            this.roCrateFormat = roCrateFormat;
+            this.manifestPath = manifestPath;
+            this.rootArtifact = rootArtifact;
+            this.canonicalizationAlgorithm = canonicalizationAlgorithm;
+            this.hashAlgorithm = hashAlgorithm;
+            this.scope = scope;
+            this.timeoutMs = timeoutMs;
         }
     }
 
@@ -1303,8 +1382,9 @@ public final class QcSuiteTools {
     /** Hand-assembled schema: stages[] + owl_profile + fail_on + limit + timeout_ms + invariants[]. */
     private static Map<String, Object> suiteSchema() {
         Map<String, Object> schema = Tools.schema()
-                .strArray("stages", "Subset of: reasoner, profile, governance, structural, invariants, "
-                        + "cqs, shacl (default reasoner, profile, structural).")
+                .strArray("stages", "Subset of: interoperability, reasoner, profile, governance, "
+                        + "structural, invariants, cqs, shacl (default reasoner, profile, structural; "
+                        + "interoperability requires project policy).")
                 .strArray("required_stages", "Stages that must complete; missing/skipped/error becomes gate=error.")
                 .bool("error_on_missing_required", "Fail closed when a required/requested stage cannot run.")
                 .str("policy_path", "Optional project policy path; delegates to strict project QC.")

@@ -40,9 +40,15 @@ class MainTest {
                 version: 1
                 project_id: cli-test
                 root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
                 validation:
                   required_stages: [profile, governance, structural]
                 """, StandardCharsets.UTF_8);
+        materializeRoCrate(policy, "cli-test");
         ByteArrayOutputStream policyOut = new ByteArrayOutputStream();
         assertEquals(0, Main.run(new String[] {"validate-policy", "--project", policy.toString()},
                 new PrintStream(policyOut), new PrintStream(new ByteArrayOutputStream())));
@@ -236,9 +242,15 @@ class MainTest {
                 version: 1
                 project_id: cli-reasoner-unnamed
                 root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
                 validation:
                   required_stages: [reasoner]
                 """, StandardCharsets.UTF_8);
+        materializeRoCrate(unnamed, "cli-reasoner-unnamed");
         ByteArrayOutputStream unnamedOut = new ByteArrayOutputStream();
         assertEquals(2, Main.run(new String[] {"validate-policy", "--project", unnamed.toString()},
                 new PrintStream(unnamedOut), new PrintStream(new ByteArrayOutputStream())));
@@ -254,11 +266,17 @@ class MainTest {
                 version: 1
                 project_id: cli-reasoner-named
                 root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
                 reasoning:
                   reasoner: ELK
                 validation:
                   required_stages: [reasoner]
                 """, StandardCharsets.UTF_8);
+        materializeRoCrate(named, "cli-reasoner-named");
         ByteArrayOutputStream namedOut = new ByteArrayOutputStream();
         assertEquals(0, Main.run(new String[] {"validate-policy", "--project", named.toString()},
                 new PrintStream(namedOut), new PrintStream(new ByteArrayOutputStream())));
@@ -266,5 +284,36 @@ class MainTest {
         assertTrue(namedJson.contains("\"valid\" : true"));
         assertFalse(namedJson.contains("reasoner_unavailable"),
                 "no availability check may run without an installed-reasoner registry");
+    }
+
+    private static void materializeRoCrate(Path policy, String projectId) throws Exception {
+        Path root = policy.getParent();
+        Path ontology = root.resolve("ontology.ttl");
+        if (!Files.exists(ontology)) {
+            Files.writeString(ontology,
+                    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<> a owl:Ontology .\n");
+        }
+        Files.writeString(root.resolve("ro-crate-metadata.json"), """
+                {
+                  "@context": "https://w3id.org/ro/crate/1.3/context",
+                  "@graph": [
+                    {"@id":"ro-crate-metadata.json","@type":"CreativeWork",
+                     "about":{"@id":"./"},"conformsTo":{"@id":"https://w3id.org/ro/crate/1.3"}},
+                    {"@id":"./","@type":"Dataset","name":"CLI test project",
+                     "description":"Headless CLI validate-policy test crate.",
+                     "datePublished":"2026-07-15",
+                     "license":"https://www.apache.org/licenses/LICENSE-2.0",
+                     "identifier":"%s",
+                     "conformsTo":{"@id":"https://hakjuoh.github.io/protege-mcp/profiles/project-v1/"},
+                     "mainEntity":{"@id":"ontology.ttl"},"hasPart":{"@id":"ontology.ttl"}},
+                    {"@id":"https://hakjuoh.github.io/protege-mcp/profiles/project-v1/",
+                     "@type":["CreativeWork","Profile"],"name":"Protégé MCP project profile"},
+                    {"@id":"ontology.ttl","@type":"File","encodingFormat":"text/turtle",
+                     "about":{"@id":"https://example.org/root"}},
+                    {"@id":"https://example.org/root","@type":"Dataset",
+                     "conformsTo":{"@id":"https://www.w3.org/TR/owl2-overview/"}}
+                  ]
+                }
+                """.formatted(projectId), StandardCharsets.UTF_8);
     }
 }

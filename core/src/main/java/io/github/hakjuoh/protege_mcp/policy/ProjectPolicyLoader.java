@@ -126,11 +126,13 @@ public final class ProjectPolicyLoader {
                     Collections.emptyMap(), issues);
         }
 
+        boolean authoredRoCrateFormat = object(
+                object(parsed, "interoperability"), "metadata").containsKey("format");
         Map<String, Object> effective = defaults(parsed);
         Path projectRoot = resolveProjectRoot(path.getParent(), string(effective, "project_root"), issues);
         Map<String, List<Path>> assets = new LinkedHashMap<>();
         semanticValidation(effective, projectRoot, activeOntologyIri, installedReasoners,
-                assets, issues);
+                !authoredRoCrateFormat, assets, issues);
         return result(discovery.kind, path, projectRoot, digest(effective), effective, assets, issues);
     }
 
@@ -214,7 +216,8 @@ public final class ProjectPolicyLoader {
 
     private static void semanticValidation(Map<String, Object> policy, Path projectRoot,
             String activeOntologyIri, Collection<String> installedReasoners,
-            Map<String, List<Path>> assets, List<PolicyIssue> issues) {
+            boolean inferRoCrateVersion, Map<String, List<Path>> assets,
+            List<PolicyIssue> issues) {
         if (projectRoot == null) {
             return;
         }
@@ -228,11 +231,39 @@ public final class ProjectPolicyLoader {
 
         validateRegex(policy, issues);
         validateTermReferences(policy, issues);
+        Path interopManifest = validateInteroperabilityAssets(policy, projectRoot, assets, issues);
         validateModules(policy, projectRoot, allowExternal, assets, issues);
         validateReasoner(policy, installedReasoners, issues);
         validateImports(policy, projectRoot, allowExternal, assets, issues);
         validateValidationAssets(policy, projectRoot, allowExternal, assets, issues);
         validateReleasePath(policy, projectRoot, allowExternal, assets, issues);
+        if (interopManifest != null) {
+            if (inferRoCrateVersion) {
+                RoCrateProjectManifest.inferVersion(interopManifest, policy);
+            }
+            RoCrateProjectManifest.validate(interopManifest, policy, issues);
+        }
+    }
+
+    private static Path validateInteroperabilityAssets(Map<String, Object> policy, Path projectRoot,
+            Map<String, List<Path>> assets, List<PolicyIssue> issues) {
+        Map<String, Object> interoperability = object(policy, "interoperability");
+        Path rootArtifact = resolveAsset(string(interoperability, "root_artifact"), projectRoot,
+                false, true, "interoperability.root_artifact", issues);
+        if (rootArtifact != null && requireRegularFile(rootArtifact,
+                "interoperability.root_artifact", issues)) {
+            assets.put("root_artifact", List.of(rootArtifact));
+        }
+
+        Map<String, Object> metadata = object(interoperability, "metadata");
+        Path manifest = resolveAsset(string(metadata, "path"), projectRoot,
+                false, true, "interoperability.metadata.path", issues);
+        if (manifest != null && requireRegularFile(manifest,
+                "interoperability.metadata.path", issues)) {
+            assets.put("interoperability_manifest", List.of(manifest));
+            return manifest;
+        }
+        return null;
     }
 
     private static void validateRegex(Map<String, Object> policy, List<PolicyIssue> issues) {
@@ -659,6 +690,15 @@ public final class ProjectPolicyLoader {
         out.putIfAbsent("prefixes", new LinkedHashMap<>());
         out.putIfAbsent("modules", new ArrayList<>());
 
+        Map<String, Object> interoperability = ensureObject(out, "interoperability");
+        interoperability.putIfAbsent("additional_profiles", new ArrayList<>());
+        Map<String, Object> metadata = ensureObject(interoperability, "metadata");
+        metadata.putIfAbsent("format", ProjectInteroperability.DEFAULT_RO_CRATE_FORMAT);
+        metadata.putIfAbsent("path", "ro-crate-1.0".equals(metadata.get("format"))
+                ? "ro-crate-metadata.jsonld" : "ro-crate-metadata.json");
+        Map<String, Object> canonicalization = ensureObject(interoperability, "canonicalization");
+        canonicalization.putIfAbsent("timeout_ms", 120_000);
+
         Map<String, Object> filesystem = ensureObject(out, "filesystem");
         filesystem.putIfAbsent("allow_external_paths", false);
         Map<String, Object> network = ensureObject(out, "network");
@@ -700,7 +740,14 @@ public final class ProjectPolicyLoader {
         }
         Map<String, Object> validation = ensureObject(out, "validation");
         validation.putIfAbsent("required_stages", new ArrayList<>(
-                List.of("reasoner", "profile", "governance", "structural")));
+                List.of("interoperability", "reasoner", "profile", "governance", "structural")));
+        List<String> configuredStages = strings(validation.get("required_stages"));
+        if (!configuredStages.contains("interoperability")) {
+            List<String> required = new ArrayList<>();
+            required.add("interoperability");
+            required.addAll(configuredStages);
+            validation.put("required_stages", required);
+        }
         if (bool(reasoning, "required", false)) {
             List<String> configured = strings(validation.get("required_stages"));
             if (!configured.contains("reasoner")) {

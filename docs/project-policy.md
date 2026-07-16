@@ -16,8 +16,8 @@ interactive defaults.
 
 The authoring file is `.protege-mcp/project.yaml`. Its canonical JSON Schema is
 [`project-policy-v1.schema.json`](https://github.com/hakjuoh/protege-mcp/blob/main/core/src/main/resources/schema/project-policy-v1.schema.json).
-The schema requires `version: 1`, a project id, and an absolute root-ontology IRI. It rejects unknown
-fields rather than silently assigning them a future meaning.
+The schema requires `version: 1`, a project id, an absolute root-ontology IRI, and an
+`interoperability` contract. It rejects unknown fields rather than silently assigning them a future meaning.
 
 Start from the example closest to the project:
 
@@ -27,6 +27,34 @@ Start from the example closest to the project:
   policy, locked imports, persisted invariants/CQs/SHACL, waivers, and release output.
 - [OBO-oriented policy](examples/project-policy/obo.yaml) — OBO IRIs and definition properties, ELK,
   ROBOT-compatible query directories, and OBO release format.
+
+### Standards interoperability contract
+
+Policy v1 separates the portable layer from the execution overlay:
+
+- [RO-Crate](https://www.researchobject.org/ro-crate/) describes the project and root ontology artifact
+  for other applications. Versions 1.0, 1.1, 1.2, and 1.3 are supported with their exact contexts,
+  specification identifiers, metadata filenames, and profile rules.
+- RO-Crate 1.1 is the broad-compatibility default because it is the newest complete version shared by
+  the reviewed Java and Python library support matrices. This is not a claim of measured market share.
+  Select 1.2 or 1.3 explicitly when the user or target environment requires it; when the field is
+  omitted, only a recognized, unambiguous 1.2 or 1.3 crate context is honored — any other signal
+  keeps the 1.1 default and fails validation loudly rather than silently adopting a legacy version.
+- W3C RDFC-1.0 plus SHA-256 supplies the cross-application root RDF dataset fingerprint.
+- `.protege-mcp/project.yaml` remains the Protégé MCP execution/QC overlay; another product does not
+  need to parse it to discover or identify the ontology artifact.
+
+The normative profile is [Ontology project RO-Crate profile v1](profiles/project-v1/). RO-Crate 1.0
+uses `ro-crate-metadata.jsonld`; versions 1.1–1.3 use `ro-crate-metadata.json`. Formal `Profile`
+contextual entities are required for 1.2/1.3, while 1.0/1.1 use `CreativeWork` with the same root
+`conformsTo` link. The loader validates the crate offline, rejects duplicate JSON keys, caps metadata at
+4 MiB/20,000 entities, and never dereferences contexts, profiles, imports, or arbitrary IRIs.
+
+The RO-Crate version and filename may be omitted together. The loader first checks an existing
+`ro-crate-metadata.json` for exactly one supported normative `@context`; a recognized 1.2 or 1.3 crate
+therefore retains its version. If there is no valid, unambiguous signal, the effective policy
+materializes `ro-crate-1.1` and `ro-crate-metadata.json`. An explicitly selected version always wins
+and never silently upgrades.
 
 Schema validation checks data shape, enumerated values, duplicate stages, positive timeouts, explicit
 IRI/date syntax patterns, and
@@ -64,7 +92,8 @@ change the digest.
 Use `get_project_policy` to inspect discovery/defaults and `validate_project_policy` to require a valid
 policy without running ontology checks. `run_project_qc` executes every `validation.required_stages` entry;
 `reasoning.required: true` also forces `reasoner` into the effective required-stage set even if the authored
-list omitted it.
+list omitted it. The `interoperability` stage is always required in policy v1, even when an authored stage
+list omits it.
 It requires Protégé's selected reasoner to match the named policy reasoner, and distinguishes:
 
 - `pass`: every required stage ran and stayed below `validation.fail_on`;
@@ -145,7 +174,20 @@ The JSON Schema enforces structure; Java consumers must also construct records t
 constructor and use `ContractJson.mapper()` so semantic contradictions, unknown fields, and duplicate
 JSON keys are rejected.
 
-## Fingerprint v2
+## RDFC dataset identity versus fingerprint v2
+
+`run_project_qc` returns both identities because they answer different questions:
+
+| Field | Standard and scope | Purpose |
+| --- | --- | --- |
+| `rdf_dataset_fingerprint` | W3C RDFC-1.0 canonical N-Quads + SHA-256; asserted root ontology, ontology header/annotations, and direct import coordinates | Cross-application RDF dataset comparison; blank-node labels and statement order do not change it. |
+| `semantic_fingerprint` (fingerprint v2) | Protégé MCP/OWLAPI canonical OWL contract | Same-session/cross-restart workspace revision, optimistic concurrency, preflight, and editor-aware semantics. |
+
+Imported ontology content is excluded from the RDFC root digest; dependency content belongs in verified
+import locks and release manifests. The `interoperability` stage computes RDFC from the same isolated
+snapshot used by the other QC stages and fails closed on a timeout or canonicalization error.
+
+### Fingerprint v2
 
 Fingerprint v2 covers ontology/version IRIs, direct import declarations, ontology annotations, and active
 ontology axioms including axiom annotations. It normalizes serializer-added unannotated declarations and

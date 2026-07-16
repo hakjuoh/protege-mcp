@@ -10,6 +10,8 @@ metadata and source distributions. Major runtime components include:
   dual-license terms published by their respective projects)
 - Model Context Protocol Java SDK and CommonMark Java (their published open-source licenses)
 - Eclipse RDF4J/Rio components transitively distributed by OWLAPI (their published BSD/EPL terms)
+- Titanium RDF Dataset Canonicalization 2.0.0 and its RDF API/N-Quads components (Apache-2.0). This
+  Java-17-compatible line is used for W3C RDFC-1.0; Titanium 3.0.0 requires Java 21.
 
 This notice is informational and does not replace any license file packaged with a dependency.
 Run `mvn dependency:tree` for the exact dependency set of a source revision.

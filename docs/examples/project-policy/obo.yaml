@@ -4,6 +4,19 @@ root_ontology: http://purl.obolibrary.org/obo/example.owl
 # '.' is the directory that contains .protege-mcp/ (or the policy's own directory elsewhere).
 project_root: .
 
+interoperability:
+  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+  additional_profiles: []
+  root_artifact: example-edit.owl
+  metadata:
+    path: ro-crate-metadata.json
+    format: ro-crate-1.1
+  canonicalization:
+    algorithm: RDFC-1.0
+    hash: SHA-256
+    scope: root-ontology
+    timeout_ms: 120000
+
 prefixes:
   EXAMPLE: http://purl.obolibrary.org/obo/EXAMPLE_
   IAO: http://purl.obolibrary.org/obo/IAO_
@@ -51,7 +64,7 @@ imports:
   network: deny
 
 validation:
-  required_stages: [reasoner, profile, governance, structural, invariants, cqs]
+  required_stages: [interoperability, reasoner, profile, governance, structural, invariants, cqs]
   fail_on: warning
   structural:
     disabled: [property_missing_domain, property_missing_range]

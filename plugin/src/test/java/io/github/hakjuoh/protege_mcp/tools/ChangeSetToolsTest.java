@@ -34,6 +34,7 @@ import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
 import io.github.hakjuoh.protege_mcp.server.McpAccessException;
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
+import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -476,9 +477,8 @@ class ChangeSetToolsTest {
 
     private static void writeDiscoveredPolicy(Path directory, String projectId) throws Exception {
         Path dir = Files.createDirectories(directory.resolve(".protege-mcp"));
-        Files.writeString(dir.resolve("project.yaml"), "version: 1\n"
-                + "project_id: " + projectId + "\n"
-                + "root_ontology: " + ONTOLOGY_IRI + "\n"
+        ProjectPolicyFixtures.writePolicy(dir.resolve("project.yaml"),
+                ProjectPolicyFixtures.minimalPolicy(projectId, ONTOLOGY_IRI)
                 + "validation:\n"
                 + "  required_stages: [structural]\n"
                 + "  fail_on: error\n");

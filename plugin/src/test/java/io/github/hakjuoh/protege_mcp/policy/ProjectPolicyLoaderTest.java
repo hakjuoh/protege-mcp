@@ -16,6 +16,8 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
+
 /** Discovery, strict YAML/schema validation, semantic checks, and path-confinement tests. */
 class ProjectPolicyLoaderTest {
 
@@ -45,8 +47,120 @@ class ProjectPolicyLoaderTest {
         assertEquals(root.toRealPath(), policy.projectRoot());
         assertEquals("sha256:", policy.digest().substring(0, 7));
         assertEquals("unlocked", object(policy.effective(), "imports").get("mode"));
-        assertEquals(List.of("reasoner", "profile", "governance", "structural"),
+        assertEquals("ro-crate-1.1",
+                object(object(policy.effective(), "interoperability"), "metadata").get("format"));
+        assertEquals(List.of("interoperability", "reasoner", "profile", "governance", "structural"),
                 object(policy.effective(), "validation").get("required_stages"));
+    }
+
+    @Test
+    void omittedRoCrateVersionDefaultsOperationallyToOnePointOne(@TempDir Path temp) throws Exception {
+        Path policyPath = temp.resolve("policy.yaml");
+        write(policyPath, "version: 1\n"
+                + "project_id: default-ro-crate\n"
+                + "root_ontology: https://example.org/ontology\n"
+                + "interoperability:\n"
+                + "  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/\n"
+                + "  root_artifact: ontology.ttl\n"
+                + "  metadata: {}\n"
+                + "  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}\n"
+                + "reasoning:\n  reasoner: HermiT\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+
+        assertTrue(policy.valid(), () -> policy.issues().toString());
+        Map<String, Object> metadata = object(
+                object(policy.effective(), "interoperability"), "metadata");
+        assertEquals("ro-crate-1.1", metadata.get("format"));
+        assertEquals("ro-crate-metadata.json", metadata.get("path"));
+    }
+
+    @Test
+    void omittedVersionFollowsARecognizedExistingCrateContext(@TempDir Path temp) throws Exception {
+        for (String format : List.of("ro-crate-1.2", "ro-crate-1.3")) {
+            Path project = temp.resolve(format);
+            Path policyPath = project.resolve("policy.yaml");
+            String explicit = "version: 1\n"
+                    + "project_id: existing-crate\n"
+                    + "root_ontology: https://example.org/ontology\n"
+                    + ProjectPolicyFixtures.interoperabilityYaml("ontology.ttl", format)
+                    + "reasoning:\n  reasoner: HermiT\n";
+            ProjectPolicyFixtures.writePolicy(policyPath, explicit);
+            Files.writeString(policyPath,
+                    explicit.replace("    format: " + format + "\n", ""));
+
+            ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+
+            assertTrue(policy.valid(), () -> format + ": " + policy.issues());
+            assertEquals(format, object(
+                    object(policy.effective(), "interoperability"), "metadata").get("format"));
+        }
+    }
+
+    @Test
+    void legacyCrateContextsAreNeverSilentlyInferred(@TempDir Path temp) throws Exception {
+        Path project = temp.resolve("legacy");
+        Path policyPath = project.resolve("policy.yaml");
+        String explicit = "version: 1\n"
+                + "project_id: legacy-crate\n"
+                + "root_ontology: https://example.org/ontology\n"
+                + ProjectPolicyFixtures.interoperabilityYaml("ontology.ttl", "ro-crate-1.1")
+                + "reasoning:\n  reasoner: HermiT\n";
+        ProjectPolicyFixtures.writePolicy(policyPath, explicit);
+        // A 1.0-context crate stored under the 1.1 filename with no authored format: the loader
+        // must keep the documented 1.1 default and fail loudly, not adopt ro-crate-1.0 (whose
+        // format/path pairing the schema rejects when authored).
+        Path manifest = project.resolve("ro-crate-metadata.json");
+        Files.writeString(manifest, Files.readString(manifest)
+                .replace("https://w3id.org/ro/crate/1.1", "https://w3id.org/ro/crate/1.0"));
+        Files.writeString(policyPath, explicit.replace("    format: ro-crate-1.1\n", ""));
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+
+        assertFalse(policy.valid());
+        assertEquals("ro-crate-1.1", object(
+                object(policy.effective(), "interoperability"), "metadata").get("format"));
+        assertCode(policy, "interop_context_missing");
+    }
+
+    @Test
+    void crateProfileViolationsSurfaceAsInteropIssues(@TempDir Path temp) throws Exception {
+        Path project = temp.resolve("violated");
+        Path policyPath = project.resolve("policy.yaml");
+        String yaml = "version: 1\n"
+                + "project_id: violated\n"
+                + "root_ontology: https://example.org/ontology\n"
+                + ProjectPolicyFixtures.interoperabilityYaml("ontology.ttl", "ro-crate-1.1")
+                + "reasoning:\n  reasoner: HermiT\n";
+        ProjectPolicyFixtures.writePolicy(policyPath, yaml);
+        Path manifest = project.resolve("ro-crate-metadata.json");
+        Files.writeString(manifest, Files.readString(manifest)
+                .replace("\"datePublished\"", "\"datePublishedRemoved\""));
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+
+        assertFalse(policy.valid());
+        assertCode(policy, "interop_root_date_published");
+    }
+
+    @Test
+    void missingCrateManifestFailsClosedAtItsPolicyPath(@TempDir Path temp) throws Exception {
+        Path project = temp.resolve("missing-crate");
+        Path policyPath = project.resolve("policy.yaml");
+        ProjectPolicyFixtures.writePolicy(policyPath, "version: 1\n"
+                + "project_id: missing-crate\n"
+                + "root_ontology: https://example.org/ontology\n"
+                + ProjectPolicyFixtures.interoperabilityYaml("ontology.ttl", "ro-crate-1.1")
+                + "reasoning:\n  reasoner: HermiT\n");
+        Files.delete(project.resolve("ro-crate-metadata.json"));
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+
+        assertFalse(policy.valid());
+        assertTrue(policy.issues().stream().anyMatch(issue ->
+                        "asset_missing".equals(issue.code())
+                                && "interoperability.metadata.path".equals(issue.path())),
+                () -> policy.issues().toString());
     }
 
     @Test
@@ -55,7 +169,8 @@ class ProjectPolicyLoaderTest {
         Path two = temp.resolve("two.yaml");
         write(one, "# comment\n" + minimal("example") + "reasoning:\n  reasoner: HermiT\n");
         write(two, "reasoning:\n  reasoner: HermiT\nroot_ontology: https://example.org/ontology\n"
-                + "project_id: example\nversion: 1\n");
+                + "project_id: example\nversion: 1\n"
+                + ProjectPolicyFixtures.interoperabilityYaml("ontology.ttl", "ro-crate-1.1"));
         ProjectPolicy a = ProjectPolicyLoader.load(one, null);
         ProjectPolicy b = ProjectPolicyLoader.load(two, null);
         assertTrue(a.valid(), () -> a.issues().toString());
@@ -126,7 +241,7 @@ class ProjectPolicyLoaderTest {
         ProjectPolicy available = ProjectPolicyLoader.load(policyPath, null,
                 "https://example.org/ontology", List.of("ELK", "HermiT"));
         assertTrue(available.valid(), () -> available.issues().toString());
-        assertEquals(List.of("reasoner", "structural"),
+        assertEquals(List.of("reasoner", "interoperability", "structural"),
                 object(available.effective(), "validation").get("required_stages"),
                 "reasoning.required must force the reasoner stage into the effective contract");
     }
@@ -444,9 +559,7 @@ class ProjectPolicyLoaderTest {
     }
 
     private static String minimal(String projectId) {
-        return "version: 1\n"
-                + "project_id: " + projectId + "\n"
-                + "root_ontology: https://example.org/ontology\n";
+        return ProjectPolicyFixtures.minimalPolicy(projectId, "https://example.org/ontology");
     }
 
     private static String cqPolicy(String convention, String path) {
@@ -469,6 +582,7 @@ class ProjectPolicyLoaderTest {
     private static void write(Path path, String value) throws IOException {
         Files.createDirectories(path.getParent());
         Files.writeString(path, value, StandardCharsets.UTF_8);
+        ProjectPolicyFixtures.materialize(path, value);
     }
 
     private static void assertCode(ProjectPolicy policy, String code) {

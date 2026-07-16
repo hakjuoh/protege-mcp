@@ -1,0 +1,7 @@
+{"@context":"https://w3id.org/ro/crate/1.1/context","@graph":[
+  {"@id":"ro-crate-metadata.json","@type":"CreativeWork","about":{"@id":"./"},"conformsTo":{"@id":"https://w3id.org/ro/crate/1.1"}},
+  {"@id":"./","@type":"Dataset","name":"CLI smoke ontology project","description":"Checked-in fixture exercising validate-policy on the shaded CLI.","datePublished":"2026-07-15","license":"https://www.apache.org/licenses/LICENSE-2.0","identifier":"cli-smoke","conformsTo":{"@id":"https://hakjuoh.github.io/protege-mcp/profiles/project-v1/"},"mainEntity":{"@id":"ontology.ttl"},"hasPart":{"@id":"ontology.ttl"}},
+  {"@id":"https://hakjuoh.github.io/protege-mcp/profiles/project-v1/","@type":"CreativeWork","name":"Ontology project RO-Crate profile v1"},
+  {"@id":"ontology.ttl","@type":"File","encodingFormat":"text/turtle","about":{"@id":"https://example.org/cli-smoke"}},
+  {"@id":"https://example.org/cli-smoke","@type":"Dataset","conformsTo":{"@id":"https://www.w3.org/TR/owl2-overview/"}}
+]}

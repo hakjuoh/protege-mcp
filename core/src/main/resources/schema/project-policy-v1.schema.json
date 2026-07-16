@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://hakjuoh.github.io/protege-mcp/schema/project-policy-v1.schema.json",
   "title": "Protégé MCP project policy v1",
-  "description": "Version-controlled ontology-project policy. Unknown fields are rejected in v1.",
+  "description": "Version-controlled ontology-project policy with a required RO-Crate 1.0-1.3 interoperability profile and W3C RDFC-1.0 dataset identity. RO-Crate 1.1 is the broad-compatibility default; newer versions may be explicit or inferred from an existing crate context. Unknown fields are rejected in v1.",
   "type": "object",
-  "required": ["version", "project_id", "root_ontology"],
+  "required": ["version", "project_id", "root_ontology", "interoperability"],
   "additionalProperties": false,
   "properties": {
     "version": {
@@ -19,6 +19,78 @@
     "project_root": {
       "$ref": "#/$defs/safeRelativePath",
       "default": "."
+    },
+    "interoperability": {
+      "type": "object",
+      "required": ["profile", "root_artifact", "metadata", "canonicalization"],
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "const": "https://hakjuoh.github.io/protege-mcp/profiles/project-v1/"
+        },
+        "additional_profiles": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/iri"},
+          "uniqueItems": true,
+          "default": []
+        },
+        "root_artifact": {
+          "$ref": "#/$defs/safeRelativePath"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "path": {"enum": ["ro-crate-metadata.jsonld", "ro-crate-metadata.json"]},
+            "format": {
+              "enum": ["ro-crate-1.0", "ro-crate-1.1", "ro-crate-1.2", "ro-crate-1.3"],
+              "default": "ro-crate-1.1"
+            }
+          }
+        },
+        "canonicalization": {
+          "type": "object",
+          "required": ["algorithm", "hash", "scope"],
+          "additionalProperties": false,
+          "properties": {
+            "algorithm": {"const": "RDFC-1.0"},
+            "hash": {"const": "SHA-256"},
+            "scope": {"const": "root-ontology"},
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3600000,
+              "default": 120000
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "metadata": {
+                "properties": {"format": {"const": "ro-crate-1.0"}},
+                "required": ["format"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "metadata": {
+                "properties": {"path": {"const": "ro-crate-metadata.jsonld"}}
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "metadata": {
+                "properties": {"path": {"const": "ro-crate-metadata.json"}}
+              }
+            }
+          }
+        }
+      ]
     },
     "prefixes": {
       "type": "object",
@@ -257,10 +329,10 @@
         "required_stages": {
           "type": "array",
           "items": {
-            "enum": ["reasoner", "profile", "governance", "structural", "invariants", "cqs", "shacl"]
+            "enum": ["interoperability", "reasoner", "profile", "governance", "structural", "invariants", "cqs", "shacl"]
           },
           "uniqueItems": true,
-          "default": ["reasoner", "profile", "governance", "structural"]
+          "default": ["interoperability", "reasoner", "profile", "governance", "structural"]
         },
         "fail_on": {
           "$ref": "#/$defs/severity",

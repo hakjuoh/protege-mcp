@@ -29,6 +29,7 @@ import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
 import io.github.hakjuoh.protege_mcp.server.McpAccessException;
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
+import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -81,9 +82,8 @@ class ImportLockToolsLockPathTest {
     @Test
     void writeRefusesWhenPolicyIsLoadedButInvalid(@TempDir Path temp) throws Exception {
         Path policy = temp.resolve("policy.yaml");
-        Files.writeString(policy, "version: 1\n"
-                + "project_id: lock-path\n"
-                + "root_ontology: https://example.org/other\n"
+        ProjectPolicyFixtures.writePolicy(policy,
+                ProjectPolicyFixtures.minimalPolicy("lock-path", "https://example.org/other")
                 + "validation:\n"
                 + "  required_stages: [structural]\n");
         ToolContext ctx = context(temp);
@@ -225,9 +225,8 @@ class ImportLockToolsLockPathTest {
                 Files.createDirectories(temp.resolve(".protege-mcp"));
                 Files.createDirectories(policyTarget.getParent());
                 Files.writeString(policyTarget, "policy-selected placeholder\n");
-                Files.writeString(temp.resolve(".protege-mcp/project.yaml"), "version: 1\n"
-                        + "project_id: lock-path\n"
-                        + "root_ontology: " + ONTOLOGY_IRI + "\n"
+                ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
+                        ProjectPolicyFixtures.minimalPolicy("lock-path", ONTOLOGY_IRI)
                         + "validation:\n"
                         + "  required_stages: [structural]\n"
                         + "imports:\n"
@@ -257,9 +256,8 @@ class ImportLockToolsLockPathTest {
         Map<String, Object> result = structured(ImportLockTools.write(context(temp), Map.of(), () -> {
             try {
                 Files.createDirectories(temp.resolve(".protege-mcp"));
-                Files.writeString(temp.resolve(".protege-mcp/project.yaml"), "version: 1\n"
-                        + "project_id: lock-path\n"
-                        + "root_ontology: " + ONTOLOGY_IRI + "\n"
+                ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
+                        ProjectPolicyFixtures.minimalPolicy("lock-path", ONTOLOGY_IRI)
                         + "validation:\n"
                         + "  required_stages: [structural]\n"
                         + "imports:\n"
@@ -291,11 +289,11 @@ class ImportLockToolsLockPathTest {
         Path declaredTarget = temp.resolve("config/imports.lock.json");
         Files.writeString(declaredTarget, "declared placeholder\n");
         Path project = temp.resolve(".protege-mcp/project.yaml");
-        Files.writeString(project, discoveredPolicy("first-rules"));
+        ProjectPolicyFixtures.writePolicy(project, discoveredPolicy("first-rules"));
 
         Map<String, Object> result = structured(ImportLockTools.write(context(temp), Map.of(), () -> {
             try {
-                Files.writeString(project, discoveredPolicy("second-rules"));
+                ProjectPolicyFixtures.writePolicy(project, discoveredPolicy("second-rules"));
             } catch (java.io.IOException e) {
                 throw new RuntimeException(e);
             }
@@ -387,9 +385,7 @@ class ImportLockToolsLockPathTest {
 
     /** A discovered-policy body that declares config/imports.lock.json; the id varies the digest. */
     private static String discoveredPolicy(String projectId) {
-        return "version: 1\n"
-                + "project_id: " + projectId + "\n"
-                + "root_ontology: " + ONTOLOGY_IRI + "\n"
+        return ProjectPolicyFixtures.minimalPolicy(projectId, ONTOLOGY_IRI)
                 + "validation:\n"
                 + "  required_stages: [structural]\n"
                 + "imports:\n"
@@ -399,9 +395,8 @@ class ImportLockToolsLockPathTest {
     /** A minimal valid policy (matching root, structural-only stages) plus the given extra block. */
     private static Path writePolicy(Path temp, String extra) throws Exception {
         Path policy = temp.resolve("policy.yaml");
-        Files.writeString(policy, "version: 1\n"
-                + "project_id: lock-path\n"
-                + "root_ontology: " + ONTOLOGY_IRI + "\n"
+        ProjectPolicyFixtures.writePolicy(policy,
+                ProjectPolicyFixtures.minimalPolicy("lock-path", ONTOLOGY_IRI)
                 + "validation:\n"
                 + "  required_stages: [structural]\n"
                 + extra);

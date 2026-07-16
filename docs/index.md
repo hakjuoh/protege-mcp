@@ -84,6 +84,7 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | [Tools](tools/) | All 78 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
 | [Headless CLI](cli.html) | Run policy validation and asserted semantic diff without Protégé. |
 | [Project policy & QC](project-policy.html) | Policy discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
+| [Commercial platforms](commercial-platforms.html) | Product landscape, current standards-based exchange, integration limitations, and future adapter requirements. |
 | [Contributing](contributing.html) | Build from source, run the tests, project layout, and how to add a tool. |
 | [Versioning & releases](versioning.html) | The SemVer + Keep-a-Changelog scheme and how releases are cut. |
 | [Changelog](changelog.html) | Release notes for every version. |
