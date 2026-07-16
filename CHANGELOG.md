@@ -5,7 +5,7 @@ All notable changes to **Protégé MCP** are documented here. The format is base
 [Semantic Versioning](https://semver.org/). Each release's section is published verbatim as the body of
 its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the release workflow.
 
-## [0.6.0] - 2026-07-13
+## [0.6.0] - 2026-07-15
 
 **Project policy is now an executable runtime contract: Protégé MCP discovers and validates checked-in
 policy, fingerprints the live ontology, resolves persisted validation assets, and produces a strict,

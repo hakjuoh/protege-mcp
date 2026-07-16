@@ -21,7 +21,7 @@ each section is also published as the body of its
 
 ---
 
-## [0.6.0] - 2026-07-13
+## [0.6.0] - 2026-07-15
 
 **Project policy is now an executable runtime contract: Protégé MCP discovers and validates checked-in
 policy, fingerprints the live ontology, resolves persisted validation assets, and produces a strict,
