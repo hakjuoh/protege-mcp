@@ -81,7 +81,7 @@ class PublicContractSnapshotTest {
     private static final Pattern CODE_SPAN = Pattern.compile("`([a-z][a-z0-9_]*)`");
     private static final Path CONTRACT_DIR = Path.of("plugin", "src", "test", "resources", "contracts");
     private static final Path TOOL_DOCS_DIR = Path.of("docs", "tools");
-    private static final Path PROMPT_DOC = TOOL_DOCS_DIR.resolve("prompts.md");
+    private static final Path PROMPT_DOC = Path.of("docs", "prompts.md");
     /** Explicit review point for a future release that intentionally changes tool guidance. */
     private static final Set<String> INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V050 = Set.of(
             "load_ontology", "run_qc_suite", "save_ontology");

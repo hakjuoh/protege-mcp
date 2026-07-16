@@ -1,6 +1,7 @@
 ---
 title: Commercial platform interoperability
-nav_order: 11
+published: false
+nav_exclude: true
 ---
 
 # Commercial ontology platform interoperability

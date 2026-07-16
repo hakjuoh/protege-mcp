@@ -13,13 +13,13 @@ copying. That menu reads a **plugin registry** (a `.repository` URL list) and, f
 lower `version`. Both files are **published from this GitHub repo**, so you can install straight from
 the official registry with nothing to fill in:
 
-- [`protege-mcp.repository`](../protege-mcp.repository) — the registry list, served from the `main`
+- [`protege-mcp.repository`](https://raw.githubusercontent.com/hakjuoh/protege-mcp/main/protege-mcp.repository) — the registry list, served from the `main`
   branch at
   `https://raw.githubusercontent.com/hakjuoh/protege-mcp/main/protege-mcp.repository`. Because
   Protégé's "Plugin registry" is a **single** URL, this file lists our descriptor **and nests
   Protégé's default registry**, so pointing Protégé here shows protege-mcp **alongside** the full
   official catalog (Cellfie, ELK, OntoGraf, OWLViz, …) — you don't lose the standard plugins.
-- [`update.properties`](../update.properties) — the update descriptor it points at
+- [`update.properties`](https://raw.githubusercontent.com/hakjuoh/protege-mcp/main/update.properties) — the update descriptor it points at
   (`id` / `name` / `version` / `download` / `readme` / `author`), served from
   `https://raw.githubusercontent.com/hakjuoh/protege-mcp/main/update.properties`. Its `download` URL
   is the jar attached to the matching [GitHub Release](https://github.com/hakjuoh/protege-mcp/releases/latest).
@@ -27,10 +27,10 @@ the official registry with nothing to fill in:
   being prepared; it is advanced only after the named asset exists.
 
 > This is **Distribution Path B** (how the jar is delivered), the counterpart to the manual-copy
-> [install](../README.md#install) (Distribution Path A). It is unrelated to **Architecture Approach B**
-> (the in-app Claude chat) in [`DESIGN.md`](../DESIGN.md) — that is the plugin's internal shape, not its
+> [install](https://github.com/hakjuoh/protege-mcp#install) (Distribution Path A). It is unrelated to **Architecture Approach B**
+> (the in-app Claude chat) in [`DESIGN.md`](https://github.com/hakjuoh/protege-mcp/blob/main/DESIGN.md) — that is the plugin's internal shape, not its
 > delivery. The same `Bundle-SymbolicName` / version rules used here are described in
-> [`DESIGN.md` §7 (Packaging)](../DESIGN.md#7-packaging-and-osgi-strategy).
+> [`DESIGN.md` §7 (Packaging)](https://github.com/hakjuoh/protege-mcp/blob/main/DESIGN.md#7-packaging-and-osgi-strategy).
 
 ## Install from the official registry (no setup)
 
@@ -47,7 +47,7 @@ the official registry with nothing to fill in:
 3. **Install it.** Select it and confirm. Protégé downloads the jar named in `update.properties`
    (`download=…/releases/download/v<version>/protege-mcp-<version>.jar`) straight
    from the GitHub Release and drops it into your plugins directory.
-4. **Restart Protégé** on a **Java 17+** JVM (see [Requirements](../README.md#requirements)). On
+4. **Restart Protégé** on a **Java 17+** JVM (see [Requirements](https://github.com/hakjuoh/protege-mcp#requirements)). On
    reload you get the **MCP Server** view and the **Settings ▸ MCP** tab.
 
 > **How the discovery chain is wired (all on GitHub).** The registry URL you paste serves

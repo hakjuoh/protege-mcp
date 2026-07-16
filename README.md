@@ -16,9 +16,10 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Installation](https://hakjuoh.github.io/protege-mcp/installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](https://hakjuoh.github.io/protege-mcp/connect/) | The server model (ports, OAuth vs. token) + Claude Code, Codex CLI, VS Code, Claude Desktop recipes. |
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
-| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 78 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
+| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 78 tools by category, including a summary of the 12 tools added in v0.6.0. |
+| [Prompts](https://hakjuoh.github.io/protege-mcp/prompts/) | The 11 guided workflows available to MCP clients. |
 | [Project policy & QC](https://hakjuoh.github.io/protege-mcp/project-policy.html) | Policy v1 discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
-| [Commercial platforms](https://hakjuoh.github.io/protege-mcp/commercial-platforms.html) | Current standards-based interoperability, product profiles, limitations, and the planned connector boundary. |
+| [RO-Crate & RDFC](https://hakjuoh.github.io/protege-mcp/interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
 | [Contributing](https://hakjuoh.github.io/protege-mcp/contributing.html) | Build from source, run the tests, and add a tool. |
 | [Versioning & releases](https://hakjuoh.github.io/protege-mcp/versioning.html) · [Changelog](https://hakjuoh.github.io/protege-mcp/changelog.html) | The release scheme and notes for every version. |
 
@@ -40,6 +41,9 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
   root, and run reasoner/profile/structural/governance/invariant/CQ/SHACL checks over one isolated snapshot
   with distinct `pass` / policy `fail` / execution `error` outcomes. The selected reasoner's exact Protégé
   configuration is preserved without classifying or mutating the live reasoner.
+- **Portable project identity** (`0.6.0`) — validate RO-Crate 1.0–1.3 metadata and report a W3C
+  RDFC-1.0 + SHA-256 identity for the asserted root RDF dataset, separately from the editor revision
+  fingerprint and imported-artifact checksums.
 - **Import integrity inspection** (`0.6.0`) — inspect deterministic direct/transitive import graphs,
   missing documents, cycles, source locations, and version conflicts; document loads keep the compatible
   warning default and support strict `missing_imports=error` for project/release workflows.

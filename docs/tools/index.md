@@ -20,6 +20,23 @@ its **arguments** and **returns**.
 
 ---
 
+## New tools in 0.6.0
+
+Version 0.6.0 adds **12 tools** to the 66-tool v0.5.x surface. Existing tool arguments and default
+interactive behavior remain compatible.
+
+| Task | New tools | What they add |
+| --- | --- | --- |
+| Project policy & QC | [`get_project_policy`](quality.html#get_project_policy), [`validate_project_policy`](quality.html#validate_project_policy), [`run_project_qc`](quality.html#run_project_qc) | Discover a checked-in policy, validate its files and settings, and run its required checks as one reproducible gate. |
+| Revisions & release evidence | [`get_model_revision`](context-validation.html#get_model_revision), [`semantic_diff`](context-validation.html#semantic_diff) | Pin the exact workspace revision used by a change and classify asserted changes between ontology artifacts. |
+| Transactional editing | [`preview_change_set`](editing.html#preview_change_set), [`commit_change_set`](editing.html#commit_change_set), [`discard_change_set`](editing.html#discard_change_set) | Preview an exact edit against an isolated QC snapshot, commit only if the revision still matches, or discard it. |
+| Import integrity | [`inspect_imports`](documents.html#inspect_imports), [`write_import_lock`](documents.html#write_import_lock), [`verify_import_lock`](documents.html#verify_import_lock), [`validate_catalog`](documents.html#validate_catalog) | Inspect the loaded import graph, lock local dependencies by checksum, verify the lock offline, and validate an OASIS catalog. |
+
+The [`save_ontology`](history.html#save_ontology), `load_ontology`, `merge_ontology_document`,
+`create_terms`, `create_properties`, and `run_qc_suite` tools also gain optional v0.6.0 behavior; their
+existing direct-call defaults are unchanged. See each tool's section for its current arguments and result
+contract.
+
 ## Conventions
 
 These hold for every tool:
@@ -51,7 +68,7 @@ would mint a new one (`search_entities` — `would_mint` / `best_match`) → **p
 edit that breaks the reasoner) → **gate** with the requirements suite and invariants
 (`run_competency_questions`, `verify_ontology`, or the umbrella `run_qc_suite`).
 
-The [guided prompts](prompts.html) package these flows for one-click use in an MCP client.
+The top-level [Prompts](../prompts/) guide packages these flows for one-click use in an MCP client.
 
 ## Tool index
 
@@ -101,4 +118,4 @@ The [guided prompts](prompts.html) package these flows for one-click use in an M
 - [**Axiom types**](axiom-types.html) — the structured `axiom_type` operand catalog used by
   `add_axiom`, `remove_axiom`, `preview_changes`, `apply_changes`, `explain_entailment`, and
   `get_explanations`.
-- [**Guided workflows (prompts)**](prompts.html) — the 11 MCP prompts.
+- [**Prompts**](../prompts/) — 11 guided workflows that compose the tools into safe, repeatable tasks.

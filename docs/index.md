@@ -63,6 +63,8 @@ Everything an AI client does flows through Protégé's own model manager, so:
   conformance, IRI policy, required annotations, module ownership / import layering), load persisted
   invariants/CQs/SHACL from a checked-in policy, and distinguish a validation failure from a check that
   could not run.
+- **Exchange a portable project identity.** Validate RO-Crate metadata and compute a W3C RDFC-1.0
+  identity for the asserted root RDF dataset, while keeping dependency checksums in an import lock.
 - **No API key stored by Protégé.** The Ontology Assistant reuses your existing CLI login; nothing is
   kept in the plugin.
 
@@ -81,10 +83,11 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | [Installation](installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](connect/) | The server model (ports, OAuth vs. bearer token) and per-environment recipes for Claude Code, Codex CLI, VS Code, and Claude Desktop. |
 | [Ontology Assistant](ontology-assistant.html) | The in-Protégé chat: what it is, how it works, attachments, privacy, and settings. |
-| [Tools](tools/) | All 78 tools by category, each with **arguments and returns**, plus the axiom-type catalog and guided prompts. |
+| [Tools](tools/) | All 78 tools by category, including a summary of the 12 tools added in v0.6.0. |
+| [Prompts](prompts/) | The 11 guided workflows available to MCP clients. |
 | [Headless CLI](cli.html) | Run policy validation and asserted semantic diff without Protégé. |
 | [Project policy & QC](project-policy.html) | Policy discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
-| [Commercial platforms](commercial-platforms.html) | Product landscape, current standards-based exchange, integration limitations, and future adapter requirements. |
+| [RO-Crate & RDFC](interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
 | [Contributing](contributing.html) | Build from source, run the tests, project layout, and how to add a tool. |
 | [Versioning & releases](versioning.html) | The SemVer + Keep-a-Changelog scheme and how releases are cut. |
 | [Changelog](changelog.html) | Release notes for every version. |

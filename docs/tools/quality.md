@@ -26,7 +26,7 @@ close the **propose → ground → verify → confirm** loop — pair them with 
 Run project-defined SPARQL **invariants** over the active ontology — patterns that must *never* appear
 (the ROBOT `verify` model). Each `queries[]` item is a SPARQL `SELECT` or `ASK` whose **results are
 violations**: any returned row (or `ASK` true) flags it, at the item's severity. A graph-producing
-`CONSTRUCT`/`DESCRIBE` is *not* a detector and is **rejected** (use [`sparql_query`](sparql.md) for those).
+`CONSTRUCT`/`DESCRIBE` is *not* a detector and is **rejected** (use [`sparql_query`](sparql.html) for those).
 The overall `gate` fails when a violation reaches `fail_on`. Queries run over a shared snapshot (asserted,
 or the reasoner's inferences for items with `include_inferred=true`); `UPDATE`/`SERVICE` are rejected, and
 violation rows are reported as raw SPARQL bindings (never rendered through the UI thread). A check that

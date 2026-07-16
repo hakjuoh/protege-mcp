@@ -92,8 +92,12 @@ plugins:
   - jekyll-remote-theme
   - jekyll-seo-tag
 
-# Keep internal recon logs and the plugin-registry readme out of the built nav/search.
+# Keep internal management documents, recon logs, and the plugin-registry readme out of
+# the GitHub Pages artifact, including direct URLs and search.
 exclude:
   - Gemfile
   - Gemfile.lock
   - vendor
+  - commercial-platforms.md
+  - adr/0001-ontology-fingerprint-canonicalization.md
+  - adr/0002-isolated-reasoner-configuration-parity.md

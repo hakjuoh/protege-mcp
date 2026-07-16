@@ -1,10 +1,10 @@
 ---
-title: "Guided workflows (prompts)"
-parent: "Tools"
-nav_order: 12
+title: Prompts
+nav_order: 6
+permalink: /prompts/
 ---
 
-# Guided workflows (prompts)
+# Prompts
 {: .no_toc }
 
 MCP *prompts* are reusable, guided ontology workflows you pick in your MCP client (Claude Code, Codex, VS Code, Claude Desktop). Each one expands to a single user message that tells the model which Protégé MCP tools to call and in what safe order — orient with context first, preview destructive edits, confirm before writing, and verify with the reasoner. Prompts are pure templates: they carry no model access and cause no side effects; all real work happens through the tools they instruct.

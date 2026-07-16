@@ -1,6 +1,6 @@
 ---
 title: Project policy contracts
-nav_order: 10
+nav_order: 7
 ---
 
 # Project policy contracts
@@ -11,6 +11,10 @@ memory-only preflight/commit change sets, verified atomic saves, deterministic i
 semantic diff, and a standalone headless CLI prototype. Calls with no policy retain the existing
 interactive defaults.
 {: .note }
+
+For a user-focused setup guide, including a complete crate example and an explanation of the two
+fingerprints, see [RO-Crate and RDFC interoperability](interoperability/).
+{: .tip }
 
 ## Policy v1 authoring format
 
@@ -113,7 +117,8 @@ materialization for invariant/CQ queries over the flattened closure. The live Pr
 initialized nor queried. `reasoner_configuration` reports the requested and runtime-exposed buffering,
 fresh-entity, individual-node, configuration-class, and timeout values; a plugin that ignores an exposed
 setting produces an explicit parity caveat. A policy/tool timeout interrupts and discards a private late result.
-See [ADR 0002](adr/0002-isolated-reasoner-configuration-parity.html).
+Review `reasoner_configuration` in the QC result when exact parity matters; it reports both the
+requested settings and the values the reasoner exposes at runtime.
 
 Persisted invariant files are ROBOT-compatible `.rq` queries with optional leading metadata:
 
@@ -200,8 +205,7 @@ cross-version comparable.
 
 OWLAPI anonymous-individual `NodeID`s are parser-local. An ontology containing anonymous individuals gets a
 hashed same-session conflict token with `stability=session_only` and `release_stable=false`; raw NodeIDs are
-not exposed, and a strict release manifest must reject that token. See
-[ADR 0001](https://github.com/hakjuoh/protege-mcp/blob/main/docs/adr/0001-ontology-fingerprint-canonicalization.md).
+not exposed, and a strict release manifest must reject that token.
 
 ## Compatibility baseline
 

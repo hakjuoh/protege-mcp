@@ -1,3 +1,8 @@
+---
+published: false
+nav_exclude: true
+---
+
 # ADR 0001: ontology fingerprint canonicalization
 
 - Status: accepted; canonicalization version 2 supersedes version 1

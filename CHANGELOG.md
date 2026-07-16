@@ -39,7 +39,7 @@ tools**; guided prompts remain 11.
   Protégé, OWLAPI, or MCP imports, pinned by a seam test), preserving a clean future split into its
   own Git project. Titanium RDFC stays on the Java-17-compatible
   2.0.0 line because 3.0.0 requires Java 21.
-- **Canonical ontology fingerprint v2**, specified in an ADR and exposed by project QC. Its semantic digest is
+- **Canonical ontology fingerprint v2**, exposed by project QC. Its semantic digest is
   independent of axiom insertion order, prefixes, document location, and serialization-added declarations;
   the separate document digest covers document coordinates, format, prefixes, and import-lock content.
   Anonymous individuals are explicitly marked `session_only` and `release_stable=false` without exposing raw
@@ -53,7 +53,7 @@ tools**; guided prompts remain 11.
   recommended buffering mode are captured with it; one private instance supplies consistency, unsatisfiable
   classes, and inferred SPARQL materialization without classifying/querying the live reasoner. Import coordinates
   remain no-network, timeout discards stale results, and configuration/runtime policy mismatches are explicit.
-- **Reasoner configuration-parity ADR and reusable construction path:** explanation and inconsistency tools now
+- **Reasoner configuration parity and reusable construction path:** explanation and inconsistency tools now
   pass the selected plugin's exact configuration rather than factory defaults. The explanation engine's required
   non-buffering override is reported, and timed-out hidden reasoners are interrupted and confined to private data.
 - **Import integrity inspection and strict loading:** `inspect_imports` returns a deterministic direct/transitive

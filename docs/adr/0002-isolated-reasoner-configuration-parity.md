@@ -1,3 +1,8 @@
+---
+published: false
+nav_exclude: true
+---
+
 # ADR 0002: Isolated reasoner configuration parity
 
 - Status: accepted

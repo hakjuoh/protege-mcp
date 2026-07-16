@@ -45,6 +45,8 @@ host are Java 17 bytecode, and the OSGi manifest declares
     <a href="https://github.com/hakjuoh/protege-mcp">Project</a> |
     <a href="https://hakjuoh.github.io/protege-mcp/">Docs</a> |
     <a href="https://hakjuoh.github.io/protege-mcp/installation.html">Install</a> |
+    <a href="https://hakjuoh.github.io/protege-mcp/tools/">Tools</a> |
+    <a href="https://hakjuoh.github.io/protege-mcp/prompts/">Prompts</a> |
     <a href="https://github.com/hakjuoh/protege-mcp/releases">Releases</a>
 </p>
 
@@ -58,10 +60,13 @@ host are Java 17 bytecode, and the OSGi manifest declares
     <li>Canonical semantic/document fingerprints detect concurrent edits and expose release stability;
         persisted invariants, competency questions, and multi-file SHACL assets are resolved inside a
         confined project root.</li>
+    <li>RO-Crate 1.0-1.3 metadata supplies a portable project description, while W3C RDFC-1.0 plus
+        SHA-256 supplies a canonical identity for the asserted root RDF dataset.</li>
     <li>Required stages fail closed, configured reasoners are checked at both snapshot boundaries, and
         governance/structural warnings gate by default. Import graphs can be inspected deterministically,
-        and document loads support a strict missing-import mode. The public surface grows from 66 to 78 tools while
-        existing interactive QC defaults remain compatible.</li>
+        and document loads support a strict missing-import mode. The 12 new tools cover project policy,
+        model revision and semantic diff, transactional change sets, and import integrity. The public
+        surface grows from 66 to 78 tools while existing interactive QC defaults remain compatible.</li>
 </ul>
 
 <h4>v0.5.1</h4>
