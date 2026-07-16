@@ -56,7 +56,7 @@
              OWL contract digest remains the optimistic workspace/revision token. -->
         <!-- 2.0.0 is the newest Java-17-compatible release (Java 8 bytecode). 3.0.0 requires
              Java 21/classfile 65, while Protégé 5.6.6 and this plugin explicitly support Java 17. -->
-        <titanium.rdfc.version>2.0.0</titanium.rdfc.version>
+        <titanium.rdfc.version>3.0.0</titanium.rdfc.version>
 
         <!-- Markdown renderer for the Ontology Assistant transcript (zero-dependency, BSD-2-Clause) -->
         <commonmark.version>0.29.0</commonmark.version>
