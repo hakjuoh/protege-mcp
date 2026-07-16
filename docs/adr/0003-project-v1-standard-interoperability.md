@@ -53,7 +53,8 @@ the desired algorithm but requires Java 21, while Protégé MCP supports Java 17
   crate that passes required QC is also acceptable to standard RO-Crate tooling.
 - OWLAPI's RDF renderer silently drops rootless anonymous-individual structures (unanchored reference
   cycles, anonymous inverse-property pairs, negative assertions among unanchored anonymous individuals,
-  anonymous annotation cycles), which would let distinct
+  self-referential anonymous type expressions, sameAs/differentFrom-linked anonymous cycles, anonymous
+  annotation cycles), which would let distinct
   datasets fingerprint identically. Rather than model the renderer's reachability rules, the digest
   verifies the serialized dataset directly — every object/data/annotation assertion must appear under
   its (inverse-simplified) predicate — and fails closed on any loss, while faithfully rendered shapes

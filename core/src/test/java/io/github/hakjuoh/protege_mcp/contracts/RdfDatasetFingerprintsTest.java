@@ -224,6 +224,76 @@ class RdfDatasetFingerprintsTest {
     }
 
     @Test
+    void selfReferentialAnonymousTypeExpressionsFailClosedWhenDropped() throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLDataFactory data = manager.getOWLDataFactory();
+        var p = data.getOWLObjectProperty(IRI.create("https://example.org/p"));
+        OWLAnonymousIndividual x = data.getOWLAnonymousIndividual("x");
+        OWLAnonymousIndividual y = data.getOWLAnonymousIndividual("y");
+
+        // ClassAssertion(ObjectHasValue(p, x), x) is valid OWL 2 DL, yet OWLAPI's rendering
+        // drops it entirely — the digest must refuse instead of matching the empty ontology.
+        OWLOntology selfTyped = manager.createOntology(IRI.create("https://example.org/self"));
+        manager.addAxiom(selfTyped, data.getOWLClassAssertionAxiom(
+                data.getOWLObjectHasValue(p, x), x));
+        assertThrows(IllegalStateException.class,
+                () -> RdfDatasetFingerprints.compute(selfTyped));
+
+        // Indirect pure-type cycle across two class assertions is dropped the same way.
+        OWLOntology indirect = manager.createOntology(IRI.create("https://example.org/indirect"));
+        manager.addAxiom(indirect, data.getOWLClassAssertionAxiom(
+                data.getOWLObjectHasValue(p, y), x));
+        manager.addAxiom(indirect, data.getOWLClassAssertionAxiom(
+                data.getOWLObjectHasValue(p, x), y));
+        assertThrows(IllegalStateException.class,
+                () -> RdfDatasetFingerprints.compute(indirect));
+
+        // Acyclic expression references render faithfully and must keep fingerprinting,
+        // with the referenced individual part of the digest.
+        OWLOntology acyclic = manager.createOntology(IRI.create("https://example.org/acyclic"));
+        manager.addAxiom(acyclic, data.getOWLClassAssertionAxiom(
+                data.getOWLObjectHasValue(p, y), x));
+        RdfDatasetFingerprint with = RdfDatasetFingerprints.compute(acyclic);
+        assertTrue(with.rdfDatasetFingerprint().startsWith("sha256:"));
+        OWLOntology without = OWLManager.createOWLOntologyManager()
+                .createOntology(IRI.create("https://example.org/acyclic"));
+        assertNotEquals(RdfDatasetFingerprints.compute(without).rdfDatasetFingerprint(),
+                with.rdfDatasetFingerprint());
+    }
+
+    @Test
+    void sameAsLinkedAnonymousStructuresFailClosedWhenDropped() throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLDataFactory data = manager.getOWLDataFactory();
+        OWLAnonymousIndividual x = data.getOWLAnonymousIndividual("x");
+        OWLAnonymousIndividual y = data.getOWLAnonymousIndividual("y");
+        OWLAnonymousIndividual z = data.getOWLAnonymousIndividual("z");
+
+        // Consistent OWL 2 DL, yet the sameAs edge closes a renderer cycle the class-reference
+        // graph alone cannot see; OWLAPI drops everything and the digest matched the empty
+        // ontology before owl:sameAs was counted.
+        OWLOntology mixed = manager.createOntology(IRI.create("https://example.org/same-mixed"));
+        manager.addAxiom(mixed, data.getOWLSameIndividualAxiom(x, y));
+        manager.addAxiom(mixed, data.getOWLClassAssertionAxiom(
+                data.getOWLObjectComplementOf(data.getOWLObjectOneOf(z)), y));
+        manager.addAxiom(mixed, data.getOWLClassAssertionAxiom(
+                data.getOWLObjectComplementOf(data.getOWLObjectOneOf(x)), z));
+        assertThrows(IllegalStateException.class, () -> RdfDatasetFingerprints.compute(mixed));
+
+        // A bare anonymous sameAs pair renders (one chained triple) and keeps fingerprinting.
+        OWLOntology pair = manager.createOntology(IRI.create("https://example.org/same-pair"));
+        manager.addAxiom(pair, data.getOWLSameIndividualAxiom(x, y));
+        assertTrue(RdfDatasetFingerprints.compute(pair)
+                .rdfDatasetFingerprint().startsWith("sha256:"));
+
+        // An n-ary DifferentIndividuals reifies from a fresh root and keeps fingerprinting.
+        OWLOntology nary = manager.createOntology(IRI.create("https://example.org/diff-nary"));
+        manager.addAxiom(nary, data.getOWLDifferentIndividualsAxiom(x, y, z));
+        assertTrue(RdfDatasetFingerprints.compute(nary)
+                .rdfDatasetFingerprint().startsWith("sha256:"));
+    }
+
+    @Test
     void treeShapedAnonymousReferencesStillFingerprint() throws Exception {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         OWLOntology ontology = manager.createOntology(IRI.create("https://example.org/tree"));

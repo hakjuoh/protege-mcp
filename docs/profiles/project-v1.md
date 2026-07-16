@@ -92,7 +92,8 @@ Consumers MUST NOT substitute either value for the other.
 A producer MUST NOT publish a digest for a dataset its RDF rendering cannot serialize losslessly. The
 host OWL RDF renderer silently drops rootless anonymous-individual structures (unanchored reference
 cycles, anonymous inverse-property pairs, negative assertions among unanchored anonymous individuals,
-anonymous annotation cycles), so this implementation verifies
+self-referential anonymous type expressions, sameAs/differentFrom-linked anonymous cycles, anonymous
+annotation cycles), so this implementation verifies
 the serialized dataset directly — every property and annotation assertion must appear under its
 predicate — and the required QC stage fails closed instead of reporting a digest that ignores part of
 the dataset. Structures the renderer emits faithfully (anchored cycles, self-loops, trees, diamonds)

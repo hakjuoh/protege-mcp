@@ -45,8 +45,9 @@ tools**; guided prompts remain 11.
   root RDF dataset fingerprint distinct from fingerprint v2, pinned to the official W3C rdf-canon vectors
   with code-point-ordered canonical quads and a timeout that bounds the whole computation. The serialized
   dataset is verified assertion-by-assertion before hashing: rootless anonymous-individual structures the
-  OWL RDF rendering drops silently (unanchored reference cycles, anonymous inverse-property pairs, negative assertions among
-  unanchored anonymous individuals) fail
+  OWL RDF rendering drops silently (unanchored reference cycles, anonymous inverse-property pairs, negative
+  assertions among unanchored anonymous individuals, self-referential anonymous type expressions,
+  sameAs/differentFrom-linked anonymous cycles) fail
   the digest closed, because distinct datasets would otherwise fingerprint identically, while faithfully
   rendered shapes (anchored cycles, self-loops, trees) keep fingerprinting.
 - **Extractable RO-Crate validation package:** bounded, offline project-profile validation lives behind
@@ -101,7 +102,7 @@ tools**; guided prompts remain 11.
   catalog precedence, live/import mutation after isolated capture, exact reasoner configuration identity,
   buffering/fresh-entity policy mismatches, import-spanning unsatisfiability, inferred-data parity, and timeout
   interruption. The clean release build contains
-  **2,830 tests** with zero failures, errors, or skips.
+  **2,832 tests** with zero failures, errors, or skips.
 
 ### Changed
 - `run_qc_suite` accepts additive governance/required-stage controls and can return common strict-gate details;

@@ -6,10 +6,14 @@ import java.io.StringWriter;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -22,10 +26,14 @@ import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationAssertionAxiom;
+import org.semanticweb.owlapi.model.OWLAnonymousIndividual;
 import org.semanticweb.owlapi.model.OWLAxiom;
+import org.semanticweb.owlapi.model.OWLClassAssertionAxiom;
 import org.semanticweb.owlapi.model.OWLDataPropertyAssertionAxiom;
+import org.semanticweb.owlapi.model.OWLDifferentIndividualsAxiom;
 import org.semanticweb.owlapi.model.OWLImportsDeclaration;
 import org.semanticweb.owlapi.model.OWLObjectPropertyAssertionAxiom;
+import org.semanticweb.owlapi.model.OWLSameIndividualAxiom;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
@@ -159,6 +167,22 @@ public final class RdfDatasetFingerprints {
             expected.merge(verifiableProperty(
                     assertion.getProperty().getIRI().toString(), true), 1, Integer::sum);
         }
+        rejectRootlessAnonymousTypeCycles(ontology);
+        // SameIndividual(a1..an) emits exactly n-1 chained owl:sameAs triples and a two-element
+        // DifferentIndividuals emits one owl:differentFrom triple; nothing else emits either
+        // predicate, so dropped sameAs/differentFrom-linked anonymous structures are countable.
+        // (An n-ary DifferentIndividuals reifies from a freshly rooted owl:AllDifferent node and
+        // is never dropped.) Overlapping axioms that collapse to one triple fail closed, like
+        // the inverse-pair collapse above.
+        for (OWLSameIndividualAxiom axiom : ontology.getAxioms(AxiomType.SAME_INDIVIDUAL)) {
+            expected.merge(OWL_NS + "sameAs", axiom.getIndividuals().size() - 1, Integer::sum);
+        }
+        for (OWLDifferentIndividualsAxiom axiom
+                : ontology.getAxioms(AxiomType.DIFFERENT_INDIVIDUALS)) {
+            if (axiom.getIndividuals().size() == 2) {
+                expected.merge(OWL_NS + "differentFrom", 1, Integer::sum);
+            }
+        }
         // Negative assertions reify instead of emitting their property as a predicate; each one
         // emits exactly one owl:sourceIndividual triple and nothing else does (user assertions
         // misusing owl:* vocabulary are rejected above), so that predicate counts them.
@@ -197,6 +221,65 @@ public final class RdfDatasetFingerprints {
                         + "serialized losslessly, so the RDF dataset digest would silently ignore "
                         + "them; name the anonymous individuals or anchor them to a named "
                         + "individual.");
+            }
+        }
+    }
+
+    /**
+     * The one drop family the predicate counts cannot see: class assertions typing anonymous
+     * individuals with anonymous expressions that reference anonymous individuals emit only
+     * rdf:type/owl:* triples, which are unattributable. A rootless component needs every node to
+     * carry an incoming edge, i.e. a directed cycle; components mixing in any counted assertion
+     * are already covered by the counts, so cycle-detecting the pure class-assertion reference
+     * graph closes the gap (e.g. {@code ClassAssertion(ObjectHasValue(p,x), x)} vanishes from the
+     * OWLAPI rendering). An externally anchored pure-type cycle would also be rejected — the
+     * conservative, fail-closed direction.
+     */
+    private static void rejectRootlessAnonymousTypeCycles(OWLOntology ontology) {
+        Map<OWLAnonymousIndividual, Set<OWLAnonymousIndividual>> references = new HashMap<>();
+        for (OWLClassAssertionAxiom assertion : ontology.getAxioms(AxiomType.CLASS_ASSERTION)) {
+            if (assertion.getIndividual().isAnonymous()
+                    && assertion.getClassExpression().isAnonymous()) {
+                Set<OWLAnonymousIndividual> referenced =
+                        assertion.getClassExpression().getAnonymousIndividuals();
+                if (!referenced.isEmpty()) {
+                    references.computeIfAbsent(
+                            (OWLAnonymousIndividual) assertion.getIndividual(),
+                            k -> new LinkedHashSet<>()).addAll(referenced);
+                }
+            }
+        }
+        Set<OWLAnonymousIndividual> done = new HashSet<>();
+        Set<OWLAnonymousIndividual> inProgress = new HashSet<>();
+        Deque<OWLAnonymousIndividual> stack = new ArrayDeque<>();
+        for (OWLAnonymousIndividual start : references.keySet()) {
+            stack.push(start);
+            while (!stack.isEmpty()) {
+                OWLAnonymousIndividual current = stack.peek();
+                if (done.contains(current)) {
+                    stack.pop();
+                    continue;
+                }
+                if (inProgress.add(current)) {
+                    for (OWLAnonymousIndividual next
+                            : references.getOrDefault(current, Collections.emptySet())) {
+                        if (inProgress.contains(next)) {
+                            throw new IllegalStateException("The root ontology types anonymous "
+                                    + "individuals with class expressions that reference "
+                                    + "anonymous individuals in a cycle; the OWL RDF rendering "
+                                    + "drops such rootless structures silently, so the RDF "
+                                    + "dataset digest would not cover them. Name at least one "
+                                    + "individual in the cycle.");
+                        }
+                        if (!done.contains(next)) {
+                            stack.push(next);
+                        }
+                    }
+                } else {
+                    stack.pop();
+                    inProgress.remove(current);
+                    done.add(current);
+                }
             }
         }
     }
