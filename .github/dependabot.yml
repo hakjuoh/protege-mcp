@@ -5,11 +5,12 @@ updates:
   #   - jackson / reactor / json-schema-validator / snakeyaml are pinned to the MCP 2.0.0 resolved tree;
   #   - jetty 12 / jakarta.servlet 6.1 are the embedded Jakarta-EE10 servlet host;
   #   - jena is embedded at 4.x (the SPARQL tools + the merged JenaSubsystemLifecycle target 4.x ARQ);
+  #   - titanium-rdfc 2.x is the last Java-17-compatible line; 3.x requires Java 21;
   #   - maven-bundle-plugin generates the load-bearing OSGi manifest.
   # A version bump for any of these breaks compilation, the bundle, or the Protégé runtime, so they are
   # ignored here. GitHub's Dependabot ALERTS still surface CVEs for them (visibility is unaffected); bump
   # them by hand, with a full build + live-Protégé check, when the runtime they track moves. Only the free
-  # test/build tooling (junit, jacoco, surefire, compiler) is left to Dependabot.
+  # test/build tooling (junit, jacoco, surefire, compiler, enforcer, shade) is left to Dependabot.
   - package-ecosystem: maven
     directory: "/"
     schedule:
@@ -34,6 +35,11 @@ updates:
       - dependency-name: "org.eclipse.jetty*"
       - dependency-name: "jakarta.servlet:*"
       - dependency-name: "org.apache.jena:*"
+      # Titanium is embedded into both distributable artifacts. Selecting 3.x only when Maven runs
+      # on JDK 21 would make their bytecode/runtime contract depend on the build machine, while the
+      # project and Protégé integration intentionally remain compatible with Java 17.
+      - dependency-name: "com.apicatalog:titanium-rdfc"
+        versions: ["[3.0.0,)"]
       - dependency-name: "org.apache.felix:maven-bundle-plugin"
 
   # GitHub Actions are safe to keep current; group them into a single PR to keep the noise down.

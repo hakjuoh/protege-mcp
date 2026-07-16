@@ -54,8 +54,11 @@
         <!-- W3C RDFC-1.0 implementation used for the cross-application RDF dataset digest.
              Keep this distinct from fingerprint v2: RDFC identifies an RDF dataset; the existing
              OWL contract digest remains the optimistic workspace/revision token. -->
-        <!-- 2.0.0 is the newest Java-17-compatible release (Java 8 bytecode). 3.0.0 requires
-             Java 21/classfile 65, while Protégé 5.6.6 and this plugin explicitly support Java 17. -->
+        <!-- 2.0.0 is the newest Java-17-compatible release (Java 8 bytecode). 3.x requires
+             Java 21/classfile 65, while Protégé 5.6.6 and this plugin explicitly support Java 17.
+             Do not switch this with a build-JDK-activated Maven profile: Titanium is embedded in
+             the plugin and CLI, so doing so would silently change the runtime requirement and
+             contents of the same project artifact depending on which JDK built it. -->
         <titanium.rdfc.version>2.0.0</titanium.rdfc.version>
 
         <!-- Markdown renderer for the Ontology Assistant transcript (zero-dependency, BSD-2-Clause) -->
@@ -97,7 +100,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-enforcer-plugin</artifactId>
-                <version>3.6.2</version>
+                <version>3.6.3</version>
                 <executions>
                     <execution>
                         <id>require-reactor-root-anchor</id>
