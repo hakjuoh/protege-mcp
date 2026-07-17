@@ -21,7 +21,7 @@ each section is also published as the body of its
 
 ---
 
-## [0.6.1] - 2026-07-16
+## [0.6.1] - 2026-07-17
 
 **Project-policy intent is now enforced at every remaining direct I/O and change-set boundary.**
 This patch release keeps the public surface at **78 tools and 11 prompts** while closing the

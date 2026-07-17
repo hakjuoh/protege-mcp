@@ -5,7 +5,7 @@ All notable changes to **Protégé MCP** are documented here. The format is base
 [Semantic Versioning](https://semver.org/). Each release's section is published verbatim as the body of
 its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the release workflow.
 
-## [0.6.1] - 2026-07-16
+## [0.6.1] - 2026-07-17
 
 **Project-policy intent is now enforced at every remaining direct I/O and change-set boundary.**
 This patch release keeps the public surface at **78 tools and 11 prompts** while closing the
