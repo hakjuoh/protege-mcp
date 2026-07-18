@@ -3572,6 +3572,32 @@
       "additionalProperties" : false
     }
   }, {
+    "name" : "write_project_policy_template",
+    "description" : "Generate a commented, schema-valid starter .protege-mcp/project.yaml to review and commit like source code. This scaffolds a NEW policy file (it never mutates the ontology or an existing policy in place): the required blocks (version, project_id, root_ontology, interoperability) are populated from the active ontology, safe security defaults (filesystem/network deny, unlocked imports, a named reasoner, the base QC stages) are filled in, and every asset-referencing optional block (prefixes, modules, annotations, iri_policy, lifecycle, invariants/shacl/competency_questions, imports lockfile, release) is commented out with guidance. The template names a root_artifact and RO-Crate metadata file you must still create, so it is honest that it is not valid on its own and returns a validation_hint listing what to complete; it never claims valid=true. The write honors read-only mode and the confirm-write gate, resolves the target under project_root (default beside the active document at .protege-mcp/project.yaml), and lands atomically; overwrite=false refuses an existing file with error_code policy_exists.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : {
+          "type" : "string",
+          "description" : "Explicit project-relative or absolute policy path to write. Default: .protege-mcp/project.yaml beside the active ontology document."
+        },
+        "project_id" : {
+          "type" : "string",
+          "description" : "Project identifier written into the template. Default: derived from the active ontology IRI's last path segment, else 'my-project'."
+        },
+        "profile" : {
+          "type" : "string",
+          "description" : "Which example-shaped starter to emit: general (OWL/Turtle, HermiT/DL) or obo (OBO edit file, ELK/EL). Default general.",
+          "enum" : [ "general", "obo" ]
+        },
+        "overwrite" : {
+          "type" : "boolean",
+          "description" : "Replace an existing file at the target path. Default false (an existing file is refused with error_code policy_exists and nothing is written)."
+        }
+      },
+      "additionalProperties" : false
+    }
+  }, {
     "name" : "run_qc_suite",
     "description" : "Run an aggregate quality-control gate over the active ontology and collapse it to ONE verdict. Composable stages (default reasoner + profile + structural): 'interoperability' (project-policy RO-Crate contract plus W3C RDFC-1.0 root-dataset fingerprint), 'reasoner' (consistency + no unsatisfiable classes), 'profile' (OWL 2 profile conformance, owl_profile default DL), 'structural' (validate_ontology's modelling-quality checks), 'governance' (IRI/annotation/import-layering project rules), 'invariants' (verify_ontology-style SPARQL invariants — pass them in 'invariants'), 'cqs' (the competency-question suite), and 'shacl' (validate against the SHACL shapes supplied in 'shacl_shapes'/'shacl_shapes_path'). Every stage, including reasoning and inferred queries, runs against one isolated shared snapshot. A stage whose backing data is absent (no selected reasoner, no invariants, no CQs, no SHACL shapes) is skipped with a reason in legacy mode. Pass policy_path to run the strict project-policy workflow, where any missing required stage is an error. The overall 'gate' fails when the worst stage reaches 'fail_on' (none | warn | error, default error).",
     "input_schema" : {

@@ -279,6 +279,43 @@ performed.**
   returned inline on a dry run.
 - `findings`, `stages`: the aggregated release gate findings and stages, surfaced on a refusal.
 
+## `write_project_policy_template`
+
+Generate a commented, schema-valid **starter** `.protege-mcp/project.yaml` to review and commit like
+source code. This scaffolds a **new** policy file — it never mutates the ontology or an existing policy in
+place. The required blocks (`version`, `project_id`, `root_ontology`, `interoperability`) are populated
+from the active ontology; safe defaults are filled in (filesystem/network **deny**, unlocked imports, a
+named reasoner, the base QC stages); and every asset-referencing optional block (prefixes, modules,
+annotations, `iri_policy`, lifecycle, invariants/shacl/competency-questions, the imports lockfile,
+release) is commented out with guidance. The template also names a `root_artifact` and an RO-Crate
+metadata file you must still create, so **it is not valid on its own**: the result carries a
+`validation_hint` listing what to complete and never claims `valid=true`. The write honors Protégé's
+**read-only** mode and the **confirm-write** gate, requires the `filesystem:project:write` capability,
+resolves the target under `project_root` (default `.protege-mcp/project.yaml` beside the active
+document), and lands atomically via a temp-file rename. `overwrite=false` refuses an existing file with
+`error_code: policy_exists` and writes nothing.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `path` | string | no | `.protege-mcp/project.yaml` beside the document | Explicit project-relative or absolute policy path to write. |
+| `project_id` | string | no | derived from the ontology IRI's last segment, else `my-project` | Project identifier written into the template. |
+| `profile` | string | no | `general` | Which starter to emit: `general` (OWL/Turtle, HermiT/DL) or `obo` (OBO edit file, ELK/EL). |
+| `overwrite` | boolean | no | `false` | Replace an existing file; otherwise an existing target is refused with `policy_exists`. |
+
+**Returns**
+
+- `written`: `true` when the template landed, `false` on a refusal.
+- `path`: the canonical path the template was written to.
+- `project_id`: the identifier written into the template.
+- `profile`: the emitted profile (`general` or `obo`).
+- `bytes`: the size in bytes of the written file.
+- `sha256`: the SHA-256 of the written bytes.
+- `validation_hint`: the ordered list of files to create and edits to make before the policy validates.
+- `note`: a reminder to review and commit the file and complete the `validation_hint` items.
+- `error_code`: `policy_exists` when a file already exists and `overwrite` is false (with `written: false`).
+
 ## `run_qc_suite`
 
 One aggregate quality-control gate that composes every stage over **one isolated shared snapshot** and

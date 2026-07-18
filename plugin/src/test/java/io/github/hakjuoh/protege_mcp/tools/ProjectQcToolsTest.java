@@ -372,10 +372,11 @@ class ProjectQcToolsTest {
     }
 
     @Test
-    void registersThreePolicyToolsWithOptionalPaths() {
+    void registersPolicyToolsWithOptionalPaths() {
         ToolRegistry registry = new ToolRegistry();
         ProjectPolicyTools.register(registry, new ToolContext(null, null));
-        assertEquals(List.of("get_project_policy", "validate_project_policy", "run_project_qc"),
+        assertEquals(List.of("get_project_policy", "validate_project_policy", "run_project_qc",
+                        "write_project_policy_template"),
                 registry.build().stream().map(s -> s.tool().name()).toList());
         registry.build().forEach(spec -> assertFalse(
                 ((List<?>) spec.tool().inputSchema().getOrDefault("required", List.of()))

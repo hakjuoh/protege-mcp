@@ -16,7 +16,7 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Installation](https://hakjuoh.github.io/protege-mcp/installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](https://hakjuoh.github.io/protege-mcp/connect/) | The server model (ports, OAuth vs. token) + Claude Code, Codex CLI, VS Code, Claude Desktop recipes. |
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
-| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 82 tools by category, including a summary of the 12 tools added in v0.6.0. |
+| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 83 tools by category, including a summary of the 12 tools added in v0.6.0. |
 | [Prompts](https://hakjuoh.github.io/protege-mcp/prompts/) | The 11 guided workflows available to MCP clients. |
 | [Project policy & QC](https://hakjuoh.github.io/protege-mcp/project-policy.html) | Policy v1 discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [RO-Crate & RDFC](https://hakjuoh.github.io/protege-mcp/interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
@@ -25,7 +25,7 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 
 ## Highlights
 
-- **82 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
+- **83 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
   govern, extract modules, run SWRL rules, SPARQL and SHACL, and reason.
 - **Enforced project boundaries** (`0.6.1`) — direct paths are confined to the canonical project root
   with request-scoped filesystem capabilities, policy network/import controls block unapproved fetches,

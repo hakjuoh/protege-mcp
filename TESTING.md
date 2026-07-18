@@ -47,7 +47,7 @@ boundary rather than indicating an unnoticed partial load.
 ## Public-contract and policy-schema harnesses
 
 - `PublicContractSnapshotTest` pins the immutable 0.5.0 baseline (66 tool registrations and 11
-  prompt registrations); the current 78-tool runtime surface is checked against it, allowing only
+  prompt registrations); the current 83-tool runtime surface is checked against it, allowing only
   reviewed additive drift. The tool goldens combine all MCP registration metadata and input schemas with
   the manual's documented result fields; prompt goldens also render every template with deterministic
   sentinel arguments. Compatibility checks allow additive optional surface while rejecting

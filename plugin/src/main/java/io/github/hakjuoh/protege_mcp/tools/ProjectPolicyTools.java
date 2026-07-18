@@ -1,8 +1,15 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -14,6 +21,7 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import io.github.hakjuoh.protege_mcp.policy.PolicyIssue;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /** Policy discovery and validation tools; filesystem work always runs off the Protégé model thread. */
@@ -43,6 +51,223 @@ public final class ProjectPolicyTools {
                     return ProjectQcTools.run(ctx, rules.authorizedPolicyArguments(arguments), true,
                             rules);
                 });
+        tools.tool("write_project_policy_template",
+                (ex, req) -> writeTemplate(ctx, ex, Tools.args(req)));
+    }
+
+    /**
+     * Generate a commented, schema-valid starter {@code .protege-mcp/project.yaml} for review and
+     * commit. This scaffolds a NEW policy file (it never mutates the ontology or an existing policy in
+     * place); the write is authorized like every other file-writing tool — read-only mode, the
+     * confirm-write gate, the {@code filesystem:project:write} capability, and canonical containment
+     * under {@code project_root} (or the local-admin no-policy compatibility path). The generated
+     * template names two files the user must still create (the {@code root_artifact} and the RO-Crate
+     * metadata), so it is honest about not being valid on its own: it returns a {@code validation_hint}
+     * and never claims {@code valid=true}.
+     */
+    static CallToolResult writeTemplate(ToolContext ctx, McpSyncServerExchange ex,
+            Map<String, Object> arguments) {
+        String profile = ProjectPolicyTemplate.normalizeProfile(Tools.optString(arguments, "profile"));
+        if (profile == null) {
+            return Tools.error("'profile' must be 'general' or 'obo'.");
+        }
+        boolean overwrite = Tools.optBool(arguments, "overwrite", false);
+        String configuredPath = Tools.optString(arguments, "path");
+        String configuredProjectId = Tools.optString(arguments, "project_id");
+
+        DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex);
+        CallToolResult denied = WriteTools.checkWriteAllowed(ctx, "write a project policy template"
+                + (configuredPath == null ? "" : " to " + configuredPath));
+        if (denied != null) {
+            return denied;
+        }
+
+        // Only small immutable coordinates come off the live model on the EDT; rendering, containment,
+        // and the atomic write all run after compute returns.
+        PolicyContext live = ctx.access().compute(ProjectPolicyTools::capture);
+        final Path target;
+        if (configuredPath != null) {
+            target = authorizeTarget(rules, ex, configuredPath, null);
+        } else {
+            Path defaultTarget = defaultTemplatePath(live);
+            if (defaultTarget == null) {
+                return Tools.error("The active ontology has no local document folder, so no default "
+                        + "policy location can be derived; pass 'path' to choose where to write the "
+                        + "template.");
+            }
+            target = authorizeTarget(rules, ex, null, defaultTarget);
+        }
+
+        String rootOntology = live.activeOntologyIri();
+        String projectId = configuredProjectId != null && !configuredProjectId.isBlank()
+                ? configuredProjectId.trim()
+                : ProjectPolicyTemplate.deriveProjectId(rootOntology);
+        ProjectPolicyTemplate.Template template =
+                ProjectPolicyTemplate.render(profile, projectId, rootOntology);
+        byte[] bytes = template.yaml().getBytes(StandardCharsets.UTF_8);
+
+        try {
+            atomicWrite(target, bytes, overwrite);
+        } catch (FileAlreadyExistsException exists) {
+            return Tools.json()
+                    .put("written", false)
+                    .put("error_code", "policy_exists")
+                    .put("path", target.toString())
+                    .put("note", "A file already exists here; pass overwrite=true to replace it.")
+                    .result();
+        } catch (IOException e) {
+            return Tools.error("Could not write project policy template: " + e.getMessage());
+        }
+
+        return Tools.json()
+                .put("written", true)
+                .put("path", target.toString())
+                .put("project_id", projectId)
+                .put("profile", profile)
+                .put("bytes", bytes.length)
+                .put("sha256", sha256(bytes))
+                .put("validation_hint", ProjectPolicyTemplate.validationHint(template))
+                .put("note", "Review and commit this like source code; it is not valid until you "
+                        + "complete the items in validation_hint.")
+                .result();
+    }
+
+    /** The default beside-document location: {@code <document dir>/.protege-mcp/project.yaml}. */
+    private static Path defaultTemplatePath(PolicyContext live) {
+        if (live.documentPath() == null) {
+            return null;
+        }
+        Path documentDir = live.documentPath().toAbsolutePath().normalize().getParent();
+        if (documentDir == null) {
+            return null;
+        }
+        return documentDir.resolve(ProjectPolicyLoader.DEFAULT_RELATIVE_PATH);
+    }
+
+    /**
+     * Authorize the template target. An explicit path uses the caller-selected {@code writePath} rules;
+     * the derived default uses {@code implicitPath} (exempt from the no-policy compatibility opt-in,
+     * like every beside-document target). Because this tool CREATES the policy that would validate a
+     * project, a discovered-but-invalid policy must not fail-close the write: in that one state the
+     * target is authorized by canonical containment under the (invalid) policy's root without trusting
+     * it to widen access — the same bootstrap {@code write_import_lock} uses for its declared lockfile.
+     */
+    private static Path authorizeTarget(DirectAccessPolicy.Rules rules, McpSyncServerExchange ex,
+            String configuredPath, Path defaultTarget) {
+        ProjectPolicy discovered = rules.policy();
+        boolean invalidDiscovered = discovered.loaded() && !discovered.valid();
+        if (configuredPath != null) {
+            return invalidDiscovered
+                    ? bootstrapContainedPath(discovered, ex, configuredPath)
+                    : rules.writePath(configuredPath);
+        }
+        return invalidDiscovered
+                ? bootstrapContainedPath(discovered, ex, defaultTarget.toString())
+                : rules.implicitPath(defaultTarget, true);
+    }
+
+    /**
+     * Containment-only write authorization used while the discovered policy is loaded but invalid: the
+     * invalid policy is trusted only to name its root, never to widen access ({@code allow_external_paths}
+     * is deliberately ignored), so a candidate policy file inside the project can still be written to
+     * fix it. Capability and canonical project-root containment are enforced.
+     */
+    private static Path bootstrapContainedPath(ProjectPolicy policy, McpSyncServerExchange ex,
+            String configured) {
+        DirectAccessPolicy.requireCapability(ex, DirectAccessPolicy.PROJECT_WRITE);
+        Path root = policy.projectRoot() != null ? policy.projectRoot()
+                : conventionalProjectRoot(policy.path());
+        if (root == null) {
+            throw new ToolArgException("The discovered project policy is invalid and names no "
+                    + "canonical project_root, so a policy path cannot be contained. Fix the policy "
+                    + "first (validate_project_policy).");
+        }
+        final Path raw;
+        try {
+            raw = Path.of(configured);
+        } catch (InvalidPathException e) {
+            throw new ToolArgException("Invalid filesystem path '" + configured + "': " + e.getMessage());
+        }
+        Path canonicalRoot = DirectAccessPolicy.canonicalCandidate(root.toAbsolutePath().normalize());
+        Path canonical = DirectAccessPolicy.canonicalCandidate(
+                (raw.isAbsolute() ? raw : canonicalRoot.resolve(raw)).normalize());
+        if (!canonical.startsWith(canonicalRoot)) {
+            throw new ToolArgException("Path is outside project_root and the invalid project policy "
+                    + "cannot authorize external paths: " + canonical);
+        }
+        return canonical;
+    }
+
+    /**
+     * The conventional project directory for a discovered policy file whose {@code project_root} is
+     * unresolvable: strip {@link ProjectPolicyLoader#DEFAULT_RELATIVE_PATH} (discovery only ever finds a
+     * policy at {@code <root>/.protege-mcp/project.yaml}); fall back to the file's own directory.
+     */
+    private static Path conventionalProjectRoot(Path policyFile) {
+        if (policyFile == null) {
+            return null;
+        }
+        Path relative = Path.of(ProjectPolicyLoader.DEFAULT_RELATIVE_PATH);
+        if (policyFile.getNameCount() > relative.getNameCount() && policyFile.endsWith(relative)) {
+            Path root = policyFile;
+            for (int i = 0; i < relative.getNameCount() && root != null; i++) {
+                root = root.getParent();
+            }
+            if (root != null) {
+                return root;
+            }
+        }
+        return policyFile.getParent();
+    }
+
+    /**
+     * Write {@code bytes} to {@code target} via a temp file and an atomic move, so a partial policy
+     * never lands. With {@code overwrite} false the move refuses an existing target (no
+     * {@code REPLACE_EXISTING}), surfacing {@link FileAlreadyExistsException} for the {@code policy_exists}
+     * result; with it true the target is replaced.
+     */
+    private static void atomicWrite(Path target, byte[] bytes, boolean overwrite) throws IOException {
+        Path normalized = target.toAbsolutePath().normalize();
+        Path parent = normalized.getParent();
+        if (parent == null) {
+            throw new IOException("policy path has no parent directory: " + normalized);
+        }
+        if (!overwrite && Files.exists(normalized)) {
+            throw new FileAlreadyExistsException(normalized.toString());
+        }
+        Files.createDirectories(parent);
+        Path temp = Files.createTempFile(parent, ".project.", ".yaml.tmp");
+        try {
+            Files.write(temp, bytes);
+            if (overwrite) {
+                Files.move(temp, normalized, StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } else {
+                Files.move(temp, normalized, StandardCopyOption.ATOMIC_MOVE);
+            }
+        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+            if (overwrite) {
+                Files.move(temp, normalized, StandardCopyOption.REPLACE_EXISTING);
+            } else {
+                Files.move(temp, normalized);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(bytes);
+            StringBuilder out = new StringBuilder(64);
+            for (byte b : hash) {
+                out.append(Character.forDigit((b >>> 4) & 0xf, 16));
+                out.append(Character.forDigit(b & 0xf, 16));
+            }
+            return out.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 
 
