@@ -65,8 +65,12 @@ public final class OntologyMetadataTools {
                     Map<String, Object> a = Tools.args(req);
                     String iri = Tools.reqString(a, "iri");
                     String configuredDocument = Tools.optString(a, "document");
+                    // Validate strictly even without 'document' (nothing is fetched then): an
+                    // invalid enum value is never silently ignored.
+                    String network = Tools.optString(a, "network");
+                    DirectAccessPolicy.requestNetworkDenies(network);
                     DirectAccessPolicy.Rules accessRules = configuredDocument == null ? null
-                            : DirectAccessPolicy.resolve(ctx, ex);
+                            : DirectAccessPolicy.resolve(ctx, ex).withRequestNetwork(network);
                     final String document = configuredDocument == null ? null
                             : accessRules.authorizeSource(configuredDocument).value();
                     int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);

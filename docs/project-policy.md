@@ -189,6 +189,39 @@ filesystem policy. Direct `file:` imports are checked and pinned to their author
 nested `jar:` sources are refused because they obscure the filesystem/host boundary. When a host allowlist
 is active, redirects are disabled because OWLAPI does not expose a policy callback for the redirect target.
 
+The document-loading operations (`load_ontology`, `merge_ontology_document`, `add_import`, and the
+`right_document` side of `diff_ontologies`/`semantic_diff`) additionally accept a request-level
+`network=deny|allow` argument that composes most-restrictive-wins with everything above: the effective
+permission is the conjunction of the request, the policy, the principal's `network:access` capability,
+and — with no policy — the local-admin compatibility profile and preference. `deny` always denies that
+request's remote fetches (the root document included) with an explicit error; `allow` merely abstains
+from denying and never overrides a policy `deny`, an invalid-policy fail-closed posture, a missing
+capability, or a restricted no-policy state — under the unrestricted no-policy local-admin profile it is
+a no-op affirmation. Every denial is attributed to its actual source (`request network=deny`,
+`imports.network=deny`/`network.default=deny`, the host allowlist, the missing capability, the invalid
+policy, or the compatibility preference), a non-empty host allowlist still disables redirect following
+regardless of the request, and a request-level `deny` engages the same strict folder-catalog presence
+gate a confining policy does — with the refusal naming the request when only the request confines the
+posture (a policy whose host allowlist already engaged the gate keeps the policy attribution).
+
+The project/release gates (`run_project_qc`, `run_qc_suite` with `policy_path`, `preview_change_set`)
+and the loading operations (`load_ontology`, `merge_ontology_document`) also accept
+`lock_mode=ignore|verify|required` (default `ignore`). It never weakens policy: with
+`imports.mode: locked` the gate verification always runs, whatever the request says. Otherwise a gate
+`verify` resolves the lockfile with the released `verify_import_lock` rules (the policy-declared
+`imports.lockfile` when exactly one resolves; the beside-active-document `imports.lock.json` only when
+none is declared or no policy is loaded; the released refusal states abort the request), runs the same
+coordinate/SHA-256 comparison the locked gate uses — including the loaded-content attestation — and
+skips cleanly with a reported note when the resolved default file does not exist; `required` turns
+exactly that file-absent state into the `imports.lock_missing` error finding. Every request-triggered
+verification labels its `lockfile_source` (`policy_declared` or `beside_document`); a beside-document
+lockfile is co-located with — and writable by — whoever supplied the ontology folder, so its
+verification attests accident-safety, not tamper-evidence, and the result says so. On the loading
+operations, `lock_mode=verify|required` verifies the to-be-loaded closure before the workspace is
+mutated, resolving the lockfile against the loaded document (beside-document default; the
+policy-declared lockfile when the loaded document is the project's resolved root artifact); a mismatch,
+or `required` with no lockfile, refuses the load with a structured error and mutates nothing.
+
 Reserved (schema-accepted, not yet enforced): the `release.format`,
 `release.require_version_iri`, and `release.require_clean_round_trip` fields validate and carry defaults but
 are not yet consulted by a release-bundle workflow.

@@ -1178,6 +1178,11 @@
         "ttl_seconds" : {
           "type" : "integer",
           "description" : "Preview lifetime in seconds (default 900, max 3600)."
+        },
+        "lock_mode" : {
+          "type" : "string",
+          "description" : "Optional import-lock verification for the preflight gate: ignore (default), verify (compare the loaded closure against the lockfile resolved with the verify_import_lock rules — the policy-declared imports.lockfile, else beside-document imports.lock.json — skipping cleanly with a note when the default file does not exist), or required (that file-absent state becomes the imports.lock_missing error finding, making the preview uncommittable). With imports.mode: locked the gate verification always runs regardless; results label the lockfile_source. Retained for rebase_change_set replays.",
+          "enum" : [ "ignore", "verify", "required" ]
         }
       },
       "required" : [ "operations" ],
@@ -1919,6 +1924,11 @@
         "connection_timeout_ms" : {
           "type" : "integer",
           "description" : "Document connection timeout when 'document' is given (default 15000)."
+        },
+        "network" : {
+          "type" : "string",
+          "description" : "Optional request-level network control for loading 'document' (most-restrictive-wins): deny refuses every remote fetch with an explicit error; allow abstains and never overrides a policy deny, an invalid policy, a missing network:access capability, or a restricted no-policy state.",
+          "enum" : [ "deny", "allow" ]
         }
       },
       "required" : [ "iri" ],
@@ -2096,6 +2106,16 @@
           "type" : "string",
           "description" : "Missing-import policy: warn (default; report and continue), error (fail without changing the workspace), or silent (continue without reporting missing IRIs).",
           "enum" : [ "warn", "error", "silent" ]
+        },
+        "network" : {
+          "type" : "string",
+          "description" : "Optional request-level network control (most-restrictive-wins): deny refuses every remote fetch this load would need (root document and imports) with an explicit error; allow abstains and never overrides a policy deny, an invalid policy, a missing network:access capability, or a restricted no-policy state.",
+          "enum" : [ "deny", "allow" ]
+        },
+        "lock_mode" : {
+          "type" : "string",
+          "description" : "Optional import-lock verification of the to-be-loaded closure BEFORE any workspace change: ignore (default), verify (compare coordinates and SHA-256 hashes against the lockfile resolved for the loaded document — beside-document imports.lock.json, or the policy-declared lockfile when loading the project's root artifact — skipping cleanly with a note when it does not exist), or required (additionally refuse the load when no lockfile exists). A mismatch refuses the load and changes nothing; the result labels the lockfile_source.",
+          "enum" : [ "ignore", "verify", "required" ]
         }
       },
       "required" : [ "source" ],
@@ -2131,6 +2151,16 @@
           "type" : "string",
           "description" : "Missing-import policy: warn (default; report and continue), error (fail without changing the active ontology), or silent (continue without reporting missing IRIs).",
           "enum" : [ "warn", "error", "silent" ]
+        },
+        "network" : {
+          "type" : "string",
+          "description" : "Optional request-level network control (most-restrictive-wins): deny refuses every remote fetch this merge would need (source document and imports) with an explicit error; allow abstains and never overrides a policy deny, an invalid policy, a missing network:access capability, or a restricted no-policy state.",
+          "enum" : [ "deny", "allow" ]
+        },
+        "lock_mode" : {
+          "type" : "string",
+          "description" : "Optional import-lock verification of the parsed document's closure BEFORE anything is merged: ignore (default), verify (compare coordinates and SHA-256 hashes against the lockfile resolved for the loaded document — beside-document imports.lock.json, or the policy-declared lockfile when merging the project's root artifact — skipping cleanly with a note when it does not exist), or required (additionally refuse the merge when no lockfile exists). A mismatch refuses the merge and changes nothing; the result labels the lockfile_source.",
+          "enum" : [ "ignore", "verify", "required" ]
         }
       },
       "required" : [ "source" ],
@@ -2637,6 +2667,11 @@
         "limit" : {
           "type" : "integer",
           "description" : "Max axioms to list per side (default 50)."
+        },
+        "network" : {
+          "type" : "string",
+          "description" : "Optional request-level network control for loading 'right_document' (most-restrictive-wins): deny refuses every remote fetch with an explicit error; allow abstains and never overrides a policy deny, an invalid policy, a missing network:access capability, or a restricted no-policy state.",
+          "enum" : [ "deny", "allow" ]
         }
       },
       "additionalProperties" : false
@@ -2670,6 +2705,11 @@
         "limit" : {
           "type" : "integer",
           "description" : "Maximum samples per category (default 50)."
+        },
+        "network" : {
+          "type" : "string",
+          "description" : "Optional request-level network control for loading 'right_document' (most-restrictive-wins): deny refuses every remote fetch with an explicit error; allow abstains and never overrides a policy deny, an invalid policy, a missing network:access capability, or a restricted no-policy state.",
+          "enum" : [ "deny", "allow" ]
         }
       },
       "additionalProperties" : false
@@ -3462,6 +3502,11 @@
         "limit" : {
           "type" : "integer",
           "description" : "Maximum samples per stage (default 25)."
+        },
+        "lock_mode" : {
+          "type" : "string",
+          "description" : "Optional import-lock verification request: ignore (default), verify (compare the loaded closure against the lockfile resolved with the verify_import_lock rules — the policy-declared imports.lockfile, else beside-document imports.lock.json — skipping cleanly with a note when the default file does not exist), or required (that file-absent state becomes the imports.lock_missing error finding). With imports.mode: locked the gate verification always runs regardless; results label the lockfile_source (policy_declared or beside_document).",
+          "enum" : [ "ignore", "verify", "required" ]
         }
       },
       "additionalProperties" : false
@@ -3570,6 +3615,11 @@
             "additionalProperties" : false
           },
           "description" : "Invariants for the 'invariants' stage (verify_ontology queries[])."
+        },
+        "lock_mode" : {
+          "type" : "string",
+          "description" : "Optional import-lock verification request, honored on the strict policy branch (with policy_path): ignore (default), verify (compare the loaded closure against the lockfile resolved with the verify_import_lock rules — the policy-declared imports.lockfile, else beside-document imports.lock.json — skipping cleanly with a note when the default file does not exist), or required (that file-absent state becomes the imports.lock_missing error finding). With imports.mode: locked the gate verification always runs regardless; results label the lockfile_source. Without policy_path the legacy inline gate performs no lock verification, so verify/required is refused with an explicit error, never silently ignored.",
+          "enum" : [ "ignore", "verify", "required" ]
         }
       },
       "additionalProperties" : false

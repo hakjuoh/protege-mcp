@@ -78,15 +78,31 @@ public final class QcSuiteTools {
                         arguments = new LinkedHashMap<>(arguments);
                         arguments.put("shacl_shapes_path", rules.readPath(shapes).toString());
                     }
-                    return runSuite(ctx, arguments);
+                    return runSuite(ctx, arguments, rules);
                 });
     }
 
     // ================================================================== orchestration
 
     private static CallToolResult runSuite(ToolContext ctx, Map<String, Object> a) {
+        return runSuite(ctx, a, null);
+    }
+
+    private static CallToolResult runSuite(ToolContext ctx, Map<String, Object> a,
+            DirectAccessPolicy.Rules rules) {
+        // Parsed on BOTH branches: an invalid value is rejected with the same ToolArgException the
+        // strict surfaces use (the catalog schema enum is advisory — the server does not validate
+        // tool inputs), and a request the legacy branch cannot honor is refused explicitly rather
+        // than silently ignored.
+        LockMode lockMode = LockMode.parse(Tools.optString(a, "lock_mode"));
         if (Tools.optString(a, "policy_path") != null) {
-            return ProjectQcTools.run(ctx, a, false);
+            return ProjectQcTools.run(ctx, a, false, rules);
+        }
+        if (lockMode.requested()) {
+            return Tools.error("lock_mode=" + lockMode.value() + " requires the strict policy "
+                    + "branch: pass policy_path (or call run_project_qc). The legacy inline gate "
+                    + "performs no lock verification, so the request is refused rather than "
+                    + "silently ignored.");
         }
         QcRunConfig config = QcRunConfig.legacy(a);
         QcSuiteExecution execution = execute(ctx, config);
@@ -140,7 +156,11 @@ public final class QcSuiteTools {
         }
         if (config.stages.contains(GOVERNANCE)) {
             List<Map<String, Object>> projectChecks = new ArrayList<>(config.projectGovernanceChecks);
-            projectChecks.addAll(ModulePolicyGovernance.importChecks(p1.importReport, config.limit));
+            // Project-mode contract only: a legacy gate that captured the import report solely for a
+            // request-level lock_mode must not gain module governance checks it never ran before.
+            if (config.projectMode) {
+                projectChecks.addAll(ModulePolicyGovernance.importChecks(p1.importReport, config.limit));
+            }
             results.add(governanceStage(p1.validationSnapshot, config.iriPattern,
                     config.requiredNamespaces, config.requiredAnnotations, config.checkOwnership,
                     config.policyGovernance, projectChecks, config.limit));
@@ -258,11 +278,15 @@ public final class QcSuiteTools {
                 }
             }
         }
-        if (config.projectMode) {
+        if (config.projectMode || config.captureImportReport) {
             // Capture the import-closure state in the SAME model-thread hop as the snapshot below, so a
             // concurrent edit cannot resolve a missing import between QC and a fail-closed import check.
+            // A request-level lock_mode also needs this outside project mode; the missing-import list
+            // stays a project-mode contract (no-policy gates do not fail closed on it).
             p1.importReport = ImportTools.analyze(mm.getActiveOntology());
-            p1.missingImports = p1.importReport.missingImports;
+            if (config.projectMode) {
+                p1.missingImports = p1.importReport.missingImports;
+            }
         }
         boolean needSnapshot = !config.stages.isEmpty();
         if (needSnapshot) {

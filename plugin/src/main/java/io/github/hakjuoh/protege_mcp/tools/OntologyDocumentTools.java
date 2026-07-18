@@ -65,10 +65,12 @@ public final class OntologyDocumentTools {
                     int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);
                     MissingImportsMode missingImports = MissingImportsMode.parse(
                             Tools.optString(a, "missing_imports"));
-                    DirectAccessPolicy.Rules accessRules = DirectAccessPolicy.resolve(ctx, ex);
+                    LockMode lockMode = LockMode.parse(Tools.optString(a, "lock_mode"));
+                    DirectAccessPolicy.Rules accessRules = DirectAccessPolicy.resolve(ctx, ex)
+                            .withRequestNetwork(Tools.optString(a, "network"));
                     DirectAccessPolicy.Source authorized = accessRules.authorizeSource(source);
                     return doLoad(ctx, authorized.value(), timeoutMs, keepActive, missingImports,
-                            accessRules.importNetworkRule());
+                            accessRules.importNetworkRule(), lockMode, accessRules);
                 });
         tools.tool("merge_ontology_document",
                 (ex, req) -> {
@@ -80,7 +82,9 @@ public final class OntologyDocumentTools {
                     int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);
                     MissingImportsMode missingImports = MissingImportsMode.parse(
                             Tools.optString(a, "missing_imports"));
-                    DirectAccessPolicy.Rules accessRules = DirectAccessPolicy.resolve(ctx, ex);
+                    LockMode lockMode = LockMode.parse(Tools.optString(a, "lock_mode"));
+                    DirectAccessPolicy.Rules accessRules = DirectAccessPolicy.resolve(ctx, ex)
+                            .withRequestNetwork(Tools.optString(a, "network"));
                     DirectAccessPolicy.Source authorized = accessRules.authorizeSource(source);
                     source = authorized.value();
                     String summary = replaceActive
@@ -97,11 +101,19 @@ public final class OntologyDocumentTools {
                             OntologyDocumentTools::workspaceImportMappings);
                     LoadedOntology loaded = load(source, timeoutMs, missingImports,
                             workspaceMappings, accessRules.importNetworkRule());
+                    // Verify the parsed closure BEFORE the workspace-mutating hop below: a lock_mode
+                    // mismatch (or required with no lockfile) refuses the merge while nothing has
+                    // been applied yet (ADR 0005 decision 4).
+                    Map<String, Object> lockVerification = lockMode.requested()
+                            ? ImportLockTools.verifyClosureBeforeLoad(accessRules,
+                                    loaded.importReport, localFile(source), lockMode)
+                            : null;
                     // A whole-document merge applies thousands of changes in one EDT batch, so give it a
                     // longer bound than the default — otherwise a slow-but-succeeding apply is reported
                     // as a timeout while the model keeps mutating.
                     return ctx.access().compute(
-                            mm -> apply(mm, loaded, replaceActive, copyOntologyId, preview),
+                            mm -> apply(mm, loaded, replaceActive, copyOntologyId, preview,
+                                    lockVerification),
                             MERGE_TIMEOUT_MS);
                 });
         tools.tool("set_active_ontology",
@@ -233,6 +245,13 @@ public final class OntologyDocumentTools {
 
     static CallToolResult doLoad(ToolContext ctx, String source, int timeoutMs, boolean keepActive,
             MissingImportsMode missingImports, DirectAccessPolicy.NetworkRule networkRule) {
+        return doLoad(ctx, source, timeoutMs, keepActive, missingImports, networkRule,
+                LockMode.IGNORE, null);
+    }
+
+    static CallToolResult doLoad(ToolContext ctx, String source, int timeoutMs, boolean keepActive,
+            MissingImportsMode missingImports, DirectAccessPolicy.NetworkRule networkRule,
+            LockMode lockMode, DirectAccessPolicy.Rules accessRules) {
         String normalized = normalizeSource(source);
         CallToolResult denied = WriteTools.checkWriteAllowed(ctx,
                 "load " + normalized + (keepActive ? " into the workspace" : " and make it active"));
@@ -246,8 +265,16 @@ public final class OntologyDocumentTools {
                 OntologyDocumentTools::workspaceImportMappings);
         LoadedDocument doc = fetch(normalized, timeoutMs, missingImports, workspaceMappings,
                 networkRule);
+        // Verify the TO-BE-LOADED closure BEFORE the workspace-mutating attach hop: a lock_mode
+        // mismatch (or required with no lockfile) refuses the load while the parsed closure still
+        // lives only in the throwaway manager (ADR 0005 decision 4).
+        Map<String, Object> lockVerification = lockMode != null && lockMode.requested()
+                ? ImportLockTools.verifyClosureBeforeLoad(accessRules,
+                        ImportTools.analyze(doc.primary), localFile(normalized), lockMode)
+                : null;
         // Only the cheap model wiring (move the parsed closure in, switch active, refresh) runs on EDT.
-        return ctx.access().compute(mm -> attach(mm, doc, keepActive), LOAD_TIMEOUT_MS);
+        return ctx.access().compute(mm -> attach(mm, doc, keepActive, lockVerification),
+                LOAD_TIMEOUT_MS);
     }
 
     /** Wait bound for wiring a parsed document into the workspace on the EDT (move + activate + UI refresh). */
@@ -309,6 +336,11 @@ public final class OntologyDocumentTools {
      * ONTOLOGY_LOADED), but with no modal UI. Runs on the EDT.
      */
     private static CallToolResult attach(OWLModelManager mm, LoadedDocument doc, boolean keepActive) {
+        return attach(mm, doc, keepActive, null);
+    }
+
+    private static CallToolResult attach(OWLModelManager mm, LoadedDocument doc, boolean keepActive,
+            Map<String, Object> lockVerification) {
         OWLOntology prevActive = mm.getActiveOntology();
         OWLOntologyManager target = mm.getOWLOntologyManager();
         OWLOntologyID primaryId = doc.primary.getOntologyID();
@@ -416,6 +448,7 @@ public final class OntologyDocumentTools {
                 .put("missing_imports_mode", doc.missingImports.value())
                 .put("resolved_imports", workspaceImports.resolvedImports)
                 .put("unresolved_imports", doc.missingImports.reported(doc.unresolvedImports))
+                .putIfNotNull("import_lock_verification", lockVerification)
                 .put("note", keptActive
                         ? "Loaded into the workspace; active ontology unchanged. Loading is not on the "
                                 + "undo stack (undo_change cannot revert it)."
@@ -607,7 +640,7 @@ public final class OntologyDocumentTools {
                     new LinkedHashSet<>(sourceOntology.getAxioms()),
                     new LinkedHashSet<>(sourceOntology.getImportsDeclarations()),
                     new LinkedHashSet<>(sourceOntology.getAnnotations()),
-                    unresolvedImports, imports.resolvedImports, missingImports);
+                    unresolvedImports, imports, missingImports);
         } catch (UnloadableImportException e) {
             throw strictImportFailure(normalized, e);
         } catch (OWLOntologyCreationException e) {
@@ -690,13 +723,17 @@ public final class OntologyDocumentTools {
                         ? "nested jar: import sources are refused because they obscure the filesystem/host boundary"
                         : firstEntry.getValue() != null
                         ? firstEntry.getValue()
-                        : !rule.capabilityAllowed()
-                        ? "the authenticated principal lacks network:access"
-                        : !rule.allowed() ? "imports.network=deny"
-                        : "the host is outside network.allowed_hosts";
+                        : denialAttribution();
+                boolean requestDenied = DirectAccessPolicy.DenialSource.REQUEST == rule.denialSource();
                 throw new ToolArgException("Could not load ontology document '" + source
                         + "': remote import '" + first + "' was required, but "
-                        + reason + ". Provide a local workspace/catalog mapping or change the reviewed policy.");
+                        + reason + ". " + (requestDenied
+                                // A request-caused refusal must never tell the caller to loosen the
+                                // reviewed policy — the caller's own argument is the denial.
+                                ? "Provide a local workspace/catalog mapping or drop the request's "
+                                        + "network=deny argument."
+                                : "Provide a local workspace/catalog mapping or change the reviewed "
+                                        + "policy."));
             }
             if (catalogRefusal == null) {
                 return;
@@ -719,6 +756,34 @@ public final class OntologyDocumentTools {
                         + "': import '" + resolvedWithoutCatalog
                         + "' had to resolve without the folder catalog, which could pin it to "
                         + "different reviewed content, because " + catalogRefusal + ".");
+            }
+        }
+
+        /**
+         * The attribution string for this rule's own denial source (ADR 0005 decision 3). Every
+         * released string is byte-identical for its released source; the invalid-policy and
+         * restricted-no-policy cases previously misreported a missing capability / a phantom
+         * {@code imports.network=deny} and now name their actual cause, and a request-level deny
+         * reports {@code request network=deny}.
+         */
+        private String denialAttribution() {
+            switch (rule.denialSource()) {
+                case REQUEST:
+                    return "request network=deny";
+                case CAPABILITY:
+                    return "the authenticated principal lacks network:access";
+                case INVALID_POLICY:
+                    return "the effective project policy is invalid, so network access fails closed "
+                            + "until it validates";
+                case COMPATIBILITY_PREFERENCE:
+                    return "no project policy is loaded and remote fetches require both the "
+                            + "local-admin profile and the 'Allow unrestricted local-admin paths when "
+                            + "no project policy is loaded' compatibility preference "
+                            + "(Protégé ▸ Preferences ▸ MCP)";
+                case POLICY:
+                    return "imports.network=deny";
+                default:
+                    return "the host is outside network.allowed_hosts";
             }
         }
 
@@ -763,6 +828,11 @@ public final class OntologyDocumentTools {
             if (catalogRefusal == null) {
                 catalogRefusal = reason;
             }
+        }
+
+        /** The composed rule's denial source, for posture-attributing catalog refusals. */
+        DirectAccessPolicy.DenialSource denialSource() {
+            return rule.denialSource();
         }
 
         /**
@@ -1180,9 +1250,16 @@ public final class OntologyDocumentTools {
         if (blocker.networkRestricted() || blocker.filesystemConfined()) {
             String unsafe = unsafeFolderCatalog(catalog, blocker);
             if (unsafe != null) {
+                // Attribute the confining posture to its actual source (ADR 0005 decision 5): when
+                // only the caller's own network=deny engaged the gate, the refusal must name the
+                // request instead of training the user to loosen the reviewed policy.
+                boolean requestConfined = !blocker.filesystemConfined()
+                        && DirectAccessPolicy.DenialSource.REQUEST == blocker.denialSource();
                 blocker.recordCatalogRefusal(
-                        "the folder catalog is not safe to resolve offline under a confining project "
-                                + "policy (" + unsafe + "): a symlinked/out-of-project catalog, a DOCTYPE, "
+                        "the folder catalog is not safe to resolve offline under "
+                                + (requestConfined ? "the request's network=deny argument"
+                                        : "a confining project policy")
+                                + " (" + unsafe + "): a symlinked/out-of-project catalog, a DOCTYPE, "
                                 + "or catalog delegation (nextCatalog/delegateURI) is refused so nothing "
                                 + "can be read out of scope or dereferenced over the network before "
                                 + "authorization. Inline the mappings into catalog-v001.xml to resolve "
@@ -1287,6 +1364,12 @@ public final class OntologyDocumentTools {
 
     private static CallToolResult apply(OWLModelManager mm, LoadedOntology loaded,
             boolean replaceActive, boolean copyOntologyId, boolean preview) {
+        return apply(mm, loaded, replaceActive, copyOntologyId, preview, null);
+    }
+
+    private static CallToolResult apply(OWLModelManager mm, LoadedOntology loaded,
+            boolean replaceActive, boolean copyOntologyId, boolean preview,
+            Map<String, Object> lockVerification) {
         OWLOntology active = mm.getActiveOntology();
         List<OWLOntologyChange> changes = new ArrayList<>();
         int removedAxioms = 0;
@@ -1367,7 +1450,8 @@ public final class OntologyDocumentTools {
                 .putIfNotNull("skipped_ontology_id", idCollisionSkip)
                 .put("missing_imports_mode", loaded.missingImports.value())
                 .put("resolved_imports", loaded.resolvedImports)
-                .put("unresolved_imports", loaded.missingImports.reported(loaded.unresolvedImports));
+                .put("unresolved_imports", loaded.missingImports.reported(loaded.unresolvedImports))
+                .putIfNotNull("import_lock_verification", lockVerification);
         if (preview) {
             if (!replaceActive) {
                 json.put("already_present_axioms", alreadyPresent);
@@ -1408,9 +1492,27 @@ public final class OntologyDocumentTools {
         final Set<OWLImportsDeclaration> importsDeclarations;
         final Set<OWLAnnotation> annotations;
         final List<String> unresolvedImports;
+        /** Full parsed-closure analysis, retained so lock_mode can verify before the apply hop. */
+        final ImportTools.ImportReport importReport;
         final List<Map<String, Object>> resolvedImports;
         final MissingImportsMode missingImports;
 
+        LoadedOntology(String source, OWLOntologyID ontologyId, Set<OWLAxiom> axioms,
+                Set<OWLImportsDeclaration> importsDeclarations, Set<OWLAnnotation> annotations,
+                List<String> unresolvedImports, ImportTools.ImportReport importReport,
+                MissingImportsMode missingImports) {
+            this.source = source;
+            this.ontologyId = ontologyId;
+            this.axioms = axioms;
+            this.importsDeclarations = importsDeclarations;
+            this.annotations = annotations;
+            this.unresolvedImports = unresolvedImports;
+            this.importReport = importReport;
+            this.resolvedImports = importReport.resolvedImports;
+            this.missingImports = missingImports;
+        }
+
+        /** Compatibility constructor retained for reflection-based tests; carries no full report. */
         LoadedOntology(String source, OWLOntologyID ontologyId, Set<OWLAxiom> axioms,
                 Set<OWLImportsDeclaration> importsDeclarations, Set<OWLAnnotation> annotations,
                 List<String> unresolvedImports, List<Map<String, Object>> resolvedImports,
@@ -1421,6 +1523,7 @@ public final class OntologyDocumentTools {
             this.importsDeclarations = importsDeclarations;
             this.annotations = annotations;
             this.unresolvedImports = unresolvedImports;
+            this.importReport = null;
             this.resolvedImports = resolvedImports;
             this.missingImports = missingImports;
         }

@@ -28,6 +28,16 @@ final class ProjectQcTools {
     }
 
     static CallToolResult run(ToolContext ctx, Map<String, Object> arguments, boolean dedicatedTool) {
+        return run(ctx, arguments, dedicatedTool, null);
+    }
+
+    /**
+     * {@code accessRules} carries the request-scoped filesystem authorization used ONLY by a
+     * request-level {@code lock_mode} beside-document lockfile resolution; without it that
+     * resolution fails closed instead of reading an unauthorized path.
+     */
+    static CallToolResult run(ToolContext ctx, Map<String, Object> arguments, boolean dedicatedTool,
+            DirectAccessPolicy.Rules accessRules) {
         String configured = Tools.optString(arguments, "policy_path");
         Path explicit = null;
         if (configured != null) {
@@ -56,12 +66,13 @@ final class ProjectQcTools {
         }
 
         try {
+            LockMode lockMode = LockMode.parse(Tools.optString(arguments, "lock_mode"));
             QcRunConfig config = config(policy, live, arguments);
             QcSuiteExecution execution = QcSuiteTools.execute(ctx, config);
             int version = ((Number) policy.effective().get("version")).intValue();
             Map<String, Object> result = QcSuiteTools.strictResult(execution, config.requiredStages,
                     config.failOn, version, policy.digest(), true);
-            enforceImportIntegrity(policy, execution, result);
+            enforceImportIntegrity(policy, execution, result, lockMode, accessRules);
             result.put("project_id", policy.effective().get("project_id"));
             result.put("policy_path", policy.path().toString());
             result.put("project_root", policy.projectRoot().toString());
@@ -155,14 +166,22 @@ final class ProjectQcTools {
      * list captured in the SAME model-thread hop as the QC snapshot (no separate, race-prone re-read).
      * Mutates {@code result} in place, forcing {@code gate=error} and one finding per unresolved import.
      */
-    @SuppressWarnings("unchecked")
     static void enforceImportIntegrity(ProjectPolicy policy,
             QcSuiteExecution execution, Map<String, Object> result) {
+        enforceImportIntegrity(policy, execution, result, LockMode.IGNORE, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    static void enforceImportIntegrity(ProjectPolicy policy,
+            QcSuiteExecution execution, Map<String, Object> result, LockMode lockMode,
+            DirectAccessPolicy.Rules accessRules) {
         Map<String, Object> imports = object(policy.effective(), "imports");
         boolean failOnMissing = Boolean.TRUE.equals(imports.get("fail_on_missing"));
         boolean locked = "locked".equals(string(imports, "mode"));
         List<Map<String, Object>> findings = (List<Map<String, Object>>) result.computeIfAbsent(
                 "findings", key -> new ArrayList<Map<String, Object>>());
+        boolean unresolvedAlreadyReported =
+                (failOnMissing || locked) && !execution.missingImports.isEmpty();
         if ((failOnMissing || locked) && !execution.missingImports.isEmpty()) {
             for (Map<String, Object> row : execution.missingImports) {
                 String iri = String.valueOf(row.get("import_iri"));
@@ -174,11 +193,20 @@ final class ProjectQcTools {
             result.put("gate", "error");
         }
         if (locked) {
+            // ADR 0005 decision 4: with imports.mode: locked, gate-time lock-content verification
+            // always runs — no lock_mode value can weaken (or needs to strengthen) it, and the
+            // lockfile keeps resolving ONLY through the policy asset.
             Map<String, Object> verification = execution.importReport == null
                     ? Map.of("valid", false, "errors",
                             List.of("project QC did not capture the loaded import graph"))
                     : ImportLockTools.verifyForGate(policy, execution.importReport,
                             execution.fingerprint, execution.closureFingerprint);
+            if (lockMode.requested()) {
+                // Additive trust labeling on an explicitly requested verification: the locked gate
+                // only ever verifies the policy-pinned lockfile.
+                verification = new LinkedHashMap<>(verification);
+                verification.put("lockfile_source", ImportLockTools.SOURCE_POLICY_DECLARED);
+            }
             result.put("import_lock_verification", verification);
             if (!Boolean.TRUE.equals(verification.get("valid"))) {
                 // Coordinates and disk hashes matching while the loaded content is not attested is a
@@ -195,6 +223,94 @@ final class ProjectQcTools {
                                 verification));
                 result.put("gate", "error");
             }
+        } else if (lockMode.requested()) {
+            requestedLockVerification(policy, execution, result, findings, lockMode, accessRules,
+                    unresolvedAlreadyReported);
+        }
+    }
+
+    /**
+     * Request-triggered ({@code lock_mode=verify|required}) gate verification for an unlocked or
+     * absent policy (ADR 0005 decision 4). Lockfile resolution follows the released tool rules and
+     * ABORTS (as {@link ToolArgException}, rendered through each surface's released configuration
+     * idiom) in the released refusal states; {@code verify} skips cleanly with a reported note when
+     * the resolved default file does not exist, and {@code required} turns exactly that file-absent
+     * state into the {@code imports.lock_missing} error finding. Mismatches reuse the pinned
+     * {@code imports.lock_mismatch} / {@code imports.unresolved} codes, and the loaded-content
+     * attestation runs here because the gate captured the same-hop closure fingerprint.
+     */
+    private static void requestedLockVerification(ProjectPolicy policy, QcSuiteExecution execution,
+            Map<String, Object> result, List<Map<String, Object>> findings, LockMode lockMode,
+            DirectAccessPolicy.Rules accessRules, boolean unresolvedAlreadyReported) {
+        if (execution.importReport == null) {
+            // Same fail-closed guard as the locked branch: verification was requested but the gate
+            // did not capture the loaded import graph in the snapshot hop.
+            Map<String, Object> verification = new LinkedHashMap<>();
+            verification.put("valid", false);
+            verification.put("errors",
+                    List.of("project QC did not capture the loaded import graph"));
+            result.put("import_lock_verification", verification);
+            findings.add(finding("imports.lock_mismatch", "imports", "error",
+                    "Requested import-lock verification (lock_mode=" + lockMode.value()
+                            + ") could not capture the loaded import graph.", verification));
+            result.put("gate", "error");
+            return;
+        }
+        ImportLockTools.GateLock resolved =
+                ImportLockTools.resolveRequestGateLock(policy, execution.importReport, accessRules);
+        if (!java.nio.file.Files.isRegularFile(resolved.path())) {
+            Map<String, Object> verification = new LinkedHashMap<>();
+            verification.put("verified", false);
+            verification.put("skipped", true);
+            verification.put("path", resolved.path().toString());
+            verification.put("lockfile_source", resolved.source());
+            if (lockMode == LockMode.VERIFY) {
+                verification.put("note", "No lockfile exists at the resolved path, so nothing was "
+                        + "verified; lock_mode=verify skips cleanly. Pass lock_mode=required to make "
+                        + "this an error, or create the lock with write_import_lock.");
+                result.put("import_lock_verification", verification);
+                return;
+            }
+            verification.put("note", "lock_mode=required, and no lockfile exists at the resolved "
+                    + "path.");
+            result.put("import_lock_verification", verification);
+            findings.add(finding("imports.lock_missing", "imports", "error",
+                    "lock_mode=required, but no import lockfile exists at " + resolved.path() + ".",
+                    verification));
+            result.put("gate", "error");
+            return;
+        }
+        Map<String, Object> verification = new LinkedHashMap<>(ImportLockTools.verifyForGate(
+                resolved.path(), execution.importReport, execution.fingerprint,
+                execution.closureFingerprint));
+        verification.put("lockfile_source", resolved.source());
+        if (ImportLockTools.SOURCE_BESIDE_DOCUMENT.equals(resolved.source())) {
+            verification.put("lockfile_note", ImportLockTools.BESIDE_DOCUMENT_TRUST_NOTE);
+        }
+        result.put("import_lock_verification", verification);
+        if (!Boolean.TRUE.equals(verification.get("valid"))) {
+            // Dedupe: when the policy's own fail_on_missing block already emitted an
+            // imports.unresolved finding per missing import, the request path must not repeat them.
+            if (!unresolvedAlreadyReported) {
+                for (Map<String, Object> row : execution.importReport.missingImports) {
+                    String iri = String.valueOf(row.get("import_iri"));
+                    findings.add(finding("imports.unresolved", "imports", "error",
+                            "Required import could not be resolved: " + iri + " (request lock_mode="
+                                    + lockMode.value() + " requires a fully resolved closure).",
+                            Map.of("import_iri", iri)));
+                }
+            }
+            boolean contentDivergence =
+                    Boolean.FALSE.equals(verification.get("loaded_content_verified"));
+            findings.add(contentDivergence
+                    ? finding("imports.loaded_content_divergence", "imports", "error",
+                            "The loaded import closure content does not provably match the "
+                                    + "lock-verified on-disk documents (request lock_mode="
+                                    + lockMode.value() + ").", verification)
+                    : finding("imports.lock_mismatch", "imports", "error",
+                            "The loaded import closure does not match the resolved import lock "
+                                    + "(request lock_mode=" + lockMode.value() + ").", verification));
+            result.put("gate", "error");
         }
     }
 

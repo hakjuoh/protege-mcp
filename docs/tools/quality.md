@@ -159,6 +159,7 @@ errored required stage is `gate=error` and takes precedence over a separate fail
 | --- | --- | --- | --- | --- |
 | `policy_path` | string | no | discovered | Explicit local policy path. |
 | `limit` | integer | no | 25 | Samples per stage (0–10000). |
+| `lock_mode` | string | no | `ignore` | Request-level import-lock verification. With `imports.mode: locked` the gate verification always runs, whatever this says (it can never weaken the policy). Otherwise `verify` compares the loaded closure against the lockfile resolved with the `verify_import_lock` rules — the policy-declared `imports.lockfile` when exactly one resolves, else the beside-active-document `imports.lock.json` — and skips cleanly with a reported note when that default file does not exist; `required` turns exactly that file-absent state into the `imports.lock_missing` error finding. The released refusal states (declared-but-unresolved lockfile, invalid policy, no local document folder) abort as a configuration error. |
 
 **Returns**
 
@@ -187,7 +188,13 @@ errored required stage is `gate=error` and takes precedence over a separate fail
   `closure_fingerprint=null`.
 - `resolved_assets`: exact policy assets used.
 - `import_lock_verification`: automatic full coordinate/checksum comparison when `imports.mode` is
-  `locked`; any mismatch forces `gate=error` and an `imports.lock_mismatch` finding.
+  `locked`; any mismatch forces `gate=error` and an `imports.lock_mismatch` finding. Also present on
+  explicit request (`lock_mode=verify|required`), where it additionally carries `lockfile_source`
+  (`policy_declared` or `beside_document`) and — for a `beside_document` lockfile — a `lockfile_note`
+  stating that the verification attests accident-safety, not tamper-evidence; a `verify` request whose
+  resolved default lockfile does not exist reports `{verified: false, skipped: true, path,
+  lockfile_source, note}` without gating, while `required` makes exactly that state an
+  `imports.lock_missing` error finding.
 - `surface`: `run_project_qc` (or `run_qc_suite` when invoked through its `policy_path` compatibility entry).
 - `errors`: structured policy/configuration errors when validation cannot start.
 
@@ -228,6 +235,7 @@ call into missing-required-to-error behavior.
 | `fail_on` | string | no | `error` | Gate severity: `none` \| `warn` \| `error`. |
 | `limit` | integer | no | 25 | Max samples per check. |
 | `timeout_ms` | integer | no | 120000 | Time budget for isolated reasoning, SPARQL, and SHACL stages. |
+| `lock_mode` | string | no | `ignore` | Request-level import-lock verification, honored on the strict policy branch (with `policy_path`) with exactly the `run_project_qc` semantics. The legacy inline branch performs no lock verification, so it refuses `verify`/`required` with an explicit error directing the caller to `policy_path`/`run_project_qc` — never a silent pass — and rejects invalid values. |
 
 **Returns**
 

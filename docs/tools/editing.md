@@ -142,6 +142,7 @@ pass runs).
 | `gates` | string array | no | reasoner (when selected), profile, governance, structural | No-policy QC stages. Explicitly listed stages become **required**: a listed stage that cannot run makes the preview uncommittable. |
 | `include_impact` | string | no | asserted | `asserted` or `none`; inferred impact is handled by `semantic_diff`. |
 | `ttl_seconds` | integer | no | 900 | Lifetime from 1 through 3600 seconds. |
+| `lock_mode` | string | no | `ignore` | Request-level import-lock verification for the preflight gate. With `imports.mode: locked` the gate verification always runs regardless. Otherwise `verify` compares the loaded closure against the lockfile resolved with the `verify_import_lock` rules (policy-declared `imports.lockfile`, else beside-active-document `imports.lock.json`), skipping cleanly with a reported note when that default file does not exist; `required` turns exactly that file-absent state into the `imports.lock_missing` error finding (the preview becomes uncommittable). The verification lands in `preflight.import_lock_verification` with a `lockfile_source` label, and the argument is retained for `rebase_change_set` replays. |
 
 **Returns**
 

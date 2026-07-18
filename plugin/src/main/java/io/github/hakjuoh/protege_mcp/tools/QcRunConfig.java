@@ -43,6 +43,12 @@ final class QcRunConfig {
     final String requiredOntologyIri;
     final QcInteroperabilityConfig interoperability;
     final List<Map<String, Object>> projectGovernanceChecks;
+    /**
+     * Capture the loaded import graph in the snapshot hop even outside project mode — needed when a
+     * request-level {@code lock_mode=verify|required} must verify against the SAME-hop closure a
+     * no-policy preview gate evaluated. Project mode always captures it regardless of this flag.
+     */
+    final boolean captureImportReport;
 
     QcRunConfig(Set<String> stages, Set<String> requiredStages, String failOn, String profileName,
             int limit, int timeout, List<Invariants.Invariant> invariants,
@@ -94,15 +100,50 @@ final class QcRunConfig {
         this.requiredOntologyIri = requiredOntologyIri;
         this.interoperability = interoperability;
         this.projectGovernanceChecks = List.copyOf(projectGovernanceChecks);
+        this.captureImportReport = false;
+    }
+
+    /** Field-for-field copy with a different import-report capture flag. */
+    private QcRunConfig(QcRunConfig base, boolean captureImportReport) {
+        this.stages = base.stages;
+        this.requiredStages = base.requiredStages;
+        this.failOn = base.failOn;
+        this.profileName = base.profileName;
+        this.limit = base.limit;
+        this.timeout = base.timeout;
+        this.invariants = base.invariants;
+        this.policyCqs = base.policyCqs;
+        this.shaclShapes = base.shaclShapes;
+        this.shaclShapesPath = base.shaclShapesPath;
+        this.shaclPaths = base.shaclPaths;
+        this.iriPattern = base.iriPattern;
+        this.requiredNamespaces = base.requiredNamespaces;
+        this.requiredAnnotations = base.requiredAnnotations;
+        this.checkOwnership = base.checkOwnership;
+        this.policyGovernance = base.policyGovernance;
+        this.disabledStructural = base.disabledStructural;
+        this.structuralSeverity = base.structuralSeverity;
+        this.projectMode = base.projectMode;
+        this.requiredReasoner = base.requiredReasoner;
+        this.requiredOntologyIri = base.requiredOntologyIri;
+        this.interoperability = base.interoperability;
+        this.projectGovernanceChecks = base.projectGovernanceChecks;
+        this.captureImportReport = captureImportReport;
     }
 
     /** Same configuration with a different stage time budget. */
     QcRunConfig withTimeout(int timeoutMs) {
-        return new QcRunConfig(stages, requiredStages, failOn, profileName, limit, timeoutMs,
-                invariants, policyCqs, shaclShapes, shaclShapesPath, shaclPaths, iriPattern,
+        QcRunConfig config = new QcRunConfig(stages, requiredStages, failOn, profileName, limit,
+                timeoutMs, invariants, policyCqs, shaclShapes, shaclShapesPath, shaclPaths, iriPattern,
                 requiredNamespaces, requiredAnnotations, checkOwnership, policyGovernance,
                 disabledStructural, structuralSeverity, projectMode, requiredReasoner,
                 requiredOntologyIri, interoperability, projectGovernanceChecks);
+        return captureImportReport ? new QcRunConfig(config, true) : config;
+    }
+
+    /** Same configuration, also capturing the loaded import graph in the snapshot hop. */
+    QcRunConfig withImportReportCapture() {
+        return captureImportReport ? this : new QcRunConfig(this, true);
     }
 
     static QcRunConfig legacy(Map<String, Object> arguments) {

@@ -49,13 +49,18 @@ public final class DiffTools {
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
                     boolean logicalOnly = Tools.optBool(a, "logical_only", false);
                     int limit = Tools.optInt(a, "limit", DEFAULT_LIMIT);
+                    // Validate strictly even when no document is loaded: an invalid enum value is
+                    // never silently ignored.
+                    String network = Tools.optString(a, "network");
+                    DirectAccessPolicy.requestNetworkDenies(network);
                     if (rightRef == null && rightDoc == null) {
                         return Tools.error("Provide 'right' (a loaded ontology IRI/version) or "
                                 + "'right_document' (a document to load and compare against).");
                     }
                     DirectAccessPolicy.NetworkRule importNetwork = null;
                     if (rightDoc != null) {
-                        DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex);
+                        DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex)
+                                .withRequestNetwork(network);
                         rightDoc = rules.authorizeSource(rightDoc).value();
                         importNetwork = rules.importNetworkRule();
                     }
@@ -85,13 +90,18 @@ public final class DiffTools {
                     }
                     int limit = Tools.optInt(a, "limit", DEFAULT_LIMIT);
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
+                    // Validate strictly even when no document is loaded: an invalid enum value is
+                    // never silently ignored.
+                    String network = Tools.optString(a, "network");
+                    DirectAccessPolicy.requestNetworkDenies(network);
                     List<String> unresolvedImports = new ArrayList<>();
                     final OWLOntology loaded;
                     DirectAccessPolicy.NetworkRule importNetwork = null;
                     if (rightDocument == null) {
                         loaded = null;
                     } else {
-                        DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex);
+                        DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex)
+                                .withRequestNetwork(network);
                         rightDocument = rules.authorizeSource(rightDocument).value();
                         importNetwork = rules.importNetworkRule();
                         // Resolve the comparison document's imports the same way load_ontology does:

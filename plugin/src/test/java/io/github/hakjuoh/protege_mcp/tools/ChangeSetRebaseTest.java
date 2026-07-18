@@ -228,6 +228,45 @@ class ChangeSetRebaseTest {
     }
 
     @Test
+    void lockModeIsReplayedSoARebaseCannotWeakenTheLockGate(@TempDir Path temp) throws Exception {
+        OWLOntology ontology = ontology(temp);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+        // lock_mode=required with no beside-document lockfile makes the preview non-committable
+        // with imports.lock_missing; a rebase that dropped the retained argument would silently
+        // weaken that verdict back to a committable preview.
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("operations", List.of(subclassByIri()));
+        args.put("lock_mode", "required");
+        Map<String, Object> preview = structured(
+                ChangeSetTools.preview(ctx, args, noPolicyReadRules()));
+        assertEquals(Boolean.FALSE, preview.get("committable"), preview::toString);
+        assertTrue(String.valueOf(((Map<?, ?>) preview.get("preflight")).get("findings"))
+                .contains("imports.lock_missing"), preview::toString);
+        String originalId = (String) preview.get("change_set_id");
+
+        addAxiom(ontology, df(ontology).getOWLAnnotationAssertionAxiom(df(ontology).getRDFSComment(),
+                IRI.create(ONTOLOGY_IRI + "#Animal"), df(ontology).getOWLLiteral("kingdom")));
+        Map<String, Object> rebased = structured(
+                ChangeSetTools.rebase(ctx, null, Map.of("change_set_id", originalId)));
+
+        assertEquals(originalId, rebased.get("rebased_from"), rebased::toString);
+        assertEquals(Boolean.FALSE, rebased.get("committable"),
+                "the replayed lock_mode must keep the rebased preview exactly as strict: " + rebased);
+        assertTrue(String.valueOf(((Map<?, ?>) rebased.get("preflight")).get("findings"))
+                        .contains("imports.lock_missing"),
+                "the rebase must reproduce the exact lock verdict: " + rebased);
+    }
+
+    /** No-policy request rules for path authorization (project read only, compat mode on). */
+    private static DirectAccessPolicy.Rules noPolicyReadRules() {
+        return new DirectAccessPolicy.Rules(
+                io.github.hakjuoh.protege_mcp.policy.ProjectPolicy.notFound(),
+                new io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal(1, "test",
+                        "test-client", "Test",
+                        java.util.Set.of(DirectAccessPolicy.PROJECT_READ), null));
+    }
+
+    @Test
     void curationRebaseAbsorbsAConcurrentlyAssertedAxiomAsANoOp(@TempDir Path temp)
             throws Exception {
         OWLOntology ontology = ontology(temp);

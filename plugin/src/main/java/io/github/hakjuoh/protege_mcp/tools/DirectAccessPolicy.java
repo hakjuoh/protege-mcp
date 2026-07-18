@@ -39,6 +39,37 @@ final class DirectAccessPolicy {
     static final String NETWORK = "network:access";
     static final String LOCAL_ADMIN = "local:admin";
 
+    /**
+     * The single most-authoritative source of a network denial, carried on every composed
+     * {@link NetworkRule} so blockers and catalog gates attribute a refusal to its actual cause
+     * (ADR 0005 decision 3). Administrative sources outrank the request argument: a caller who also
+     * passed {@code network=deny} would still be denied after removing it, so the denial names the
+     * constraint that actually holds. {@code REQUEST} is stored only when the base posture was
+     * unconditionally open (allowed with no host allowlist): over an allowlisted-allow base the
+     * policy already confines the request-independent posture, so the composed denial carries
+     * {@code ALLOWED_HOSTS} and the catalog/blocker attribution keeps naming the reviewed policy.
+     */
+    enum DenialSource {
+        /** The rule allows network access (a per-host allowlist may still deny individual URIs). */
+        NONE,
+        /** The caller's own {@code network=deny} request argument over an unconditionally open base. */
+        REQUEST,
+        /** The effective policy's {@code network.default} / {@code imports.network} deny. */
+        POLICY,
+        /**
+         * The policy's host allowlist confines the posture. Stored when a request-level deny is
+         * composed onto an allowed-but-allowlisted base; blockers also use the same attribution
+         * when a specific host is refused under an otherwise-allowed rule.
+         */
+        ALLOWED_HOSTS,
+        /** The authenticated principal lacks {@code network:access}. */
+        CAPABILITY,
+        /** The loaded project policy is invalid; network authorization fails closed. */
+        INVALID_POLICY,
+        /** No policy is loaded and the local-admin compatibility profile/preference is not active. */
+        COMPATIBILITY_PREFERENCE
+    }
+
     private DirectAccessPolicy() {
     }
 
@@ -185,11 +216,34 @@ final class DirectAccessPolicy {
         return value instanceof AuthenticatedPrincipal ? (AuthenticatedPrincipal) value : null;
     }
 
+    /**
+     * Parse the optional request-level {@code network} argument. Strict by contract: only
+     * {@code deny} and {@code allow} (case-insensitively) are accepted; an absent/blank argument is
+     * the released behavior. Returns true exactly when the request denies network access.
+     */
+    static boolean requestNetworkDenies(String requested) {
+        if (requested == null || requested.trim().isEmpty()) {
+            return false;
+        }
+        String normalized = requested.trim().toLowerCase(Locale.ROOT);
+        if ("deny".equals(normalized)) {
+            return true;
+        }
+        if ("allow".equals(normalized)) {
+            // ADR 0005 decision 3: allow merely abstains from denying. It never overrides a policy
+            // deny, an invalid-policy fail-closed posture, a missing capability, or a restricted
+            // no-policy state; under an unrestricted no-policy profile it is a no-op affirmation.
+            return false;
+        }
+        throw new ToolArgException("Invalid network '" + requested + "'; expected deny or allow.");
+    }
+
     static final class Rules {
         private final ProjectPolicy policy;
         private final AuthenticatedPrincipal principal;
         private final boolean unrestrictedNoPolicyPaths;
         private final Path authorizedPolicyPath;
+        private final boolean requestNetworkDeny;
 
         Rules(ProjectPolicy policy, AuthenticatedPrincipal principal) {
             this(policy, principal, true);
@@ -202,10 +256,29 @@ final class DirectAccessPolicy {
 
         private Rules(ProjectPolicy policy, AuthenticatedPrincipal principal,
                 boolean unrestrictedNoPolicyPaths, Path authorizedPolicyPath) {
+            this(policy, principal, unrestrictedNoPolicyPaths, authorizedPolicyPath, false);
+        }
+
+        private Rules(ProjectPolicy policy, AuthenticatedPrincipal principal,
+                boolean unrestrictedNoPolicyPaths, Path authorizedPolicyPath,
+                boolean requestNetworkDeny) {
             this.policy = policy;
             this.principal = principal;
             this.unrestrictedNoPolicyPaths = unrestrictedNoPolicyPaths;
             this.authorizedPolicyPath = authorizedPolicyPath;
+            this.requestNetworkDeny = requestNetworkDeny;
+        }
+
+        /**
+         * Compose the optional request-level {@code network=deny|allow} argument into these rules
+         * (ADR 0005 decision 3, most-restrictive-wins). {@code deny} denies every network fetch this
+         * request would make; {@code allow} (and an absent argument) changes nothing.
+         */
+        Rules withRequestNetwork(String requested) {
+            if (!requestNetworkDenies(requested)) {
+                return this;
+            }
+            return new Rules(policy, principal, unrestrictedNoPolicyPaths, authorizedPolicyPath, true);
         }
 
         ProjectPolicy policy() {
@@ -309,6 +382,25 @@ final class DirectAccessPolicy {
                 throw new ToolArgException("Network document access requires capability " + NETWORK + ".");
             }
             if (!rule.allowed()) {
+                if (rule.denialSource() == DenialSource.REQUEST) {
+                    // The explicit error PLAN §8.4 requires for the root document: the caller's own
+                    // request denies the fetch, never a silent partial load — and never a message
+                    // that tells the caller to loosen the reviewed policy.
+                    throw new ToolArgException("Network access is denied by the request argument "
+                            + "network=deny.");
+                }
+                if (rule.denialSource() == DenialSource.ALLOWED_HOSTS) {
+                    // A request deny composed over an allowlisted-allow policy: keep the released
+                    // per-host verdict for a host the allowlist would refuse anyway; a host inside
+                    // the allowlist is denied only by the caller's own request.
+                    String host = normalizedHost(uri);
+                    if (host == null || !rule.allowedHosts().contains(host)) {
+                        throw new ToolArgException("Network host '" + (host == null ? "(none)" : host)
+                                + "' is not present in network.allowed_hosts.");
+                    }
+                    throw new ToolArgException("Network access is denied by the request argument "
+                            + "network=deny.");
+                }
                 if (!policy.loaded()) {
                     // No policy exists, so there is no network.default/imports.network to blame. The
                     // no-policy fallback allows a remote document only for a local-admin principal with
@@ -332,15 +424,41 @@ final class DirectAccessPolicy {
         }
 
         private NetworkRule networkRule(boolean importFetch) {
+            NetworkRule base = baseNetworkRule(importFetch);
+            if (!requestNetworkDeny || !base.allowed()) {
+                // Either no request-level deny, or an administrative source already denies — the
+                // administrative denial is the one that holds even without the request argument, so
+                // its attribution stands (most-authoritative denial, ADR 0005 decision 3).
+                return base;
+            }
+            // REQUEST is attributed only when the base posture was unconditionally open. Over an
+            // allowlisted-allow base the policy already restricted the posture (the catalog
+            // presence gate was engaged with or without the request), so the composed denial keeps
+            // the allowlist attribution — advice to drop the request argument would be wrong there.
+            // Redirect coupling deliberately unchanged: a non-empty allowlist already disabled
+            // redirects, and with the rule denied no fetch happens either way.
+            return new NetworkRule(false, base.allowedHosts(), base.followRedirects(),
+                    base.capabilityAllowed(), this,
+                    base.allowedHosts().isEmpty() ? DenialSource.REQUEST
+                            : DenialSource.ALLOWED_HOSTS);
+        }
+
+        private NetworkRule baseNetworkRule(boolean importFetch) {
             boolean capabilityAllowed = has(NETWORK);
             if (policy.loaded() && !policy.valid()) {
                 // Import blockers consult this rule non-exceptionally; fail closed without throwing.
-                return new NetworkRule(false, Collections.emptySet(), false, false, this);
+                // The denial is the invalid policy itself — capabilityAllowed=false only mirrors the
+                // released fail-closed shape and must not be attributed as a missing capability.
+                return new NetworkRule(false, Collections.emptySet(), false, false, this,
+                        DenialSource.INVALID_POLICY);
             }
             if (!policy.loaded()) {
                 boolean compatibility = unrestrictedNoPolicyPaths && has(LOCAL_ADMIN);
-                return new NetworkRule(compatibility && capabilityAllowed,
-                        Collections.emptySet(), true, capabilityAllowed, this);
+                boolean allowed = compatibility && capabilityAllowed;
+                return new NetworkRule(allowed, Collections.emptySet(), true, capabilityAllowed, this,
+                        allowed ? DenialSource.NONE
+                                : !capabilityAllowed ? DenialSource.CAPABILITY
+                                : DenialSource.COMPATIBILITY_PREFERENCE);
             }
             Map<String, Object> network = object(policy.effective(), "network");
             Map<String, Object> imports = object(policy.effective(), "imports");
@@ -350,10 +468,13 @@ final class DirectAccessPolicy {
             for (String host : strings(network.get("allowed_hosts"))) {
                 hosts.add(stripTrailingDot(host.toLowerCase(Locale.ROOT)));
             }
+            boolean effectiveAllowed = allowed && capabilityAllowed;
             // OWLAPI does not expose a redirect target callback. When a host allowlist is active,
             // following redirects could leave the allowlist, so callers must disable redirects.
-            return new NetworkRule(allowed && capabilityAllowed,
-                    Collections.unmodifiableSet(hosts), hosts.isEmpty(), capabilityAllowed, this);
+            return new NetworkRule(effectiveAllowed,
+                    Collections.unmodifiableSet(hosts), hosts.isEmpty(), capabilityAllowed, this,
+                    effectiveAllowed ? DenialSource.NONE
+                            : !capabilityAllowed ? DenialSource.CAPABILITY : DenialSource.POLICY);
         }
 
         private Path path(String configured, boolean write, boolean derivedFromOpenDocument) {
@@ -432,10 +553,20 @@ final class DirectAccessPolicy {
     record Source(String value, boolean network) { }
 
     record NetworkRule(boolean allowed, Set<String> allowedHosts, boolean followRedirects,
-            boolean capabilityAllowed, Rules filesystemRules) {
+            boolean capabilityAllowed, Rules filesystemRules, DenialSource denialSource) {
         NetworkRule(boolean allowed, Set<String> allowedHosts, boolean followRedirects,
                 boolean capabilityAllowed) {
             this(allowed, allowedHosts, followRedirects, capabilityAllowed, null);
+        }
+
+        NetworkRule(boolean allowed, Set<String> allowedHosts, boolean followRedirects,
+                boolean capabilityAllowed, Rules filesystemRules) {
+            // Compatibility constructors predate the denial-source discriminator; derive the source
+            // exactly the way the released blocker attribution did (capability first, then policy),
+            // so legacy-constructed denied rules keep their released attribution strings.
+            this(allowed, allowedHosts, followRedirects, capabilityAllowed, filesystemRules,
+                    allowed ? DenialSource.NONE
+                            : !capabilityAllowed ? DenialSource.CAPABILITY : DenialSource.POLICY);
         }
 
         boolean permits(URI uri) {

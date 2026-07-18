@@ -531,6 +531,167 @@ class OntologyDocumentToolsPolicyGateTest {
         }
     }
 
+    @Test
+    void requestDenyBlocksRemoteImportsUnderAnOpenPolicyWithRequestAttribution(@TempDir Path temp)
+            throws Exception {
+        Path project = Files.createDirectories(temp.resolve("project"));
+        Path root = project.resolve("root.ttl");
+        Files.writeString(root, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/root> a owl:Ontology ;
+                    owl:imports <https://network-must-not-be-used.invalid/import.ttl> .
+                """);
+        DirectAccessPolicy.Rules rules = openNetworkRules(project).withRequestNetwork("deny");
+
+        for (Method loader : loaders()) {
+            Throwable denied = assertThrows(Throwable.class,
+                    () -> invoke(loader, root.toString(), 1_000, MissingImportsMode.WARN,
+                            List.of(), rules.importNetworkRule()));
+            assertInstanceOf(ToolArgException.class, denied);
+            assertTrue(denied.getMessage().contains("request network=deny"), denied.getMessage());
+            // A request-caused refusal must never train the user to loosen the reviewed policy.
+            assertTrue(!denied.getMessage().contains("change the reviewed policy"),
+                    denied.getMessage());
+            assertTrue(denied.getMessage().contains("network-must-not-be-used.invalid"),
+                    denied.getMessage());
+        }
+
+        // network=allow is a no-op: the open policy keeps resolving nothing-to-fetch loads.
+        Files.writeString(root, ontology("https://example.org/root"));
+        DirectAccessPolicy.Rules affirmed = openNetworkRules(project).withRequestNetwork("allow");
+        for (Method loader : loaders()) {
+            assertDoesNotThrow(() -> invoke(loader, root.toString(), 1_000,
+                    MissingImportsMode.ERROR, List.of(), affirmed.importNetworkRule()));
+        }
+    }
+
+    @Test
+    void requestDenyEngagesTheCatalogPresenceGateAndNamesTheRequest(@TempDir Path temp)
+            throws Exception {
+        // A urn: import resolvable ONLY through a local <nextCatalog> delegation chain (the network
+        // mapper never touches urn:). Under the fully-open policy the strict gate stays off and the
+        // delegation resolves; a request-level deny must engage the presence gate for that
+        // otherwise-open policy, and the refusal must name the request — not the reviewed policy —
+        // as the confining posture.
+        Path project = Files.createDirectories(temp.resolve("project"));
+        String imported = "urn:example:catalog-only-import";
+        Files.writeString(project.resolve("imported.ttl"), ontology(imported));
+        Path root = project.resolve("root.ttl");
+        Files.writeString(root, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/root> a owl:Ontology ; owl:imports <%s> .
+                """.formatted(imported));
+        Files.writeString(project.resolve("catalog-v001.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+                  <nextCatalog catalog="sub/catalog-v001.xml"/>
+                </catalog>
+                """);
+        Files.createDirectories(project.resolve("sub"));
+        Files.writeString(project.resolve("sub/catalog-v001.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+                  <uri name="%s" uri="../imported.ttl"/>
+                </catalog>
+                """.formatted(imported));
+        DirectAccessPolicy.Rules open = openNetworkRules(project);
+
+        for (Method loader : loaders()) {
+            assertDoesNotThrow(() -> invoke(loader, root.toString(), 2_000,
+                    MissingImportsMode.ERROR, List.of(), open.importNetworkRule()),
+                    "sanity: the delegation catalog resolves under the fully-open policy");
+        }
+        DirectAccessPolicy.Rules denied = open.withRequestNetwork("deny");
+        for (Method loader : loaders()) {
+            Throwable refused = assertThrows(Throwable.class,
+                    () -> invoke(loader, root.toString(), 2_000, MissingImportsMode.WARN,
+                            List.of(), denied.importNetworkRule()));
+            assertInstanceOf(ToolArgException.class, refused);
+            assertTrue(refused.getMessage().contains("the request's network=deny argument"),
+                    refused.getMessage());
+            assertTrue(!refused.getMessage().contains("a confining project policy"),
+                    refused.getMessage());
+        }
+    }
+
+    @Test
+    void requestDenyOverAnAllowlistedPolicyKeepsThePolicyCatalogAttribution(@TempDir Path temp)
+            throws Exception {
+        // A host allowlist already engages the strict catalog presence gate WITHOUT the request, so
+        // a composed request deny must not repaint the refusal as request-caused — advising the
+        // caller to drop the argument would not reopen the gate.
+        Path project = Files.createDirectories(temp.resolve("project"));
+        String imported = "urn:example:allowlisted-catalog-import";
+        Files.writeString(project.resolve("imported.ttl"), ontology(imported));
+        Path root = project.resolve("root.ttl");
+        Files.writeString(root, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/root> a owl:Ontology ; owl:imports <%s> .
+                """.formatted(imported));
+        Files.writeString(project.resolve("catalog-v001.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+                  <nextCatalog catalog="sub/catalog-v001.xml"/>
+                </catalog>
+                """);
+        Files.createDirectories(project.resolve("sub"));
+        Files.writeString(project.resolve("sub/catalog-v001.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+                  <uri name="%s" uri="../imported.ttl"/>
+                </catalog>
+                """.formatted(imported));
+        DirectAccessPolicy.Rules denied =
+                allowlistRules(project, "example.org").withRequestNetwork("deny");
+
+        for (Method loader : loaders()) {
+            Throwable refused = assertThrows(Throwable.class,
+                    () -> invoke(loader, root.toString(), 2_000, MissingImportsMode.WARN,
+                            List.of(), denied.importNetworkRule()));
+            assertInstanceOf(ToolArgException.class, refused);
+            assertTrue(refused.getMessage().contains("a confining project policy"),
+                    refused.getMessage());
+            assertTrue(!refused.getMessage().contains("network=deny argument"),
+                    "the allowlist confines the gate with or without the request: "
+                            + refused.getMessage());
+        }
+    }
+
+    @Test
+    void invalidPolicyBlockerDenialNamesThePolicyNotAMissingCapability(@TempDir Path temp)
+            throws Exception {
+        Path project = Files.createDirectories(temp.resolve("project"));
+        Path root = project.resolve("root.ttl");
+        Files.writeString(root, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/root> a owl:Ontology ;
+                    owl:imports <https://network-must-not-be-used.invalid/import.ttl> .
+                """);
+        Path policyPath = project.resolve(".protege-mcp/project.yaml");
+        ProjectPolicyFixtures.writePolicy(policyPath,
+                ProjectPolicyFixtures.minimalPolicy("document-gate-invalid",
+                        "https://example.org/root")
+                        + "modules:\n  - ontology_iri: https://example.org/missing\n"
+                        + "    path: missing.rdf\n");
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+        assertTrue(policy.loaded() && !policy.valid(),
+                () -> "fixture must be loaded-but-invalid: " + policy.issues());
+        DirectAccessPolicy.Rules rules = new DirectAccessPolicy.Rules(policy,
+                new AuthenticatedPrincipal(1, "test", "test-client", "Test",
+                        Set.of(DirectAccessPolicy.PROJECT_READ, DirectAccessPolicy.NETWORK), null));
+
+        for (Method loader : loaders()) {
+            Throwable denied = assertThrows(Throwable.class,
+                    () -> invoke(loader, root.toString(), 1_000, MissingImportsMode.WARN,
+                            List.of(), rules.importNetworkRule()));
+            assertInstanceOf(ToolArgException.class, denied);
+            assertTrue(denied.getMessage().contains("the effective project policy is invalid"),
+                    denied.getMessage());
+            assertTrue(!denied.getMessage().contains("lacks network:access"),
+                    "the released misattribution must be gone: " + denied.getMessage());
+        }
+    }
+
     // ------------------------------------------------------------------ fixtures
 
     /** A valid loaded policy: network open to any host, but the filesystem confined to the project. */

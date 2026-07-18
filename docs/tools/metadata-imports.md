@@ -90,6 +90,7 @@ Adds an `owl:imports` declaration to the active ontology. The result's `resolved
 | `iri` | string | yes | — | Imported ontology IRI. |
 | `document` | string | no | — | Optional path/URL/IRI of the import's document to load now so the import resolves (keeps the active ontology unchanged). |
 | `connection_timeout_ms` | integer | no | `15000` | Document connection timeout when `document` is given. |
+| `network` | string | no | — | Request-level network control for loading `document`, composed most-restrictive-wins with the project policy: `deny` refuses every remote fetch with an explicit error attributed to `request network=deny`; `allow` abstains and never overrides a policy deny, an invalid policy, a missing `network:access` capability, or a restricted no-policy state. |
 
 **Returns**
 

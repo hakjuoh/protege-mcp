@@ -40,6 +40,8 @@ Missing imports use the backward-compatible `warn` mode by default: parsing succ
 | `keep_active` | boolean | no | `false` | Keep the current active ontology instead of switching to the loaded document. Use this to resolve an unresolved import without losing your edit target. |
 | `connection_timeout_ms` | integer | no | `15000` | Remote document connection timeout. |
 | `missing_imports` | string | no | `warn` | `warn` reports and continues; `error` fails before changing the workspace; `silent` continues without reporting missing IRIs. |
+| `network` | string | no | — | Request-level network control, composed most-restrictive-wins with the project policy: `deny` refuses every remote fetch this load would need (the root document and each import) with an explicit error attributed to `request network=deny`; `allow` abstains and never overrides a policy deny, an invalid policy, a missing `network:access` capability, or a restricted no-policy state. |
+| `lock_mode` | string | no | `ignore` | Verify the TO-BE-LOADED closure's coordinates and SHA-256 hashes BEFORE the workspace is mutated. The lockfile resolves against the loaded document (beside-document `imports.lock.json`; the policy-declared lockfile when the loaded document is the project's resolved root artifact). `verify` skips cleanly with a note when no lockfile exists; `required` refuses the load in that state. A mismatch refuses the load and changes nothing. |
 
 **Returns**
 
@@ -56,9 +58,10 @@ Missing imports use the backward-compatible `warn` mode by default: parsing succ
 - `missing_imports_mode`: string — effective `warn`, `error`, or `silent` policy (`error` only returns an error result when an import is missing).
 - `resolved_imports`: array of import-edge objects identifying every declaration resolved while loading, including source/target ontology and document IRIs, depth, and local/remote source type.
 - `unresolved_imports`: array of strings — import IRIs that could not load; empty in explicit `silent` mode.
+- `import_lock_verification`: object (only with `lock_mode=verify|required`) — the pre-load lock comparison: on a match `{valid, path, sha256, entry_count, errors, missing_entries, extra_entries, mismatched_entries, lockfile_source}` (plus `lockfile_note` when `lockfile_source` is `beside_document`, stating that a non-policy-pinned lockfile attests accident-safety, not tamper-evidence); when `verify` found no lockfile, `{verified: false, skipped: true, path?, lockfile_source, note}`.
 - `note`: string — reminder that loading is not on the undo stack.
 
-On invalid input (unreadable source, parse failure) the call fails with an error object of the form `{error: "..."}`.
+On invalid input (unreadable source, parse failure) the call fails with an error object of the form `{error: "..."}`. A `lock_mode` mismatch — or `lock_mode=required` with no lockfile — refuses the load the same way, before anything is attached to the workspace.
 
 **Example**
 
@@ -117,6 +120,8 @@ Loads an OWL ontology document from a local path or document IRI/URL and copies 
 | `preview` | boolean | no | `false` | Dry-run: report what the merge would copy/remove without applying anything (works in read-only mode). |
 | `connection_timeout_ms` | integer | no | `15000` | Remote document connection timeout. |
 | `missing_imports` | string | no | `warn` | `warn` reports and continues; `error` fails before changing the active ontology; `silent` continues without reporting missing IRIs. |
+| `network` | string | no | — | Request-level network control, composed most-restrictive-wins with the project policy: `deny` refuses every remote fetch this merge would need (the source document and each import) with an explicit error attributed to `request network=deny`; `allow` abstains and never overrides a policy deny, an invalid policy, a missing `network:access` capability, or a restricted no-policy state. |
+| `lock_mode` | string | no | `ignore` | Verify the parsed document's closure coordinates and SHA-256 hashes BEFORE anything is merged. The lockfile resolves against the loaded document (beside-document `imports.lock.json`; the policy-declared lockfile when the document is the project's resolved root artifact). `verify` skips cleanly with a note when no lockfile exists; `required` refuses the merge in that state. A mismatch refuses the merge and changes nothing. |
 
 **Returns**
 
@@ -129,6 +134,7 @@ Loads an OWL ontology document from a local path or document IRI/URL and copies 
 - `missing_imports_mode`: string — effective `warn`, `error`, or `silent` policy.
 - `resolved_imports`: array of import-edge objects identifying the imports actually resolved while parsing the source document.
 - `unresolved_imports`: array of strings — import IRIs that could not load; empty in explicit `silent` mode.
+- `import_lock_verification`: object (only with `lock_mode=verify|required`) — the pre-merge lock comparison with its `lockfile_source` label (`policy_declared` or `beside_document`, the latter with a `lockfile_note` stating the verification attests accident-safety, not tamper-evidence); when `verify` found no lockfile, a `{verified: false, skipped: true, ...}` note. A mismatch, or `required` with no lockfile, refuses the merge with an error before anything is applied.
 - `active`: object — counts for the active ontology after the merge: `{axioms, logical_axioms, direct_imports, ontology_annotations}`.
 
 With `preview=true` (nothing is applied):

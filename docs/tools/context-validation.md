@@ -199,6 +199,7 @@ Diffs two ontologies at the axiom level — the round-trip safety net for multi-
 | `include_imports` | boolean | no | false | Compare full imports closures instead of just the two ontologies. |
 | `logical_only` | boolean | no | false | Compare logical axioms only, ignoring declarations and annotation assertions. |
 | `limit` | integer | no | 50 | Max axioms to list per side. |
+| `network` | string | no | — | Request-level network control for loading `right_document`, composed most-restrictive-wins with the project policy: `deny` refuses every remote fetch with an explicit error attributed to `request network=deny`; `allow` abstains and never overrides a policy deny, an invalid policy, a missing `network:access` capability, or a restricted no-policy state. |
 
 One of `right` or `right_document` must be supplied.
 
@@ -257,6 +258,7 @@ workspace.
 | `include_imports` | boolean | no | false | Include each side's loaded imports closure. |
 | `mode` | string | no | asserted | Only `asserted` is supported in 0.6. |
 | `limit` | integer | no | 50 | Maximum samples per category. |
+| `network` | string | no | — | Request-level network control for loading `right_document`, composed most-restrictive-wins with the project policy: `deny` refuses every remote fetch with an explicit error attributed to `request network=deny`; `allow` abstains and never overrides a policy deny, an invalid policy, a missing `network:access` capability, or a restricted no-policy state. |
 
 **Returns**
 

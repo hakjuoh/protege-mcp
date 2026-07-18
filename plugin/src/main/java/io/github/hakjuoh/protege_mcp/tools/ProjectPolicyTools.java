@@ -40,7 +40,8 @@ public final class ProjectPolicyTools {
                     Map<String, Object> arguments = Tools.args(req);
                     DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
                             Tools.optString(arguments, "policy_path"));
-                    return ProjectQcTools.run(ctx, rules.authorizedPolicyArguments(arguments), true);
+                    return ProjectQcTools.run(ctx, rules.authorizedPolicyArguments(arguments), true,
+                            rules);
                 });
     }
 

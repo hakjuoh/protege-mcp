@@ -34,7 +34,7 @@ public final class ChangeSetTools {
                     Map<String, Object> arguments = Tools.args(req);
                     DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
                             Tools.optString(arguments, "policy_path"));
-                    return preview(ctx, rules.authorizedPolicyArguments(arguments));
+                    return preview(ctx, rules.authorizedPolicyArguments(arguments), rules);
                 });
         tools.tool("commit_change_set",
                 (ex, req) -> {
@@ -56,13 +56,18 @@ public final class ChangeSetTools {
     }
 
     static CallToolResult preview(ToolContext ctx, Map<String, Object> arguments) {
+        return preview(ctx, arguments, null);
+    }
+
+    static CallToolResult preview(ToolContext ctx, Map<String, Object> arguments,
+            DirectAccessPolicy.Rules accessRules) {
         List<Map<String, Object>> operations = Tools.objList(arguments, "operations");
         boolean strict = Tools.optBool(arguments, "strict", false);
         Map<String, Object> replay = new LinkedHashMap<>();
         replay.put("operations", operations);
         replay.put("strict", strict);
         return previewPrepared(ctx, arguments, mm -> ChangePlanner.plan(mm, operations, strict),
-                KIND_OPERATIONS, replay, null, null);
+                KIND_OPERATIONS, replay, null, null, accessRules);
     }
 
     /** Planner kinds retained per entry so a rebase can re-run the exact producing pipeline. */
@@ -73,17 +78,30 @@ public final class ChangeSetTools {
     /** Shared preview/QC/cache pipeline for low-level and high-level curation planners. */
     static CallToolResult previewPrepared(ToolContext ctx, Map<String, Object> arguments,
             PreparedPlanner planner, String plannerKind, Map<String, Object> replayArguments) {
-        return previewPrepared(ctx, arguments, planner, plannerKind, replayArguments, null, null);
+        return previewPrepared(ctx, arguments, planner, plannerKind, replayArguments, null, null,
+                null);
     }
 
+    /**
+     * {@code accessRules} carries the request-scoped filesystem authorization for a request-level
+     * {@code lock_mode} beside-document lockfile resolution; a caller that supplies none (the
+     * curation planners, whose public schemas carry no lock_mode) fails that resolution closed.
+     */
     static CallToolResult previewPrepared(ToolContext ctx, Map<String, Object> arguments,
             PreparedPlanner planner, String plannerKind, Map<String, Object> replayArguments,
-            ChangeSetStore.Entry rebaseSource, Map<String, Object> extraResultFields) {
+            ChangeSetStore.Entry rebaseSource, Map<String, Object> extraResultFields,
+            DirectAccessPolicy.Rules accessRules) {
         String impact = Tools.optString(arguments, "include_impact");
         if (impact != null && !Set.of("none", "asserted").contains(impact.toLowerCase())) {
             return Tools.error("include_impact must be none or asserted for preview_change_set.");
         }
         boolean assertedImpact = impact == null || "asserted".equalsIgnoreCase(impact);
+        final LockMode lockMode;
+        try {
+            lockMode = LockMode.parse(Tools.optString(arguments, "lock_mode"));
+        } catch (ToolArgException invalid) {
+            return Tools.error(invalid.getMessage());
+        }
         // Every statically-checkable argument is rejected BEFORE any model hop or QC work — an
         // inevitably refused request must not first consume an isolated classification. Read as a
         // LONG: Number.intValue() wraps 2^32+1 to 1, silently converting an absurd ttl into a valid
@@ -123,7 +141,8 @@ public final class ChangeSetTools {
         // it claims to reproduce. Copied here, once, so every producer — present and future —
         // retains them without remembering to.
         Map<String, Object> retainedReplay = new LinkedHashMap<>(replayArguments);
-        for (String preflightShaping : List.of("gates", "timeout_ms", "include_impact")) {
+        for (String preflightShaping : List.of("gates", "timeout_ms", "include_impact",
+                "lock_mode")) {
             if (arguments.containsKey(preflightShaping)) {
                 retainedReplay.put(preflightShaping, arguments.get(preflightShaping));
             }
@@ -173,6 +192,11 @@ public final class ChangeSetTools {
             try {
                 QcRunConfig config = preflightConfig(policyState, arguments,
                         captured.reasonerSelection);
+                if (lockMode.requested()) {
+                    // A no-policy preview still needs the SAME-hop import graph for the requested
+                    // lock verification; project mode captures it anyway.
+                    config = config.withImportReportCapture();
+                }
                 QcSuiteExecution execution = QcSuiteTools.execute(ctx, config,
                         captured.plan.changes());
                 int version = policy.loaded() && policy.effective().get("version") instanceof Number
@@ -181,11 +205,16 @@ public final class ChangeSetTools {
                         version, policy.digest(), policy.loaded());
                 // Preview must fail closed on an incomplete import closure exactly like run_project_qc,
                 // so a change set cannot become committable over a truncated closure.
-                ProjectQcTools.enforceImportIntegrity(policy, execution, preflight);
+                ProjectQcTools.enforceImportIntegrity(policy, execution, preflight, lockMode,
+                        accessRules);
                 if (!"pass".equals(preflight.get("gate"))) {
                     reasons.add("preflight_" + preflight.get("gate"));
                 }
             } catch (RuntimeException e) {
+                // An abort mid-block (e.g. a lock_mode lockfile-resolution refusal) may fire AFTER
+                // strictResult assigned a gate=pass map; a half-built preflight must never be
+                // attached or cached next to the preflight_error reason it contradicts.
+                preflight = null;
                 reasons.add("preflight_error: " + (e.getMessage() == null
                         ? e.getClass().getSimpleName() : e.getMessage()));
             }
@@ -318,7 +347,7 @@ public final class ChangeSetTools {
             extra.put("resolution_verified", true);
             try {
                 return previewPrepared(ctx, preview, planner, source.plannerKind,
-                        source.plannerArguments, source, extra);
+                        source.plannerArguments, source, extra, rules);
             } catch (ToolArgException e) {
                 // A re-plan that cannot even run (a strict minting refusal after a concurrent
                 // delete, an exhausted cache) is a failed rebase, not a transport error: report it
