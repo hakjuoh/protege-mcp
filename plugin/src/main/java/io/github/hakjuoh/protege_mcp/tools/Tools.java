@@ -1,6 +1,5 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,8 +27,8 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
- * Shared helpers for the tool handlers: argument extraction, result/error construction, a small
- * JSON-schema builder, exception-to-error guarding, and entity/IRI resolution + rendering.
+ * Shared helpers for the tool handlers: argument extraction, result/error construction,
+ * exception-to-error guarding, and entity/IRI resolution + rendering.
  */
 public final class Tools {
 
@@ -127,141 +126,6 @@ public final class Tools {
     /** Read {@code key} as a list of object maps (e.g. the {@code annotations} operand). */
     public static List<Map<String, Object>> objList(Map<String, Object> a, String key) {
         return ToolArgs.objList(a, key);
-    }
-
-    // ------------------------------------------------------------------ schema builder
-
-    public static SchemaBuilder schema() {
-        return new SchemaBuilder();
-    }
-
-    public static Map<String, Object> emptySchema() {
-        return ToolSchemas.emptySchema();
-    }
-
-    /** A bare {@code {type:string, description}} property map (for hand-assembled schemas). */
-    public static Map<String, Object> stringProperty(String desc) {
-        return ToolSchemas.stringProperty(desc);
-    }
-
-    /** A bare {@code {type:boolean, description}} property map (for hand-assembled schemas). */
-    public static Map<String, Object> boolProperty(String desc) {
-        return ToolSchemas.boolProperty(desc);
-    }
-
-    /** A bare {@code {type:integer, description}} property map (for hand-assembled schemas). */
-    public static Map<String, Object> intProperty(String desc) {
-        return ToolSchemas.integerProperty(desc);
-    }
-
-    /** Builds a JSON-schema {@code object} as a plain {@code Map} (no Jackson needed). */
-    public static final class SchemaBuilder {
-        private final Map<String, Object> properties = new LinkedHashMap<>();
-        private final List<String> required = new ArrayList<>();
-
-        public SchemaBuilder str(String name, String desc) {
-            return prop(name, "string", desc, false);
-        }
-
-        public SchemaBuilder strReq(String name, String desc) {
-            return prop(name, "string", desc, true);
-        }
-
-        /** Optional string constrained to the listed JSON-Schema enum values. */
-        public SchemaBuilder strEnum(String name, String desc, String... values) {
-            Map<String, Object> p = new LinkedHashMap<>();
-            p.put("type", "string");
-            if (desc != null) {
-                p.put("description", desc);
-            }
-            p.put("enum", List.of(values));
-            properties.put(name, p);
-            return this;
-        }
-
-        public SchemaBuilder integer(String name, String desc) {
-            return prop(name, "integer", desc, false);
-        }
-
-        public SchemaBuilder bool(String name, String desc) {
-            return prop(name, "boolean", desc, false);
-        }
-
-        public SchemaBuilder strArray(String name, String desc) {
-            return arrayProp(name, desc, false);
-        }
-
-        public SchemaBuilder strArrayReq(String name, String desc) {
-            return arrayProp(name, desc, true);
-        }
-
-        /**
-         * An array of annotation objects, each {@code {property, value | value_iri, lang, datatype}},
-         * used as the optional axiom-annotation operand. Mirrors how a single annotation value is
-         * resolved by {@link Tools#buildAnnotation}.
-         */
-        public SchemaBuilder annotationArray(String name, String desc) {
-            Map<String, Object> itemProps = new LinkedHashMap<>();
-            itemProps.put("property", stringProperty("Annotation property: 'rdfs:label', 'rdfs:comment', "
-                    + "or an IRI/name (default rdfs:label)."));
-            itemProps.put("value", stringProperty("Literal text value (omit if value_iri is given)."));
-            itemProps.put("value_iri", stringProperty("IRI-valued annotation: an entity name/IRI or absolute "
-                    + "IRI (alternative to value)."));
-            itemProps.put("lang", stringProperty("Optional language tag for a literal value, e.g. 'en'."));
-            itemProps.put("datatype", stringProperty("Optional datatype IRI/name for a typed literal value."));
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("type", "object");
-            item.put("properties", itemProps);
-            item.put("additionalProperties", false);
-            Map<String, Object> p = new LinkedHashMap<>();
-            p.put("type", "array");
-            p.put("items", item);
-            if (desc != null) {
-                p.put("description", desc);
-            }
-            properties.put(name, p);
-            return this;
-        }
-
-        private SchemaBuilder arrayProp(String name, String desc, boolean req) {
-            Map<String, Object> p = new LinkedHashMap<>();
-            p.put("type", "array");
-            Map<String, Object> items = new LinkedHashMap<>();
-            items.put("type", "string");
-            p.put("items", items);
-            if (desc != null) {
-                p.put("description", desc);
-            }
-            properties.put(name, p);
-            if (req) {
-                required.add(name);
-            }
-            return this;
-        }
-
-        private SchemaBuilder prop(String name, String type, String desc, boolean req) {
-            Map<String, Object> p = new LinkedHashMap<>();
-            p.put("type", type);
-            if (desc != null) {
-                p.put("description", desc);
-            }
-            properties.put(name, p);
-            if (req) {
-                required.add(name);
-            }
-            return this;
-        }
-
-        public Map<String, Object> build() {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("type", "object");
-            m.put("properties", properties);
-            if (!required.isEmpty()) {
-                m.put("required", required);
-            }
-            m.put("additionalProperties", false);
-            return m;
-        }
     }
 
     // ------------------------------------------------------------------ entity resolution

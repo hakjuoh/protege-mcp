@@ -33,6 +33,15 @@ class PromptRegistryTest {
     }
 
     @Test
+    void resourceBackedPromptResolvesMetadataByName() {
+        PromptRegistry registry = new PromptRegistry();
+        assertSame(registry, registry.prompt("audit_ontology", args -> "rendered"));
+        SyncPromptSpecification spec = registry.build().get(0);
+        assertEquals("audit_ontology", spec.prompt().name());
+        assertTrue(spec.prompt().description().startsWith("Audit the active ontology"));
+    }
+
+    @Test
     void buildStartsEmptyAndAccumulatesInRegistrationOrder() {
         PromptRegistry registry = new PromptRegistry();
         assertTrue(registry.build().isEmpty(), "a fresh registry holds no specs");

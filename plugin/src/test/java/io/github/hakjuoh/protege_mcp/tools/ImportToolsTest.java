@@ -175,6 +175,7 @@ class ImportToolsTest {
         List<SyncToolSpecification> specs = registry.build();
         assertEquals(1, specs.size());
         assertEquals("inspect_imports", specs.get(0).tool().name());
-        assertEquals(Tools.emptySchema(), specs.get(0).tool().inputSchema());
+        assertEquals(Map.of("type", "object", "additionalProperties", false),
+                specs.get(0).tool().inputSchema());
     }
 }

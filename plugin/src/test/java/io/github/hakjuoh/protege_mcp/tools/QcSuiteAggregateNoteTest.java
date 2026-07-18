@@ -24,8 +24,8 @@ class QcSuiteAggregateNoteTest {
 
     @Test
     void zeroRanStagesAnnotatesTheVacuousPass() {
-        List<QcSuiteTools.StageResult> onlySkipped =
-                List.of(QcSuiteTools.StageResult.skipped("shacl", "no SHACL shapes supplied"));
+        List<QcStageResult> onlySkipped =
+                List.of(QcStageResult.skipped("shacl", "no SHACL shapes supplied"));
         Map<String, Object> m = structured(QcSuiteTools.aggregate(onlySkipped, "error"));
         assertEquals(0, ((Number) m.get("stages_ran")).intValue());
         assertEquals("pass", m.get("gate"));
@@ -34,8 +34,8 @@ class QcSuiteAggregateNoteTest {
 
     @Test
     void aStageThatRanCarriesNoVacuousNote() {
-        List<QcSuiteTools.StageResult> ran =
-                List.of(new QcSuiteTools.StageResult("reasoner", true, QcSuiteTools.PASS, null, null));
+        List<QcStageResult> ran =
+                List.of(new QcStageResult("reasoner", true, QcSuiteTools.PASS, null, null));
         Map<String, Object> m = structured(QcSuiteTools.aggregate(ran, "error"));
         assertEquals(1, ((Number) m.get("stages_ran")).intValue());
         assertNull(m.get("note"));

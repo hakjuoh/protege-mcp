@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Arrays;
@@ -25,12 +26,14 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
+import io.github.hakjuoh.protege_mcp.catalog.McpCatalog;
+
 /**
  * Supplementary coverage for {@link PreviewTools}, expanding on {@link PreviewToolsTest} (which only
  * covers two {@link PreviewTools#newEntities} cases). Focuses on the remaining pure branches of
  * {@code newEntities} (built-in filtering, empty signature, declared-only vs signature-only
  * knownness, multi-ontology closures, fully-new axioms) and the full structure produced by
- * {@link PreviewTools#operationsSchema}.
+ * the resource-backed {@code preview_changes} input schema.
  */
 class PreviewToolsCoverageTest {
 
@@ -185,7 +188,7 @@ class PreviewToolsCoverageTest {
 
     @Test
     void operationsSchemaTopLevelObjectStructure() {
-        Map<String, Object> schema = PreviewTools.operationsSchema();
+        Map<String, Object> schema = previewSchema();
         assertEquals("object", schema.get("type"), "top-level schema is an object");
         assertEquals(Boolean.FALSE, schema.get("additionalProperties"),
                 "additionalProperties is false");
@@ -196,7 +199,7 @@ class PreviewToolsCoverageTest {
     @Test
     @SuppressWarnings("unchecked")
     void operationsSchemaHasOperationsArrayField() {
-        Map<String, Object> schema = PreviewTools.operationsSchema();
+        Map<String, Object> schema = previewSchema();
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");
         assertNotNull(props, "properties present");
         assertTrue(props.containsKey("operations"), "operations property present");
@@ -210,31 +213,30 @@ class PreviewToolsCoverageTest {
     @Test
     @SuppressWarnings("unchecked")
     void operationsSchemaItemSchemaIsAxiomSchemaWithOpProperty() {
-        Map<String, Object> schema = PreviewTools.operationsSchema();
+        Map<String, Object> schema = previewSchema();
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");
         Map<String, Object> operations = (Map<String, Object>) props.get("operations");
         Map<String, Object> item = (Map<String, Object>) operations.get("items");
         assertEquals("object", item.get("type"), "each item is an object schema");
         Map<String, Object> itemProps = (Map<String, Object>) item.get("properties");
-        // 'op' is injected on top of the base Axioms.schema() properties.
+        // 'op' extends the shared axiom operand shape.
         assertTrue(itemProps.containsKey("op"), "op property injected into item schema");
         Map<String, Object> op = (Map<String, Object>) itemProps.get("op");
         assertEquals("string", op.get("type"), "op is a string property");
         assertEquals("add (default) or remove.", op.get("description"),
                 "op carries the documented description");
-        // The base axiom operands are still present (proving it reuses Axioms.schema()).
-        assertTrue(itemProps.containsKey("axiom_type"), "axiom_type carried over from Axioms.schema()");
-        assertTrue(itemProps.containsKey("sub"), "sub carried over from Axioms.schema()");
+        assertTrue(itemProps.containsKey("axiom_type"), "axiom_type is present");
+        assertTrue(itemProps.containsKey("sub"), "sub is present");
     }
 
     @Test
-    void operationsSchemaIsFreshEachCallSoAxiomsSchemaIsNotMutatedAcrossCalls() {
-        // Each call reconstructs the schema from Axioms.schema(); mutating one result's map must not
-        // corrupt a second independent call.
-        Map<String, Object> first = PreviewTools.operationsSchema();
-        first.put("injected", "x");
-        Map<String, Object> second = PreviewTools.operationsSchema();
-        assertFalse(second.containsKey("injected"), "a second call is independent of the first");
+    void operationsSchemaIsImmutableCatalogData() {
+        assertThrows(UnsupportedOperationException.class,
+                () -> previewSchema().put("injected", "x"));
+    }
+
+    private static Map<String, Object> previewSchema() {
+        return McpCatalog.get().tool("preview_changes").inputSchema();
     }
 
     // ------------------------------------------------------------------ preview via Axioms.build (fake mm)

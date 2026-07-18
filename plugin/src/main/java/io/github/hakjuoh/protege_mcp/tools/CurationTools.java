@@ -70,37 +70,7 @@ public final class CurationTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("create_term",
-                "Create a class WITH its curation suite in one undoable step (vs. create_class + several "
-                        + "add_axiom calls): mints the class (same 'iri'/'namespace'/'label'/'label_lang'/"
-                        + "'no_label' options as create_class), adds a definition ('definition', default "
-                        + "property rdfs:comment — set 'definition_property' e.g. skos:definition), any "
-                        + "extra 'annotations', one or more 'parents' (each a class name, IRI or "
-                        + "Manchester restriction such as 'hasPart some Cell'), and optional "
-                        + "'equivalent_to' class expressions for a defined class. Reports the created "
-                        + "term and any 'new_entities' the operands introduced; strict=true refuses to "
-                        + "mint an unrecognised operand.",
-                Tools.schema()
-                        .str("name", "Short name — the IRI local part when minting, and the default label. "
-                                + "Optional when a full 'iri' is given (its local part becomes the name).")
-                        .str("iri", "Full IRI to use (optional; overrides 'namespace').")
-                        .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional).")
-                        .str("label", "rdfs:label text (default: 'name').")
-                        .str("label_lang", "Language tag for the rdfs:label, e.g. 'en' (default: none).")
-                        .bool("no_label", "Do not add any rdfs:label (default false).")
-                        .str("definition", "Definition text (optional).")
-                        .str("definition_property", "Annotation property for the definition (default "
-                                + "rdfs:comment; e.g. skos:definition, or your ontology's own definition "
-                                + "property).")
-                        .str("definition_lang", "Language tag for the definition literal (optional).")
-                        .strArray("parents", "Superclasses: each a class name, IRI or Manchester class "
-                                + "expression (optional).")
-                        .strArray("equivalent_to", "Equivalent class expressions for a defined class "
-                                + "(each a name, IRI or Manchester class expression; optional).")
-                        .annotationArray("annotations", "Extra annotations for the term (array of "
-                                + "{property, value | value_iri, lang, datatype}).")
-                        .bool("strict", WriteTools.STRICT_DESC)
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     boolean strict = Tools.optBool(a, "strict", false);
                     return WriteTools.write(ctx, "create_term " + WriteTools.summaryName(a), mm -> {
@@ -118,28 +88,9 @@ public final class CurationTools {
                                 defProp, defText, defLang, extra));
                         return applyCuration(mm, ont, changes, strict, cls, Tools.json());
                     });
-                }));
-
+                });
         tools.tool("create_terms",
-                "Create MANY classes in one undoable transaction (batch term-request intake) — the array "
-                        + "form of create_term. 'terms' is an array; each item takes the same fields as "
-                        + "create_term ('name', optional when a full 'iri' is given, plus "
-                        + "'iri'/'namespace'/'label'/'label_lang'/"
-                        + "'no_label'/'definition'/'definition_property'/'definition_lang'/'parents'/"
-                        + "'equivalent_to'/'annotations'). Top-level 'namespace' and 'definition_property' "
-                        + "are DEFAULTS applied to any term that omits its own (mint IRIs in a shared "
-                        + "namespace, set one definition property for all). The whole batch is applied as a "
-                        + "SINGLE undoable change (one undo_change reverts every term) and is ATOMIC: if any "
-                        + "term is malformed, nothing is applied. strict=true refuses the whole batch if any "
-                        + "operand would be minted as a new, empty entity (a typo guard). Note: to make one "
-                        + "term reference ANOTHER term in the SAME batch (e.g. as a parent), give that other "
-                        + "term an explicit 'iri'/'namespace' and reference it by its full IRI — nothing is "
-                        + "in the ontology until the batch commits, so a bare name for a same-batch term "
-                        + "won't resolve. Optionally set verify=report|rollback to classify the reasoner "
-                        + "after applying and detect a regression (as in apply_changes); rollback undoes "
-                        + "the whole batch when one is found.",
-                createTermsSchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     List<Map<String, Object>> termSpecs = Tools.objList(a, "terms");
                     if (termSpecs.isEmpty()) {
@@ -175,42 +126,9 @@ public final class CurationTools {
                     }
                     return ApplyVerify.verifiedApply(ctx, verify, timeout, summary, "create_terms",
                             mm -> createTermsBatch(mm, termSpecs, strict, defaultNamespace, defaultDefProp));
-                }));
-
+                });
         tools.tool("create_property",
-                "Create an object or data property WITH its axioms in one undoable step: mints the "
-                        + "property ('property_type' object|data, default object; same "
-                        + "'iri'/'namespace'/'label'/'label_lang'/'no_label' options), and optionally "
-                        + "adds a 'definition', extra 'annotations', a 'domain' (class expression), a "
-                        + "'range' (class expression for object; datatype / Manchester data range for "
-                        + "data), 'super_properties', 'characteristics' (object: functional, "
-                        + "inverse_functional, transitive, symmetric, asymmetric, reflexive, "
-                        + "irreflexive; data: functional) and an 'inverse_of' (object only). Reports "
-                        + "'new_entities'; strict=true refuses to mint an unrecognised operand.",
-                Tools.schema()
-                        .str("name", "Short name — the IRI local part when minting, and the default label. "
-                                + "Optional when a full 'iri' is given (its local part becomes the name).")
-                        .str("property_type", "object (default) | data.")
-                        .str("iri", "Full IRI to use (optional; overrides 'namespace').")
-                        .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional).")
-                        .str("label", "rdfs:label text (default: 'name').")
-                        .str("label_lang", "Language tag for the rdfs:label (optional).")
-                        .bool("no_label", "Do not add any rdfs:label (default false).")
-                        .str("definition", "Definition text (optional).")
-                        .str("definition_property", "Annotation property for the definition (default "
-                                + "rdfs:comment).")
-                        .str("definition_lang", "Language tag for the definition literal (optional).")
-                        .str("domain", "Domain class expression (name, IRI or Manchester; optional).")
-                        .str("range", "Range: a class expression for an object property, or a datatype / "
-                                + "Manchester data range (e.g. xsd:integer[>= 0]) for a data property.")
-                        .strArray("super_properties", "Super-properties this is a subproperty of (optional).")
-                        .strArray("characteristics", "Property characteristics to assert (optional).")
-                        .str("inverse_of", "Inverse object property (object properties only; optional).")
-                        .annotationArray("annotations", "Extra annotations (array of {property, value | "
-                                + "value_iri, lang, datatype}).")
-                        .bool("strict", WriteTools.STRICT_DESC)
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     boolean strict = Tools.optBool(a, "strict", false);
                     String type = propertyType(a);
@@ -224,27 +142,9 @@ public final class CurationTools {
                                 : objectPropertyAxioms(mm, df, ont, (OWLObjectProperty) prop, a));
                         return applyCuration(mm, ont, changes, strict, prop, Tools.json());
                     });
-                }));
-
+                });
         tools.tool("create_properties",
-                "Create MANY object/data properties in ONE undoable transaction — the array form of "
-                        + "create_property. 'properties' is an array; each item takes the same fields as "
-                        + "create_property ('name', optional when a full 'iri' is given, plus "
-                        + "property_type/iri/namespace/label/"
-                        + "no_label/definition/definition_property/domain/range/super_properties/"
-                        + "characteristics/inverse_of/annotations). Top-level 'namespace', "
-                        + "'definition_property' and 'property_type' are DEFAULTS applied to any item that "
-                        + "omits its own. The whole batch is a SINGLE undoable change (one undo_change "
-                        + "reverts every property) and ATOMIC: if any item is malformed, nothing is "
-                        + "applied. strict=true refuses the whole batch if any operand would be minted as a "
-                        + "new, empty entity. To reference another property in THIS batch (e.g. as "
-                        + "inverse_of / super_properties), give it an explicit iri/namespace and reference "
-                        + "its full IRI — nothing is in the ontology until the batch commits. Optionally "
-                        + "set verify=report|rollback to classify the reasoner after applying and detect "
-                        + "a regression (as in apply_changes); rollback undoes the whole batch when one "
-                        + "is found.",
-                createPropertiesSchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     List<Map<String, Object>> specs = Tools.objList(a, "properties");
                     if (specs.isEmpty()) {
@@ -280,28 +180,9 @@ public final class CurationTools {
                     }
                     return ApplyVerify.verifiedApply(ctx, verify, timeout, summary, "create_properties",
                             mm -> createPropertiesBatch(mm, specs, strict, defNs, defDef, defType));
-                }));
-
+                });
         tools.tool("deprecate_entity",
-                "Deprecate a term (the standard obsolescence pattern) in one undoable step: asserts "
-                        + "owl:deprecated true (the W3C OWL 2 deprecation flag), and — when 'replaced_by' "
-                        + "is given — a 'term replaced by' pointer (default IAO_0100001, the de-facto OBO "
-                        + "Foundry obsolescence convention — NOT a W3C standard; override with "
-                        + "'replaced_by_property') to the replacement term, plus any extra 'annotations' "
-                        + "(e.g. a skos:changeNote). The term and its axioms are kept (existing usages are "
-                        + "NOT rewritten — repoint them with rename_entity or edit each axiom if a full "
-                        + "merge is intended).",
-                Tools.schema()
-                        .strReq("entity", "Term to deprecate: an IRI or display name.")
-                        .str("replaced_by", "Replacement term: an IRI or display name (optional).")
-                        .str("replaced_by_property", "Annotation property for the replacement pointer. "
-                                + "Default IAO_0100001 'term replaced by' — the de-facto OBO Foundry "
-                                + "obsolescence convention, not a W3C standard; pass e.g. "
-                                + "dcterms:isReplacedBy for a vocabulary-neutral alternative.")
-                        .annotationArray("annotations", "Extra annotations to add (e.g. a change note; "
-                                + "array of {property, value | value_iri, lang, datatype}).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
                     return WriteTools.write(ctx, "deprecate " + entityRef, mm -> {
@@ -339,23 +220,9 @@ public final class CurationTools {
                                 .put("applied", changes.size())
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("move_class",
-                "Reparent a class (its subtree follows automatically, since subclasses point at it): "
-                        + "removes the class's asserted NAMED superclass axioms and asserts "
-                        + "SubClassOf(class, new_parent). Anonymous restriction superclasses are left "
-                        + "untouched. Pass keep_other_parents=true to ADD the new parent without removing "
-                        + "the existing ones; omit new_parent to detach the class to a root. One undoable "
-                        + "change.",
-                Tools.schema()
-                        .strReq("entity", "Class to move: an IRI or display name.")
-                        .str("new_parent", "New superclass: a class name, IRI or Manchester class "
-                                + "expression (omit to detach to a root).")
-                        .bool("keep_other_parents", "Add new_parent without removing existing named "
-                                + "superclasses (default false: replace them).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
                     String newParentRef = Tools.optString(a, "new_parent");
@@ -393,7 +260,7 @@ public final class CurationTools {
                                 .put("applied", changes.size())
                                 .result();
                     });
-                }));
+                });
     }
 
     // ================================================================== change builders (Protégé-free)
@@ -587,125 +454,6 @@ public final class CurationTools {
     // ================================================================== create_terms (batch)
 
     /**
-     * Schema for {@code create_terms}: a required {@code terms} array whose items mirror {@code
-     * create_term}'s fields, plus top-level {@code namespace} / {@code definition_property} defaults and a
-     * {@code strict} flag. Hand-assembled (rather than via {@link Tools.SchemaBuilder}) because the item is
-     * itself an object schema — the same shape {@code create_term} builds.
-     */
-    private static Map<String, Object> createTermsSchema() {
-        Map<String, Object> item = Tools.schema()
-                .str("name", "Short name — the IRI local part when minting, and the default label. "
-                        + "Optional when a full 'iri' is given (its local part becomes the name).")
-                .str("iri", "Full IRI to use (optional; overrides 'namespace').")
-                .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional; "
-                        + "falls back to the top-level 'namespace' default).")
-                .str("label", "rdfs:label text (default: 'name').")
-                .str("label_lang", "Language tag for the rdfs:label, e.g. 'en' (default: none).")
-                .bool("no_label", "Do not add any rdfs:label (default false).")
-                .str("definition", "Definition text (optional).")
-                .str("definition_property", "Annotation property for the definition (optional; falls back "
-                        + "to the top-level 'definition_property' default, else rdfs:comment).")
-                .str("definition_lang", "Language tag for the definition literal (optional).")
-                .strArray("parents", "Superclasses: each a class name, IRI or Manchester class expression. "
-                        + "To reference another term in THIS batch, use its full IRI.")
-                .strArray("equivalent_to", "Equivalent class expressions for a defined class (optional).")
-                .annotationArray("annotations", "Extra annotations (array of {property, value | value_iri, "
-                        + "lang, datatype}).")
-                .build();
-
-        Map<String, Object> terms = new LinkedHashMap<>();
-        terms.put("type", "array");
-        terms.put("items", item);
-        terms.put("description", "The classes to create; each item is a create_term field set (only "
-                + "'name' or a full 'iri' is required).");
-
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("terms", terms);
-        properties.put("namespace", Tools.stringProperty("Default namespace for any term that gives "
-                + "neither its own 'iri' nor 'namespace' (IRI = namespace + name)."));
-        properties.put("definition_property", Tools.stringProperty("Default definition annotation "
-                + "property for any term that omits its own 'definition_property' (e.g. skos:definition)."));
-        properties.put("strict", Tools.boolProperty(WriteTools.STRICT_DESC));
-        properties.put("verify", Tools.stringProperty(VERIFY_DESC));
-        properties.put("timeout_ms", Tools.intProperty(VERIFY_TIMEOUT_DESC));
-        addChangeSetPreviewFields(properties);
-
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
-        schema.put("required", java.util.Collections.singletonList("terms"));
-        schema.put("additionalProperties", false);
-        return schema;
-    }
-
-    /** The shared verify=/timeout_ms schema wording (shared with apply_changes). */
-    static final String VERIFY_DESC = "none (default) | report | rollback. With report or rollback, "
-            + "classify the reasoner after applying and flag a regression (newly unsatisfiable class, "
-            + "or newly inconsistent ontology); rollback undoes the whole batch on a regression. "
-            + "Requires a reasoner selected in Protégé; rollback additionally refuses up front "
-            + "(applying nothing) when no pre-apply baseline classification can be established.";
-    static final String VERIFY_TIMEOUT_DESC = "Max wait in ms for EACH classification the verify "
-            + "pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000.";
-
-    /**
-     * Schema for {@code create_properties}: a required {@code properties} array whose items mirror {@code
-     * create_property}'s fields, plus top-level {@code namespace} / {@code definition_property} /
-     * {@code property_type} defaults and a {@code strict} flag. The array form of {@code create_property},
-     * mirroring how {@link #createTermsSchema()} is the array form of {@code create_term}.
-     */
-    private static Map<String, Object> createPropertiesSchema() {
-        Map<String, Object> item = Tools.schema()
-                .str("name", "Short name — the IRI local part when minting, and the default label. "
-                        + "Optional when a full 'iri' is given (its local part becomes the name).")
-                .str("property_type", "object (default) | data.")
-                .str("iri", "Full IRI to use (optional; overrides 'namespace').")
-                .str("namespace", "Namespace to mint the IRI in: IRI = namespace + name (optional; "
-                        + "falls back to the top-level 'namespace' default).")
-                .str("label", "rdfs:label text (default: 'name').")
-                .str("label_lang", "Language tag for the rdfs:label (optional).")
-                .bool("no_label", "Do not add any rdfs:label (default false).")
-                .str("definition", "Definition text (optional).")
-                .str("definition_property", "Annotation property for the definition (optional; falls back "
-                        + "to the top-level 'definition_property' default, else rdfs:comment).")
-                .str("definition_lang", "Language tag for the definition literal (optional).")
-                .str("domain", "Domain class expression (name, IRI or Manchester; optional).")
-                .str("range", "Range: a class expression for an object property, or a datatype / Manchester "
-                        + "data range (e.g. xsd:integer[>= 0]) for a data property.")
-                .strArray("super_properties", "Super-properties this is a subproperty of (optional).")
-                .strArray("characteristics", "Property characteristics to assert (optional).")
-                .str("inverse_of", "Inverse object property (object properties only; optional).")
-                .annotationArray("annotations", "Extra annotations (array of {property, value | value_iri, "
-                        + "lang, datatype}).")
-                .build();
-
-        Map<String, Object> propertiesArray = new LinkedHashMap<>();
-        propertiesArray.put("type", "array");
-        propertiesArray.put("items", item);
-        propertiesArray.put("description", "The properties to create; each item is a create_property "
-                + "field set (only 'name' or a full 'iri' is required).");
-
-        Map<String, Object> schemaProperties = new LinkedHashMap<>();
-        schemaProperties.put("properties", propertiesArray);
-        schemaProperties.put("namespace", Tools.stringProperty("Default namespace for any item that gives "
-                + "neither its own 'iri' nor 'namespace' (IRI = namespace + name)."));
-        schemaProperties.put("definition_property", Tools.stringProperty("Default definition annotation "
-                + "property for any item that omits its own 'definition_property'."));
-        schemaProperties.put("property_type", Tools.stringProperty("Default property_type (object|data) "
-                + "for any item that omits its own (else object)."));
-        schemaProperties.put("strict", Tools.boolProperty(WriteTools.STRICT_DESC));
-        schemaProperties.put("verify", Tools.stringProperty(VERIFY_DESC));
-        schemaProperties.put("timeout_ms", Tools.intProperty(VERIFY_TIMEOUT_DESC));
-        addChangeSetPreviewFields(schemaProperties);
-
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", schemaProperties);
-        schema.put("required", java.util.Collections.singletonList("properties"));
-        schema.put("additionalProperties", false);
-        return schema;
-    }
-
-    /**
      * A copy of {@code spec} with the batch-level defaults filled in: {@code namespace} only when the term
      * gives neither its own {@code namespace} nor an explicit {@code iri} (so an explicit IRI is never
      * overridden), and {@code definition_property} only when absent. Never mutates the caller's map.
@@ -872,22 +620,6 @@ public final class CurationTools {
         return ChangePlanner.prepared(mm, changes, batch.created, kind);
     }
 
-    private static void addChangeSetPreviewFields(Map<String, Object> properties) {
-        properties.put("preview", Tools.boolProperty("Create a memory-only isolated change-set preview "
-                + "instead of editing; commit it with commit_change_set. Default false."));
-        properties.put("policy_path", Tools.stringProperty("Optional project policy for preflight."));
-        Map<String, Object> gates = new LinkedHashMap<>();
-        gates.put("type", "array");
-        gates.put("description", "Optional no-policy preview stages (as in preview_change_set): "
-                + "reasoner, profile, governance, structural, cqs. Overrides the default gate — e.g. "
-                + "to preview in an ontology whose pre-existing unsatisfiable classes would otherwise "
-                + "fail the default reasoner stage. Explicitly listed stages become REQUIRED: a "
-                + "listed stage that cannot run makes the preview uncommittable.");
-        gates.put("items", Tools.stringProperty("QC stage."));
-        properties.put("gates", gates);
-        properties.put("ttl_seconds", Tools.intProperty("Preview lifetime in seconds (1-3600; default 900)."));
-        properties.put("include_impact", Tools.stringProperty("none or asserted (default asserted)."));
-    }
 
     private record BuiltBatch(List<OWLOntologyChange> changes, Set<OWLEntity> createdSet,
             List<? extends OWLEntity> created) { }

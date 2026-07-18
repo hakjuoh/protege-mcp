@@ -56,8 +56,8 @@ final class ProjectQcTools {
         }
 
         try {
-            QcSuiteTools.RunConfig config = config(policy, live, arguments);
-            QcSuiteTools.SuiteExecution execution = QcSuiteTools.execute(ctx, config);
+            QcRunConfig config = config(policy, live, arguments);
+            QcSuiteExecution execution = QcSuiteTools.execute(ctx, config);
             int version = ((Number) policy.effective().get("version")).intValue();
             Map<String, Object> result = QcSuiteTools.strictResult(execution, config.requiredStages,
                     config.failOn, version, policy.digest(), true);
@@ -73,7 +73,7 @@ final class ProjectQcTools {
         }
     }
 
-    static QcSuiteTools.RunConfig config(ProjectPolicy policy,
+    static QcRunConfig config(ProjectPolicy policy,
             ProjectPolicyTools.PolicyContext live, Map<String, Object> arguments) {
         Map<String, Object> root = policy.effective();
         Map<String, Object> validation = object(root, "validation");
@@ -130,8 +130,8 @@ final class ProjectQcTools {
         if (manifests.size() != 1) {
             throw new ToolArgException("Exactly one RO-Crate metadata file must resolve.");
         }
-        QcSuiteTools.InteroperabilityConfig interopConfig =
-                new QcSuiteTools.InteroperabilityConfig(
+        QcInteroperabilityConfig interopConfig =
+                new QcInteroperabilityConfig(
                         string(interoperability, "profile"),
                         strings(interoperability.get("additional_profiles")),
                         string(metadata, "format"), manifests.get(0).toString(),
@@ -140,7 +140,7 @@ final class ProjectQcTools {
                         string(canonicalization, "hash"), string(canonicalization, "scope"),
                         integer(canonicalization.get("timeout_ms"), 120_000));
 
-        return new QcSuiteTools.RunConfig(stages, required, failOn, profile, limit, timeout,
+        return new QcRunConfig(stages, required, failOn, profile, limit, timeout,
                 invariants, cqs, null, null, shacl, iriPattern, namespaces,
                 requiredAnnotations, true, governanceRules(root), disabled, severity, true, configuredReasoner,
                 string(root, "root_ontology"), interopConfig,
@@ -157,7 +157,7 @@ final class ProjectQcTools {
      */
     @SuppressWarnings("unchecked")
     static void enforceImportIntegrity(ProjectPolicy policy,
-            QcSuiteTools.SuiteExecution execution, Map<String, Object> result) {
+            QcSuiteExecution execution, Map<String, Object> result) {
         Map<String, Object> imports = object(policy.effective(), "imports");
         boolean failOnMissing = Boolean.TRUE.equals(imports.get("fail_on_missing"));
         boolean locked = "locked".equals(string(imports, "mode"));

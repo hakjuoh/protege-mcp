@@ -51,10 +51,10 @@ class IsolatedReasonerQcTest {
         manager.addAxiom(active, df.getOWLSubClassOfAxiom(a, c));
 
         TrackingHermitFactory factory = new TrackingHermitFactory(null);
-        QcSuiteTools.SuiteExecution execution = execute(active, factory,
+        QcSuiteExecution execution = execute(active, factory,
                 Map.of("stages", List.of("reasoner", "profile"), "timeout_ms", 30_000));
 
-        QcSuiteTools.StageResult reasoner = execution.results.get(0);
+        QcStageResult reasoner = execution.results.get(0);
         assertEquals("fail", reasoner.verdict);
         assertEquals(1, reasoner.summary.get("unsatisfiable_count"),
                 "the contradiction spans active + imported axioms and must not disappear in isolation");
@@ -79,7 +79,7 @@ class IsolatedReasonerQcTest {
             manager.addAxiom(active, df.getOWLClassAssertionAxiom(left, victim));
             manager.addAxiom(active, df.getOWLClassAssertionAxiom(right, victim));
         });
-        QcSuiteTools.SuiteExecution execution = execute(active, factory,
+        QcSuiteExecution execution = execute(active, factory,
                 Map.of("stages", List.of("reasoner", "structural"), "timeout_ms", 30_000));
 
         assertEquals("pass", execution.results.get(0).verdict,
@@ -133,12 +133,12 @@ class IsolatedReasonerQcTest {
         };
 
         long started = System.nanoTime();
-        QcSuiteTools.SuiteExecution execution = execute(active, factory,
+        QcSuiteExecution execution = execute(active, factory,
                 Map.of("stages", List.of("reasoner"), "timeout_ms", 250));
         long elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(
                 System.nanoTime() - started);
 
-        QcSuiteTools.StageResult reasoner = execution.results.get(0);
+        QcStageResult reasoner = execution.results.get(0);
         assertTrue(reasoner.executionError);
         assertTrue(reasoner.reason.contains("timed out"));
         assertTrue(interrupted.get());
@@ -165,13 +165,13 @@ class IsolatedReasonerQcTest {
                 "sparql", "SELECT ?x WHERE { ?x a <https://example.org/test#Parent> }");
 
         TrackingHermitFactory factory = new TrackingHermitFactory(null);
-        QcSuiteTools.SuiteExecution execution = execute(active, factory, Map.of(
+        QcSuiteExecution execution = execute(active, factory, Map.of(
                 "stages", List.of("reasoner", "invariants"),
                 "invariants", List.of(invariant),
                 "timeout_ms", 30_000));
 
         assertEquals("pass", execution.results.get(0).verdict);
-        QcSuiteTools.StageResult invariants = execution.results.get(1);
+        QcStageResult invariants = execution.results.get(1);
         assertEquals("fail", invariants.verdict);
         assertEquals(1, invariants.summary.get("violations"));
         assertEquals(0, invariants.summary.get("errors"));
@@ -192,10 +192,10 @@ class IsolatedReasonerQcTest {
                 "ELK", "org.semanticweb.elk.owlapi.ElkReasonerFactory");
         ToolContext context = new ToolContext(HeadlessAccess.over(model), null);
 
-        QcSuiteTools.SuiteExecution execution = QcSuiteTools.execute(context,
+        QcSuiteExecution execution = QcSuiteTools.execute(context,
                 inferredInvariantsProjectConfig());
 
-        QcSuiteTools.StageResult reasoner = execution.results.stream()
+        QcStageResult reasoner = execution.results.stream()
                 .filter(result -> "reasoner".equals(result.stage)).findFirst().orElseThrow(
                         () -> new AssertionError("the inferences-only SWRL gate error was discarded: "
                                 + execution.results.stream().map(r -> r.stage).toList()));
@@ -215,7 +215,7 @@ class IsolatedReasonerQcTest {
                 "ELK", "org.semanticweb.elk.owlapi.ElkReasonerFactory");
         ToolContext context = new ToolContext(HeadlessAccess.over(model), null);
 
-        QcSuiteTools.SuiteExecution execution = QcSuiteTools.execute(context,
+        QcSuiteExecution execution = QcSuiteTools.execute(context,
                 inferredInvariantsProjectConfig());
 
         assertEquals(List.of("invariants"),
@@ -241,20 +241,20 @@ class IsolatedReasonerQcTest {
     }
 
     /** The config shape ProjectQcTools builds for required_stages [invariants] — reasoner NOT scheduled. */
-    private static QcSuiteTools.RunConfig inferredInvariantsProjectConfig() {
+    private static QcRunConfig inferredInvariantsProjectConfig() {
         List<Invariants.Invariant> invariants = List.of(new Invariants.Invariant("inferred-clean",
                 "no instances of Missing", "error",
                 "SELECT ?x WHERE { ?x a <https://example.org/test#Missing> }", true));
-        return new QcSuiteTools.RunConfig(Set.of("invariants"), Set.of("invariants"), "error", "DL",
+        return new QcRunConfig(Set.of("invariants"), Set.of("invariants"), "error", "DL",
                 25, 30_000, invariants, null, null, null, List.of(), null, List.of(), List.of(),
                 true, PolicyGovernance.Rules.empty(), Set.of(), Map.of(), true, null, null, null);
     }
 
-    private static QcSuiteTools.SuiteExecution execute(OWLOntology ontology,
+    private static QcSuiteExecution execute(OWLOntology ontology,
             TrackingHermitFactory factory, Map<String, Object> args) {
         OWLModelManager model = modelManager(ontology, factory);
         ToolContext context = new ToolContext(HeadlessAccess.over(model), null);
-        return QcSuiteTools.execute(context, QcSuiteTools.RunConfig.legacy(args));
+        return QcSuiteTools.execute(context, QcRunConfig.legacy(args));
     }
 
     private static OWLModelManager modelManager(OWLOntology ontology, TrackingHermitFactory factory) {

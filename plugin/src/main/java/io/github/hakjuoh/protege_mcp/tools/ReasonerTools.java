@@ -68,11 +68,7 @@ public final class ReasonerTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("run_reasoner",
-                "Run the reasoner selected in Protégé (classify) and wait for completion. Reports the "
-                        + "resulting status and unsatisfiable-class count, and warns when the ontology "
-                        + "has SWRL rules the selected reasoner silently ignores (ELK).",
-                Tools.schema().integer("timeout_ms", "Max wait in ms (default 60000).").build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     int timeout = Tools.optInt(Tools.args(req), "timeout_ms", 60_000);
                     Map<String, Object> pre = ctx.access().compute(mm -> {
                         Map<String, Object> m = new LinkedHashMap<>();
@@ -97,27 +93,15 @@ public final class ReasonerTools {
                         res.put("warning", pre.get("swrl_warning"));
                     }
                     return Tools.ok(res);
-                }));
-
+                });
         tools.tool("get_unsatisfiable_classes",
-                "List unsatisfiable (equivalent to owl:Nothing) classes from the active reasoner. "
-                        + "If the whole ontology is INCONSISTENT, use explain_inconsistency instead.",
-                Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> guardInconsistency("get_unsatisfiable_classes",
+                (ex, req) -> guardInconsistency("get_unsatisfiable_classes",
                         () -> ctx.access().compute(mm -> {
                             return Tools.ok(unsatisfiableClasses(mm, requireReasoner(mm)));
-                        }))));
+                        })));
 
         tools.tool("get_inferred_superclasses",
-                "Read inferred relations from the reasoner. 'relation' is one of superclasses "
-                        + "(default), subclasses, equivalent, types (for an individual), instances "
-                        + "(of a class). 'direct' limits to direct relations (default true).",
-                Tools.schema()
-                        .strReq("entity", "Class IRI/name (or individual for 'types').")
-                        .str("relation", "superclasses | subclasses | equivalent | types | instances")
-                        .bool("direct", "Direct relations only (default true).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String entity = Tools.reqString(a, "entity");
                     String relation = Tools.optString(a, "relation");
@@ -126,34 +110,16 @@ public final class ReasonerTools {
                     return guardInconsistency("get_inferred_superclasses",
                             () -> ctx.access().compute(mm ->
                                     Tools.ok(inferredRelation(mm, requireReasoner(mm), entity, rel, direct))));
-                }));
-
+                });
         tools.tool("explain_entailment",
-                "Check whether a structured axiom is entailed by the active reasoner (true/false). "
-                        + "axiom_type is one of: " + Axioms.SUPPORTED + ". Use get_explanations for "
-                        + "the justifications behind an entailment.",
-                Axioms.schema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     return guardInconsistency("explain_entailment",
                             () -> ctx.access().compute(mm ->
                                     Tools.ok(explainEntailment(mm, requireReasoner(mm), Axioms.build(mm, a)))));
-                }));
-
+                });
         tools.tool("get_explanations",
-                "Explain WHY a structured axiom is entailed: return one or more justifications "
-                        + "(minimal sets of asserted axioms that together entail it). Minimal "
-                        + "justifications are computed for these axiom_type values: "
-                        + String.join(", ", EXPLAINABLE_AXIOM_TYPES) + ". For any OTHER axiom_type "
-                        + "(e.g. a property-hierarchy or property-characteristic entailment) it falls "
-                        + "back to confirming whether the axiom is entailed and returning the asserted "
-                        + "axioms that mention the same entities as structural context (not a minimal "
-                        + "justification). To explain why a class C is unsatisfiable, use "
-                        + "axiom_type=class_assertion with class=C and any individual, or subclass_of "
-                        + "with sub=C, super=\"owl:Nothing\". Requires a reasoner (see list_reasoners / "
-                        + "set_reasoner).",
-                explanationsSchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String axiomType = Tools.reqString(a, "axiom_type").toLowerCase();
                     if (!EXPLAINABLE_AXIOM_TYPES.contains(axiomType)) {
@@ -250,24 +216,9 @@ public final class ReasonerTools {
                             return Tools.ok(result);
                         }, timeout);
                     });
-                }));
-
+                });
         tools.tool("explain_inconsistency",
-                "Explain WHY the ontology is INCONSISTENT: find a set of asserted logical axioms "
-                        + "that together cause the contradiction. The result's 'minimal' flag "
-                        + "reports whether the set was fully minimized within the time budget "
-                        + "(false = still jointly inconsistent, but reduced-not-minimal). Runs the "
-                        + "selected reasoner over a private copy of the imports closure (off the "
-                        + "UI thread; the live reasoner state is untouched). If the ontology is "
-                        + "consistent it says so. Use after run_reasoner reports INCONSISTENT — "
-                        + "the other explanation/query tools cannot run over an inconsistent "
-                        + "ontology.",
-                Tools.schema()
-                        .integer("timeout_ms", "Time budget in ms for the whole search "
-                                + "(default 60000). On expiry the current still-inconsistent axiom "
-                                + "set is returned with minimal=false.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     int timeout = Tools.optInt(Tools.args(req), "timeout_ms", 60_000);
                     // Phase 1 (EDT): capture the selected factory + a private closure snapshot.
                     Object[] snap = ctx.access().compute(mm -> {
@@ -296,34 +247,9 @@ public final class ReasonerTools {
                         result.put("reasoner_configuration", spec.metadata(spec.selectedBuffering()));
                         return Tools.ok(result);
                     });
-                }));
-
+                });
         tools.tool("execute_dl_query",
-                "Run a Protégé DL Query: given a Manchester-syntax class expression, return the "
-                        + "reasoner's equivalent classes, subclasses, superclasses, and instances. "
-                        + "'relation' limits the result (equivalent | subclasses | superclasses | "
-                        + "instances | all, default all); 'direct' limits sub/super/instance results "
-                        + "to direct ones (default true). Caveat: for a COMPLEX (anonymous) class "
-                        + "expression with direct=false, some reasoners — notably ELK — can return an "
-                        + "INCOMPLETE set of sub/superclasses, omitting the DIRECT level (Protégé's own "
-                        + "DL Query tab shows the same); the response then carries a 'warning'. Set "
-                        + "complete=true to reconstruct the exhaustive set (the reasoner's direct results "
-                        + "unioned with each direct class's transitive descent, which every reasoner "
-                        + "computes reliably for named classes), or classify with a DL reasoner (e.g. "
-                        + "HermiT). Call run_reasoner first.",
-                Tools.schema()
-                        .strReq("query", "Manchester-syntax class expression, e.g. "
-                                + "\"hasOwner some Person\" or \"Animal and (hasOwner some Person)\".")
-                        .str("relation", "equivalent | subclasses | superclasses | instances | all "
-                                + "(default all).")
-                        .bool("direct", "Direct results only for sub/super/instances (default true).")
-                        .bool("complete", "For a complex (anonymous) expression with direct=false, "
-                                + "reconstruct the exhaustive sub/superclass set (direct + named-class "
-                                + "descent) instead of the raw reasoner call, working around reasoners "
-                                + "(e.g. ELK) that under-report complex-expression queries (default false).")
-                        .integer("timeout_ms", "Max wait in ms for the query (default 60000).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String query = Tools.reqString(a, "query");
                     String relation = Tools.optString(a, "relation");
@@ -337,13 +263,9 @@ public final class ReasonerTools {
                                 OWLClassExpression ce = Tools.resolveClassExpression(mm, query);
                                 return Tools.ok(dlQuery(mm, r, query, ce, rel, direct, complete));
                             }, timeout));
-                }));
-
+                });
         tools.tool("list_reasoners",
-                "List the reasoner plugins installed in Protégé and mark the one currently selected. "
-                        + "Use set_reasoner to change it, then run_reasoner to classify.",
-                Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
+                (ex, req) -> ctx.access().compute(mm -> {
                     OWLReasonerManager rm = mm.getOWLReasonerManager();
                     String currentId = rm.getCurrentReasonerFactoryId();
                     TreeMap<String, Map<String, Object>> byName = new TreeMap<>();
@@ -362,13 +284,10 @@ public final class ReasonerTools {
                             .put("reasoners", new ArrayList<>(byName.values()))
                             .putIfNotNull("current_id", currentId)
                             .result();
-                })));
+                }));
 
         tools.tool("set_reasoner",
-                "Select the reasoner Protégé will use, by id or name (see list_reasoners). This does "
-                        + "not classify — call run_reasoner afterwards.",
-                Tools.schema().strReq("reasoner", "Reasoner id or name (see list_reasoners).").build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String ref = Tools.reqString(a, "reasoner");
                     return WriteTools.write(ctx, "set reasoner to " + ref, mm -> {
@@ -395,19 +314,7 @@ public final class ReasonerTools {
                                 .put("message", "Selected reasoner. Call run_reasoner to classify.")
                                 .result();
                     });
-                }));
-    }
-
-    /** Axiom schema (same operands as add_axiom) plus the explanation-search knobs. */
-    private static Map<String, Object> explanationsSchema() {
-        Map<String, Object> schema = Axioms.schema();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        props.put("max", Tools.intProperty("Maximum number of justifications to compute "
-                + "(default 3; 0 = all)."));
-        props.put("timeout_ms", Tools.intProperty("Max wait in ms for the explanation search "
-                + "(default 60000)."));
-        return schema;
+                });
     }
 
     /**

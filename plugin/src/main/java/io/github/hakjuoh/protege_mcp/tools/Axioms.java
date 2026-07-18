@@ -52,50 +52,6 @@ public final class Axioms {
                     + "annotation_property_domain, annotation_property_range, "
                     + "declaration, datatype_definition";
 
-    public static Map<String, Object> schema() {
-        return Tools.schema()
-                .strReq("axiom_type", SUPPORTED)
-                .str("sub", "subclass_of: subclass — name, IRI or Manchester class expression")
-                .str("super", "subclass_of: superclass — name, IRI or Manchester class expression")
-                .strArray("classes", "equivalent_classes / disjoint_classes / disjoint_union: classes — "
-                        + "names, IRIs or Manchester class expressions")
-                .str("class", "class_assertion / disjoint_union / has_key: class — name, IRI or "
-                        + "Manchester class expression")
-                .str("individual", "class_assertion: individual IRI/name")
-                .strArray("individuals", "same_individual / different_individuals: individual IRI/name list")
-                .str("property", "*_property_assertion / property characteristic / sub_*_property_of / "
-                        + "*_property_domain|range / annotation_* / has_key seed: property IRI/name")
-                .strArray("properties", "equivalent_/disjoint_object|data_properties: property IRI/name "
-                        + "list; has_key: object/data property IRI/name list")
-                .str("super_property", "sub_object_property_of / sub_data_property_of / "
-                        + "sub_property_chain_of / sub_annotation_property_of: super property IRI/name")
-                .strArray("chain", "sub_property_chain_of: ordered object property list (each a "
-                        + "name/IRI, or an inverse link inverse(P) / ObjectInverseOf(P))")
-                .str("inverse_property", "inverse_object_properties: inverse object property IRI/name")
-                .str("subject", "*_property_assertion / annotation_assertion: subject IRI/name")
-                .str("object", "object_property_assertion / negative_object_property_assertion: object "
-                        + "individual IRI/name")
-                .str("value", "data_property_assertion / annotation_assertion: literal value")
-                .str("value_iri", "annotation_assertion: IRI-valued annotation (entity name/IRI or "
-                        + "absolute IRI; alternative to value)")
-                .str("lang", "data_property_assertion / annotation_assertion: optional language tag")
-                .str("datatype", "data_property_assertion / annotation_assertion: optional datatype "
-                        + "IRI/name; datatype_definition: defined datatype IRI/name")
-                .str("entity", "declaration: entity IRI/name")
-                .str("entity_type", "declaration: class | object_property | data_property | "
-                        + "annotation_property | individual | datatype")
-                .str("domain", "object_property_domain / data_property_domain: domain class expression; "
-                        + "annotation_property_domain: domain IRI")
-                .str("range", "object_property_range: range class expression; "
-                        + "data_property_range / datatype_definition: datatype IRI/name or a "
-                        + "Manchester-syntax data range such as \"xsd:integer[>= 0]\" or \"{1, 2, 3}\"; "
-                        + "annotation_property_range: range IRI")
-                .annotationArray("annotations", "Optional axiom annotations (array of "
-                        + "{property, value | value_iri, lang, datatype}); reconstructs reified "
-                        + "owl:Axiom blocks.")
-                .build();
-    }
-
     public static OWLAxiom build(OWLModelManager mm, Map<String, Object> a) {
         OWLAxiom base = buildBase(mm, a);
         Set<OWLAnnotation> annotations = Tools.annotationSet(mm, a, "annotations");

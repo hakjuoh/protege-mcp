@@ -58,24 +58,7 @@ public final class WriteTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("create_class",
-                "Create a named class. Give a full 'iri', or a 'namespace' to mint the IRI in (IRI = "
-                        + "namespace + name — useful when terms live in a shared namespace distinct from "
-                        + "the ontology IRI), else the IRI is minted from 'name' using Protégé's "
-                        + "entity-creation settings. An rdfs:label ('label' or 'name', tagged with "
-                        + "'label_lang') is added unless 'no_label'. Optionally set a 'parent' superclass.",
-                Tools.schema()
-                        .str("name", "Short name for the class — the IRI local part when minting, and "
-                                + "the default rdfs:label. Optional when a full 'iri' is given (its local "
-                                + "part becomes the name).")
-                        .str("iri", "Full IRI to use (optional; overrides 'namespace').")
-                        .str("namespace", "Namespace to mint the IRI in: IRI becomes namespace + name "
-                                + "(optional).")
-                        .str("label", "rdfs:label text (default: 'name').")
-                        .str("label_lang", "Language tag for the rdfs:label, e.g. 'en-US' (default: none).")
-                        .bool("no_label", "Do not add any rdfs:label (default false).")
-                        .str("parent", "Superclass: IRI, name or Manchester class expression (optional).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     return write(ctx, "create_class " + summaryName(a), mm -> {
                         OWLDataFactory df = mm.getOWLDataFactory();
@@ -95,28 +78,9 @@ public final class WriteTools {
                                 .put("present", present)
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("create_entity",
-                "Create a named entity of a given type: class, object_property, data_property, "
-                        + "annotation_property, individual or datatype. Give a full 'iri', or a "
-                        + "'namespace' to mint it in (IRI = namespace + name), else the IRI is minted "
-                        + "from 'name'. An rdfs:label ('label' or 'name', tagged with 'label_lang') is "
-                        + "added unless 'no_label'.",
-                Tools.schema()
-                        .strReq("entity_type", "class | object_property | data_property | "
-                                + "annotation_property | individual | datatype")
-                        .str("name", "Short name — the IRI local part when minting, and the default "
-                                + "rdfs:label. Optional when a full 'iri' is given (its local part "
-                                + "becomes the name).")
-                        .str("iri", "Full IRI to use (optional; overrides 'namespace').")
-                        .str("namespace", "Namespace to mint the IRI in: IRI becomes namespace + name "
-                                + "(optional).")
-                        .str("label", "rdfs:label text (default: 'name').")
-                        .str("label_lang", "Language tag for the rdfs:label, e.g. 'en-US' (default: none).")
-                        .bool("no_label", "Do not add any rdfs:label (default false).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String type = Tools.reqString(a, "entity_type");
                     return write(ctx, "create_entity " + type + " " + summaryName(a), mm -> {
@@ -125,18 +89,9 @@ public final class WriteTools {
                         mm.applyChanges(changes);
                         return Tools.json().put("created", Tools.entityJson(mm, e)).result();
                     });
-                }));
-
+                });
         tools.tool("add_subclass_of",
-                "Assert that 'child' is a subclass of 'parent'. Each may be a class name, a full IRI, "
-                        + "or a Manchester-syntax class expression (e.g. 'hasOwner some Person'). Any "
-                        + "entities introduced as a side effect are reported as 'new_entities'.",
-                Tools.schema()
-                        .strReq("child", "Subclass: IRI, name or class expression.")
-                        .strReq("parent", "Superclass: IRI, name or class expression.")
-                        .bool("strict", STRICT_DESC)
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String child = Tools.reqString(a, "child");
                     String parent = Tools.reqString(a, "parent");
@@ -149,28 +104,9 @@ public final class WriteTools {
                                 Tools.resolveClassExpression(mm, parent));
                         return applyAxiom(mm, ont, ax, strict);
                     });
-                }));
-
+                });
         tools.tool("add_annotation",
-                "Add an annotation assertion to an entity (default property rdfs:label). The value is a "
-                        + "literal (optionally typed with 'datatype' or tagged with 'lang') or, with "
-                        + "'value_iri', an IRI; pass 'annotations' to attach axiom annotations (reified "
-                        + "owl:Axiom). For a non-entity subject or full OWL 2 symmetry use add_axiom "
-                        + "with axiom_type=annotation_assertion.",
-                Tools.schema()
-                        .strReq("entity", "Target subject: entity IRI/name or any absolute IRI.")
-                        .str("property", "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name "
-                                + "(default rdfs:label).")
-                        .str("value", "Literal text value (omit if value_iri is given).")
-                        .str("value_iri", "IRI-valued annotation: an entity name/IRI or absolute IRI "
-                                + "(alternative to value).")
-                        .str("lang", "Optional language tag for a literal value, e.g. 'en'.")
-                        .str("datatype", "Optional datatype IRI/name for a typed literal value.")
-                        .annotationArray("annotations", "Optional axiom annotations on this assertion "
-                                + "(array of {property, value | value_iri, lang, datatype}).")
-                        .bool("strict", STRICT_DESC)
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
                     boolean strict = Tools.optBool(a, "strict", false);
@@ -183,19 +119,9 @@ public final class WriteTools {
                                 Tools.annotationValue(mm, a), Tools.annotationSet(mm, a, "annotations"));
                         return applyAxiom(mm, ont, ax, strict);
                     });
-                }));
-
+                });
         tools.tool("add_axiom",
-                "Add a structured axiom. axiom_type is one of: " + Axioms.SUPPORTED + ". Provide the "
-                        + "operands the chosen type needs (sub/super, classes[], class/individual, "
-                        + "property/subject/object, property/subject/value[+lang|datatype], "
-                        + "property/domain, property/range). Any class operand may be a named class, a "
-                        + "full IRI, or a Manchester-syntax class expression such as "
-                        + "\"Animal and (hasOwner some Person)\" — so defined classes and restrictions "
-                        + "are expressible via equivalent_classes / subclass_of. Entities introduced as "
-                        + "a side effect are reported as 'new_entities'.",
-                withStrict(Axioms.schema()),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     boolean strict = Tools.optBool(a, "strict", false);
                     return write(ctx, "add_axiom " + Tools.optString(a, "axiom_type"), mm -> {
@@ -203,13 +129,9 @@ public final class WriteTools {
                         OWLAxiom ax = Axioms.build(mm, a);
                         return applyAxiom(mm, ont, ax, strict);
                     });
-                }));
-
+                });
         tools.tool("remove_axiom",
-                "Remove a structured axiom (same arguments as add_axiom). axiom_type is one of: "
-                        + Axioms.SUPPORTED + ".",
-                Axioms.schema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     return write(ctx, "remove_axiom " + Tools.optString(a, "axiom_type"), mm -> {
                         OWLOntology ont = mm.getActiveOntology();
@@ -225,26 +147,9 @@ public final class WriteTools {
                                 .put("axiom", Tools.axiomJson(mm, ax))
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("apply_changes",
-                "Apply a batch of axiom add/remove operations in ONE call — the same 'operations' array "
-                        + "as preview_changes (each item: axiom_type + operands, optional op=add|remove, "
-                        + "default add). Closes the gap where preview batches but the write tools apply "
-                        + "one axiom per call. The whole batch is applied as a SINGLE undoable "
-                        + "transaction, so one undo_change reverts all of it at once (like create_class). "
-                        + "Reports, per operation, what was applied/removed and any new entities "
-                        + "introduced, plus a summary. Run preview_changes first to dry-run; set "
-                        + "strict=true to skip any add that would mint a brand-new entity from an "
-                        + "unrecognized IRI/name. Note: because nothing is applied until the batch "
-                        + "completes, an operation that references an entity introduced by an EARLIER "
-                        + "operation in the same batch must refer to it by full IRI. Optionally set "
-                        + "verify=report|rollback to run the same isolated policy/change-set gate used by "
-                        + "preview_change_set: report returns the verdict and commits the batch, while "
-                        + "rollback prevents a failing batch before it reaches the live ontology "
-                        + "(default none = direct apply with no gate).",
-                applyChangesSchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     List<Map<String, Object>> operations = Tools.objList(a, "operations");
                     if (operations.isEmpty()) {
@@ -264,19 +169,9 @@ public final class WriteTools {
                     }
                     DirectAccessPolicy.requireCapability(ex, DirectAccessPolicy.PROJECT_READ);
                     return ChangeSetApplyVerify.apply(ctx, verify, timeout, summary, operations, strict);
-                }));
-
+                });
         tools.tool("set_label",
-                "Set (upsert) an entity's rdfs:label: removes any existing rdfs:label on the entity in "
-                        + "the SAME language and adds the new one. Use this to fix a label without "
-                        + "hand-removing the old axiom — rename_entity changes the IRI, not the label.",
-                Tools.schema()
-                        .strReq("entity", "Target entity: IRI or display name.")
-                        .strReq("value", "New rdfs:label text.")
-                        .str("lang", "Language tag, e.g. 'en-US' (default none). Only labels in the same "
-                                + "language are replaced.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
                     String value = Tools.reqString(a, "value");
@@ -309,17 +204,9 @@ public final class WriteTools {
                                 .put("removed_previous", removed)
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("undo_change",
-                "Undo the last change on the shared Protégé undo stack. Pass peek=true to instead "
-                        + "REPORT what the next undo would revert (the transaction's change count "
-                        + "and a sample of its axioms) without undoing anything.",
-                Tools.schema()
-                        .bool("peek", "Inspect the next-undo transaction without undoing it "
-                                + "(works in read-only mode). Default false.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     if (Tools.optBool(Tools.args(req), "peek", false)) {
                         return ctx.access().compute(WriteTools::peekUndo);
                     }
@@ -345,12 +232,9 @@ public final class WriteTools {
                                         + "loaded fingerprint.")
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("redo_change",
-                "Redo the last undone change on the shared Protégé undo stack.",
-                Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> write(ctx, "redo last change", mm -> {
+                (ex, req) -> write(ctx, "redo last change", mm -> {
                     HistoryManager hm = mm.getHistoryManager();
                     if (!hm.canRedo()) {
                         return Tools.error("Nothing to redo.");
@@ -365,39 +249,10 @@ public final class WriteTools {
                             .put("net_axiom_change", after - before)
                             .put("undo_depth", hm.getLoggedChanges().size())
                             .put("can_undo", hm.canUndo()).put("can_redo", hm.canRedo()).result();
-                })));
+                }));
 
         tools.tool("save_ontology",
-                "Save the active ontology to disk. With no arguments it writes to the ontology's "
-                        + "existing document; a never-saved (untitled) ontology has no file yet, so "
-                        + "pass 'path' to choose one (save-as). The serialization format is inferred "
-                        + "from the file extension (.ttl/.turtle, .owl/.rdf/.xml, .omn, .ofn/.fss, "
-                        + ".owx, .obo — anything else is an error); a path without an extension "
-                        + "keeps the ontology's current format. After a save-as the ontology is "
-                        + "bound to that file, so later argument-less saves go to the same place. "
-                        + "Pass all=true to instead save EVERY ontology with unsaved changes to its "
-                        + "own existing document (list_ontologies shows which are dirty). For a "
-                        + "fail-closed artifact pipeline set verify_round_trip=true: it writes beside "
-                        + "the target, reloads without fetching the import closure, compares ontology "
-                        + "id/direct imports/ontology and axiom annotations/normalized asserted axioms, "
-                        + "rejects anonymous individuals whose blank-node ids cannot survive reload, "
-                        + "rechecks the live revision, and only then replaces the target. atomic=true "
-                        + "requires an atomic filesystem move; "
-                        + "backup=true preserves the previous artifact as <path>.bak.",
-                Tools.schema()
-                        .str("path", "Optional file path to save to (save-as), e.g. /tmp/pets.ttl.")
-                        .bool("all", "Save every dirty ontology to its existing document instead of "
-                                + "just the active one (default false; cannot be combined with "
-                                + "'path' — ontologies without a file are reported as skipped).")
-                        .bool("verify_round_trip", "Use a temporary isolated reload and normalized "
-                                + "document comparison before replacing the target; imports are not "
-                                + "fetched and anonymous individuals are unsupported "
-                                + "(default false for compatibility).")
-                        .bool("atomic", "Require atomic target replacement; implies verify_round_trip.")
-                        .bool("backup", "Copy an existing target to <path>.bak before replacement; "
-                                + "implies verify_round_trip.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String configuredPath = Tools.optString(a, "path");
                     boolean all = Tools.optBool(a, "all", false);
@@ -438,7 +293,7 @@ public final class WriteTools {
                         return verifiedSave(ctx, summary, path, atomic, backup);
                     }
                     return write(ctx, summary, mm -> saveOntology(mm, path), SAVE_TIMEOUT_MS);
-                }));
+                });
     }
 
     // ------------------------------------------------------------------ shared helpers
@@ -506,9 +361,6 @@ public final class WriteTools {
         return Tools.error("Server is in read-only mode; writes are disabled "
                 + "(toggle in Protégé ▸ Preferences ▸ MCP).");
     }
-
-    static final String STRICT_DESC = "If true, fail instead of minting a brand-new entity from an "
-            + "unrecognized absolute IRI / display name (guards against typo'd references). Default false.";
 
     /**
      * Apply an add-axiom change, reporting any entities it introduces into the ontology that were not
@@ -683,31 +535,6 @@ public final class WriteTools {
             n += o.getAxiomCount();
         }
         return n;
-    }
-
-    /** add_axiom's schema is Axioms.schema() plus the optional 'strict' typo-guard flag. */
-    private static Map<String, Object> withStrict(Map<String, Object> schema) {
-        @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        props.put("strict", Tools.boolProperty(STRICT_DESC));
-        return schema;
-    }
-
-    /**
-     * apply_changes' schema is preview_changes' operations[] plus the optional 'strict' flag and the
-     * change-set-gate knobs ('verify' enum + 'timeout_ms').
-     */
-    private static Map<String, Object> applyChangesSchema() {
-        Map<String, Object> schema = PreviewTools.operationsSchema();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        props.put("strict", Tools.boolProperty(STRICT_DESC));
-        props.put("verify", Tools.stringProperty("none (default) | report | rollback. With report or "
-                + "rollback, run the isolated policy/change-set gate before commit. report commits and "
-                + "returns a failing verdict; rollback prevents a failing batch before live mutation."));
-        props.put("timeout_ms", Tools.intProperty("Time budget in ms for the isolated preflight gate. "
-                + "Default 60000."));
-        return schema;
     }
 
     /**

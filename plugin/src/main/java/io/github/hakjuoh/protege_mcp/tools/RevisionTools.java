@@ -27,23 +27,12 @@ public final class RevisionTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("get_model_revision",
-                "Return the complete optimistic-concurrency envelope for this Protégé window: a "
-                        + "per-backend workspace UUID, monotonic session revision, canonical semantic "
-                        + "fingerprint, and live document fingerprint. The document coordinate is "
-                        + "recomputed on every call, so a prefix-only GUI edit conflicts even though "
-                        + "Protégé emits no model event. The result also reports active ontology, "
-                        + "document, dirty/reasoner state, fingerprint stability, and effective policy "
-                        + "digest. Read-only.",
-                Tools.schema()
-                        .str("policy_path", "Optional explicit local project policy; otherwise discover "
-                                + ".protege-mcp/project.yaml from the active ontology document upward.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> arguments = Tools.args(req);
                     DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
                             Tools.optString(arguments, "policy_path"));
                     return get(ctx, rules.authorizedPolicyArguments(arguments));
-                }));
+                });
     }
 
     static io.modelcontextprotocol.spec.McpSchema.CallToolResult get(ToolContext ctx,

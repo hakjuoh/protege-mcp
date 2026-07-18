@@ -365,10 +365,8 @@ class CurationToolsTest {
         Map<String, Object> props = properties(s);
         assertEquals("string", type(props, "verify"), "verify is a string arg");
         assertEquals("integer", type(props, "timeout_ms"), "timeout_ms is an integer arg");
-        assertEquals(CurationTools.VERIFY_DESC, description(props, "verify"),
-                "verify carries the shared apply_changes-style wording");
-        assertEquals(CurationTools.VERIFY_TIMEOUT_DESC, description(props, "timeout_ms"),
-                "timeout_ms carries the per-classification wait wording");
+        assertFalse(description(props, "verify").isBlank(), "verify is documented");
+        assertFalse(description(props, "timeout_ms").isBlank(), "timeout_ms is documented");
         assertTrue(s.tool().description().contains("verify=report|rollback"),
                 "the tool description advertises verify=report|rollback");
     }
@@ -379,10 +377,11 @@ class CurationToolsTest {
         Map<String, Object> props = properties(s);
         assertEquals("string", type(props, "verify"), "verify is a string arg");
         assertEquals("integer", type(props, "timeout_ms"), "timeout_ms is an integer arg");
-        assertEquals(CurationTools.VERIFY_DESC, description(props, "verify"),
-                "verify carries the same wording as create_terms");
-        assertEquals(CurationTools.VERIFY_TIMEOUT_DESC, description(props, "timeout_ms"),
-                "timeout_ms carries the same wording as create_terms");
+        Map<String, Object> termProps = properties(specByName("create_terms"));
+        assertEquals(description(termProps, "verify"), description(props, "verify"),
+                "both batch tools share verify wording in the catalog");
+        assertEquals(description(termProps, "timeout_ms"), description(props, "timeout_ms"),
+                "both batch tools share timeout wording in the catalog");
         assertTrue(s.tool().description().contains("verify=report|rollback"),
                 "the tool description advertises verify=report|rollback");
     }

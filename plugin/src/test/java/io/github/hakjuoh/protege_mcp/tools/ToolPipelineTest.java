@@ -142,8 +142,8 @@ class ToolPipelineTest {
         assertEquals("pass", verify.get("gate"), "no forbidden pattern present");
 
         // run_qc_suite structural stage + aggregate: labelled, in-hierarchy → pass.
-        QcSuiteTools.StageResult structural = QcSuiteTools.structuralStage(mm);
-        QcSuiteTools.StageResult cqs = QcSuiteTools.cqsStage(snap, loaded, 1000, 30_000);
+        QcStageResult structural = QcSuiteTools.structuralStage(mm);
+        QcStageResult cqs = QcSuiteTools.cqsStage(snap, loaded, 1000, 30_000);
         io.modelcontextprotocol.spec.McpSchema.CallToolResult gate = QcSuiteTools.aggregate(
                 java.util.Arrays.asList(structural, cqs), "error");
         @SuppressWarnings("unchecked")

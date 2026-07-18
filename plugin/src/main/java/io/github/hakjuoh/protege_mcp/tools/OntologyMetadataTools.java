@@ -37,12 +37,7 @@ public final class OntologyMetadataTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("set_ontology_id",
-                "Set the active ontology's IRI and (optionally) version IRI.",
-                Tools.schema()
-                        .strReq("ontology_iri", "New ontology IRI.")
-                        .str("version_iri", "Optional version IRI.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String ontologyIri = Tools.reqString(a, "ontology_iri");
                     String versionIri = Tools.optString(a, "version_iri");
@@ -64,23 +59,9 @@ public final class OntologyMetadataTools {
                                 .put("message", "Set ontology id to " + label(newId) + ".")
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("add_import",
-                "Add an owl:imports declaration to the active ontology. The result's 'resolved' flag "
-                        + "reports whether the document actually loaded into the workspace — an "
-                        + "unresolved import is a dangling declaration whose terms stay invisible to "
-                        + "lookups and reasoning until it is loaded. Pass 'document' (a path/URL/IRI) to "
-                        + "resolve the import NOW by loading that document WITHOUT changing your active "
-                        + "edit target.",
-                Tools.schema()
-                        .strReq("iri", "Imported ontology IRI.")
-                        .str("document", "Optional path/URL/IRI of the import's document to load now so "
-                                + "the import resolves (keeps the active ontology unchanged).")
-                        .integer("connection_timeout_ms", "Document connection timeout when 'document' is "
-                                + "given (default 15000).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String iri = Tools.reqString(a, "iri");
                     String configuredDocument = Tools.optString(a, "document");
@@ -128,20 +109,9 @@ public final class OntologyMetadataTools {
                                 + "keep_active=true, or add a catalog mapping for the IRI.");
                     }
                     return json.result();
-                }));
-
+                });
         tools.tool("set_prefix",
-                "Register or update a prefix in the active ontology's prefix map (e.g. prefix 'ex' "
-                        + "→ 'http://example.org/ns#'), so CURIEs "
-                        + "like 'ex:myTerm' render and parse and the document serializes with the "
-                        + "prefix. The prefix map lives in the ontology's document format — this changes "
-                        + "no axioms and is NOT on the undo stack.",
-                Tools.schema()
-                        .strReq("prefix", "Prefix name, with or without a trailing ':' (e.g. 'ex' or "
-                                + "'ex:'); use ':' for the default namespace.")
-                        .strReq("namespace", "Namespace IRI the prefix expands to.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String prefix = Tools.reqString(a, "prefix");
                     String namespace = Tools.reqString(a, "namespace");
@@ -169,12 +139,9 @@ public final class OntologyMetadataTools {
                                 .put("prefixes", fmt.asPrefixOWLOntologyFormat().getPrefixName2PrefixMap())
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("remove_import",
-                "Remove an owl:imports declaration from the active ontology.",
-                Tools.schema().strReq("iri", "Imported ontology IRI to remove.").build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String iri = Tools.reqString(a, "iri");
                     return WriteTools.write(ctx, "remove import " + iri, mm -> {
@@ -187,22 +154,9 @@ public final class OntologyMetadataTools {
                         mm.applyChange(new RemoveImport(ont, decl));
                         return Tools.json().put("removed", true).put("iri", iri).result();
                     });
-                }));
-
+                });
         tools.tool("add_ontology_annotation",
-                "Add an ontology-level annotation (e.g. dcterms:title, owl:versionInfo). The value is a "
-                        + "literal (optionally typed with 'datatype' or tagged with 'lang') or, with "
-                        + "'value_iri', an IRI.",
-                Tools.schema()
-                        .str("property", "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name "
-                                + "(default rdfs:label).")
-                        .str("value", "Literal text value (omit if value_iri is given).")
-                        .str("value_iri", "IRI-valued annotation: an entity name/IRI or absolute IRI.")
-                        .str("lang", "Optional language tag for a literal value, e.g. 'en'.")
-                        .str("datatype", "Optional datatype IRI/name for a typed literal value.")
-                        .annotationArray("annotations", "Optional nested annotations on this annotation.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     return WriteTools.write(ctx, "add ontology annotation", mm -> {
                         OWLOntology ont = mm.getActiveOntology();
@@ -226,20 +180,9 @@ public final class OntologyMetadataTools {
                                 .put("already_present", alreadyPresent)
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("remove_ontology_annotation",
-                "Remove an ontology-level annotation (same arguments as add_ontology_annotation).",
-                Tools.schema()
-                        .str("property", "Annotation property: 'rdfs:label', 'rdfs:comment', or an IRI/name "
-                                + "(default rdfs:label).")
-                        .str("value", "Literal text value (omit if value_iri is given).")
-                        .str("value_iri", "IRI-valued annotation: an entity name/IRI or absolute IRI.")
-                        .str("lang", "Optional language tag for a literal value, e.g. 'en'.")
-                        .str("datatype", "Optional datatype IRI/name for a typed literal value.")
-                        .annotationArray("annotations", "Optional nested annotations on this annotation.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     return WriteTools.write(ctx, "remove ontology annotation", mm -> {
                         OWLOntology ont = mm.getActiveOntology();
@@ -257,7 +200,7 @@ public final class OntologyMetadataTools {
                                 .put("annotation", Tools.annotationJson(mm, annotation))
                                 .result();
                     });
-                }));
+                });
     }
 
     /**

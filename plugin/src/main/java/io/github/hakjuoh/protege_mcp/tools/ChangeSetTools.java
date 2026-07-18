@@ -6,7 +6,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,104 +30,24 @@ public final class ChangeSetTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("preview_change_set",
-                "Normalize a batch of structured axiom operations, apply the exact delta only to a "
-                        + "private ontology snapshot, and run policy/default QC before any live edit. "
-                        + "With no policy, the default gate includes the reasoner stage whenever a "
-                        + "reasoner is selected: inconsistency or ANY unsatisfiable class in the changed "
-                        + "snapshot blocks the commit (the same result-state semantics used by "
-                        + "apply_changes verify=report|rollback; pass explicit gates to override). "
-                        + "satisfiability_checked=false in the result means no reasoner verdict gated "
-                        + "this preview. Returns a memory-only, workspace-scoped change_set_id, complete "
-                        + "base revision, expiry, normalized summary, preflight gate, and committable "
-                        + "decision. Preview entries are size bounded (at most 2,000 operations, "
-                        + "8,000 normalized changes, ~2 MiB each) and expire after 15 minutes by "
-                        + "default. Nothing is applied and no Undo entry is created.",
-                previewSchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> arguments = Tools.args(req);
                     DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
                             Tools.optString(arguments, "policy_path"));
                     return preview(ctx, rules.authorizedPolicyArguments(arguments));
-                }));
-
+                });
         tools.tool("commit_change_set",
-                "Commit an earlier preview exactly once. Requires its change_set_id and the COMPLETE "
-                        + "expected_revision envelope. Read-only mode is checked before confirmation and "
-                        + "again afterward; after the user confirms, one commit mutex and one Protégé "
-                        + "model-thread hop revalidate policy/assets, workspace/session/semantic/document "
-                        + "coordinates (including live prefixes), apply the exact normalized delta through "
-                        + "one applyChanges broadcast, and report the new revision and Undo logging. Any "
-                        + "conflict applies nothing; no auto-merge occurs.",
-                commitSchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     DirectAccessPolicy.requireCapability(ex, DirectAccessPolicy.PROJECT_READ);
                     return commit(ctx, Tools.args(req));
-                }));
-
+                });
         tools.tool("discard_change_set",
-                "Explicitly remove an uncommitted memory-only preview from this Protégé window. "
-                        + "Unknown, expired, already committed, or currently committing ids return "
-                        + "discarded=false. No ontology state is changed.",
-                Tools.schema().strReq("change_set_id", "Preview id returned by preview_change_set.").build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     String id = Tools.reqString(Tools.args(req), "change_set_id");
                     boolean discarded = ctx.changeSets().discard(id);
                     return Tools.json().put("change_set_id", id).put("discarded", discarded)
                             .putIfNotNull("error_code", discarded ? null : "unknown_change_set").result();
-                }));
-    }
-
-    private static Map<String, Object> previewSchema() {
-        Map<String, Object> schema = PreviewTools.operationsSchema();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> properties = (Map<String, Object>) schema.get("properties");
-        properties.put("strict", Tools.boolProperty("Reject an operation that would mint an unrecognized "
-                + "entity. Default false."));
-        properties.put("policy_path", Tools.stringProperty("Optional project policy path; otherwise discover "
-                + "beside the active ontology. When absent, the default gates run: reasoner (when a "
-                + "reasoner is selected), profile, governance, structural."));
-        Map<String, Object> gates = new LinkedHashMap<>();
-        gates.put("type", "array");
-        // Only stages whose backing data this bounded preview can supply are usable without a policy.
-        // invariants/shacl need assets (invariants[]/shacl shapes) that preview_change_set does not
-        // accept, so they would only ever be missing-required → uncommittable; omit them here. Pass
-        // policy_path to run the full policy stage set instead.
-        gates.put("description", "Optional no-policy stages: reasoner, profile, governance, structural, "
-                + "cqs. (invariants and shacl require a project policy.) Explicitly listed stages "
-                + "become REQUIRED: a listed stage that cannot run makes the preview uncommittable.");
-        gates.put("items", Tools.stringProperty("QC stage."));
-        properties.put("gates", gates);
-        properties.put("include_impact", Tools.stringProperty("asserted (default) or none. Inferred impact is "
-                + "provided by semantic_diff rather than this bounded preview slice."));
-        properties.put("ttl_seconds", Tools.intProperty("Preview lifetime in seconds (default 900, max 3600)."));
-        return schema;
-    }
-
-    private static Map<String, Object> commitSchema() {
-        Map<String, Object> revision = new LinkedHashMap<>();
-        revision.put("type", "object");
-        Map<String, Object> rp = new LinkedHashMap<>();
-        rp.put("workspace_id", Tools.stringProperty("Per-backend workspace UUID."));
-        rp.put("session_revision", Tools.intProperty("Monotonic workspace event counter."));
-        rp.put("semantic_fingerprint", Tools.stringProperty("Canonical semantic SHA-256."));
-        rp.put("document_fingerprint", Tools.stringProperty("Canonical live-document SHA-256."));
-        revision.put("properties", rp);
-        revision.put("required", List.of("workspace_id", "session_revision", "semantic_fingerprint",
-                "document_fingerprint"));
-        revision.put("additionalProperties", false);
-        Map<String, Object> schema = Tools.schema()
-                .strReq("change_set_id", "Preview id returned by preview_change_set.")
-                .str("confirm_policy_digest", "Optional policy digest pinned by the caller.")
-                .build();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> properties = (Map<String, Object>) schema.get("properties");
-        properties.put("expected_revision", revision);
-        @SuppressWarnings("unchecked")
-        List<String> required = (List<String>) schema.get("required");
-        List<String> expanded = new ArrayList<>(required);
-        expanded.add("expected_revision");
-        schema.put("required", expanded);
-        return schema;
+                });
     }
 
     static CallToolResult preview(ToolContext ctx, Map<String, Object> arguments) {
@@ -203,9 +122,9 @@ public final class ChangeSetTools {
         Map<String, Object> preflight = null;
         if (reasons.isEmpty()) {
             try {
-                QcSuiteTools.RunConfig config = preflightConfig(policyState, arguments,
+                QcRunConfig config = preflightConfig(policyState, arguments,
                         captured.reasonerSelection);
-                QcSuiteTools.SuiteExecution execution = QcSuiteTools.execute(ctx, config,
+                QcSuiteExecution execution = QcSuiteTools.execute(ctx, config,
                         captured.plan.changes());
                 int version = policy.loaded() && policy.effective().get("version") instanceof Number
                         ? ((Number) policy.effective().get("version")).intValue() : 0;
@@ -303,14 +222,14 @@ public final class ChangeSetTools {
         return result;
     }
 
-    static QcSuiteTools.RunConfig preflightConfig(RevisionTools.PolicyState state,
+    static QcRunConfig preflightConfig(RevisionTools.PolicyState state,
             Map<String, Object> arguments, ReasonerSelection selection) {
         // apply_changes' documented timeout_ms is the preflight budget. It can only TIGHTEN a
         // policy's reasoning.timeout_ms — the policy stays the reproducible ceiling.
         Integer requestedTimeout = arguments.get("timeout_ms") instanceof Number number
                 ? Math.max(1, number.intValue()) : null;
         if (state.policy().loaded() && state.policy().valid()) {
-            QcSuiteTools.RunConfig config = ProjectQcTools.config(state.policy(), state.live(),
+            QcRunConfig config = ProjectQcTools.config(state.policy(), state.live(),
                     arguments);
             return requestedTimeout == null || requestedTimeout >= config.timeout
                     ? config : config.withTimeout(requestedTimeout);
@@ -342,7 +261,7 @@ public final class ChangeSetTools {
         if (requestedTimeout != null) {
             legacy.put("timeout_ms", requestedTimeout);
         }
-        return QcSuiteTools.RunConfig.legacy(legacy);
+        return QcRunConfig.legacy(legacy);
     }
 
     /** The reasoner-selection state the preview's captured hop observed. */

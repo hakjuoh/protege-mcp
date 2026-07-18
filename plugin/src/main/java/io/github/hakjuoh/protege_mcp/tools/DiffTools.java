@@ -41,26 +41,7 @@ public final class DiffTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("diff_ontologies",
-                "Diff two ontologies at the axiom level. 'left' (default the active ontology) and "
-                        + "'right' name loaded ontologies by ontology IRI or version IRI (see "
-                        + "list_ontologies); alternatively 'right_document' loads a document (path/URL/IRI) "
-                        + "purely to compare against — without adding it to the workspace. Reports counts "
-                        + "and capped samples of axioms only-in-left and only-in-right, and "
-                        + "identical=true when the two axiom sets match (a faithful round-trip). Use "
-                        + "include_imports to compare imports closures, logical_only to ignore "
-                        + "declarations/annotations. Read-only.",
-                Tools.schema()
-                        .str("left", "Ontology IRI/version of a loaded ontology (default: active).")
-                        .str("right", "Ontology IRI/version of a loaded ontology to compare against.")
-                        .str("right_document", "Path/URL/IRI of a document to load and compare against "
-                                + "(alternative to 'right'; not added to the workspace).")
-                        .bool("include_imports", "Compare full imports closures instead of just the two "
-                                + "ontologies (default false).")
-                        .bool("logical_only", "Compare logical axioms only, ignoring declarations and "
-                                + "annotation assertions (default false).")
-                        .integer("limit", "Max axioms to list per side (default " + DEFAULT_LIMIT + ").")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String leftRef = Tools.optString(a, "left");
                     String rightRef = Tools.optString(a, "right");
@@ -85,28 +66,9 @@ public final class DiffTools {
                     String rightLabel = rightDoc != null ? rightDoc : rightRef;
                     return ctx.access().compute(mm -> diff(mm, leftRef, rightRef, rightAxioms, rightLabel,
                             includeImports, logicalOnly, limit));
-                }));
-
+                });
         tools.tool("semantic_diff",
-                "Classify an asserted semantic diff while retaining diff_ontologies as the fast exact "
-                        + "axiom primitive. Reports ontology/import/ontology-annotation changes, added "
-                        + "and removed entities by type, unique exact-label rename candidates (never "
-                        + "automatic rewrites), per-entity annotation/lifecycle/replacement deltas, "
-                        + "asserted axioms grouped by type and affected IRI, and a conservative "
-                        + "compatibility classification (any logical axiom added or removed is "
-                        + "potentially_breaking). Unresolved right_document imports are reported and, "
-                        + "with include_imports, force potentially_breaking instead of diffing a "
-                        + "silently truncated closure. This 0.6 prototype supports mode=asserted; "
-                        + "inferred/both fail explicitly rather than returning incomplete results.",
-                Tools.schema()
-                        .str("left", "Loaded ontology IRI/version (default active).")
-                        .str("right", "Loaded ontology IRI/version to compare.")
-                        .str("right_document", "Local/IRI document to load privately instead of right.")
-                        .bool("include_imports", "Include each side's loaded imports closure.")
-                        .str("mode", "asserted (default); inferred/both are not in this prototype.")
-                        .integer("limit", "Maximum samples per category (default 50).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String mode = Tools.optString(a, "mode");
                     if (mode != null && !"asserted".equalsIgnoreCase(mode)) {
@@ -148,7 +110,7 @@ public final class DiffTools {
                         return Tools.ok(SemanticDiffService.diff(left, right, includeImports, limit,
                                 unresolvedImports));
                     });
-                }));
+                });
     }
 
     private static CallToolResult diff(OWLModelManager mm, String leftRef, String rightRef,

@@ -79,41 +79,7 @@ public final class GovernanceTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("validate_governance",
-                "Audit the active ontology against PROJECT GOVERNANCE rules (complements "
-                        + "validate_ontology's generic quality checks and run_reasoner's logic checks). "
-                        + "Checks: (1) owl_profile — OWL 2 profile conformance (default DL; or EL/QL/RL; "
-                        + "'none'/'Full' skips), reporting the axioms that leave the profile; (4) "
-                        + "check_ownership (default true) — the active module must not assert logical "
-                        + "axioms about IMPORTED terms (import-layering / module ownership) — both run BY "
-                        + "DEFAULT; (2) required_namespaces / iri_pattern — every owned entity's IRI must "
-                        + "start with one of the namespaces and/or match the regex; and (3) "
-                        + "required_annotations — every owned class/property must carry each listed "
-                        + "annotation property (use 'label' and 'definition' for rdfs:label / any "
-                        + "definition property) — are opt-in. Owned = declared in the audited scope, not "
-                        + "purely imported. Set include_imports=true to audit the whole imports closure "
-                        + "as owned.",
-                Tools.schema()
-                        .bool("include_imports", "Treat the whole imports closure as owned and audit it "
-                                + "too (default false: only the active ontology's own terms).")
-                        .str("owl_profile", "OWL 2 profile to check conformance against: DL (default), "
-                                + "EL, QL, RL. Pass 'none' or 'Full' to skip the profile check.")
-                        .strArray("required_namespaces", "Owned entity IRIs must start with one of these "
-                                + "namespace prefixes (optional; e.g. your ontology's term namespace).")
-                        .str("iri_pattern", "Owned entity IRIs must match this Java regular expression "
-                                + "(optional; applied to the full IRI).")
-                        .strArray("required_annotations", "Annotation properties every owned "
-                                + "class/property must carry: an IRI/CURIE/name, or the specials 'label' "
-                                + "(rdfs:label) and 'definition' (rdfs:comment / skos:definition / any "
-                                + "*definition property). Optional.")
-                        .bool("check_ownership", "Flag logical axioms in the active ontology whose "
-                                + "subject is an imported (upstream) term — an import-layering violation. "
-                                + "Default true.")
-                        .integer("limit", "Max sample offenders/details per check (default 25).")
-                        .integer("timeout_ms", "Time budget in ms before the call returns a timeout "
-                                + "error (default 60000). The checks run on the model thread and are not "
-                                + "interrupted mid-run, so this bounds the caller's wait, not the work.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
                     boolean checkOwnership = Tools.optBool(a, "check_ownership", true);
@@ -177,7 +143,7 @@ public final class GovernanceTools {
                                     + "run run_reasoner for satisfiability and validate_ontology for "
                                     + "generic modelling quality.")
                             .result();
-                }));
+                });
     }
 
     // ================================================================== phase 1 (model thread)

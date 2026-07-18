@@ -62,28 +62,7 @@ public final class ShaclTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("shacl_validate",
-                "Validate the active ontology (its imports-closure RDF) against a SHACL shapes graph using "
-                        + "the embedded Apache Jena SHACL engine. Provide the shapes inline as Turtle in "
-                        + "'shapes', or a LOCAL file path in 'shapes_path' (remote fetch is disabled for "
-                        + "offline safety). By default validation runs over the ASSERTED triples (like "
-                        + "sparql_query); set include_inferred=true to first materialise the active "
-                        + "reasoner's inferences (run_reasoner first). Reports 'conforms' plus, per "
-                        + "validation result, the focus node, result path, value, severity "
-                        + "(Violation/Warning/Info), source shape, constraint component and message. This is "
-                        + "the SHACL counterpart to verify_ontology's SPARQL invariants; use it for "
-                        + "shape-based data-quality checks (cardinality, datatype, value/class constraints).",
-                Tools.schema()
-                        .str("shapes", "SHACL shapes graph as Turtle text (inline). Either this or "
-                                + "'shapes_path' is required.")
-                        .str("shapes_path", "Path to a LOCAL SHACL shapes document (Turtle/RDF-XML/etc.; "
-                                + "format inferred from the extension). Alternative to 'shapes'.")
-                        .bool("include_inferred", "Validate over the active reasoner's inferred triples "
-                                + "(default false; requires a classified reasoner — run_reasoner first).")
-                        .integer("limit", "Max validation results to return (default 1000).")
-                        .integer("timeout_ms", "Time budget in ms, applied to BOTH the data snapshot (on the "
-                                + "model thread) and the SHACL validation itself (default 120000).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String shapesText = Tools.optString(a, "shapes");
                     String shapesPath = Tools.optString(a, "shapes_path");
@@ -106,7 +85,7 @@ public final class ShaclTools {
                             SparqlTools.toTurtleBytes(SparqlTools.snapshot(mm, includeInferred).ontology()),
                             snapTimeout);
                     return Tools.ok(validate(dataTurtle, shapesText, shapesPath, limit, snapTimeout));
-                }));
+                });
     }
 
     /**

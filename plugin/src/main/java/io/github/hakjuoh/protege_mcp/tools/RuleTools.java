@@ -1,7 +1,6 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -67,32 +66,13 @@ public final class RuleTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("list_rules",
-                "List the SWRL rules (swrl:Imp axioms) in the active ontology as structured "
-                        + "body/head atoms plus any rule annotations and a text rendering. Variable "
-                        + "arguments are emitted as ?<absolute IRI> so a listed rule round-trips through "
-                        + "add_rule unchanged. Set include_imports=true to include rules from the imports "
-                        + "closure. Read-only.",
-                Tools.schema()
-                        .bool("include_imports", "Include rules from imported ontologies too (default false).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
                     return ctx.access().compute(mm -> listRules(mm, includeImports));
-                }));
-
+                });
         tools.tool("add_rule",
-                "Add a SWRL rule (swrl:Imp) to the active ontology from structured body and head atoms. "
-                        + "Each atom is {type, ...}: type=class {predicate, arg1}; object_property "
-                        + "{predicate, arg1, arg2}; data_property {predicate, arg1, arg2|value[+lang|"
-                        + "datatype]}; same_as/different_from {arg1, arg2}; builtin {builtin, args[]}. An "
-                        + "argument starting with '?' is a variable (?name → variable_namespace+name, "
-                        + "?<IRI> → that IRI); otherwise an i-argument is an individual and a d-argument "
-                        + "is a literal. Optional 'annotations' attach rule-level rdfs:label/comment/etc. "
-                        + "The rule is implication body → head (an empty body is allowed; head must be "
-                        + "non-empty).",
-                ruleSchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     List<Map<String, Object>> body = Tools.objList(a, "body");
                     List<Map<String, Object>> head = Tools.objList(a, "head");
@@ -117,16 +97,9 @@ public final class RuleTools {
                                 .put("rule", ruleJson(mm, rule, -1))
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("remove_rule",
-                "Remove a SWRL rule from the active ontology. Identify it by 'index' (into the same "
-                        + "rendering-sorted order list_rules returns) and/or 'label' (its rdfs:label), or "
-                        + "by passing the same structured 'body'/'head'/'annotations' as add_rule to "
-                        + "remove that exact rule. An index/label that matches no rule is reported, not an "
-                        + "error.",
-                removeRuleSchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     List<Map<String, Object>> body = Tools.objList(a, "body");
                     List<Map<String, Object>> head = Tools.objList(a, "head");
@@ -182,7 +155,7 @@ public final class RuleTools {
                         return Tools.json().put("removed", removed.size())
                                 .put("rules", removed).result();
                     });
-                }));
+                });
     }
 
     // ------------------------------------------------------------------ list
@@ -633,107 +606,5 @@ public final class RuleTools {
             }
         }
         return false;
-    }
-
-    // ------------------------------------------------------------------ schemas
-
-    private static Map<String, Object> ruleSchema() {
-        Map<String, Object> schema = new LinkedHashMap<>();
-        Map<String, Object> props = new LinkedHashMap<>();
-        props.put("body", atomArray("Body atoms (the rule's premise; may be empty)."));
-        props.put("head", atomArray("Head atoms (the rule's conclusion; at least one)."));
-        props.put("variable_namespace", Tools.stringProperty("Namespace for ?name variables "
-                + "(default " + DEFAULT_VARIABLE_NS + "). ?<absolute IRI> ignores this."));
-        props.put("annotations", annotationArrayProp());
-        schema.put("type", "object");
-        schema.put("properties", props);
-        schema.put("required", Arrays.asList("head"));
-        schema.put("additionalProperties", false);
-        return schema;
-    }
-
-    private static Map<String, Object> removeRuleSchema() {
-        Map<String, Object> schema = ruleSchema();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> props = (Map<String, Object>) schema.get("properties");
-        props.remove("body");
-        props.remove("head");
-        // re-add body/head as optional (no 'required') for the exact-match removal path
-        props.put("body", atomArray("Body atoms of the exact rule to remove (with 'head')."));
-        props.put("head", atomArray("Head atoms of the exact rule to remove (with 'body')."));
-        props.put("index", intProperty("0-based index into the active ontology's rules in the same "
-                + "rendering-sorted order list_rules returns (call list_rules without include_imports)."));
-        props.put("label", Tools.stringProperty("Remove rule(s) whose rdfs:label equals this."));
-        schema.remove("required");
-        return schema;
-    }
-
-    private static Map<String, Object> atomArray(String desc) {
-        Map<String, Object> arr = new LinkedHashMap<>();
-        arr.put("type", "array");
-        arr.put("items", atomItemSchema());
-        arr.put("description", desc);
-        return arr;
-    }
-
-    private static Map<String, Object> atomItemSchema() {
-        Map<String, Object> props = new LinkedHashMap<>();
-        props.put("type", Tools.stringProperty("class | object_property | data_property | same_as | "
-                + "different_from | builtin"));
-        props.put("predicate", Tools.stringProperty("class/object_property/data_property: the class or "
-                + "property IRI/name (a class may be a Manchester expression)."));
-        props.put("predicate_iri", Tools.stringProperty("class/object_property/data_property: full IRI "
-                + "of the predicate (alternative to 'predicate', preferred when present — lets "
-                + "list_rules output replay verbatim across ontologies)."));
-        props.put("arg1", Tools.stringProperty("First argument: ?variable or an individual IRI/name."));
-        props.put("arg2", Tools.stringProperty("Second argument: ?variable, an individual (object_"
-                + "property/same_as/different_from) or a literal/?variable (data_property)."));
-        props.put("value", Tools.stringProperty("data_property: literal value (alternative to a "
-                + "variable arg2)."));
-        props.put("lang", Tools.stringProperty("data_property value: optional language tag."));
-        props.put("datatype", Tools.stringProperty("data_property value: optional datatype IRI/name."));
-        props.put("builtin", Tools.stringProperty("builtin: the built-in IRI/CURIE, e.g. "
-                + "swrlb:greaterThan."));
-        Map<String, Object> args = new LinkedHashMap<>();
-        args.put("type", "array");
-        Map<String, Object> items = new LinkedHashMap<>();
-        items.put("description", "A ?variable, a plain literal value (string), or a typed/lang literal "
-                + "object {value, datatype} / {value, lang}.");
-        args.put("items", items);
-        args.put("description", "builtin: ordered d-arguments (?variables or literal values; typed/lang "
-                + "literals as {value, datatype|lang}).");
-        props.put("args", args);
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("type", "object");
-        item.put("properties", props);
-        item.put("additionalProperties", false);
-        return item;
-    }
-
-    private static Map<String, Object> annotationArrayProp() {
-        // Mirror SchemaBuilder.annotationArray's item shape for rule-level annotations.
-        Map<String, Object> itemProps = new LinkedHashMap<>();
-        itemProps.put("property", Tools.stringProperty("Annotation property: 'rdfs:label', "
-                + "'rdfs:comment', or an IRI/name (default rdfs:label)."));
-        itemProps.put("value", Tools.stringProperty("Literal text value (omit if value_iri is given)."));
-        itemProps.put("value_iri", Tools.stringProperty("IRI-valued annotation (alternative to value)."));
-        itemProps.put("lang", Tools.stringProperty("Optional language tag for a literal value."));
-        itemProps.put("datatype", Tools.stringProperty("Optional datatype IRI/name for a typed literal."));
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("type", "object");
-        item.put("properties", itemProps);
-        item.put("additionalProperties", false);
-        Map<String, Object> arr = new LinkedHashMap<>();
-        arr.put("type", "array");
-        arr.put("items", item);
-        arr.put("description", "Optional rule-level annotations (rdfs:label, dcterms:description, …).");
-        return arr;
-    }
-
-    private static Map<String, Object> intProperty(String desc) {
-        Map<String, Object> p = new LinkedHashMap<>();
-        p.put("type", "integer");
-        p.put("description", desc);
-        return p;
     }
 }

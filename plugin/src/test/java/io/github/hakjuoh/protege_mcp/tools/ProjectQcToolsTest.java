@@ -313,7 +313,7 @@ class ProjectQcToolsTest {
     @Test
     void moduleOwnedNamespaceViolationAloneFailsTheProjectGate(@TempDir Path temp) throws Exception {
         // Wiring pin, not a unit re-test: ModulePolicyGovernance.moduleChecks reaches the gate only
-        // through ProjectQcTools.config → RunConfig.projectGovernanceChecks → the governance-stage
+        // through ProjectQcTools.config → QcRunConfig.projectGovernanceChecks → the governance-stage
         // merge. This policy's ONLY violation is a foreign-namespace definition, so replacing that
         // wiring with an empty list flips this end-to-end gate back to pass.
         writeModuleDocument(temp.resolve("owner.ttl"), "https://example.org/owner",

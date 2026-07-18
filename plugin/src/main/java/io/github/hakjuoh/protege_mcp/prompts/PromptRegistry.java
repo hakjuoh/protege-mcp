@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.prompts;
 import java.util.ArrayList;
 import java.util.List;
 
+import io.github.hakjuoh.protege_mcp.catalog.McpCatalog;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncPromptSpecification;
 import io.modelcontextprotocol.spec.McpSchema.PromptArgument;
 
@@ -21,8 +22,17 @@ public final class PromptRegistry {
     private final List<SyncPromptSpecification> specs = new ArrayList<>();
 
     /**
-     * Register one prompt: its {@code name}, {@code description}, {@code arguments} and the text
-     * {@code template}. Returns {@code this} so calls can chain.
+     * Register a renderer by name, resolving its description and arguments from the shared JSON
+     * catalog.
+     */
+    public PromptRegistry prompt(String name, PromptTemplate template) {
+        McpCatalog.PromptDefinition definition = McpCatalog.get().prompt(name);
+        return prompt(definition.name(), definition.description(), definition.arguments(), template);
+    }
+
+    /**
+     * Register explicitly supplied metadata. Retained for focused factory tests and extensions that
+     * are not part of the built-in catalog.
      */
     public PromptRegistry prompt(String name, String description,
             List<PromptArgument> arguments, PromptTemplate template) {

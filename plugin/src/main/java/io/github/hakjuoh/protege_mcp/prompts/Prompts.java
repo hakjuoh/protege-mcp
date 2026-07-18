@@ -1,10 +1,6 @@
 package io.github.hakjuoh.protege_mcp.prompts;
 
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.Map;
-
-import io.modelcontextprotocol.spec.McpSchema.PromptArgument;
 
 /**
  * MCP <em>prompts</em>: reusable, guided ontology workflows a user can pick in their MCP client. Each
@@ -20,8 +16,6 @@ public final class Prompts {
 
     public static void register(PromptRegistry prompts) {
         prompts.prompt("audit_ontology",
-                "Audit the active ontology for modelling-quality issues and propose fixes.",
-                Collections.emptyList(),
                 args -> ""
                         + "Audit the ontology currently open in Protégé and propose fixes.\n\n"
                         + "1. Call get_ontology_context to orient yourself (size, roots, reasoner state).\n"
@@ -46,8 +40,6 @@ public final class Prompts {
                         + "fallback when change-set tools are unavailable.");
 
         prompts.prompt("explain_class",
-                "Explain a class: its definition, neighbourhood, and what the reasoner infers about it.",
-                Collections.singletonList(arg("class", "Class IRI or display name.", true)),
                 args -> {
                     String cls = str(args, "class", "the class");
                     return ""
@@ -63,10 +55,6 @@ public final class Prompts {
                 });
 
         prompts.prompt("add_subclass_safely",
-                "Add a subclass relationship safely: check the terms exist, preview, then apply and verify.",
-                Arrays.asList(
-                        arg("child", "Subclass — IRI, name, or Manchester class expression.", true),
-                        arg("parent", "Superclass — IRI, name, or Manchester class expression.", true)),
                 args -> {
                     String child = str(args, "child", "the child class");
                     String parent = str(args, "parent", "the parent class");
@@ -97,8 +85,6 @@ public final class Prompts {
                 });
 
         prompts.prompt("find_and_fix_unsatisfiable",
-                "Find unsatisfiable classes, explain why, and propose minimal fixes.",
-                Collections.emptyList(),
                 args -> ""
                         + "Diagnose and fix unsatisfiable classes in the active ontology.\n\n"
                         + "1. Call run_reasoner, then get_unsatisfiable_classes. If the ontology is wholly "
@@ -118,10 +104,6 @@ public final class Prompts {
                         + "reverts the whole batch if not.");
 
         prompts.prompt("author_sparql_query",
-                "Author a SPARQL query that answers a question: discover the vocabulary, draft, validate, "
-                        + "then run it.",
-                Collections.singletonList(
-                        arg("question", "The question to answer in plain words.", true)),
                 args -> {
                     String question = str(args, "question", "the question");
                     return ""
@@ -145,8 +127,6 @@ public final class Prompts {
                 });
 
         prompts.prompt("model_domain",
-                "Model a described domain incrementally: propose terms, preview, apply with confirmation.",
-                Collections.singletonList(arg("description", "What to model (the domain in plain words).", true)),
                 args -> {
                     String desc = str(args, "description", "the described domain");
                     return ""
@@ -171,11 +151,6 @@ public final class Prompts {
                 });
 
         prompts.prompt("author_competency_question",
-                "Turn a plain-language requirement into a stored, executable competency question: "
-                        + "discover vocabulary, draft, validate, store, and run it.",
-                Arrays.asList(
-                        arg("question", "The requirement/competency question in plain words.", true),
-                        arg("expected", "Pass condition: nonEmpty (default) | empty | 'count OP N'.", false)),
                 args -> {
                     String question = str(args, "question", "the requirement");
                     String expected = str(args, "expected", "");
@@ -210,10 +185,6 @@ public final class Prompts {
                 });
 
         prompts.prompt("author_swrl_rule",
-                "Author a SWRL rule from a plain-language description, checking reasoner compatibility "
-                        + "(ELK ignores rules; built-ins can fail classification) before and after applying.",
-                Collections.singletonList(
-                        arg("rule", "The rule to express, in plain words (if X then Y).", true)),
                 args -> {
                     String rule = str(args, "rule", "the described rule");
                     return ""
@@ -245,11 +216,6 @@ public final class Prompts {
                 });
 
         prompts.prompt("refactor_entity_safely",
-                "Rename, deprecate, delete or move a term the safe way: blast-radius first, correct tool "
-                        + "choice, preview, confirm, verify.",
-                Arrays.asList(
-                        arg("entity", "The term to refactor: IRI or display name.", true),
-                        arg("goal", "What to achieve: rename | deprecate | delete | move (plain words are fine).", true)),
                 args -> {
                     String entity = str(args, "entity", "the term");
                     String goal = str(args, "goal", "the intended change");
@@ -284,11 +250,6 @@ public final class Prompts {
                 });
 
         prompts.prompt("bootstrap_ontology",
-                "Start a new ontology module correctly: create it bound to a file, set prefixes and "
-                        + "metadata, add resolved imports, save, and write the catalog.",
-                Arrays.asList(
-                        arg("ontology_iri", "IRI of the new ontology.", true),
-                        arg("path", "File path to bind the ontology to (optional but recommended).", false)),
                 args -> {
                     String iri = str(args, "ontology_iri", "the new ontology IRI");
                     String path = str(args, "path", "");
@@ -321,11 +282,6 @@ public final class Prompts {
                 });
 
         prompts.prompt("release_readiness_check",
-                "Run the full quality gate (reasoner, profile, structural checks, competency questions, "
-                        + "governance policy) and, on approval, save the release artifacts.",
-                Arrays.asList(
-                        arg("profile", "OWL 2 profile the project must stay in: DL (default), EL, QL or RL.", false),
-                        arg("namespace", "The project's required term namespace, for the governance IRI policy.", false)),
                 args -> {
                     String profile = str(args, "profile", "DL");
                     String ns = str(args, "namespace", "");
@@ -364,10 +320,6 @@ public final class Prompts {
     }
 
     // ------------------------------------------------------------------ helpers
-
-    private static PromptArgument arg(String name, String description, boolean required) {
-        return new PromptArgument(name, description, required);
-    }
 
     private static String str(Map<String, Object> args, String key, String fallback) {
         if (args == null) {

@@ -96,27 +96,7 @@ public final class SparqlTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("sparql_query",
-                "Run a SPARQL 1.1 query over the active ontology and its imports closure, using an "
-                        + "embedded Jena ARQ engine. Supports the read query forms SELECT, ASK, CONSTRUCT "
-                        + "and DESCRIBE; SPARQL UPDATE and SERVICE are rejected (edits go through the "
-                        + "write tools; no network access). Prefixes declared in the ontology (plus "
-                        + "rdf/rdfs/owl/xsd) are auto-prepended, so queries can use them without their "
-                        + "own PREFIX lines. By default the query sees the ASSERTED triples (like "
-                        + "Protégé's SPARQL Query tab); set include_inferred=true to first materialise "
-                        + "the active reasoner's inferences (run_reasoner first — this runs on the UI "
-                        + "thread and can be slow on a large ABox). 'limit' caps the rows (SELECT) or "
-                        + "triples (CONSTRUCT/DESCRIBE) returned (default 1000).",
-                Tools.schema()
-                        .strReq("query", "A SPARQL 1.1 query (SELECT, ASK, CONSTRUCT, or DESCRIBE).")
-                        .bool("include_inferred", "Materialise the active reasoner's inferred axioms "
-                                + "before querying (default false; requires a classified reasoner; runs "
-                                + "on the UI thread).")
-                        .integer("limit", "Max rows (SELECT) or triples (CONSTRUCT/DESCRIBE) to return "
-                                + "(default 1000).")
-                        .integer("timeout_ms", "Overall time budget in ms, covering both the snapshot/"
-                                + "inference step and the query evaluation (default 120000).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> query(ctx, Tools.args(req))));
+                (ex, req) -> query(ctx, Tools.args(req)));
     }
 
     /**

@@ -57,31 +57,7 @@ public final class OntologyDocumentTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("load_ontology",
-                "Load an OWL ontology document from a local path or document IRI/URL into the "
-                        + "current Protégé workspace and make the loaded ontology active. Unlike "
-                        + "merge_ontology_document, this keeps the document as its own loaded "
-                        + "ontology instead of copying its contents into the previous active "
-                        + "ontology. GitHub blob URLs are converted to raw.githubusercontent.com "
-                        + "URLs automatically. The document is fetched off the UI thread (so a slow "
-                        + "remote fetch does not freeze Protégé). Missing imports default to warn "
-                        + "(load succeeds and reports them), can fail closed with missing_imports=error, "
-                        + "or can be explicitly silenced. A sibling catalog-v001.xml next to a local-file document "
-                        + "first resolves its imports to local files (offline), like Protégé's own "
-                        + "File ▸ Open. Note: a load is not an applyChange edit, so it does NOT join "
-                        + "the shared undo stack — undo_change cannot revert it. Pass keep_active=true "
-                        + "to load the document (e.g. to resolve an import) WITHOUT changing your "
-                        + "current active edit target.",
-                Tools.schema()
-                        .strReq("source", "Local file path, file: IRI, http(s) document IRI, or GitHub blob URL.")
-                        .bool("keep_active", "Keep the current active ontology instead of switching to the "
-                                + "loaded document (default false). Use this to resolve an unresolved "
-                                + "import without losing your edit target.")
-                        .integer("connection_timeout_ms", "Remote document connection timeout (default 15000).")
-                        .strEnum("missing_imports", "Missing-import policy: warn (default; report and continue), "
-                                + "error (fail without changing the workspace), or silent (continue without "
-                                + "reporting missing IRIs).", "warn", "error", "silent")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String source = Tools.reqString(a, "source");
                     boolean keepActive = Tools.optBool(a, "keep_active", false);
@@ -92,30 +68,9 @@ public final class OntologyDocumentTools {
                     DirectAccessPolicy.Source authorized = accessRules.authorizeSource(source);
                     return doLoad(ctx, authorized.value(), timeoutMs, keepActive, missingImports,
                             accessRules.importNetworkRule());
-                }));
-
+                });
         tools.tool("merge_ontology_document",
-                "Load an OWL ontology document from a local path or document IRI/URL and copy its "
-                        + "axioms, direct import declarations, and ontology annotations into the "
-                        + "active ontology. This preserves axiom annotations and axiom types that "
-                        + "are not exposed by the structured add_axiom tool. GitHub blob URLs are "
-                        + "converted to raw.githubusercontent.com URLs automatically. Pass "
-                        + "preview=true to fetch and parse the document but only REPORT what the "
-                        + "merge would do, without changing anything.",
-                Tools.schema()
-                        .strReq("source", "Local file path, file: IRI, http(s) document IRI, or GitHub blob URL.")
-                        .bool("replace_active", "Remove active ontology axioms/imports/ontology annotations first "
-                                + "(default false).")
-                        .bool("copy_ontology_id", "Copy source ontology IRI/version to the active ontology. "
-                                + "Defaults to replace_active.")
-                        .bool("preview", "Dry-run: report what the merge would copy/remove without "
-                                + "applying anything (works in read-only mode). Default false.")
-                        .integer("connection_timeout_ms", "Remote document connection timeout (default 15000).")
-                        .strEnum("missing_imports", "Missing-import policy: warn (default; report and continue), "
-                                + "error (fail without changing the active ontology), or silent (continue "
-                                + "without reporting missing IRIs).", "warn", "error", "silent")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String source = Tools.reqString(a, "source");
                     boolean replaceActive = Tools.optBool(a, "replace_active", false);
@@ -147,19 +102,9 @@ public final class OntologyDocumentTools {
                     return ctx.access().compute(
                             mm -> apply(mm, loaded, replaceActive, copyOntologyId, preview),
                             MERGE_TIMEOUT_MS);
-                }));
-
+                });
         tools.tool("set_active_ontology",
-                "Select which already-loaded ontology is the ACTIVE edit target (every edit tool writes "
-                        + "to the active ontology). Resolve by ontology IRI or version IRI (see "
-                        + "list_ontologies). Unlike load_ontology this loads/fetches nothing — it just "
-                        + "switches focus among ontologies already in the workspace, e.g. back to your "
-                        + "module after load_ontology brought an imported ontology into the workspace.",
-                Tools.schema()
-                        .strReq("ontology_iri", "Ontology IRI or version IRI of a loaded ontology "
-                                + "(see list_ontologies).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String ref = Tools.reqString(a, "ontology_iri");
                     return ctx.access().compute(mm -> {
@@ -181,25 +126,9 @@ public final class OntologyDocumentTools {
                                 .put("direct_imports", target.getImportsDeclarations().size())
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("create_ontology",
-                "Create a brand-new empty ontology in the workspace and make it the active edit target "
-                        + "(so add_axiom/create_* write into it). Give its 'ontology_iri' and optionally a "
-                        + "'version_iri'. Pass 'path' to bind it to a file now (so an argument-less "
-                        + "save_ontology writes there, and write_catalog has a folder); otherwise it is "
-                        + "untitled until you save_ontology with a path. Use this to start a new module "
-                        + "before adding imports/axioms; set_ontology_id changes an existing ontology's "
-                        + "id, whereas this mints a new one. Creating an ontology is not on the undo stack.",
-                Tools.schema()
-                        .strReq("ontology_iri", "IRI of the new ontology.")
-                        .str("version_iri", "Optional version IRI.")
-                        .str("path", "Optional file path to bind the new ontology to (e.g. "
-                                + "/tmp/mymodule/MyModule.rdf).")
-                        .bool("keep_active", "Keep the current active ontology instead of switching to the "
-                                + "new one (default false).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String ontologyIri = Tools.reqString(a, "ontology_iri");
                     String versionIri = Tools.optString(a, "version_iri");
@@ -214,7 +143,7 @@ public final class OntologyDocumentTools {
                     }
                     return ctx.access().compute(mm -> createOntology(mm, ontologyIri, versionIri, path,
                             keepActive));
-                }));
+                });
     }
 
     /**

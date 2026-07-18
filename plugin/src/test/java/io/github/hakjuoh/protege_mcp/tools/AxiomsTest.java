@@ -43,6 +43,8 @@ import org.semanticweb.owlapi.model.OWLObjectPropertyRangeAxiom;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+
+import io.github.hakjuoh.protege_mcp.catalog.McpCatalog;
 import org.semanticweb.owlapi.model.OWLSameIndividualAxiom;
 import org.semanticweb.owlapi.model.OWLSubClassOfAxiom;
 import org.semanticweb.owlapi.model.OWLSubObjectPropertyOfAxiom;
@@ -155,7 +157,7 @@ class AxiomsTest {
 
     @Test
     void schemaIsAnObjectSchemaWithProperties() {
-        Map<String, Object> schema = Axioms.schema();
+        Map<String, Object> schema = axiomSchema();
         assertNotNull(schema, "schema() must not return null");
         assertEquals("object", schema.get("type"), "top-level schema type is object");
         assertEquals(Boolean.FALSE, schema.get("additionalProperties"),
@@ -166,7 +168,7 @@ class AxiomsTest {
     @Test
     @SuppressWarnings("unchecked")
     void schemaRequiresAxiomTypeWithSupportedValues() {
-        Map<String, Object> schema = Axioms.schema();
+        Map<String, Object> schema = axiomSchema();
         List<String> required = (List<String>) schema.get("required");
         assertNotNull(required, "schema must declare required fields");
         assertTrue(required.contains("axiom_type"), "axiom_type is required");
@@ -182,7 +184,7 @@ class AxiomsTest {
     @SuppressWarnings("unchecked")
     void schemaDocumentsAllOperandKeys() {
         Map<String, Object> props =
-                (Map<String, Object>) Axioms.schema().get("properties");
+                (Map<String, Object>) axiomSchema().get("properties");
         for (String key : Arrays.asList("sub", "super", "classes", "class", "individual", "individuals",
                 "property", "properties", "super_property", "chain", "inverse_property", "subject",
                 "object", "value", "value_iri", "lang", "datatype", "entity", "entity_type", "domain",
@@ -195,7 +197,7 @@ class AxiomsTest {
     @SuppressWarnings("unchecked")
     void schemaAnnotationsIsAnArrayOfObjects() {
         Map<String, Object> props =
-                (Map<String, Object>) Axioms.schema().get("properties");
+                (Map<String, Object>) axiomSchema().get("properties");
         Map<String, Object> annotations = (Map<String, Object>) props.get("annotations");
         assertEquals("array", annotations.get("type"), "annotations is an array");
         Map<String, Object> item = (Map<String, Object>) annotations.get("items");
@@ -207,6 +209,10 @@ class AxiomsTest {
     }
 
     // ================================================================== build(): class axioms
+
+    private static Map<String, Object> axiomSchema() {
+        return McpCatalog.get().tool("add_axiom").inputSchema();
+    }
 
     @Test
     void buildSubclassOfFromDeclaredClasses() throws OWLOntologyCreationException {

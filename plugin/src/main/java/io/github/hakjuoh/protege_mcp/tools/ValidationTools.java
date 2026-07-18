@@ -77,29 +77,7 @@ public final class ValidationTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("validate_ontology",
-                "Audit the active ontology for modelling-quality issues (not logical consistency — use "
-                        + "run_reasoner for that). Runs structural checks and reports, per check, a "
-                        + "count, sample offenders, and a fix suggestion. Checks: "
-                        + String.join(", ", CHECK_IDS) + ". Imported terms (declared upstream) are not "
-                        + "flagged for missing label/definition/domain/range when auditing the active "
-                        + "ontology alone; set include_imports=true to audit the whole imports closure. "
-                        + "Pass 'checks' to run a subset. These are modelling-quality checks only; set "
-                        + "with_reasoner=true to also include the reasoner's consistency / "
-                        + "unsatisfiable-class verdict (a clean audit is NOT proof of logical "
-                        + "consistency).",
-                Tools.schema()
-                        .bool("include_imports", "Audit the imports closure too (default false).")
-                        .strArray("checks", "Subset of check ids to run (default all).")
-                        .bool("with_reasoner", "Also report the reasoner's consistency / unsatisfiable "
-                                + "classes (uses the already-classified reasoner; run_reasoner first for "
-                                + "a current verdict). Default false.")
-                        .integer("limit", "Max sample offenders/details per check (default 25).")
-                        .integer("timeout_ms", "Time budget in ms before the call returns a timeout "
-                                + "error (default 60000). The structural checks run on the model thread "
-                                + "and are not interrupted mid-run, so this bounds the caller's wait, "
-                                + "not the on-thread work itself.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
                     boolean withReasoner = Tools.optBool(a, "with_reasoner", false);
@@ -138,7 +116,7 @@ public final class ValidationTools {
                                         + "get_unsatisfiable_classes (or pass with_reasoner=true).")
                                 .result();
                     }, timeoutMs);
-                }));
+                });
     }
 
     /**

@@ -29,12 +29,7 @@ public final class ReadTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("list_ontologies",
-                "List EVERY ontology loaded in the Protégé workspace — the active ontology, its "
-                        + "imports closure, and any other loaded ontologies. Marks which one is "
-                        + "active, which have unsaved changes (dirty), and where each is saved "
-                        + "(document).",
-                Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
+                (ex, req) -> ctx.access().compute(mm -> {
                     OWLOntology active = mm.getActiveOntology();
                     Set<OWLOntology> onts = mm.getOntologies();
                     Set<OWLOntology> dirty = mm.getDirtyOntologies();
@@ -60,12 +55,10 @@ public final class ReadTools {
                                     + "unsaved changes (save_ontology writes the active ontology; "
                                     + "all=true saves every dirty one).")
                             .result();
-                })));
+                }));
 
         tools.tool("get_active_ontology",
-                "Details of the active ontology: IRI, axiom counts and direct imports.",
-                Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> ctx.access().compute(mm -> {
+                (ex, req) -> ctx.access().compute(mm -> {
                     OWLOntology o = mm.getActiveOntology();
                     OWLOntologyID id = o.getOntologyID();
                     List<String> imports = new ArrayList<>();
@@ -84,33 +77,17 @@ public final class ReadTools {
                             .put("write_protection", ctx.controller().isReadOnly()
                                     ? "read-only (plugin setting)" : "writable")
                             .result();
-                })));
+                }));
 
         tools.tool("summarize_ontology",
-                "Summarize the active ontology: signature counts, ontology annotations, imports and "
-                        + "axiom-type counts. Set include_imports=true to summarize the imports closure.",
-                Tools.schema()
-                        .bool("include_imports", "Also summarize the imports closure (default false).")
-                        .integer("limit", "Max axiom-type rows to return (default 80).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
                     int limit = Tools.optInt(a, "limit", 80);
                     return ctx.access().compute(mm -> summarize(mm.getActiveOntology(), includeImports, limit));
-                }));
-
+                });
         tools.tool("list_classes",
-                "List named classes in the active ontology's signature (rendering + IRI), display-sorted. "
-                        + "Paginated: 'limit' caps the page and 'offset' skips that many classes — when the "
-                        + "result carries 'next_offset', pass it back as 'offset' to fetch the next page and "
-                        + "enumerate the whole signature past 'limit'.",
-                Tools.schema()
-                        .integer("limit", "Max classes to return per page (default 200).")
-                        .integer("offset", "0-based index to start from (default 0); pass a prior "
-                                + "'next_offset' to page forward.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     int limit = Tools.optInt(a, "limit", 200);
                     int offset = Tools.optInt(a, "offset", 0);
@@ -118,29 +95,9 @@ public final class ReadTools {
                         Set<OWLClass> classes = mm.getActiveOntology().getClassesInSignature();
                         return Tools.ok(Tools.entityPage(mm, classes, offset, limit));
                     });
-                }));
-
+                });
         tools.tool("search_entities",
-                "Search entities by name/IRI fragment across the loaded ontologies. 'type' is one of "
-                        + "class, object_property, data_property, annotation_property, individual, "
-                        + "datatype, all (default all). A plain fragment matches as a substring and '*' "
-                        + "is a wildcard; an empty or wildcard-only query lists the active ontology's "
-                        + "whole signature. Results are RANKED: each carries a 'score' and 'match_kind' "
-                        + "(exact | prefix | substring | fuzzy — exact considers every rdfs:label language "
-                        + "variant and the IRI local name). Paginated: 'limit' caps the page and 'offset' "
-                        + "skips that many ranked hits — when the result carries 'next_offset', pass it "
-                        + "back as 'offset' for the next page. Two grounding fields help decide whether to "
-                        + "reuse a term or mint a new one: 'best_match' is the IRI the query resolves to "
-                        + "(or null), and 'would_mint' is true when a single-term query resolves to no "
-                        + "existing entity, so using it as a create_* name would introduce a NEW one.",
-                Tools.schema()
-                        .strReq("query", "Search text (use '*' as a wildcard).")
-                        .str("type", "Entity type filter (default 'all').")
-                        .integer("limit", "Max results per page (default 50).")
-                        .integer("offset", "0-based index into the ranked results to start from (default "
-                                + "0); pass a prior 'next_offset' to page forward.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String query = Tools.reqString(a, "query");
                     String type = Tools.optString(a, "type");
@@ -154,14 +111,9 @@ public final class ReadTools {
                         result.put("type", type == null ? "all" : type);
                         return Tools.ok(result);
                     });
-                }));
-
+                });
         tools.tool("get_entity",
-                "Look up an entity by IRI or display name; returns its type(s), IRI and rendering. An "
-                        + "IRI may be 'punned' across several entity types, so 'matches' can hold more "
-                        + "than one entity.",
-                Tools.schema().strReq("entity", "Entity IRI or display name.").build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     String ref = Tools.reqString(Tools.args(req), "entity");
                     return ctx.access().compute(mm -> {
                         Set<OWLEntity> es = Tools.findEntities(mm, ref);
@@ -180,22 +132,9 @@ public final class ReadTools {
                                         ? "The IRI is punned across several entity types." : null)
                                 .result();
                     });
-                }));
-
+                });
         tools.tool("get_axioms_for_entity",
-                "Axioms that reference the given entity. By default only the active ontology; set "
-                        + "include_imports=true to also include axioms from the imports closure (e.g. an "
-                        + "imported term's domain/range and class restrictions). The 'axioms' block is "
-                        + "paginated ('limit' + 'offset'): when it carries 'next_offset', pass it back as "
-                        + "'offset' to page through an entity with more referencing axioms than 'limit'.",
-                Tools.schema()
-                        .strReq("entity", "Entity IRI or display name.")
-                        .bool("include_imports", "Also search the imports closure (default false).")
-                        .integer("limit", "Max axioms to return per page (default 100).")
-                        .integer("offset", "0-based index to start from (default 0); pass a prior "
-                                + "'next_offset' to page forward.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String ref = Tools.reqString(a, "entity");
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
@@ -220,7 +159,7 @@ public final class ReadTools {
                                 .put("axioms", Tools.axiomPage(mm, axioms, offset, limit))
                                 .result();
                     });
-                }));
+                });
     }
 
     private static Set<? extends OWLEntity> search(OWLModelManager mm, String query, String type) {

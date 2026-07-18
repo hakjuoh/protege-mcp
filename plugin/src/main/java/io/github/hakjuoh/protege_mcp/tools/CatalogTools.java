@@ -42,21 +42,7 @@ public final class CatalogTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("write_catalog",
-                "Write an OASIS catalog-v001.xml next to the active ontology that maps each imported "
-                        + "ontology IRI (and version IRI) to the local file it loaded from, so the module "
-                        + "re-opens in Protégé with imports resolved offline. By default the catalog is "
-                        + "written in the folder of the active ontology's saved document and covers its "
-                        + "whole imports closure; pass 'path' to choose a target folder or file, and "
-                        + "direct_imports_only=true to map just the directly-imported ontologies. Imports "
-                        + "that are unresolved or not backed by a local file are reported as skipped. This "
-                        + "writes a file and is NOT undoable.",
-                Tools.schema()
-                        .str("path", "Target folder, or a catalog file path (default: the active "
-                                + "ontology's document folder, file catalog-v001.xml).")
-                        .bool("direct_imports_only", "Map only directly-imported ontologies instead of the "
-                                + "full imports closure (default false).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String configuredPath = Tools.optString(a, "path");
                     boolean directOnly = Tools.optBool(a, "direct_imports_only", false);
@@ -79,7 +65,7 @@ public final class CatalogTools {
                         return denied;
                     }
                     return ctx.access().compute(mm -> writeCatalog(mm, path, directOnly));
-                }));
+                });
     }
 
     private static CallToolResult writeCatalog(OWLModelManager mm, String path, boolean directOnly) {

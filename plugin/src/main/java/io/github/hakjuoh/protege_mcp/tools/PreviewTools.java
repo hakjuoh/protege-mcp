@@ -1,7 +1,6 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -28,15 +27,7 @@ public final class PreviewTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("preview_changes",
-                "Dry-run a batch of axiom changes WITHOUT applying them. 'operations' is an array; each "
-                        + "item takes the same operands as add_axiom/remove_axiom (axiom_type + operands) "
-                        + "plus 'op' = add (default) or remove. Reports, per operation, the rendered "
-                        + "axiom, whether it is already present, and the new entities an add would "
-                        + "introduce. Apply the whole batch in one undoable call with apply_changes (same "
-                        + "'operations' array), or a single change with add_axiom/remove_axiom, once the "
-                        + "diff looks right.",
-                operationsSchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     List<Map<String, Object>> operations = Tools.objList(a, "operations");
                     if (operations.isEmpty()) {
@@ -44,7 +35,7 @@ public final class PreviewTools {
                                 + "(each: axiom_type + operands, optional op=add|remove).");
                     }
                     return ctx.access().compute(mm -> preview(mm, operations));
-                }));
+                });
     }
 
     private static io.modelcontextprotocol.spec.McpSchema.CallToolResult preview(OWLModelManager mm,
@@ -146,27 +137,4 @@ public final class PreviewTools {
         return out;
     }
 
-    /** Schema: {@code {operations: [ {op, ...add_axiom operands} ]}}. */
-    static Map<String, Object> operationsSchema() {
-        Map<String, Object> itemSchema = Axioms.schema();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> itemProps = (Map<String, Object>) itemSchema.get("properties");
-        itemProps.put("op", Tools.stringProperty("add (default) or remove."));
-
-        Map<String, Object> operations = new LinkedHashMap<>();
-        operations.put("type", "array");
-        operations.put("items", itemSchema);
-        operations.put("description", "Axiom changes to preview; each item is an add_axiom/remove_axiom "
-                + "operand set plus optional op=add|remove.");
-
-        Map<String, Object> properties = new LinkedHashMap<>();
-        properties.put("operations", operations);
-
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "object");
-        schema.put("properties", properties);
-        schema.put("required", Arrays.asList("operations"));
-        schema.put("additionalProperties", false);
-        return schema;
-    }
 }

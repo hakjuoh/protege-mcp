@@ -35,18 +35,7 @@ public final class EntityRefactorTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("rename_entity",
-                "Change an entity's IRI throughout the active ontology (every axiom and annotation "
-                        + "that references the old IRI is rewritten to the new one). If the IRI is "
-                        + "punned across several entity types, all of them are renamed. The new IRI "
-                        + "must be a full absolute IRI. Pass preview=true to only REPORT what the "
-                        + "rename would rewrite, without changing anything.",
-                Tools.schema()
-                        .strReq("entity", "Entity to rename: an IRI or display name.")
-                        .strReq("new_iri", "New full IRI for the entity.")
-                        .bool("preview", "Dry-run: report the rewrite without applying anything "
-                                + "(works in read-only mode). Default false.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
                     String newIriRef = Tools.reqString(a, "new_iri");
@@ -55,22 +44,9 @@ public final class EntityRefactorTools {
                     }
                     return WriteTools.write(ctx, "rename " + entityRef + " to " + newIriRef,
                             mm -> renameEntity(mm, entityRef, newIriRef, false));
-                }));
-
+                });
         tools.tool("delete_entity",
-                "Delete an entity from the active ontology: removes its declaration and every axiom "
-                        + "that references it. If the IRI is punned across several entity types, all "
-                        + "are removed unless 'entity_type' narrows it to one. Pass preview=true to "
-                        + "only REPORT the blast radius (every axiom the delete would remove), "
-                        + "without changing anything.",
-                Tools.schema()
-                        .strReq("entity", "Entity to delete: an IRI or display name.")
-                        .str("entity_type", "Optional: class | object_property | data_property | "
-                                + "annotation_property | individual | datatype (narrows a punned IRI).")
-                        .bool("preview", "Dry-run: report what would be removed without applying "
-                                + "anything (works in read-only mode). Default false.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String entityRef = Tools.reqString(a, "entity");
                     String entityType = Tools.optString(a, "entity_type");
@@ -80,7 +56,7 @@ public final class EntityRefactorTools {
                     return WriteTools.write(ctx, "delete entity " + entityRef
                             + (entityType != null ? " (" + entityType + ")" : ""),
                             mm -> deleteEntity(mm, entityRef, entityType, false));
-                }));
+                });
     }
 
     /**

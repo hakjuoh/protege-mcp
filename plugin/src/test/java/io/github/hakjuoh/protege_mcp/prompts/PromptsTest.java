@@ -36,8 +36,8 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
  * <p>{@code Prompts} is a pure template/data builder with no OWLAPI, Protégé runtime, Swing, or I/O
  * dependencies, so every test here is deterministic and headless. The provider is exercised the way
  * {@link PromptCatalog#buildAll} drives it — registered into a fresh {@link PromptRegistry}; the
- * private helpers ({@code arg}, {@code str}) are exercised via reflection to hit their enumerated
- * edge cases directly, and also transitively through the rendered prompt handlers.
+ * private {@code str} helper is exercised via reflection to hit its enumerated edge cases directly,
+ * and also transitively through the rendered prompt handlers.
  */
 class PromptsTest {
 
@@ -56,19 +56,6 @@ class PromptsTest {
             Method m = Prompts.class.getDeclaredMethod("str", Map.class, String.class, String.class);
             m.setAccessible(true);
             return (String) m.invoke(null, args, key, fallback);
-        } catch (InvocationTargetException e) {
-            throw sneaky(e.getCause());
-        } catch (ReflectiveOperationException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    /** Invoke the private {@code Prompts.arg(String, String, boolean)} helper. */
-    private static PromptArgument invokeArg(String name, String description, boolean required) {
-        try {
-            Method m = Prompts.class.getDeclaredMethod("arg", String.class, String.class, boolean.class);
-            m.setAccessible(true);
-            return (PromptArgument) m.invoke(null, name, description, required);
         } catch (InvocationTargetException e) {
             throw sneaky(e.getCause());
         } catch (ReflectiveOperationException e) {
@@ -703,50 +690,6 @@ class PromptsTest {
         Map<String, Object> args = new HashMap<>();
         args.put("k", "real");
         assertEquals("real", invokeStr(args, "k", "fb"));
-    }
-
-    // ------------------------------------------------------------------ private arg() edge cases
-
-    @Test
-    void argRoundTripsNameDescriptionAndRequiredTrue() {
-        PromptArgument a = invokeArg("child", "the child", true);
-        assertAll(
-                () -> assertEquals("child", a.name()),
-                () -> assertEquals("the child", a.description()),
-                () -> assertEquals(Boolean.TRUE, a.required()));
-    }
-
-    @Test
-    void argRoundTripsRequiredFalse() {
-        PromptArgument a = invokeArg("opt", "optional", false);
-        assertEquals(Boolean.FALSE, a.required());
-    }
-
-    @Test
-    void argRejectsNullNameViaConstructorValidation() {
-        // The MCP SDK's PromptArgument (an Identifier) requires a non-empty name, so arg() propagates.
-        IllegalArgumentException ex = org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalArgumentException.class, () -> invokeArg(null, "d", true));
-        assertTrue(ex.getMessage() != null && ex.getMessage().toLowerCase().contains("name"),
-                "message should mention the offending name");
-    }
-
-    @Test
-    void argRejectsEmptyNameViaConstructorValidation() {
-        org.junit.jupiter.api.Assertions.assertThrows(
-                IllegalArgumentException.class, () -> invokeArg("", "d", true));
-    }
-
-    @Test
-    void argPassesThroughNullDescription() {
-        PromptArgument a = invokeArg("n", null, false);
-        assertNull(a.description());
-    }
-
-    @Test
-    void argPassesThroughEmptyDescription() {
-        PromptArgument a = invokeArg("n", "", false);
-        assertEquals("", a.description());
     }
 
     // ------------------------------------------------------------------ handler independence

@@ -79,28 +79,7 @@ public final class SparqlAuthoringTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("sparql_schema",
-                "Discover the queryable vocabulary for AUTHORING a SPARQL query over the active ontology "
-                        + "(its imports closure by default — the same graph sparql_query sees). Returns the "
-                        + "prefix map (plus a ready-to-paste PREFIX block), and capped, sorted lists of "
-                        + "classes, object/data properties (with their domains and ranges), named "
-                        + "individuals and datatypes — each with a CURIE (e.g. ex:Widget) and "
-                        + "full IRI — and a set of ready-to-run example queries built from the ontology's "
-                        + "own terms. Use 'keyword' to focus on a sub-topic. sparql_query auto-prepends "
-                        + "these prefixes, so you can use the CURIEs directly. This is asserted structure; "
-                        + "for reasoner-derived triples query with include_inferred=true.",
-                Tools.schema()
-                        .str("keyword", "Only include classes/properties/individuals whose label or IRI "
-                                + "contains this text (case-insensitive). Use to focus on a sub-topic.")
-                        .integer("limit", "Max items per list (default 100).")
-                        .bool("include_imports", "Include terms from the imports closure (default true; "
-                                + "sparql_query queries the closure).")
-                        .bool("include_individuals", "Include a sample of named individuals (default true).")
-                        .bool("include_examples", "Include example queries grounded in the ontology's own "
-                                + "terms (default true).")
-                        .integer("timeout_ms", "Time budget in ms for gathering the vocabulary on the UI "
-                                + "thread (default 120000; raise for very large imports closures).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String keyword = Tools.optString(a, "keyword");
                     int limit = Tools.optInt(a, "limit", 100);
@@ -118,27 +97,9 @@ public final class SparqlAuthoringTools {
                     return ctx.access().compute(mm ->
                             schema(mm, keyword, cap, includeImports, includeIndividuals, includeExamples),
                             timeout);
-                }));
-
+                });
         tools.tool("sparql_validate",
-                "Check a SPARQL query BEFORE running it (it is parsed, not executed, unless dry_run=true). "
-                        + "Reports whether it parses, the query form, the projected variables, and whether "
-                        + "sparql_query would accept it ('executable' — a read query with no SERVICE). The "
-                        + "ontology's prefixes are auto-prepended just as sparql_query does, so a query that "
-                        + "uses declared CURIEs validates without its own PREFIX lines. 'unknown_terms' lists "
-                        + "IRIs used in the query (graph patterns, property paths, VALUES, CONSTRUCT "
-                        + "template, DESCRIBE targets) that are NOT declared in the ontology — usually a "
-                        + "typo or a term from another vocabulary; catch these before running. A "
-                        + "syntax error is reported as valid=false with the engine's message, not as a tool "
-                        + "error. Set dry_run=true to also run it with a small LIMIT and return a sample.",
-                Tools.schema()
-                        .strReq("query", "The SPARQL query to check.")
-                        .bool("dry_run", "Also execute the query with a small LIMIT to confirm it runs and "
-                                + "return a sample of results (default false).")
-                        .integer("sample_limit", "Rows/triples to return when dry_run=true (default 5).")
-                        .integer("timeout_ms", "Time budget for the dry run in ms (default 120000).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String query = Tools.reqString(a, "query");
                     boolean dryRun = Tools.optBool(a, "dry_run", false);
@@ -151,7 +112,7 @@ public final class SparqlAuthoringTools {
                         timeout = 120_000;
                     }
                     return validate(ctx, query, dryRun, sampleLimit, timeout);
-                }));
+                });
     }
 
     // ================================================================ sparql_schema

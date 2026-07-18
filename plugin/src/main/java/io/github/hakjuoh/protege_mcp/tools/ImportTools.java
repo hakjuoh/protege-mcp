@@ -31,12 +31,7 @@ public final class ImportTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("inspect_imports",
-                "Inspect the active ontology's direct and transitive import graph without fetching "
-                        + "or changing anything. Reports every declaration, the ontology and document "
-                        + "it currently resolves to, local/remote source type, missing imports, "
-                        + "strongly-connected cycles, and loaded version/document conflicts.",
-                Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> ctx.access().compute(ImportTools::inspect)));
+                (ex, req) -> ctx.access().compute(ImportTools::inspect));
     }
 
     static CallToolResult inspect(OWLModelManager mm) {

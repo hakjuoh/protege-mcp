@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 
+import io.github.hakjuoh.protege_mcp.catalog.McpCatalog;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
@@ -24,12 +25,25 @@ public final class ToolRegistry {
     private final List<SyncToolSpecification> specs = new ArrayList<>();
 
     /**
-     * Register one tool: its {@code name}, {@code description}, JSON-schema {@code inputSchema} and its
-     * call {@code handler}. Returns {@code this} so calls can chain.
+     * Register a handler by name, resolving its description and input schema from the shared JSON
+     * catalog.
+     */
+    public ToolRegistry tool(String name,
+            BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
+        McpCatalog.ToolDefinition definition = McpCatalog.get().tool(name);
+        return tool(definition.name(), definition.description(), definition.inputSchema(), handler);
+    }
+
+    /**
+     * Register explicitly supplied metadata. Retained for focused factory tests and extensions that
+     * are not part of the built-in catalog. Every registered handler crosses the same guarded
+     * execution boundary so providers only implement their processing logic.
      */
     public ToolRegistry tool(String name, String description, Map<String, Object> inputSchema,
             BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
-        specs.add(ToolSpecs.of(name, description, inputSchema, handler));
+        BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> guarded =
+                (exchange, request) -> Tools.guard(() -> handler.apply(exchange, request));
+        specs.add(ToolSpecs.of(name, description, inputSchema, guarded));
         return this;
     }
 

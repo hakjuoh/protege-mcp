@@ -23,59 +23,27 @@ public final class ProjectPolicyTools {
     }
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
-        tools.tool("get_project_policy",
-                "Discover and return the effective version-controlled ontology project policy. Discovery "
-                        + "order is an explicit local policy_path, then .protege-mcp/project.yaml walking "
-                        + "from the active ontology document toward its parent roots. YAML is parsed "
-                        + "strictly, validated against policy schema v1, defaulted deterministically, and "
-                        + "checked for missing/escaping assets, invalid CURIEs/regexes, active-ontology "
-                        + "mismatch, and unavailable required reasoners. With no policy, interactive legacy "
-                        + "behavior is unchanged and policy_loaded=false is explicit.",
-                schema(), (ex, req) -> Tools.guard(() -> {
+        tools.tool("get_project_policy", (ex, req) -> {
                     Map<String, Object> arguments = Tools.args(req);
                     DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
                             Tools.optString(arguments, "policy_path"));
                     return run(ctx, rules.authorizedPolicyArguments(arguments), false);
-                }));
-
-        tools.tool("validate_project_policy",
-                "Validate a discovered or explicit project policy before ontology QC. Returns structured "
-                        + "schema, semantic, reasoner, and filesystem findings; duplicate YAML keys, unknown "
-                        + "fields, missing required assets, traversal/symlink escapes, malformed regexes, "
-                        + "unknown CURIE prefixes, a root-ontology mismatch, or a missing required reasoner "
-                        + "make valid=false. Validation never mutates the ontology or policy file.",
-                schema(), (ex, req) -> Tools.guard(() -> {
+                });
+        tools.tool("validate_project_policy", (ex, req) -> {
                     Map<String, Object> arguments = Tools.args(req);
                     DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
                             Tools.optString(arguments, "policy_path"));
                     return run(ctx, rules.authorizedPolicyArguments(arguments), true);
-                }));
-
+                });
         tools.tool("run_project_qc",
-                "Run the effective project policy as a strict reproducible QC gate. Every configured "
-                        + "required stage (reasoner, profile, governance, structural, persisted invariants, "
-                        + "policy-selected competency questions, and one or more SHACL files) must execute "
-                        + "against one captured ontology revision. A policy violation returns gate=fail; an "
-                        + "invalid policy, missing asset, unavailable/wrong reasoner, malformed query/shapes, "
-                        + "or skipped/errored required stage returns gate=error and can never pass vacuously.",
-                Tools.schema()
-                        .str("policy_path", "Optional explicit local project policy; otherwise discover it.")
-                        .integer("limit", "Maximum samples per stage (default 25).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> arguments = Tools.args(req);
                     DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
                             Tools.optString(arguments, "policy_path"));
                     return ProjectQcTools.run(ctx, rules.authorizedPolicyArguments(arguments), true);
-                }));
+                });
     }
 
-    private static Map<String, Object> schema() {
-        return Tools.schema()
-                .str("policy_path", "Optional local path to project.yaml. When omitted, discover "
-                        + ".protege-mcp/project.yaml from the active ontology document upward.")
-                .build();
-    }
 
     static CallToolResult run(ToolContext ctx, Map<String, Object> arguments, boolean requirePolicy) {
         String configured = Tools.optString(arguments, "policy_path");

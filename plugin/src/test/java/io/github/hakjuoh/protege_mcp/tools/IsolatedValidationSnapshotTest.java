@@ -63,13 +63,13 @@ class IsolatedValidationSnapshotTest {
                 snapshot.active().getAnnotations(), 25);
         assertEquals(false, profile.get("owned_in_profile"), "profile sees the removed-from-live axiom");
 
-        QcSuiteTools.StageResult structural = QcSuiteTools.structuralStage(snapshot,
+        QcStageResult structural = QcSuiteTools.structuralStage(snapshot,
                 Collections.emptySet(), Collections.emptyMap(), true);
         assertEquals("warn", structural.verdict, "structural sees the pre-repair missing labels");
         assertEquals(0, checkCount(structural, "undeclared_entity"),
                 "the explicit closure prevents an imported declaration false positive");
 
-        QcSuiteTools.StageResult governance = QcSuiteTools.governanceStage(snapshot, null,
+        QcStageResult governance = QcSuiteTools.governanceStage(snapshot, null,
                 Collections.emptyList(), List.of("label"), true, 25);
         assertEquals("warn", governance.verdict);
         assertTrue(checkCount(governance, "required_annotations") > 0);
@@ -78,7 +78,7 @@ class IsolatedValidationSnapshotTest {
 
         Invariants.Invariant invariant = new Invariants.Invariant("labels", "classes need labels", "error",
                 "SELECT ?c WHERE { ?c a owl:Class . FILTER NOT EXISTS { ?c rdfs:label ?label } }", false);
-        QcSuiteTools.StageResult invariants = QcSuiteTools.invariantsStage(snapshot.queries(),
+        QcStageResult invariants = QcSuiteTools.invariantsStage(snapshot.queries(),
                 List.of(invariant), 1000, 30_000);
         assertEquals("fail", invariants.verdict, "invariant sees the pre-repair graph");
 
@@ -87,7 +87,7 @@ class IsolatedValidationSnapshotTest {
         cq.query = "SELECT ?label WHERE { ?s rdfs:label ?label }";
         cq.expected = Expectation.empty();
         cq.includeInferred = false;
-        QcSuiteTools.StageResult cqs = QcSuiteTools.cqsStage(snapshot.queries(), List.of(cq),
+        QcStageResult cqs = QcSuiteTools.cqsStage(snapshot.queries(), List.of(cq),
                 1000, 30_000);
         assertEquals("pass", cqs.verdict, "CQ does not observe labels added to the live model");
 
@@ -96,7 +96,7 @@ class IsolatedValidationSnapshotTest {
                 + "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
                 + "ex:LocalShape a sh:NodeShape ; sh:targetNode ex:Local ;\n"
                 + "  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] .\n";
-        QcSuiteTools.StageResult shacl = QcSuiteTools.shaclStage(snapshot.assertedTurtle(), shapes,
+        QcStageResult shacl = QcSuiteTools.shaclStage(snapshot.assertedTurtle(), shapes,
                 null, 1000, 30_000);
         assertEquals("fail", shacl.verdict, "SHACL sees the pre-repair graph");
     }
@@ -145,7 +145,7 @@ class IsolatedValidationSnapshotTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static int checkCount(QcSuiteTools.StageResult result, String id) {
+    private static int checkCount(QcStageResult result, String id) {
         for (Map<String, Object> check : (List<Map<String, Object>>) result.summary.get("checks")) {
             if (id.equals(check.get("id"))) {
                 return ((Number) check.get("count")).intValue();

@@ -153,14 +153,16 @@ class ReadToolsTest {
     @Test
     void listOntologiesUsesEmptySchema() {
         Tool t = specByName("list_ontologies").tool();
-        assertEquals(Tools.emptySchema(), t.inputSchema(), "list_ontologies takes no arguments");
+        assertEquals(Map.of("type", "object", "additionalProperties", false), t.inputSchema(),
+                "list_ontologies takes no arguments");
         assertFalse(t.inputSchema().containsKey("properties"),
                 "empty schema declares no properties");
     }
 
     @Test
     void getActiveOntologyUsesEmptySchema() {
-        assertEquals(Tools.emptySchema(), specByName("get_active_ontology").tool().inputSchema(),
+        assertEquals(Map.of("type", "object", "additionalProperties", false),
+                specByName("get_active_ontology").tool().inputSchema(),
                 "get_active_ontology takes no arguments");
     }
 

@@ -48,32 +48,12 @@ public final class ContextTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("get_ontology_context",
-                "Orientation overview of the active ontology in one call: id, signature counts, "
-                        + "imports, ontology annotations, the asserted root classes (direct children "
-                        + "of owl:Thing), sampled object/data properties, the reasoner state, and the "
-                        + "prefix map. Use this first, then get_entity_context to drill into a term.",
-                Tools.schema()
-                        .integer("limit", "Max items per sampled list — roots, properties (default 50).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     int limit = Tools.optInt(Tools.args(req), "limit", 50);
                     return ctx.access().compute(mm -> ontologyContext(mm, ctx, limit));
-                }));
-
+                });
         tools.tool("get_entity_context",
-                "An 'entity card' for one term in a single call: its type(s), labels/annotations, "
-                        + "whether it is deprecated, and its asserted neighbourhood — for a class: "
-                        + "super/sub/equivalent/disjoint classes and asserted instances; for a "
-                        + "property: domains, ranges, super/sub properties, inverses and "
-                        + "characteristics; for an individual: types and property assertions. Resolves "
-                        + "an IRI or display name; if the name is punned across several entity types, "
-                        + "every match gets its own card. Asserted structure only.",
-                Tools.schema()
-                        .strReq("entity", "Entity IRI or display name.")
-                        .bool("include_imports", "Include the imports closure (default true).")
-                        .integer("limit", "Max items per neighbourhood list (default 50).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     String ref = Tools.reqString(a, "entity");
                     boolean includeImports = Tools.optBool(a, "include_imports", true);
@@ -101,7 +81,7 @@ public final class ContextTools {
                                         ? "The IRI is punned across several entity types." : null)
                                 .result();
                     });
-                }));
+                });
     }
 
     // ------------------------------------------------------------------ get_ontology_context

@@ -29,72 +29,21 @@ public final class CompetencyQuestionTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("add_competency_question",
-                "Add or update (by id) a competency question — a SPARQL query plus an expected result that "
-                        + "run_competency_questions later re-checks. Give the 'query' (SELECT or ASK) and, "
-                        + "recommended, the natural-language 'text'. 'expected' is the pass condition: "
-                        + "nonEmpty (default) | empty | 'count OP N' (OP one of >=,<=,==,>,<); EXACT_ROWS "
-                        + "is authored directly in a sidecar-manifest. 'convention' chooses the store "
-                        + "(robot-sparql-dir = the default *.rq writer for ROBOT/CI interop | "
-                        + "sidecar-manifest = a full-fidelity JSON file | ontology-annotations = stored "
-                        + "inside the ontology, the fallback when it is unsaved); omit it to follow an "
-                        + "existing store. This writes a file (or an ontology annotation) and echoes where.",
-                Tools.schema()
-                        .str("id", "Stable id within the store (optional; an auto CQ-N is minted if omitted).")
-                        .strReq("query", "Executable SPARQL 1.1 query — SELECT or ASK.")
-                        .str("text", "The natural-language competency question (recommended).")
-                        .str("type", "Optional category, e.g. Scoping | Validating.")
-                        .str("query_lang", "Query language — only 'sparql' is supported (default sparql).")
-                        .bool("include_inferred", "Also run over the reasoner's inferred triples when the "
-                                + "suite runs (default true).")
-                        .str("expected", "Pass condition: nonEmpty (default) | empty | 'count OP N'.")
-                        .strArray("tags", "Optional tags.")
-                        .str("convention", "robot-sparql-dir | sidecar-manifest | ontology-annotations "
-                                + "(optional; omit to follow an existing store, else defaults to "
-                                + "robot-sparql-dir, or ontology-annotations when the ontology is unsaved).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> addCq(ctx, Tools.args(req), lazyRules(ctx, ex))));
+                (ex, req) -> addCq(ctx, Tools.args(req), lazyRules(ctx, ex)));
 
         tools.tool("list_competency_questions",
-                "List every competency question found across all storage conventions (robot-sparql-dir "
-                        + "*.rq files, a sidecar-manifest JSON, and ontology annotations), each tagged with "
-                        + "its 'convention'. Reports 'conventions_found' and any 'skipped' entries that "
-                        + "could not be parsed (malformed input is isolated, never fatal).",
-                Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     authorizeSidecars(ctx, lazyRules(ctx, ex), false);
                     return ctx.access().compute(CompetencyQuestionTools::listCq);
-                }));
-
+                });
         tools.tool("remove_competency_question",
-                "Remove a competency question by id. Pass 'convention' to disambiguate when the same id "
-                        + "exists in more than one store; otherwise the single store holding it is used.",
-                Tools.schema()
-                        .strReq("id", "The competency question id to remove.")
-                        .str("convention", "robot-sparql-dir | sidecar-manifest | ontology-annotations "
-                                + "(optional; required only when the id exists in several stores).")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> removeCq(ctx, Tools.args(req), lazyRules(ctx, ex))));
+                (ex, req) -> removeCq(ctx, Tools.args(req), lazyRules(ctx, ex)));
 
         tools.tool("run_competency_questions",
-                "Re-run the competency-question suite against the active ontology and report, per CQ, "
-                        + "whether it still passes — a regression check for curation edits. Each CQ's query "
-                        + "runs over a shared point-in-time snapshot (asserted triples, plus the reasoner's "
-                        + "inferences for CQs with include_inferred=true when a classified reasoner is "
-                        + "available). Judged by its expected result (nonEmpty / empty / count / exactRows). "
-                        + "Filter with 'ids' or 'convention'; 'fail_on'=any makes the overall 'gate' fail "
-                        + "if any CQ fails (default none = report only). Caveats (open-world EMPTY, "
-                        + "truncated results/inferences) are surfaced, never silent.",
-                Tools.schema()
-                        .strArray("ids", "Only run these CQ ids (default: all).")
-                        .str("convention", "Only run CQs from this convention (default: all detected).")
-                        .integer("limit", "Max rows per query (default 1000).")
-                        .integer("timeout_ms", "Per-query time budget in ms (default 120000).")
-                        .str("fail_on", "Gate policy: none (default) | any.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     authorizeSidecars(ctx, lazyRules(ctx, ex), false);
                     return runCq(ctx, Tools.args(req));
-                }));
+                });
     }
 
     // ================================================================== add

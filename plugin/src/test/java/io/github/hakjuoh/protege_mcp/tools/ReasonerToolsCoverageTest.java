@@ -25,10 +25,12 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
+import io.github.hakjuoh.protege_mcp.catalog.McpCatalog;
+
 /**
  * Supplementary, method-level coverage for {@link ReasonerTools}. There is no pre-existing test for
  * this class, so this file targets the pure / data-transforming {@code private static} helpers that do
- * NOT need the live Protégé reasoner runtime: {@code explanationsSchema},
+ * NOT need the live Protégé reasoner runtime: the explanation input schema,
  * {@code isolatedClosure}, {@code explanationsJson}, {@code structuralExplanation} and
  * {@code relatedAssertedAxioms}. Reasoner-dependent paths ({@code specs}, {@code requireReasoner})
  * are out of scope (they need a live reasoner/Protégé session).
@@ -74,7 +76,7 @@ class ReasonerToolsCoverageTest {
 
     @Test
     void explanationsSchemaAddsMaxAndTimeoutIntegerProps() throws Throwable {
-        Map<String, Object> schema = invoke("explanationsSchema", new Class<?>[] {});
+        Map<String, Object> schema = explanationSchema();
         assertTrue(schema.containsKey("properties"), "schema has a properties block");
         @SuppressWarnings("unchecked")
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");
@@ -98,20 +100,26 @@ class ReasonerToolsCoverageTest {
 
     @Test
     void explanationsSchemaKeepsBaseAxiomProperties() throws Throwable {
-        // The base Axioms.schema() properties (e.g. axiom_type) must survive the augmentation.
-        Map<String, Object> base = Axioms.schema();
+        Map<String, Object> base = McpCatalog.get().tool("add_axiom").inputSchema();
         @SuppressWarnings("unchecked")
         Map<String, Object> baseProps = (Map<String, Object>) base.get("properties");
 
-        Map<String, Object> schema = invoke("explanationsSchema", new Class<?>[] {});
+        Map<String, Object> schema = explanationSchema();
         @SuppressWarnings("unchecked")
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");
 
         for (String key : baseProps.keySet()) {
-            assertTrue(props.containsKey(key), "base axiom property retained: " + key);
+            if (!"strict".equals(key)) {
+                assertTrue(props.containsKey(key), "base axiom property retained: " + key);
+            }
         }
-        assertTrue(props.size() >= baseProps.size() + 2,
-                "augmented schema has at least the base props plus max + timeout_ms");
+        assertFalse(props.containsKey("strict"), "strict is a write-only option");
+        assertTrue(props.containsKey("max") && props.containsKey("timeout_ms"),
+                "explanation search adds max and timeout_ms");
+    }
+
+    private static Map<String, Object> explanationSchema() {
+        return McpCatalog.get().tool("get_explanations").inputSchema();
     }
 
     // ================================================================ isolatedClosure

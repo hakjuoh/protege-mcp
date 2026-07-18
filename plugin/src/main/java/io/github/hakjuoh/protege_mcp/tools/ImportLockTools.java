@@ -39,49 +39,14 @@ public final class ImportLockTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("write_import_lock",
-                "Write deterministic imports.lock.json for every currently resolved local import in "
-                        + "the active ontology's closure. Each sorted entry records ontology/version IRI, "
-                        + "project-relative document, SHA-256 and whether it is direct. Missing or remote "
-                        + "imports fail closed. The file is replaced atomically and is not undoable.",
-                Tools.schema()
-                        .str("path", "Explicit lock path. Default: the policy-declared imports.lockfile; "
-                                + "a policy that fails to load/validate, or whose declared lockfile does "
-                                + "not resolve, refuses instead of falling back. Only a policy without a "
-                                + "lockfile (or no policy) defaults beside the active document.")
-                        .str("policy_path", "Optional explicit project policy. A path that fails to load "
-                                + "refuses lock-path defaulting rather than falling back.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> write(ctx, Tools.args(req), () -> { }, ex)));
+                (ex, req) -> write(ctx, Tools.args(req), () -> { }, ex));
 
         tools.tool("verify_import_lock",
-                "Verify the effective imports.lock.json without network access. Recomputes every local "
-                        + "artifact SHA-256 and compares deterministic loaded import coordinates, reporting "
-                        + "missing/extra entries, changed documents and checksum mismatches. Invalid JSON, "
-                        + "duplicate entries, unresolved imports or non-local documents return valid=false.",
-                Tools.schema()
-                        .str("path", "Explicit lock path. Default: the policy-declared imports.lockfile; "
-                                + "a policy that fails to load/validate, or whose declared lockfile does "
-                                + "not resolve, refuses instead of verifying a fallback file. Only a policy "
-                                + "without a lockfile (or no policy) defaults beside the active document.")
-                        .str("policy_path", "Optional explicit project policy. A path that fails to load "
-                                + "refuses lock-path defaulting rather than falling back.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> verify(ctx, Tools.args(req), () -> { }, ex)));
+                (ex, req) -> verify(ctx, Tools.args(req), () -> { }, ex));
 
         tools.tool("validate_catalog",
-                "Parse an OASIS catalog-v001.xml with hardened no-network XML settings and report malformed, "
-                        + "duplicate, remote, or missing local URI mappings. uri targets are resolved "
-                        + "honoring xml:base, matching Protege's own catalog loading; nextCatalog "
-                        + "delegations are reported in next_catalogs but never followed. Optionally compare "
-                        + "catalog names with the active import declarations — an import only reachable "
-                        + "through a delegation is reported as delegated_imports (unverified), not as a "
-                        + "missing mapping. Read-only.",
-                Tools.schema()
-                        .str("path", "Catalog file (default catalog-v001.xml beside active ontology).")
-                        .bool("compare_imports", "Require every active import declaration to have a mapping.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> validateCatalog(ctx, Tools.args(req),
-                        DirectAccessPolicy.resolve(ctx, ex))));
+                (ex, req) -> validateCatalog(ctx, Tools.args(req),
+                        DirectAccessPolicy.resolve(ctx, ex)));
     }
 
     /**

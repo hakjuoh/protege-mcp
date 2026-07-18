@@ -39,19 +39,19 @@ class QcSuiteToolsTest {
     @Test
     void legacyLimitUsesTheSameBoundsAsProjectQc() {
         assertThrows(ToolArgException.class,
-                () -> QcSuiteTools.RunConfig.legacy(Map.of("limit", -1)));
+                () -> QcRunConfig.legacy(Map.of("limit", -1)));
         assertThrows(ToolArgException.class,
-                () -> QcSuiteTools.RunConfig.legacy(Map.of("limit", 10_001)));
+                () -> QcRunConfig.legacy(Map.of("limit", 10_001)));
     }
 
     @Test
     void explicitRequiredStagesStayNarrowWhenStrictMissingIsAlsoSet() {
-        QcSuiteTools.RunConfig explicit = QcSuiteTools.RunConfig.legacy(Map.of(
+        QcRunConfig explicit = QcRunConfig.legacy(Map.of(
                 "stages", List.of("structural", "cqs"),
                 "required_stages", List.of("structural")));
         assertEquals(Set.of("structural"), QcSuiteTools.legacyRequiredStages(explicit, true));
 
-        QcSuiteTools.RunConfig fallback = QcSuiteTools.RunConfig.legacy(Map.of(
+        QcRunConfig fallback = QcRunConfig.legacy(Map.of(
                 "stages", List.of("structural", "cqs")));
         assertEquals(Set.of("structural", "cqs"),
                 QcSuiteTools.legacyRequiredStages(fallback, true));
@@ -73,7 +73,7 @@ class QcSuiteToolsTest {
         cq.expected = Expectation.count("<=", 1000);
         cq.convention = Cq.CONV_MANIFEST;
 
-        QcSuiteTools.StageResult stage = QcSuiteTools.cqsStage(snapshot, List.of(cq), 1000, 30_000);
+        QcStageResult stage = QcSuiteTools.cqsStage(snapshot, List.of(cq), 1000, 30_000);
 
         assertEquals("fail", stage.verdict);
         assertEquals(1, stage.summary.get("errors"));
@@ -146,24 +146,24 @@ class QcSuiteToolsTest {
 
     @Test
     void allPassStagesGatePass() {
-        List<QcSuiteTools.StageResult> stages = Arrays.asList(
-                new QcSuiteTools.StageResult("a", true, QcSuiteTools.PASS, null, null),
-                new QcSuiteTools.StageResult("b", true, QcSuiteTools.PASS, null, null));
+        List<QcStageResult> stages = Arrays.asList(
+                new QcStageResult("a", true, QcSuiteTools.PASS, null, null),
+                new QcStageResult("b", true, QcSuiteTools.PASS, null, null));
         assertEquals("pass", gate(QcSuiteTools.aggregate(stages, "error")));
     }
 
     @Test
     void failStageTripsErrorGate() {
-        List<QcSuiteTools.StageResult> stages = Arrays.asList(
-                new QcSuiteTools.StageResult("a", true, QcSuiteTools.PASS, null, null),
-                new QcSuiteTools.StageResult("b", true, QcSuiteTools.FAIL, null, null));
+        List<QcStageResult> stages = Arrays.asList(
+                new QcStageResult("a", true, QcSuiteTools.PASS, null, null),
+                new QcStageResult("b", true, QcSuiteTools.FAIL, null, null));
         assertEquals("fail", gate(QcSuiteTools.aggregate(stages, "error")));
     }
 
     @Test
     void warnStageOnlyTripsWarnGate() {
-        List<QcSuiteTools.StageResult> stages = Collections.singletonList(
-                new QcSuiteTools.StageResult("a", true, QcSuiteTools.WARN, null, null));
+        List<QcStageResult> stages = Collections.singletonList(
+                new QcStageResult("a", true, QcSuiteTools.WARN, null, null));
         assertEquals("pass", gate(QcSuiteTools.aggregate(stages, "error")),
                 "a warn stage does not trip fail_on=error");
         assertEquals("fail", gate(QcSuiteTools.aggregate(stages, "warn")),
@@ -172,9 +172,9 @@ class QcSuiteToolsTest {
 
     @Test
     void skippedStagesDoNotCountTowardTheGate() {
-        List<QcSuiteTools.StageResult> stages = Arrays.asList(
-                QcSuiteTools.StageResult.skipped("reasoner", "no results"),
-                new QcSuiteTools.StageResult("structural", true, QcSuiteTools.PASS, null, null));
+        List<QcStageResult> stages = Arrays.asList(
+                QcStageResult.skipped("reasoner", "no results"),
+                new QcStageResult("structural", true, QcSuiteTools.PASS, null, null));
         Map<String, Object> r = structured(QcSuiteTools.aggregate(stages, "error"));
         assertEquals("pass", r.get("gate"));
         assertEquals(1, r.get("stages_ran"), "only the ran stage counts");
@@ -182,26 +182,26 @@ class QcSuiteToolsTest {
 
     @Test
     void strictRequiredSkipAndExecutionFailureAreErrorsNotFailures() {
-        QcSuiteTools.SuiteExecution skipped = execution(List.of(
-                QcSuiteTools.StageResult.skipped("reasoner", "none selected"),
-                new QcSuiteTools.StageResult("structural", true, QcSuiteTools.FAIL, Map.of(), null)));
+        QcSuiteExecution skipped = execution(List.of(
+                QcStageResult.skipped("reasoner", "none selected"),
+                new QcStageResult("structural", true, QcSuiteTools.FAIL, Map.of(), null)));
         Map<String, Object> result = QcSuiteTools.strictResult(skipped,
                 new java.util.LinkedHashSet<>(List.of("reasoner", "structural")), "error",
                 1, "sha256:" + "2".repeat(64), true);
         assertEquals("error", result.get("gate"), "execution inability takes precedence over violations");
         assertEquals(1, result.get("stages_skipped"));
 
-        QcSuiteTools.SuiteExecution errored = execution(List.of(
-                QcSuiteTools.StageResult.errored("shacl", "bad shapes")));
+        QcSuiteExecution errored = execution(List.of(
+                QcStageResult.errored("shacl", "bad shapes")));
         assertEquals("error", QcSuiteTools.strictResult(errored, Set.of("shacl"), "error",
                 1, null, true).get("gate"));
     }
 
     @Test
     void strictOptionalSkipDoesNotControlGateAndInfoThresholdIsHonored() {
-        QcSuiteTools.SuiteExecution execution = execution(List.of(
-                QcSuiteTools.StageResult.skipped("shacl", "optional"),
-                new QcSuiteTools.StageResult("structural", true, QcSuiteTools.INFO, Map.of(), null)));
+        QcSuiteExecution execution = execution(List.of(
+                QcStageResult.skipped("shacl", "optional"),
+                new QcStageResult("structural", true, QcSuiteTools.INFO, Map.of(), null)));
         Map<String, Object> pass = QcSuiteTools.strictResult(execution, Set.of("structural"), "warn",
                 1, null, true);
         assertEquals("pass", pass.get("gate"));
@@ -227,8 +227,8 @@ class QcSuiteToolsTest {
         String hash = "sha256:" + "3".repeat(64);
         var fingerprint = new io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint(
                 1, hash, hash, "cross_restart", true, List.of());
-        var execution = new QcSuiteTools.SuiteExecution(List.of(
-                new QcSuiteTools.StageResult("structural", true, QcSuiteTools.PASS, Map.of(), null)),
+        var execution = new QcSuiteExecution(List.of(
+                new QcStageResult("structural", true, QcSuiteTools.PASS, Map.of(), null)),
                 fingerprint, false, "HermiT", null);
         Map<String, Object> result = QcSuiteTools.strictResult(execution, Set.of("structural"),
                 "warn", 1, null, true);
@@ -242,7 +242,7 @@ class QcSuiteToolsTest {
     @Test
     void structuralStageWarnsOnModellingSmell() throws Exception {
         OWLModelManager mm = ontology(false);   // Foo has no label → missing_label finding
-        QcSuiteTools.StageResult r = QcSuiteTools.structuralStage(mm);
+        QcStageResult r = QcSuiteTools.structuralStage(mm);
         assertTrue(r.ran);
         assertEquals("warn", r.verdict, "a structural smell is a warn, not a hard fail");
     }
@@ -250,7 +250,7 @@ class QcSuiteToolsTest {
     @Test
     void structuralStagePassesWhenClean() throws Exception {
         OWLModelManager mm = ontology(true);    // all classes labelled + in hierarchy
-        QcSuiteTools.StageResult r = QcSuiteTools.structuralStage(mm);
+        QcStageResult r = QcSuiteTools.structuralStage(mm);
         assertEquals("pass", r.verdict);
     }
 
@@ -259,7 +259,7 @@ class QcSuiteToolsTest {
     @Test
     void invariantsStageSkippedWhenNoneSupplied() throws Exception {
         SuiteSnapshot snap = snapshot(false);
-        QcSuiteTools.StageResult r = QcSuiteTools.invariantsStage(snap, Collections.emptyList(),
+        QcStageResult r = QcSuiteTools.invariantsStage(snap, Collections.emptyList(),
                 1000, 30_000);
         assertFalse(r.ran);
     }
@@ -270,7 +270,7 @@ class QcSuiteToolsTest {
         List<Invariants.Invariant> invs = Collections.singletonList(new Invariants.Invariant(
                 "labelled", "every class needs a label", "error",
                 "SELECT ?c WHERE { ?c a owl:Class . FILTER NOT EXISTS { ?c rdfs:label ?l } }", false));
-        QcSuiteTools.StageResult r = QcSuiteTools.invariantsStage(snap, invs, 1000, 30_000);
+        QcStageResult r = QcSuiteTools.invariantsStage(snap, invs, 1000, 30_000);
         assertTrue(r.ran);
         assertEquals("fail", r.verdict);
     }
@@ -282,7 +282,7 @@ class QcSuiteToolsTest {
         SuiteSnapshot snap = snapshot(false);
         List<Invariants.Invariant> invs = Collections.singletonList(new Invariants.Invariant(
                 "inf", "inference-only pattern", "error", "SELECT ?c WHERE { ?c a owl:Class }", true));
-        QcSuiteTools.StageResult r = QcSuiteTools.invariantsStage(snap, invs, 1000, 30_000);
+        QcStageResult r = QcSuiteTools.invariantsStage(snap, invs, 1000, 30_000);
         assertTrue(r.ran);
         assertEquals("fail", r.verdict, "the un-runnable inferred check fails the stage closed");
         assertEquals(0, r.summary.get("violations"), "it is not a violation");
@@ -297,7 +297,7 @@ class QcSuiteToolsTest {
         SuiteSnapshot snap = snapshot(false);
         List<Invariants.Invariant> invs = Collections.singletonList(new Invariants.Invariant(
                 "inf-warn", "inference-only, warn", "warn", "SELECT ?c WHERE { ?c a owl:Class }", true));
-        QcSuiteTools.StageResult r = QcSuiteTools.invariantsStage(snap, invs, 1000, 30_000);
+        QcStageResult r = QcSuiteTools.invariantsStage(snap, invs, 1000, 30_000);
         assertTrue(r.ran);
         assertEquals("warn", r.verdict, "a warn-severity check that could not run is a WARN, never PASS");
         assertEquals(1, r.summary.get("errors"));
@@ -313,7 +313,7 @@ class QcSuiteToolsTest {
     @Test
     void cqsStageSkippedWhenNoQuestions() throws Exception {
         SuiteSnapshot snap = snapshot(false);
-        QcSuiteTools.StageResult r = QcSuiteTools.cqsStage(snap, Collections.emptyList(), 1000, 30_000);
+        QcStageResult r = QcSuiteTools.cqsStage(snap, Collections.emptyList(), 1000, 30_000);
         assertFalse(r.ran);
     }
 
@@ -325,7 +325,7 @@ class QcSuiteToolsTest {
         cq.query = "SELECT ?i WHERE { ?i a owl:NamedIndividual }";   // none exist → nonEmpty fails
         cq.expected = Expectation.nonEmpty();
         cq.includeInferred = false;
-        QcSuiteTools.StageResult r = QcSuiteTools.cqsStage(snap, Arrays.asList(cq), 1000, 30_000);
+        QcStageResult r = QcSuiteTools.cqsStage(snap, Arrays.asList(cq), 1000, 30_000);
         assertTrue(r.ran);
         assertEquals("fail", r.verdict);
     }
@@ -341,7 +341,7 @@ class QcSuiteToolsTest {
         cq.query = "SELECT ?c WHERE { ?c a owl:Class }";
         cq.expected = Expectation.nonEmpty();
         cq.includeInferred = true;
-        QcSuiteTools.StageResult r = QcSuiteTools.cqsStage(snap, Arrays.asList(cq), 1000, 30_000);
+        QcStageResult r = QcSuiteTools.cqsStage(snap, Arrays.asList(cq), 1000, 30_000);
         assertTrue(r.ran);
         assertEquals("pass", r.verdict, "it passes on the asserted triples");
         assertEquals(1, r.summary.get("caveats"), "the degradation caveat is surfaced, not silent");
@@ -354,9 +354,9 @@ class QcSuiteToolsTest {
                 "SELECT ?c WHERE { ?c a owl:Class . FILTER NOT EXISTS { ?c rdfs:label ?l } }", false);
         Invariants.Invariant anyClass = new Invariants.Invariant("any-class", "class", "error",
                 "ASK { ?c a owl:Class }", false);
-        QcSuiteTools.StageResult firstInvariant = QcSuiteTools.invariantsStage(snap,
+        QcStageResult firstInvariant = QcSuiteTools.invariantsStage(snap,
                 List.of(missingLabel), 1000, 30_000);
-        QcSuiteTools.StageResult secondInvariant = QcSuiteTools.invariantsStage(snap,
+        QcStageResult secondInvariant = QcSuiteTools.invariantsStage(snap,
                 List.of(anyClass), 1000, 30_000);
         assertEquals(firstInvariant.summary.get("violations"), secondInvariant.summary.get("violations"));
         assertNotEquals(firstInvariant.summary.get("identity_digest"),
@@ -366,9 +366,9 @@ class QcSuiteToolsTest {
                 "SELECT ?i WHERE { ?i a owl:NamedIndividual }");
         CompetencyQuestion noProperties = failingNonEmptyCq("no-properties",
                 "SELECT ?p WHERE { ?p a owl:ObjectProperty }");
-        QcSuiteTools.StageResult firstCq = QcSuiteTools.cqsStage(snap,
+        QcStageResult firstCq = QcSuiteTools.cqsStage(snap,
                 List.of(noIndividuals), 1000, 30_000);
-        QcSuiteTools.StageResult secondCq = QcSuiteTools.cqsStage(snap,
+        QcStageResult secondCq = QcSuiteTools.cqsStage(snap,
                 List.of(noProperties), 1000, 30_000);
         assertEquals(firstCq.summary.get("failed"), secondCq.summary.get("failed"));
         assertNotEquals(firstCq.summary.get("identity_digest"), secondCq.summary.get("identity_digest"));
@@ -376,11 +376,11 @@ class QcSuiteToolsTest {
         String shapePrefix = "@prefix sh: <http://www.w3.org/ns/shacl#> .\n"
                 + "@prefix ex: <" + NS + "> .\n"
                 + "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n";
-        QcSuiteTools.StageResult firstShacl = QcSuiteTools.shaclStage(snap.assertedTurtle(),
+        QcStageResult firstShacl = QcSuiteTools.shaclStage(snap.assertedTurtle(),
                 shapePrefix + "ex:S a sh:NodeShape ; sh:targetNode ex:Foo ; "
                         + "sh:property [ sh:path rdfs:comment ; sh:minCount 1 ] .\n",
                 null, 1000, 30_000);
-        QcSuiteTools.StageResult secondShacl = QcSuiteTools.shaclStage(snap.assertedTurtle(),
+        QcStageResult secondShacl = QcSuiteTools.shaclStage(snap.assertedTurtle(),
                 shapePrefix + "ex:S a sh:NodeShape ; sh:targetNode ex:Animal ; "
                         + "sh:property [ sh:path rdfs:comment ; sh:minCount 1 ] .\n",
                 null, 1000, 30_000);
@@ -432,9 +432,9 @@ class QcSuiteToolsTest {
         return String.valueOf(structured(r).get("gate"));
     }
 
-    private static QcSuiteTools.SuiteExecution execution(List<QcSuiteTools.StageResult> results) {
+    private static QcSuiteExecution execution(List<QcStageResult> results) {
         String hash = "sha256:" + "1".repeat(64);
-        return new QcSuiteTools.SuiteExecution(results,
+        return new QcSuiteExecution(results,
                 new io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint(
                         1, hash, hash, "cross_restart", true, List.of()), true, null, null);
     }

@@ -55,36 +55,7 @@ public final class ModuleTools {
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("extract_module",
-                "Extract a locality-based MODULE — a self-contained subset of the ontology that "
-                        + "preserves everything the seed terms entail — using syntactic locality (the "
-                        + "same technique as robot extract). 'signature' is the seed set: entity names or "
-                        + "full IRIs (classes, properties, individuals; punned IRIs bring all senses). "
-                        + "'module_type' is STAR (default — smallest, both-directions), BOT (⊥, "
-                        + "subclasses/uses of the seeds) or TOP (⊤, superclasses/context). 'source' is "
-                        + "imports_closure (default — extract from the active ontology + its imports) or "
-                        + "active (the active ontology only). By default the module is loaded as a NEW "
-                        + "ontology in the Protégé workspace (give 'iri' to name it); pass 'path' to save "
-                        + "it to a file instead (format from the extension: .ttl/.turtle, "
-                        + ".owl/.rdf/.xml, .omn, .ofn/.fss, .owx, .obo — anything else is an error; no "
-                        + "extension writes RDF/XML). "
-                        + "Reports the module's axiom/entity counts and which seeds resolved.",
-                Tools.schema()
-                        .strArrayReq("signature", "Seed entities: names or full IRIs (classes, "
-                                + "properties, individuals). A punned IRI contributes every sense.")
-                        .str("module_type", "STAR (default) | BOT | TOP.")
-                        .str("source", "imports_closure (default) | active — which axioms to extract "
-                                + "from.")
-                        .str("iri", "IRI for the new module ontology (optional; anonymous if omitted). "
-                                + "Ignored when 'path' is given and the file format has no ontology IRI.")
-                        .str("path", "File to save the module to (save instead of loading into the "
-                                + "workspace); format inferred from the extension (.ttl/.turtle, "
-                                + ".owl/.rdf/.xml, .omn, .ofn/.fss, .owx, .obo — anything else is an "
-                                + "error; no extension writes RDF/XML).")
-                        .integer("timeout_ms", "Time budget in ms for the on-EDT phases (seed resolution "
-                                + "+ closure snapshot, and the workspace load); default 60000. It does "
-                                + "not interrupt the extraction itself, which runs off the UI thread.")
-                        .build(),
-                (ex, req) -> Tools.guard(() -> {
+                (ex, req) -> {
                     Map<String, Object> a = Tools.args(req);
                     List<String> seeds = Tools.stringList(a, "signature");
                     if (seeds.isEmpty()) {
@@ -138,7 +109,7 @@ public final class ModuleTools {
                     }
                     return ctx.access().compute(mm -> loadModule(mm, moduleAxioms, moduleIri, seeds, prep,
                             moduleType, fromClosure), boundMs);
-                }));
+                });
     }
 
     // ================================================================== phase 1 (model thread)
