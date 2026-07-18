@@ -128,6 +128,26 @@
                             </arguments>
                         </configuration>
                     </execution>
+                    <execution>
+                        <!-- The scoped `validate` command (policy_validation scope, report formats, and
+                             a redundant offline affirmation) shares the same ro_crate/titanium shade
+                             path; smoke it against the shaded jar too. The smoke policy is valid, so it
+                             exits 0. -->
+                        <id>smoke-shaded-validate</id>
+                        <phase>verify</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>${java.home}/bin/java</executable>
+                            <arguments>
+                                <argument>-jar</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}-all.jar</argument>
+                                <argument>validate</argument>
+                                <argument>--project</argument>
+                                <argument>${project.basedir}/src/smoke/policy.yaml</argument>
+                                <argument>--no-network</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
             <plugin>

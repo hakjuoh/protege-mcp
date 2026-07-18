@@ -17,6 +17,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.github.hakjuoh.protege_mcp.core.release.ArtifactStore;
+
 class MainTest {
 
     @TempDir
@@ -252,7 +254,9 @@ class MainTest {
                 """, StandardCharsets.UTF_8);
         materializeRoCrate(unnamed, "cli-reasoner-unnamed");
         ByteArrayOutputStream unnamedOut = new ByteArrayOutputStream();
-        assertEquals(2, Main.run(new String[] {"validate-policy", "--project", unnamed.toString()},
+        // PLAN §10.2: a loaded-and-evaluated but invalid policy is a gate-style failure (exit 1), not a
+        // configuration error (exit 2). This is the documented change from the 0.6.1 mapping.
+        assertEquals(1, Main.run(new String[] {"validate-policy", "--project", unnamed.toString()},
                 new PrintStream(unnamedOut), new PrintStream(new ByteArrayOutputStream())));
         String unnamedJson = unnamedOut.toString();
         assertTrue(unnamedJson.contains("\"valid\" : false"));
@@ -284,6 +288,341 @@ class MainTest {
         assertTrue(namedJson.contains("\"valid\" : true"));
         assertFalse(namedJson.contains("reasoner_unavailable"),
                 "no availability check may run without an installed-reasoner registry");
+    }
+
+    @Test
+    void loadedButInvalidPolicyExitsOneAndUnloadablePolicyExitsTwo() throws Exception {
+        // A schema-valid policy whose semantic checks fail is loaded AND evaluated (a canonical digest
+        // was computed): that is a gate-style failure, exit 1.
+        Path invalid = temp.resolve("invalid.yaml");
+        Files.writeString(invalid, """
+                version: 1
+                project_id: cli-invalid
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [reasoner]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(invalid, "cli-invalid");
+        ByteArrayOutputStream invalidOut = new ByteArrayOutputStream();
+        assertEquals(1, Main.run(new String[] {"validate-policy", "--project", invalid.toString()},
+                new PrintStream(invalidOut), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(invalidOut.toString().contains("\"valid\" : false"));
+
+        // A policy that never parses cleanly has no digest and is a configuration error, exit 2.
+        Path missing = temp.resolve("does-not-exist.yaml");
+        assertEquals(2, Main.run(new String[] {"validate-policy", "--project", missing.toString()},
+                new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream())));
+
+        Path unparseable = temp.resolve("broken.yaml");
+        Files.writeString(unparseable, "this: is: not: valid: yaml: {[}\n", StandardCharsets.UTF_8);
+        assertEquals(2, Main.run(new String[] {"validate-policy", "--project", unparseable.toString()},
+                new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream())));
+    }
+
+    @Test
+    void diffCheckGatesOnIdentity() throws Exception {
+        Path a = temp.resolve("a.ofn");
+        Path b = temp.resolve("b.ofn");
+        Files.writeString(a, "Ontology(<https://example.org/o> Declaration(Class(<https://example.org/A>)))");
+        Files.writeString(b, "Ontology(<https://example.org/o> Declaration(Class(<https://example.org/B>)))");
+
+        // Without --check, a differing diff still exits 0 (released behavior preserved).
+        assertEquals(0, Main.run(new String[] {"diff", "--left", a.toString(), "--right", b.toString()},
+                new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream())));
+
+        // With --check, differing ontologies exit 1.
+        assertEquals(1, Main.run(
+                new String[] {"diff", "--left", a.toString(), "--right", b.toString(), "--check"},
+                new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream())));
+
+        // With --check, identical ontologies exit 0.
+        Path aCopy = temp.resolve("a-copy.ofn");
+        Files.writeString(aCopy, Files.readString(a));
+        assertEquals(0, Main.run(
+                new String[] {"diff", "--left", a.toString(), "--right", aCopy.toString(), "--check"},
+                new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream())));
+    }
+
+    @Test
+    void manifestDiffResolvesPrimaryArtifactAndVerifiesSha256() throws Exception {
+        Path ontology = temp.resolve("ontology.ttl");
+        Files.writeString(ontology, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/o> a owl:Ontology .\n"
+                + "<https://example.org/A> a owl:Class .\n", StandardCharsets.UTF_8);
+        Path manifest = temp.resolve("manifest.json");
+        Files.writeString(manifest, """
+                {
+                  "manifest_version": 1,
+                  "project_id": "cli-manifest",
+                  "version_iri": "https://example.org/o/1.0.0",
+                  "artifacts": [
+                    {"path": "ontology.ttl", "sha256": "%s", "bytes": %d}
+                  ]
+                }
+                """.formatted(ArtifactStore.sha256(ontology), Files.size(ontology)),
+                StandardCharsets.UTF_8);
+        Path right = temp.resolve("right.ttl");
+        Files.writeString(right, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/o> a owl:Ontology .\n"
+                + "<https://example.org/B> a owl:Class .\n", StandardCharsets.UTF_8);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(0,
+                Main.run(new String[] {"diff", "--left", manifest.toString(), "--right", right.toString()},
+                        new PrintStream(out), new PrintStream(err)),
+                () -> "manifest diff must resolve + verify + diff: " + err);
+        String json = out.toString();
+        assertTrue(json.contains("\"left_manifest\""), json);
+        assertTrue(json.contains("\"sha256_verified\" : true"), json);
+        assertTrue(json.contains("\"artifact_path\" : \"ontology.ttl\""), json);
+        assertTrue(json.contains("https://example.org/o/1.0.0"), "the manifest version IRI is reported");
+        assertTrue(json.contains("\"entities\""), "the resolved artifact was actually diffed");
+    }
+
+    @Test
+    void manifestDiffRejectsSha256MismatchWithoutDiffing() throws Exception {
+        Path ontology = temp.resolve("ontology.ttl");
+        Files.writeString(ontology, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/o> a owl:Ontology .\n", StandardCharsets.UTF_8);
+        Path manifest = temp.resolve("manifest.json");
+        Files.writeString(manifest, """
+                {
+                  "manifest_version": 1,
+                  "version_iri": "https://example.org/o/1.0.0",
+                  "artifacts": [
+                    {"path": "ontology.ttl", "sha256": "sha256:%s", "bytes": 1}
+                  ]
+                }
+                """.formatted("0".repeat(64)), StandardCharsets.UTF_8);
+        Path right = temp.resolve("right.ttl");
+        Files.writeString(right, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/o> a owl:Ontology .\n", StandardCharsets.UTF_8);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(3,
+                Main.run(new String[] {"diff", "--left", manifest.toString(), "--right", right.toString()},
+                        new PrintStream(out), new PrintStream(err)));
+        assertTrue(err.toString().contains("sha256 mismatch"), err.toString());
+        assertFalse(out.toString().contains("\"entities\""), "a tampered artifact must not be diffed");
+    }
+
+    @Test
+    void manifestDiffRejectsArtifactPathEscapingTheManifestDirectory() throws Exception {
+        Path subdir = temp.resolve("release");
+        Files.createDirectories(subdir);
+        // A file outside the manifest directory that a `..` path would reach.
+        Files.writeString(temp.resolve("escape.ttl"), "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/o> a owl:Ontology .\n", StandardCharsets.UTF_8);
+        Path manifest = subdir.resolve("manifest.json");
+        Files.writeString(manifest, """
+                {
+                  "manifest_version": 1,
+                  "artifacts": [
+                    {"path": "../escape.ttl", "sha256": "sha256:%s", "bytes": 1}
+                  ]
+                }
+                """.formatted("0".repeat(64)), StandardCharsets.UTF_8);
+        Path right = temp.resolve("right.ttl");
+        Files.writeString(right, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/o> a owl:Ontology .\n", StandardCharsets.UTF_8);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(3,
+                Main.run(new String[] {"diff", "--left", manifest.toString(), "--right", right.toString()},
+                        new PrintStream(out), new PrintStream(err)));
+        assertTrue(err.toString().contains("escapes the manifest directory"), err.toString());
+        assertFalse(out.toString().contains("\"entities\""), "an escaping artifact must not be diffed");
+    }
+
+    @Test
+    void manifestDiffRejectsAMissingArtifactWithoutDiffing() throws Exception {
+        // The artifact path is well-formed and contained, but the file is absent → exit 3, no diff.
+        Path manifest = temp.resolve("manifest.json");
+        Files.writeString(manifest, """
+                {
+                  "manifest_version": 1,
+                  "artifacts": [
+                    {"path": "ontology.ttl", "sha256": "sha256:%s", "bytes": 1}
+                  ]
+                }
+                """.formatted("0".repeat(64)), StandardCharsets.UTF_8);
+        Path right = temp.resolve("right.ttl");
+        Files.writeString(right, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/o> a owl:Ontology .\n", StandardCharsets.UTF_8);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(3,
+                Main.run(new String[] {"diff", "--left", manifest.toString(), "--right", right.toString()},
+                        new PrintStream(out), new PrintStream(err)));
+        assertTrue(err.toString().contains("could not be resolved beside the manifest"), err.toString());
+        assertFalse(out.toString().contains("\"entities\""), "a missing artifact must not be diffed");
+    }
+
+    @Test
+    void anOversizedJsonOperandIsNotBufferedAsAManifest() throws Exception {
+        // A multi-megabyte .json operand must not be whole-file-buffered by the manifest probe; it
+        // falls through to the streaming document loader (which reports its own bounded parse error).
+        Path big = temp.resolve("big.json");
+        byte[] filler = new byte[(int) Main.MAX_MANIFEST_BYTES + 4096];
+        java.util.Arrays.fill(filler, (byte) ' ');
+        Files.write(big, filler);
+        Path right = temp.resolve("right.ofn");
+        Files.writeString(right, "Ontology(<https://example.org/o>)");
+
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        // The oversized json is NOT whole-file-buffered by the manifest probe (no OOM) and is not
+        // treated as a manifest — it falls through to the streaming OWLAPI loader. The parse outcome
+        // is OWLAPI's business; what this pins is that the run COMPLETES (returns a code, never an
+        // uncaught OutOfMemoryError) and never reaches the sha256/containment manifest path.
+        int code = Main.run(new String[] {"diff", "--left", big.toString(), "--right", right.toString()},
+                new PrintStream(new ByteArrayOutputStream()), new PrintStream(err));
+        assertTrue(code == 0 || code == 3, "diff completed without crashing: exit " + code);
+        assertFalse(err.toString().contains("sha256"), "an oversized json is not treated as a manifest");
+    }
+
+    @Test
+    void validateExitsOneForAnInvalidPolicyAndTwoForAnUnloadableOne() throws Exception {
+        // The `validate` command has its own exitFor return site (json AND markdown) — pin its
+        // non-zero verdicts directly, not only transitively through validate-policy.
+        Path invalid = temp.resolve("invalid.yaml");
+        Files.writeString(invalid, """
+                version: 1
+                project_id: cli-validate-invalid
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [reasoner]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(invalid, "cli-validate-invalid");
+
+        for (String format : new String[] {"json", "markdown"}) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            assertEquals(1, Main.run(
+                    new String[] {"validate", "--project", invalid.toString(), "--format", format},
+                    new PrintStream(out), new PrintStream(new ByteArrayOutputStream())),
+                    () -> "a loaded-but-invalid policy is a gate failure (exit 1) in " + format);
+        }
+
+        Path missing = temp.resolve("nope.yaml");
+        assertEquals(2, Main.run(new String[] {"validate", "--project", missing.toString()},
+                new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream())));
+    }
+
+    @Test
+    void validateReportsPolicyValidationScopeAndDeferredQcNote() throws Exception {
+        Path policy = temp.resolve("project.yaml");
+        Files.writeString(policy, """
+                version: 1
+                project_id: cli-validate
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [profile, governance, structural]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(policy, "cli-validate");
+
+        ByteArrayOutputStream jsonOut = new ByteArrayOutputStream();
+        assertEquals(0, Main.run(new String[] {"validate", "--project", policy.toString()},
+                new PrintStream(jsonOut), new PrintStream(new ByteArrayOutputStream())));
+        String json = jsonOut.toString();
+        assertTrue(json.contains("\"scope\" : \"policy_validation\""), json);
+        assertTrue(json.contains("Full project QC"), "the QC-deferred note is present");
+        assertTrue(json.contains("\"valid\" : true"), json);
+
+        ByteArrayOutputStream mdOut = new ByteArrayOutputStream();
+        assertEquals(0, Main.run(
+                new String[] {"validate", "--project", policy.toString(), "--format", "markdown"},
+                new PrintStream(mdOut), new PrintStream(new ByteArrayOutputStream())));
+        String md = mdOut.toString();
+        assertTrue(md.contains("# Policy validation: valid"), md);
+        assertTrue(md.contains("Full project QC"), "the QC-deferred note is present in markdown");
+    }
+
+    @Test
+    void validateRejectsJunitAndSarifFormatsAsConfigurationErrors() throws Exception {
+        Path policy = temp.resolve("project.yaml");
+        Files.writeString(policy, """
+                version: 1
+                project_id: cli-fmt
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [profile, governance, structural]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(policy, "cli-fmt");
+        for (String format : new String[] {"junit", "sarif", "bogus"}) {
+            ByteArrayOutputStream err = new ByteArrayOutputStream();
+            assertEquals(2, Main.run(
+                    new String[] {"validate", "--project", policy.toString(), "--format", format},
+                    new PrintStream(new ByteArrayOutputStream()), new PrintStream(err)),
+                    () -> "format " + format + " must be a configuration error");
+            assertTrue(err.toString().contains("configuration error:"), err.toString());
+        }
+    }
+
+    @Test
+    void noNetworkIsAcceptedAsRedundantOnValidateAndDiff() throws Exception {
+        Path policy = temp.resolve("project.yaml");
+        Files.writeString(policy, """
+                version: 1
+                project_id: cli-nonet
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [profile, governance, structural]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(policy, "cli-nonet");
+        ByteArrayOutputStream validateOut = new ByteArrayOutputStream();
+        assertEquals(0, Main.run(
+                new String[] {"validate", "--project", policy.toString(), "--no-network"},
+                new PrintStream(validateOut), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(validateOut.toString().contains("\"no_network\""), validateOut.toString());
+
+        Path left = temp.resolve("left.ofn");
+        Path right = temp.resolve("right.ofn");
+        Files.writeString(left, "Ontology(<https://example.org/o> Declaration(Class(<https://example.org/A>)))");
+        Files.writeString(right, "Ontology(<https://example.org/o> Declaration(Class(<https://example.org/B>)))");
+        ByteArrayOutputStream diffOut = new ByteArrayOutputStream();
+        assertEquals(0, Main.run(
+                new String[] {"diff", "--left", left.toString(), "--right", right.toString(), "--no-network"},
+                new PrintStream(diffOut), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(diffOut.toString().contains("\"no_network\""), diffOut.toString());
+    }
+
+    @Test
+    void deferredCommandsPrintANotAvailableMessageAndExitTwo() {
+        for (String command : new String[] {"release", "imports", "serve"}) {
+            ByteArrayOutputStream err = new ByteArrayOutputStream();
+            assertEquals(2, Main.run(new String[] {command, "--transport", "stdio"},
+                    new PrintStream(new ByteArrayOutputStream()), new PrintStream(err)));
+            assertTrue(err.toString().contains("not yet available in the headless CLI"),
+                    () -> command + " message: " + err);
+        }
     }
 
     private static void materializeRoCrate(Path policy, String projectId) throws Exception {

@@ -4,11 +4,16 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.io.FileDocumentSource;
@@ -18,18 +23,49 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
-import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
-import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.github.hakjuoh.protege_mcp.contracts.ContractJson;
 import io.github.hakjuoh.protege_mcp.core.diff.SemanticDiffService;
 import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
+import io.github.hakjuoh.protege_mcp.core.release.ArtifactStore;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 
-/** Minimal Java 17 headless surface proving the core has no Protégé runtime dependency. */
+/**
+ * Java 17 headless surface proving the core has no Protégé runtime dependency.
+ *
+ * <p>Exit codes (PLAN §10.2): {@code 0} a gate/command passed; {@code 1} a validation/release gate
+ * FAILED (a clean, loaded, but non-passing result); {@code 2} a configuration/usage error; {@code 3}
+ * an execution/infrastructure error. Adopting {@code 1} for an invalid-but-loaded policy is a
+ * documented change from the {@code 0.6.1} mapping, which returned {@code 2}.
+ */
 public final class Main {
 
     public static final String VERSION = "0.6.1";
+
+    /** Windows drive-letter absolute path (e.g. {@code C:\a}); Path.of on POSIX does not flag it. */
+    private static final Pattern WINDOWS_ABSOLUTE = Pattern.compile("^[A-Za-z]:[\\\\/].*");
+
+    /**
+     * Full project QC (the reasoner-, profile-, structural-, governance-, invariants-, cqs-, and
+     * shacl-stage gate) is not reachable from the headless CLI: those stages run against Protégé's
+     * OWLModelManager-bound QC executor and a reasoner the CLI does not bundle. This command validates
+     * only the project policy (syntax, semantic references, and local assets).
+     */
+    private static final String QC_DEFERRED_NOTE =
+            "Full project QC (reasoner/profile/structural/governance/invariants/cqs/shacl stages) "
+                    + "requires the in-Protégé run_project_qc tool or a future headless runner with a "
+                    + "bundled reasoner; this command validates only the project policy (syntax, semantic "
+                    + "references, and local assets).";
+
+    /** ADR 0005 decision 6: the headless CLI is already network=deny, so --no-network is redundant. */
+    private static final String NO_NETWORK_NOTE =
+            "accepted redundant affirmation: the headless CLI performs no network access, so --no-network "
+                    + "(network=deny) already holds (ADR 0005 decision 6).";
+
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(SerializationFeature.INDENT_OUTPUT)
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
@@ -46,20 +82,32 @@ public final class Main {
 
     static int run(String[] args, PrintStream out, PrintStream err) {
         try {
-            if (args.length == 1 && ("--version".equals(args[0]) || "version".equals(args[0]))) {
-                out.println("protege-mcp-cli " + VERSION);
-                return 0;
+            if (args.length == 0) {
+                err.println(usage());
+                return 2;
             }
-            if (args.length == 3 && "validate-policy".equals(args[0])
-                    && "--project".equals(args[1])) {
-                return validatePolicy(Path.of(args[2]), out);
+            switch (args[0]) {
+                case "--version":
+                case "version":
+                    if (args.length == 1) {
+                        out.println("protege-mcp-cli " + VERSION);
+                        return 0;
+                    }
+                    break;
+                case "validate-policy":
+                    return validatePolicy(args, out);
+                case "validate":
+                    return validate(args, out);
+                case "diff":
+                    return diff(args, out);
+                case "release":
+                case "imports":
+                case "serve":
+                    return deferred(args[0], err);
+                default:
+                    break;
             }
-            if (args.length == 5 && "diff".equals(args[0])
-                    && "--left".equals(args[1]) && "--right".equals(args[3])) {
-                return diff(Path.of(args[2]), Path.of(args[4]), out);
-            }
-            err.println("Usage: protege-mcp-cli --version | validate-policy --project FILE | "
-                    + "diff --left ONTOLOGY --right ONTOLOGY");
+            err.println(usage());
             return 2;
         } catch (IllegalArgumentException e) {
             err.println("configuration error: " + message(e));
@@ -70,10 +118,57 @@ public final class Main {
         }
     }
 
-    private static int validatePolicy(Path path, PrintStream out) throws Exception {
+    // ===================================================================== validate-policy / validate
+
+    private static int validatePolicy(String[] args, PrintStream out) throws Exception {
+        Options opts = parse(args, Set.of("--project"), Set.of());
         // Headless policy syntax/asset validation has no installed Protégé reasoner registry.
         // Runtime reasoner availability is checked by the adapter that executes project QC.
-        ProjectPolicy policy = ProjectPolicyLoader.load(path, null);
+        ProjectPolicy policy = ProjectPolicyLoader.load(Path.of(required(opts, "--project")), null);
+        JSON.writeValue(out, policyResult(policy));
+        out.println();
+        return exitFor(policy);
+    }
+
+    /**
+     * Headless policy validation with report formats. Renders the same policy result as
+     * {@code validate-policy}, tagged with {@code scope: policy_validation} and a note that the full
+     * reasoner-dependent QC gate is not run here. {@code --format junit|sarif} is deliberately
+     * unsupported: those emitters project a QC {@link io.github.hakjuoh.protege_mcp.contracts.GateResult}
+     * whose mandatory semantic fingerprint a policy-only validation cannot honestly produce without a
+     * bundled reasoner, so forcing that shape would fabricate a gate result.
+     */
+    private static int validate(String[] args, PrintStream out) throws Exception {
+        Options opts = parse(args, Set.of("--project", "--format"), Set.of("--no-network"));
+        String format = opts.values.getOrDefault("--format", "json");
+        ProjectPolicy policy = ProjectPolicyLoader.load(Path.of(required(opts, "--project")), null);
+        Map<String, Object> result = policyResult(policy);
+        result.put("scope", "policy_validation");
+        result.put("note", QC_DEFERRED_NOTE);
+        recordNoNetwork(opts, result);
+        switch (format) {
+            case "json":
+                JSON.writeValue(out, result);
+                out.println();
+                break;
+            case "markdown":
+                out.println(policyMarkdown(policy, opts.flags.contains("--no-network")));
+                break;
+            case "junit":
+            case "sarif":
+                throw new IllegalArgumentException("--format '" + format + "' is not available for "
+                        + "policy-only validation: it projects a full QC gate result (with a semantic "
+                        + "fingerprint) that the headless CLI cannot produce without a bundled reasoner. "
+                        + "Use --format json or markdown, or run the in-Protégé run_project_qc gate.");
+            default:
+                throw new IllegalArgumentException("unknown --format '" + format
+                        + "'; expected json or markdown");
+        }
+        return exitFor(policy);
+    }
+
+    /** The shared policy-validation JSON body (unchanged shape from the 0.6.1 validate-policy output). */
+    private static Map<String, Object> policyResult(ProjectPolicy policy) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("policy_loaded", policy.loaded());
         result.put("valid", policy.valid());
@@ -84,27 +179,231 @@ public final class Main {
                 .map(issue -> issue.toJson()).toList());
         result.put("warnings", policy.issues().stream().filter(issue -> !"error".equals(issue.severity()))
                 .map(issue -> issue.toJson()).toList());
-        JSON.writeValue(out, result);
-        out.println();
-        return policy.valid() ? 0 : 2;
+        return result;
     }
 
-    private static int diff(Path left, Path right, PrintStream out) throws Exception {
+    private static String policyMarkdown(ProjectPolicy policy, boolean noNetwork) {
+        StringBuilder md = new StringBuilder();
+        md.append("# Policy validation: ").append(policy.valid() ? "valid" : "invalid").append("\n\n");
+        md.append("- Scope: `policy_validation`\n");
+        md.append("- Policy loaded: ").append(policy.loaded()).append("\n");
+        md.append("- Policy path: ").append(policy.path() == null ? "_none_" : "`" + policy.path() + "`")
+                .append("\n");
+        md.append("- Project root: ")
+                .append(policy.projectRoot() == null ? "_none_" : "`" + policy.projectRoot() + "`")
+                .append("\n");
+        md.append("- Policy digest: ")
+                .append(policy.digest() == null ? "_none_" : "`" + policy.digest() + "`").append("\n");
+        if (noNetwork) {
+            md.append("- Network: `deny` (--no-network is a redundant affirmation; ADR 0005)\n");
+        }
+        md.append("\n> ").append(QC_DEFERRED_NOTE).append("\n\n");
+        appendIssueList(md, policy, "error", "Errors");
+        appendIssueList(md, policy, "warning", "Warnings");
+        return md.toString();
+    }
+
+    private static void appendIssueList(StringBuilder md, ProjectPolicy policy, String severity,
+            String heading) {
+        List<io.github.hakjuoh.protege_mcp.policy.PolicyIssue> matching = policy.issues().stream()
+                .filter(issue -> severity.equals(issue.severity())).toList();
+        md.append("## ").append(heading).append(" (").append(matching.size()).append(")\n\n");
+        if (matching.isEmpty()) {
+            md.append("_None._\n\n");
+            return;
+        }
+        for (io.github.hakjuoh.protege_mcp.policy.PolicyIssue issue : matching) {
+            md.append("- **").append(issue.code()).append("**");
+            if (issue.path() != null) {
+                md.append(" `").append(issue.path()).append('`');
+            }
+            md.append(" — ").append(issue.message().replace("\n", " ")).append('\n');
+        }
+        md.append('\n');
+    }
+
+    /**
+     * A valid policy passes (exit 0). An invalid policy that was still fully evaluated — parsed,
+     * schema-valid, semantic checks run, so a canonical {@code policy_digest} was computed — is a
+     * gate-style failure (exit 1). A policy that could not be brought to an evaluable form (missing,
+     * unparseable, schema-invalid, oversized, unreadable) never gets a digest and is a configuration
+     * error (exit 2).
+     */
+    private static int exitFor(ProjectPolicy policy) {
+        if (policy.valid()) {
+            return 0;
+        }
+        return policy.digest() != null ? 1 : 2;
+    }
+
+    // ===================================================================== diff
+
+    private static int diff(String[] args, PrintStream out) throws Exception {
+        Options opts = parse(args, Set.of("--left", "--right"), Set.of("--check", "--no-network"));
+        ResolvedOperand left = resolveOperand(Path.of(required(opts, "--left")));
+        ResolvedOperand right = resolveOperand(Path.of(required(opts, "--right")));
+
         // The comparison is asserted-only (imports are never diffed), so fetching owl:imports would
         // perform needless and surprising I/O. Load each root with a mapper that satisfies every import
         // from a private empty placeholder, then report every declared import so the deliberately
         // omitted closure stays visible.
         List<String> leftUnresolved = new ArrayList<>();
         List<String> rightUnresolved = new ArrayList<>();
-        OWLOntology leftOntology = loadDocument(left, leftUnresolved);
-        OWLOntology rightOntology = loadDocument(right, rightUnresolved);
+        OWLOntology leftOntology = loadDocument(left.document(), leftUnresolved);
+        OWLOntology rightOntology = loadDocument(right.document(), rightUnresolved);
         Map<String, Object> result = SemanticDiffService.diff(leftOntology, rightOntology, false, 100,
                 rightUnresolved);
         result.put("left_unresolved_imports", List.copyOf(leftUnresolved));
         result.put("right_unresolved_imports", List.copyOf(rightUnresolved));
+        if (left.manifest() != null) {
+            result.put("left_manifest", left.manifest());
+        }
+        if (right.manifest() != null) {
+            result.put("right_manifest", right.manifest());
+        }
+        recordNoNetwork(opts, result);
         JSON.writeValue(out, result);
         out.println();
+        // Without --check, diff stays exit 0 regardless of the outcome (0.6.1 behavior preserved). With
+        // --check it is a CI gate: exit 1 when the two ontologies are not identical.
+        if (opts.flags.contains("--check") && !Boolean.TRUE.equals(result.get("identical"))) {
+            return 1;
+        }
         return 0;
+    }
+
+    /** A diff operand: the ontology document to load, plus optional resolved-from-manifest metadata. */
+    private record ResolvedOperand(Path document, Map<String, Object> manifest) {
+    }
+
+    /**
+     * A {@code --left}/{@code --right} operand is a plain ontology document unless it is a {@code .json}
+     * file that parses as a release manifest ({@code manifest_version} present). A manifest is resolved
+     * to its PRIMARY ontology artifact ({@code artifacts[0]} — the release manifest always lists the
+     * ontology artifact first), whose recorded sha256 is verified against the file on disk and whose
+     * path is re-validated for containment before any diff. A non-manifest {@code .json} (e.g. a
+     * JSON-LD ontology) is loaded unchanged.
+     */
+    private static ResolvedOperand resolveOperand(Path path) throws IOException {
+        if (!isJsonName(path)) {
+            return new ResolvedOperand(path, null);
+        }
+        Map<String, Object> manifest = readManifestOrNull(path);
+        if (manifest == null) {
+            return new ResolvedOperand(path, null);
+        }
+        return resolveManifest(path, manifest);
+    }
+
+    private static boolean isJsonName(Path path) {
+        Path name = path.getFileName();
+        return name != null && name.toString().toLowerCase(Locale.ROOT).endsWith(".json");
+    }
+
+    /**
+     * A release manifest is a small metadata file; a multi-gigabyte {@code .json} operand is never a
+     * manifest. Cap the pre-read so an untrusted CI operand cannot exhaust the heap through the
+     * whole-file buffer this manifest probe would otherwise create — matching the loader's
+     * {@code MAX_POLICY_BYTES} discipline. Oversized {@code .json} operands are simply not treated as
+     * manifests and fall through to OWLAPI's streaming document loader.
+     */
+    static final long MAX_MANIFEST_BYTES = 1_048_576L;
+
+    private static Map<String, Object> readManifestOrNull(Path path) {
+        Map<String, Object> parsed;
+        try {
+            if (!Files.isRegularFile(path) || Files.size(path) > MAX_MANIFEST_BYTES) {
+                return null;
+            }
+            parsed = ContractJson.mapper().readValue(Files.readAllBytes(path),
+                    new TypeReference<LinkedHashMap<String, Object>>() { });
+        } catch (IOException | RuntimeException notAManifest) {
+            // A .json that is not parseable JSON is left to the OWLAPI document loader (e.g. RDF/JSON),
+            // which reports its own bounded parse error if it too cannot read it.
+            return null;
+        }
+        return parsed != null && parsed.containsKey("manifest_version") ? parsed : null;
+    }
+
+    private static ResolvedOperand resolveManifest(Path manifestPath, Map<String, Object> manifest)
+            throws IOException {
+        Path manifestDir = manifestPath.toAbsolutePath().normalize().getParent();
+        if (manifestDir == null) {
+            throw new IllegalStateException("release manifest has no parent directory: " + manifestPath);
+        }
+        Object artifactsValue = manifest.get("artifacts");
+        if (!(artifactsValue instanceof List<?> artifacts) || artifacts.isEmpty()) {
+            throw new IllegalStateException(
+                    "release manifest lists no artifact to diff against: " + manifestPath);
+        }
+        if (!(artifacts.get(0) instanceof Map<?, ?> primary)) {
+            throw new IllegalStateException("release manifest artifact entry is malformed: " + manifestPath);
+        }
+        String artifactPath = str(primary.get("path"));
+        String recordedSha = str(primary.get("sha256"));
+        Path resolved = authorizeArtifact(manifestDir, artifactPath);
+        String actualSha = ArtifactStore.sha256(resolved);
+        if (recordedSha == null || !actualSha.equalsIgnoreCase(recordedSha)) {
+            throw new IllegalStateException("release manifest sha256 mismatch for '" + artifactPath
+                    + "': the manifest records " + recordedSha + " but the file hashes to " + actualSha
+                    + " (a tampered or moved artifact must not be silently diffed).");
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("version_iri", manifest.get("version_iri"));
+        metadata.put("artifact_path", artifactPath);
+        metadata.put("sha256_verified", true);
+        return new ResolvedOperand(resolved, metadata);
+    }
+
+    /**
+     * Re-validate an untrusted, manifest-supplied artifact path (the same class of bug fixed in
+     * ReleaseGate.compareBaseline): reject an absolute path outright, resolve it against the manifest
+     * directory, and require the resolved and real paths to stay strictly beneath the manifest
+     * directory's real path. A {@code ..} escape, an absolute path, or a symlink pointing outside is
+     * refused before the artifact is diffed.
+     */
+    private static Path authorizeArtifact(Path manifestDir, String artifactPath) throws IOException {
+        if (artifactPath == null || artifactPath.isBlank()) {
+            throw new IllegalStateException("release manifest primary artifact has no path");
+        }
+        if (WINDOWS_ABSOLUTE.matcher(artifactPath).matches() || artifactPath.startsWith("\\\\")) {
+            throw new IllegalStateException("release manifest artifact path must be relative to the "
+                    + "manifest directory: " + artifactPath);
+        }
+        Path relative;
+        try {
+            relative = Path.of(artifactPath);
+        } catch (InvalidPathException e) {
+            throw new IllegalStateException("release manifest artifact path is invalid: " + artifactPath);
+        }
+        if (relative.isAbsolute()) {
+            throw new IllegalStateException("release manifest artifact path must be relative to the "
+                    + "manifest directory: " + artifactPath);
+        }
+        Path realManifestDir = manifestDir.toRealPath();
+        Path resolved = realManifestDir.resolve(relative).normalize();
+        if (!resolved.startsWith(realManifestDir)) {
+            throw new IllegalStateException("release manifest artifact path escapes the manifest "
+                    + "directory: " + artifactPath);
+        }
+        // Resolve symlinks BEFORE any existence branch and collapse the not-found and
+        // symlink-escape outcomes into ONE indistinguishable message: probing isRegularFile first
+        // would follow a link to an out-of-tree target and leak, through two distinct errors,
+        // whether that target exists on the victim's filesystem.
+        Path real;
+        try {
+            real = resolved.toRealPath();
+        } catch (IOException notFound) {
+            throw new IllegalStateException(
+                    "release manifest artifact could not be resolved beside the manifest: "
+                            + artifactPath);
+        }
+        if (!real.startsWith(realManifestDir) || !Files.isRegularFile(real)) {
+            throw new IllegalStateException(
+                    "release manifest artifact could not be resolved beside the manifest: "
+                            + artifactPath);
+        }
+        return real;
     }
 
     private static OWLOntology loadDocument(Path path, List<String> unresolvedOut) throws Exception {
@@ -148,7 +447,92 @@ public final class Main {
         }
     }
 
+    // ===================================================================== deferred commands
+
+    /**
+     * The roadmap commands that a headless CLI cannot honestly run yet: {@code release} and
+     * {@code imports lock} need atomic headless mutation plus a bundled license-reviewed reasoner for
+     * the gate stages, and {@code serve --transport stdio} needs a headless workspace adapter and the
+     * plugin's tool catalog moved to core. Rather than ship a command that looks half-done, print a
+     * clear not-available message and exit 2.
+     */
+    private static int deferred(String command, PrintStream err) {
+        err.println(command + ": not yet available in the headless CLI (planned; PLAN §10.2/§10.3).");
+        err.println("It requires a bundled license-reviewed baseline reasoner and a headless workspace "
+                + "adapter; run project QC and releases from the in-Protégé MCP tools for now.");
+        return 2;
+    }
+
+    // ===================================================================== shared helpers
+
+    private static void recordNoNetwork(Options opts, Map<String, Object> result) {
+        if (opts.flags.contains("--no-network")) {
+            result.put("no_network", NO_NETWORK_NOTE);
+        }
+    }
+
+    private static String usage() {
+        return String.join("\n",
+                "Usage:",
+                "  protege-mcp-cli --version",
+                "  protege-mcp-cli validate-policy --project FILE",
+                "  protege-mcp-cli validate --project FILE [--format json|markdown] [--no-network]",
+                "  protege-mcp-cli diff --left LEFT --right RIGHT [--check] [--no-network]",
+                "      LEFT/RIGHT is an ontology document or a release manifest.json (resolved to its",
+                "      primary ontology artifact after sha256 + containment verification).",
+                "",
+                "Exit codes: 0 passed; 1 validation/gate failed; 2 configuration/usage error; "
+                        + "3 execution/infrastructure error.",
+                "",
+                "Planned, not yet available headlessly (require a bundled license-reviewed reasoner and a",
+                "headless workspace adapter): release [--dry-run], imports lock, validate full-QC stages,",
+                "serve --transport stdio. Run these from the in-Protégé MCP tools.");
+    }
+
+    /** Parse {@code --key value} options and boolean flags after the command word (args[0]). */
+    private static Options parse(String[] args, Set<String> valueKeys, Set<String> boolFlags) {
+        Options opts = new Options();
+        int i = 1;
+        while (i < args.length) {
+            String arg = args[i];
+            if (boolFlags.contains(arg)) {
+                if (!opts.flags.add(arg)) {
+                    throw new IllegalArgumentException("repeated flag " + arg);
+                }
+                i++;
+            } else if (valueKeys.contains(arg)) {
+                if (i + 1 >= args.length) {
+                    throw new IllegalArgumentException("missing value for " + arg);
+                }
+                if (opts.values.put(arg, args[i + 1]) != null) {
+                    throw new IllegalArgumentException("repeated option " + arg);
+                }
+                i += 2;
+            } else {
+                throw new IllegalArgumentException("unexpected argument: " + arg);
+            }
+        }
+        return opts;
+    }
+
+    private static String required(Options opts, String key) {
+        String value = opts.values.get(key);
+        if (value == null) {
+            throw new IllegalArgumentException("missing required option " + key);
+        }
+        return value;
+    }
+
+    private static String str(Object value) {
+        return value instanceof String ? (String) value : null;
+    }
+
     private static String message(Throwable error) {
         return OwlParsingErrors.conciseMessage(error);
+    }
+
+    private static final class Options {
+        private final Map<String, String> values = new LinkedHashMap<>();
+        private final Set<String> flags = new LinkedHashSet<>();
     }
 }
