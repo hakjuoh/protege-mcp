@@ -53,7 +53,7 @@ counterpart — run it against the built `v{{ site.version }}` jar before publis
 | 21 | `run_competency_questions` | per-CQ `pass`, overall `{passed, failed, gate}` |
 | 22 | `verify_ontology` with an invariant that matches nothing, then one that matches | first `gate=pass`; second reports the violation rows (as bindings) and `gate=fail` at `fail_on=error` |
 | 23 | `run_qc_suite` (default stages) | `reasoner`/`profile`/`structural` each `ran` with a verdict; overall `gate` |
-| 24 | `run_qc_suite` before `run_reasoner` (fresh load) | the `reasoner` stage is `ran:false` with a "run run_reasoner" reason, **not** an error |
+| 24 | `run_qc_suite` before `run_reasoner` (fresh load, with a reasoner selected) | the `reasoner` stage is `ran:true` with an isolated verdict while the live reasoner remains uninitialized; selecting `None` instead yields `ran:false` with a skip reason, **not** an error |
 | 25 | `remove_competency_question` the CQ | `removed=true`; the `.rq` file is gone |
 
 ### 0.4.3 — previews, save-all, inconsistency triage
