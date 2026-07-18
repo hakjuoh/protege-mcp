@@ -33,6 +33,7 @@ import io.github.hakjuoh.protege_mcp.contracts.GateStatus;
 import io.github.hakjuoh.protege_mcp.contracts.StageResult;
 import io.github.hakjuoh.protege_mcp.contracts.StageStatus;
 import io.github.hakjuoh.protege_mcp.core.diff.SemanticDiffService;
+import io.github.hakjuoh.protege_mcp.core.owl.FormatCompatibility;
 import io.github.hakjuoh.protege_mcp.core.release.ArtifactStore;
 import io.github.hakjuoh.protege_mcp.core.release.ReleaseCrate;
 import io.github.hakjuoh.protege_mcp.core.release.ReleaseManifest;
@@ -266,6 +267,8 @@ final class ReleaseGate {
             roundTrip.put("clean", serialized.clean());
             if (serialized.clean()) {
                 ontologyBytes = serialized.bytes();
+                // Distinguish byte-for-byte vs axiom-identical reproducibility (PLAN §8.3).
+                roundTrip.put("round_trip_class", serialized.roundTripClass());
             } else {
                 roundTrip.put("error", serialized.error());
                 if (requireCleanRoundTrip) {
@@ -275,6 +278,28 @@ final class ReleaseGate {
                             null, Map.of()));
                 }
             }
+        }
+
+        // Format loss safeguards (PLAN §8.3): the OBO compatibility report and the default lossy-format
+        // warning surface here BEFORE any replacement. In release mode a predicted loss is a gate error
+        // (strict) when require_clean_round_trip holds; otherwise a warning finding.
+        OWLDocumentFormat releaseFormat = cap.snapshot.format();
+        if (FormatCompatibility.isOboFormat(releaseFormat)) {
+            roundTrip.put("obo_compatibility",
+                    FormatCompatibility.oboCompatibility(cap.snapshot.ontology()).toJson());
+        }
+        FormatCompatibility.LossyWarning releaseLossy =
+                FormatCompatibility.detectLoss(cap.snapshot.ontology(), releaseFormat);
+        if (releaseLossy != null) {
+            roundTrip.put("lossy_format", releaseLossy.toJson());
+            FindingSeverity severity = requireCleanRoundTrip
+                    ? FindingSeverity.ERROR : FindingSeverity.WARNING;
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("format", formatName);
+            details.put("reasons", releaseLossy.reasons());
+            releaseFindings.add(finding("release.lossy_format", "release", severity,
+                    "The release format '" + formatName + "' cannot represent the ontology without "
+                            + "loss: " + String.join("; ", releaseLossy.reasons()), null, details));
         }
 
         // Optional baseline comparison (ASSERTED only; ADR 0004 defers inferred baseline diff).
@@ -617,7 +642,8 @@ final class ReleaseGate {
 
     // ================================================================== verified serialization
 
-    private record Serialized(byte[] bytes, String sha256, boolean clean, String error) {
+    private record Serialized(byte[] bytes, String sha256, boolean clean, String error,
+            String roundTripClass) {
     }
 
     /**
@@ -632,15 +658,16 @@ final class ReleaseGate {
             Path target = dir.resolve("ontology" + extension);
             try (VerifiedOntologyWriter.Prepared prepared =
                     VerifiedOntologyWriter.prepare(snapshot, target)) {
+                String roundTripClass = prepared.verification.roundTripClass();
                 prepared.install(false, false);
                 byte[] bytes = Files.readAllBytes(target);
-                return new Serialized(bytes, ArtifactStore.sha256(bytes), true, null);
+                return new Serialized(bytes, ArtifactStore.sha256(bytes), true, null, roundTripClass);
             }
         } catch (ToolArgException e) {
-            return new Serialized(null, null, false, e.getMessage());
+            return new Serialized(null, null, false, e.getMessage(), null);
         } catch (IOException e) {
             return new Serialized(null, null, false,
-                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(), null);
         } finally {
             deleteRecursively(dir);
         }

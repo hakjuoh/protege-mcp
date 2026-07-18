@@ -191,6 +191,46 @@ class ReleaseToolsTest {
     }
 
     @Test
+    void oboReleaseFormatWithIncompatibleOntologyIsAGateErrorViaTheOboReport(@TempDir Path temp)
+            throws Exception {
+        // A multi-label entity is not representable in the OBO frame model. With release.format=obo the
+        // gate must surface an obo_compatibility report, a lossy_format warning, and a release.lossy_format
+        // finding (a gate error under require_clean_round_trip).
+        Path policy = writeReleasePolicy(temp, "obo", "[structural]", "");
+        ToolContext ctx = oboMultiLabelCtx(temp);
+
+        Map<String, Object> result = structured(callGate(ctx,
+                Map.of("policy_path", policy.toString())));
+
+        assertEquals("error", result.get("gate"), () -> result.toString());
+        assertTrue(String.valueOf(result.get("findings")).contains("release.lossy_format"),
+                () -> result.toString());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> roundTrip = (Map<String, Object>) result.get("round_trip");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> obo = (Map<String, Object>) roundTrip.get("obo_compatibility");
+        assertNotNull(obo, () -> roundTrip.toString());
+        assertEquals(false, obo.get("compatible"), () -> obo.toString());
+        assertNotNull(roundTrip.get("lossy_format"), () -> roundTrip.toString());
+    }
+
+    private ToolContext oboMultiLabelCtx(Path temp) throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology active = manager.createOntology(
+                new OWLOntologyID(IRI.create(ONTOLOGY_IRI), IRI.create(VERSION_IRI)));
+        manager.setOntologyFormat(active, new TurtleDocumentFormat());
+        manager.setOntologyDocumentIRI(active, IRI.create(temp.resolve("ontology.ttl").toUri()));
+        OWLDataFactory df = manager.getOWLDataFactory();
+        IRI thing = IRI.create(ONTOLOGY_IRI + "#Thing");
+        manager.addAxiom(active, df.getOWLDeclarationAxiom(df.getOWLClass(thing)));
+        manager.addAxiom(active, df.getOWLAnnotationAssertionAxiom(df.getRDFSLabel(), thing,
+                df.getOWLLiteral("Thing", "en")));
+        manager.addAxiom(active, df.getOWLAnnotationAssertionAxiom(df.getRDFSLabel(), thing,
+                df.getOWLLiteral("Ding", "de")));
+        return new ToolContext(HeadlessAccess.over(FakeModelManager.over(active)), null);
+    }
+
+    @Test
     void resolvedImportsPresentEvenWithNoPolicy(@TempDir Path temp) throws Exception {
         ToolContext ctx = ctx(temp, VERSION_IRI, null, null);
 

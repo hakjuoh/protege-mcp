@@ -228,6 +228,15 @@ release-bundle workflow: `run_release_gate` reads them to verify the serializati
 and round-trip fidelity, and `prepare_release` writes the bundle into `release.output_dir` (see the
 [Release tools](tools/quality.html#run_release_gate)).
 
+When `release.format` names an `obo` format and a term carries more than one single-valued frame tag
+(name/comment/definition — which the OBO writer rejects), the release gate surfaces a
+`round_trip.obo_compatibility` report and a `round_trip.lossy_format` warning and records a
+`release.lossy_format` finding — a gate error while `release.require_clean_round_trip` is true (the
+default), otherwise a warning. The RDF-based formats (`turtle`, `rdfxml`, `functional`, `owlxml`) and OBO
+content that stays within the frame model are never flagged (OBO preserves general axioms, SWRL, keys, and
+datatype definitions via its `owl-axioms:` escape hatch). The `round_trip.round_trip_class` field reports
+whether the verified serialization is `byte_for_byte` or `axiom_identical`.
+
 ## Common result contracts
 
 The companion

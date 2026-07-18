@@ -1,5 +1,6 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.channels.FileChannel;
@@ -8,11 +9,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
+import org.semanticweb.owlapi.io.StreamDocumentTarget;
 import org.semanticweb.owlapi.model.AddImport;
 import org.semanticweb.owlapi.model.AddOntologyAnnotation;
 import org.semanticweb.owlapi.model.IRI;
@@ -34,6 +37,24 @@ final class VerifiedOntologyWriter {
 
     /** Longest symlink chain {@link #resolveNewTarget} follows before failing closed. */
     private static final int MAX_LINK_HOPS = 8;
+
+    /**
+     * Round-trip reproducibility classes (PLAN §8.3), from strongest to weakest:
+     * <ul>
+     *   <li>{@link #ROUND_TRIP_BYTE_FOR_BYTE}: re-serializing the reloaded artifact reproduces the
+     *       written bytes exactly — the artifact is a canonical fixpoint for its format.</li>
+     *   <li>{@link #ROUND_TRIP_AXIOM_IDENTICAL}: the normalized asserted axioms, ontology id, imports
+     *       and annotations match, but the bytes are not reproducible (e.g. serializer-materialized
+     *       declarations or RDF 1.1 literal typing). This is the comparison verified save has always
+     *       enforced.</li>
+     *   <li>{@link #ROUND_TRIP_LOGICALLY_EQUIVALENT}: RESERVED for a future reasoner-backed comparison.
+     *       It requires classification and is out of scope here, so verified save NEVER emits it — the
+     *       value exists only to keep the enum stable.</li>
+     * </ul>
+     */
+    static final String ROUND_TRIP_BYTE_FOR_BYTE = "byte_for_byte";
+    static final String ROUND_TRIP_AXIOM_IDENTICAL = "axiom_identical";
+    static final String ROUND_TRIP_LOGICALLY_EQUIVALENT = "logically_equivalent";
 
     private VerifiedOntologyWriter() {
     }
@@ -96,7 +117,7 @@ final class VerifiedOntologyWriter {
                 try (FileChannel channel = FileChannel.open(temp, StandardOpenOption.WRITE)) {
                     channel.force(true);
                 }
-                Verification verification = verify(snapshot.ontology, temp);
+                Verification verification = verify(snapshot.ontology, temp, snapshot.format);
                 if (!verification.identical()) {
                     throw new ToolArgException("Verified save round trip was not exact: "
                             + verification.mismatches());
@@ -146,7 +167,7 @@ final class VerifiedOntologyWriter {
         return current;
     }
 
-    private static Verification verify(OWLOntology expected, Path temp) {
+    private static Verification verify(OWLOntology expected, Path temp, OWLDocumentFormat format) {
         OWLOntologyManager manager = OwlManagers.create();
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.THROW_EXCEPTION)
@@ -170,13 +191,15 @@ final class VerifiedOntologyWriter {
                     .equals(OwlDocumentSemantics.normalizedAnnotations(actual));
             boolean axioms = normalizedAxioms(expected).equals(normalizedAxioms(actual));
             boolean anonymous = OwlDocumentSemantics.hasAnonymousIndividuals(expected);
+            boolean identical = id && imports && annotations && axioms;
+            String roundTripClass = roundTripClass(identical, actual, format, temp);
             Map<String, Object> mismatch = new LinkedHashMap<>();
             if (!id) mismatch.put("ontology_id", false);
             if (!imports) mismatch.put("imports", false);
             if (!annotations) mismatch.put("ontology_annotations", false);
             if (!axioms) mismatch.put("axioms_including_annotations", false);
             if (anonymous) mismatch.put("anonymous_individuals", "present_session_ids_not_release_stable");
-            return new Verification(id, imports, annotations, axioms, anonymous, mismatch);
+            return new Verification(id, imports, annotations, axioms, anonymous, roundTripClass, mismatch);
         } catch (IOException e) {
             throw new ToolArgException("Could not prepare isolated import handling for strict reload: "
                     + message(e));
@@ -217,6 +240,35 @@ final class VerifiedOntologyWriter {
             return expected.isAnonymous() == actual.isAnonymous();
         }
         return expected.equals(actual);
+    }
+
+    /**
+     * Classify the strength of a verified round trip (PLAN §8.3). Only meaningful when the axiom-level
+     * comparison already holds; a non-identical reload throws before this ever reaches a caller.
+     * {@code byte_for_byte} is a strict superset signal: re-serialize the reloaded ontology with the
+     * SAME format instance that wrote the artifact and compare bytes. {@code logically_equivalent} is
+     * reserved (needs a reasoner) and is never returned here.
+     */
+    static String roundTripClass(boolean identical, OWLOntology reloaded, OWLDocumentFormat format,
+            Path artifact) {
+        if (identical && reserializeMatches(reloaded, format, artifact)) {
+            return ROUND_TRIP_BYTE_FOR_BYTE;
+        }
+        return ROUND_TRIP_AXIOM_IDENTICAL;
+    }
+
+    /** True when re-serializing {@code reloaded} reproduces the artifact byte-for-byte. */
+    private static boolean reserializeMatches(OWLOntology reloaded, OWLDocumentFormat format,
+            Path artifact) {
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            reloaded.getOWLOntologyManager().saveOntology(reloaded, format,
+                    new StreamDocumentTarget(out));
+            return Arrays.equals(out.toByteArray(), Files.readAllBytes(artifact));
+        } catch (OWLOntologyStorageException | IOException | RuntimeException e) {
+            // Cannot prove byte stability → fall back to the weaker axiom-identical class.
+            return false;
+        }
     }
 
     static final class Prepared implements AutoCloseable {
@@ -301,7 +353,7 @@ final class VerifiedOntologyWriter {
     record Snapshot(OWLOntology ontology, OWLDocumentFormat format) { }
 
     record Verification(boolean ontologyId, boolean imports, boolean ontologyAnnotations,
-            boolean axiomsIncludingAnnotations, boolean anonymousIndividuals,
+            boolean axiomsIncludingAnnotations, boolean anonymousIndividuals, String roundTripClass,
             Map<String, Object> mismatches) {
         boolean identical() {
             return ontologyId && imports && ontologyAnnotations && axiomsIncludingAnnotations;
@@ -310,6 +362,7 @@ final class VerifiedOntologyWriter {
         Map<String, Object> toJson() {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("identical", identical());
+            result.put("round_trip_class", roundTripClass);
             result.put("ontology_id", ontologyId);
             result.put("imports", imports);
             result.put("ontology_annotations", ontologyAnnotations);

@@ -127,12 +127,15 @@ ontology with unsaved changes to its own existing document (`list_ontologies` sh
 | `verify_round_trip` | boolean | no | `false` | Serialize beside the target, isolated-reload without fetching imports, and compare ontology id, direct imports, ontology annotations, normalized axioms, and axiom annotations before replacement. Anonymous individuals are unsupported because their blank-node ids change on reload. |
 | `atomic` | boolean | no | `false` | Require atomic replacement; implies `verify_round_trip`. |
 | `backup` | boolean | no | `false` | Preserve an existing target as `<path>.bak`; implies `verify_round_trip`. |
+| `on_lossy` | string (`warn` \| `fail`) | no | `warn` | How to handle a target format that cannot represent the ontology without loss. `warn` still saves and adds `lossy_format_warning` (and, for OBO, `obo_compatibility`) to the result; `fail` refuses before writing with `error_code=lossy_format_refused` and leaves the target unchanged. Applies to a single-ontology save (ignored with `all=true`). |
 
 **Returns**
 
 - `saved`: boolean — `true` on success.
 - `path`: string — the absolute path written.
 - `format`: string — the serialization format used (the format class's simple name); present only on a save-as.
+- `lossy_format_warning`: object — present when the chosen format cannot represent the ontology without loss; carries `format`, `reasons`, and a `recommendation`. Only genuinely lossy targets are flagged (an OBO term carrying more than one single-valued frame tag — name/comment/definition, which the OBO writer rejects). Turtle, RDF/XML, Functional, OWL/XML, and Manchester are treated as lossless (each round-trips OWL 2 DL content in this OWLAPI build; OBO preserves general axioms, SWRL, keys, and datatype definitions via its `owl-axioms:` escape hatch).
+- `obo_compatibility`: object — present on an OBO save; reports `compatible`, bounded `issues` (each `kind`/`focus_iri`/`detail`), and exact `counts`.
 
 With verified save (`verify_round_trip`, `atomic`, or `backup`):
 
@@ -147,11 +150,16 @@ save or replace the blank node with a named individual.
 - `bytes`: artifact size.
 - `sha256`: artifact digest.
 - `round_trip`: exact comparison details for ontology id, imports, ontology annotations, and annotated axioms.
+  Its `round_trip_class` sub-field records the reproducibility strength of the verified round trip:
+  `byte_for_byte` (re-serializing the reloaded artifact reproduces the written bytes) or `axiom_identical`
+  (normalized asserted axioms/id/imports/annotations match but the bytes are not reproducible). The
+  reserved value `logically_equivalent` requires a reasoner and is never emitted.
 - `atomic`: whether atomic installation was used.
 - `backup_path`: the retained backup, when requested.
 - `revision`: the new complete model revision envelope after successful installation.
-- `error_code`: `revision_conflict` when a concurrent edit intervened (returned with
-  `saved=false`); the prior target remains untouched.
+- `error_code`: `revision_conflict` when a concurrent edit intervened, or `lossy_format_refused` when
+  `on_lossy=fail` and the chosen format would lose content (both returned with `saved=false`); the prior
+  target remains untouched.
 - `base_revision`, `current_revision`: the conflicting revision envelopes on that refusal.
 
 With `all=true`:

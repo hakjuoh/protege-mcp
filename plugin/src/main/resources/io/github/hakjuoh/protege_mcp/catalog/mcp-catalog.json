@@ -822,7 +822,7 @@
     }
   }, {
     "name" : "save_ontology",
-    "description" : "Save the active ontology to disk. With no arguments it writes to the ontology's existing document; a never-saved (untitled) ontology has no file yet, so pass 'path' to choose one (save-as). The serialization format is inferred from the file extension (.ttl/.turtle, .owl/.rdf/.xml, .omn, .ofn/.fss, .owx, .obo — anything else is an error); a path without an extension keeps the ontology's current format. After a save-as the ontology is bound to that file, so later argument-less saves go to the same place. Pass all=true to instead save EVERY ontology with unsaved changes to its own existing document (list_ontologies shows which are dirty). For a fail-closed artifact pipeline set verify_round_trip=true: it writes beside the target, reloads without fetching the import closure, compares ontology id/direct imports/ontology and axiom annotations/normalized asserted axioms, rejects anonymous individuals whose blank-node ids cannot survive reload, rechecks the live revision, and only then replaces the target. atomic=true requires an atomic filesystem move; backup=true preserves the previous artifact as <path>.bak.",
+    "description" : "Save the active ontology to disk. With no arguments it writes to the ontology's existing document; a never-saved (untitled) ontology has no file yet, so pass 'path' to choose one (save-as). The serialization format is inferred from the file extension (.ttl/.turtle, .owl/.rdf/.xml, .omn, .ofn/.fss, .owx, .obo — anything else is an error); a path without an extension keeps the ontology's current format. After a save-as the ontology is bound to that file, so later argument-less saves go to the same place. Pass all=true to instead save EVERY ontology with unsaved changes to its own existing document (list_ontologies shows which are dirty). When the chosen format cannot represent the ontology without loss (an OBO term carrying more than one single-valued frame tag — name/comment/definition) the result carries a 'lossy_format_warning' and an 'obo_compatibility' report by default; set on_lossy=fail to refuse before writing instead (error_code=lossy_format_refused). For a fail-closed artifact pipeline set verify_round_trip=true: it writes beside the target, reloads without fetching the import closure, compares ontology id/direct imports/ontology and axiom annotations/normalized asserted axioms, reports round_trip.round_trip_class (byte_for_byte or axiom_identical), rejects anonymous individuals whose blank-node ids cannot survive reload, rechecks the live revision, and only then replaces the target. atomic=true requires an atomic filesystem move; backup=true preserves the previous artifact as <path>.bak.",
     "input_schema" : {
       "type" : "object",
       "properties" : {
@@ -845,6 +845,11 @@
         "backup" : {
           "type" : "boolean",
           "description" : "Copy an existing target to <path>.bak before replacement; implies verify_round_trip."
+        },
+        "on_lossy" : {
+          "type" : "string",
+          "enum" : [ "warn", "fail" ],
+          "description" : "How to handle a target format that cannot represent the ontology without loss (default warn): 'warn' still saves and adds lossy_format_warning/obo_compatibility to the result; 'fail' refuses before writing with error_code=lossy_format_refused and leaves the target unchanged. Applies to a single-ontology save (ignored with all=true)."
         }
       },
       "additionalProperties" : false

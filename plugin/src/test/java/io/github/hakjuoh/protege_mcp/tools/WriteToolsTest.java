@@ -1004,6 +1004,88 @@ class WriteToolsTest {
                 priv("saveOntology", OWLModelManager.class, String.class), mm, path);
     }
 
+    private CallToolResult callSaveOntology(OWLModelManager mm, String path, String onLossy)
+            throws Throwable {
+        return (CallToolResult) invoke(
+                priv("saveOntology", OWLModelManager.class, String.class, String.class),
+                mm, path, onLossy);
+    }
+
+    /** A single-label class in an OBO-friendly ontology (round-trips through the OBO frame model). */
+    private OWLOntology oboFriendlyOntology() throws Exception {
+        OWLOntology o = emptyOntology();
+        OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
+        OWLClass dog = declaredClass(o, "Dog");
+        o.getOWLOntologyManager().addAxiom(o, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), dog.getIRI(), df.getOWLLiteral("Dog", "en")));
+        return o;
+    }
+
+    // ---- 0.7.0 M3R format safeguards (lossy warnings / OBO report / on_lossy) ----
+
+    @Test
+    void plainTurtleSaveHasNoLossyWarningAndKeepsTheReleasedShape() throws Throwable {
+        OWLOntology o = emptyOntology();
+        declaredClass(o, "Dog");
+        OWLModelManager mm = mutatingManager(o);
+        File out = new File(Files.createTempDirectory("save-lossless").toFile(), "pets.ttl");
+
+        Map<String, Object> m = structured(callSaveOntology(mm, out.getPath()));
+        assertEquals(Boolean.TRUE, m.get("saved"));
+        assertEquals("TurtleDocumentFormat", m.get("format"));
+        assertFalse(m.containsKey("lossy_format_warning"), "a lossless format must not warn");
+        assertFalse(m.containsKey("obo_compatibility"), "non-OBO save carries no OBO report");
+    }
+
+    @Test
+    void plainOboSaveOfCompatibleOntologyAttachesReportAndSavesWithoutWarning() throws Throwable {
+        // OBO can represent a single-label term: warn mode (default) saves, attaches the compatible OBO
+        // report, and adds NO lossy_format_warning.
+        OWLModelManager mm = mutatingManager(oboFriendlyOntology());
+        File out = new File(Files.createTempDirectory("save-obo-ok").toFile(), "pets.obo");
+
+        Map<String, Object> m = structured(callSaveOntology(mm, out.getPath(), "warn"));
+        assertEquals(Boolean.TRUE, m.get("saved"), () -> m.toString());
+        assertTrue(out.isFile(), "a compatible OBO save writes the file");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> obo = (Map<String, Object>) m.get("obo_compatibility");
+        assertNotNull(obo, () -> "OBO save carries a compatibility report: " + m);
+        assertEquals(Boolean.TRUE, obo.get("compatible"));
+        assertFalse(m.containsKey("lossy_format_warning"), "a compatible OBO save must not warn");
+    }
+
+    @Test
+    void plainOboSaveOfMultiLabelOntologyOnLossyFailReportsAndRefuses() throws Throwable {
+        // OBO's frame model rejects a second rdfs:label. on_lossy=fail refuses before writing with the
+        // obo_compatibility report attached and the target untouched.
+        OWLOntology o = emptyOntology();
+        OWLDataFactory df = o.getOWLOntologyManager().getOWLDataFactory();
+        OWLClass dog = declaredClass(o, "Dog");
+        o.getOWLOntologyManager().addAxiom(o, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), dog.getIRI(), df.getOWLLiteral("Dog", "en")));
+        o.getOWLOntologyManager().addAxiom(o, df.getOWLAnnotationAssertionAxiom(
+                df.getRDFSLabel(), dog.getIRI(), df.getOWLLiteral("Hund", "de")));
+        OWLModelManager mm = mutatingManager(o);
+        File out = new File(Files.createTempDirectory("save-obo-fail").toFile(), "pets.obo");
+
+        Map<String, Object> m = structured(callSaveOntology(mm, out.getPath(), "fail"));
+        assertEquals(Boolean.FALSE, m.get("saved"), () -> m.toString());
+        assertEquals("lossy_format_refused", m.get("error_code"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> obo = (Map<String, Object>) m.get("obo_compatibility");
+        assertNotNull(obo, () -> "OBO save carries a compatibility report: " + m);
+        assertEquals(Boolean.FALSE, obo.get("compatible"));
+        assertTrue(String.valueOf(obo.get("issues")).contains("multiple_labels"), () -> obo.toString());
+        assertFalse(out.exists(), "on_lossy=fail must not write the target");
+    }
+
+    @Test
+    void invalidOnLossyValueIsARejectedToolArgument() throws Throwable {
+        assertNull(WriteTools.normalizeOnLossy("nope"), "an unknown on_lossy value is rejected");
+        assertEquals("warn", WriteTools.normalizeOnLossy(null), "missing on_lossy defaults to warn");
+        assertEquals("fail", WriteTools.normalizeOnLossy("FAIL"), "value is case-insensitive");
+    }
+
     @Test
     void saveOntologyWithPathWritesFileAndReportsFormat() throws Throwable {
         OWLOntology o = emptyOntology();

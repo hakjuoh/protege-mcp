@@ -42,6 +42,7 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 import org.semanticweb.owlapi.model.RemoveAxiom;
 
+import io.github.hakjuoh.protege_mcp.core.owl.FormatCompatibility;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -259,6 +260,10 @@ public final class WriteTools {
                     boolean verifyRoundTrip = Tools.optBool(a, "verify_round_trip", false);
                     boolean atomic = Tools.optBool(a, "atomic", false);
                     boolean backup = Tools.optBool(a, "backup", false);
+                    String onLossy = normalizeOnLossy(Tools.optString(a, "on_lossy"));
+                    if (onLossy == null) {
+                        return Tools.error("'on_lossy' must be 'warn' (default) or 'fail'.");
+                    }
                     if (all && configuredPath != null) {
                         return Tools.error("'all' saves every dirty ontology to its own existing "
                                 + "document and cannot be combined with 'path' (a save-as targets "
@@ -290,9 +295,10 @@ public final class WriteTools {
                             ? "save the active ontology to " + path
                             : "save the active ontology to disk";
                     if (verifyRoundTrip || atomic || backup) {
-                        return verifiedSave(ctx, summary, path, atomic, backup);
+                        return verifiedSave(ctx, summary, path, atomic, backup, onLossy);
                     }
-                    return write(ctx, summary, mm -> saveOntology(mm, path), SAVE_TIMEOUT_MS);
+                    final String lossyMode = onLossy;
+                    return write(ctx, summary, mm -> saveOntology(mm, path, lossyMode), SAVE_TIMEOUT_MS);
                 });
     }
 
@@ -304,6 +310,45 @@ public final class WriteTools {
      * a false failure. Same rationale (and value) as the document tools' merge/load bound.
      */
     private static final long SAVE_TIMEOUT_MS = 120_000L;
+
+    /** {@code on_lossy} values: warn (default, additive warning) or fail (refuse before writing). */
+    static final String ON_LOSSY_WARN = "warn";
+    static final String ON_LOSSY_FAIL = "fail";
+
+    /** Normalize the {@code on_lossy} request arg; null signals an invalid value. */
+    static String normalizeOnLossy(String raw) {
+        if (raw == null) {
+            return ON_LOSSY_WARN;
+        }
+        String value = raw.trim().toLowerCase(Locale.ROOT);
+        return (ON_LOSSY_WARN.equals(value) || ON_LOSSY_FAIL.equals(value)) ? value : null;
+    }
+
+    /** Attach the format-safeguard result fields (OBO report + lossy warning) when present. */
+    private static void attachLossy(Tools.Json json, FormatCompatibility.OboCompatibility obo,
+            FormatCompatibility.LossyWarning lossy) {
+        if (obo != null) {
+            json.put("obo_compatibility", obo.toJson());
+        }
+        if (lossy != null) {
+            json.put("lossy_format_warning", lossy.toJson());
+        }
+    }
+
+    /** The saved:false refusal returned when on_lossy=fail and the target format would lose content. */
+    private static CallToolResult lossyRefusal(String format, String path,
+            FormatCompatibility.OboCompatibility obo, FormatCompatibility.LossyWarning lossy) {
+        Tools.Json refusal = Tools.json()
+                .put("saved", false)
+                .put("error_code", "lossy_format_refused")
+                .put("format", format)
+                .put("path", path)
+                .put("lossy_format_warning", lossy.toJson());
+        if (obo != null) {
+            refusal.put("obo_compatibility", obo.toJson());
+        }
+        return refusal.result();
+    }
 
     private static List<String> saveTargets(OWLModelManager mm, boolean all) {
         List<String> targets = new ArrayList<>();
@@ -690,15 +735,44 @@ public final class WriteTools {
      * refuse up front (instead of letting a non-file document IRI fail deep in the OWL API) when the
      * ontology has never been saved.
      */
+    /** Backwards-compatible entry point: a plain save with the default {@code on_lossy=warn}. */
     private static CallToolResult saveOntology(OWLModelManager mm, String path) {
+        return saveOntology(mm, path, ON_LOSSY_WARN);
+    }
+
+    private static CallToolResult saveOntology(OWLModelManager mm, String path, String onLossy) {
         OWLOntology ont = mm.getActiveOntology();
         OWLOntologyManager om = mm.getOWLOntologyManager();
+        OWLDocumentFormat current = om.getOntologyFormat(ont);
+
+        // Resolve the format that WILL be used FIRST — it can reject the extension, and the lossy/OBO
+        // safeguards (0.7.0 M3R, PLAN §8.3) must run BEFORE any directory is created, the format is
+        // rebound, or the target is replaced. A rejected save-as leaves no side effects.
+        File file;
+        OWLDocumentFormat format;
         if (path != null) {
-            File file = new File(path).getAbsoluteFile();
-            OWLDocumentFormat current = om.getOntologyFormat(ont);
-            // Resolve the format FIRST: it can reject the extension, and a rejected save-as must
-            // not leave side effects (created directories, rebound format/document IRI).
-            OWLDocumentFormat format = formatForPath(path, current);
+            file = new File(path).getAbsoluteFile();
+            format = formatForPath(path, current);
+        } else {
+            IRI doc = om.getOntologyDocumentIRI(ont);
+            if (!isFileDocument(doc)) {
+                return Tools.error("This ontology has not been saved to a file yet (current document: "
+                        + doc + "). Pass 'path' to choose where to write it, e.g. "
+                        + "\"/path/to/ontology.ttl\".");
+            }
+            file = new File(doc.toURI());
+            format = current != null ? current : new RDFXMLDocumentFormat();
+        }
+
+        boolean isObo = FormatCompatibility.isOboFormat(format);
+        FormatCompatibility.OboCompatibility obo = isObo
+                ? FormatCompatibility.oboCompatibility(ont) : null;
+        FormatCompatibility.LossyWarning lossy = FormatCompatibility.detectLoss(ont, format);
+        if (ON_LOSSY_FAIL.equals(onLossy) && lossy != null) {
+            return lossyRefusal(format.getClass().getSimpleName(), file.toString(), obo, lossy);
+        }
+
+        if (path != null) {
             File dir = file.getParentFile();
             if (dir != null && !dir.isDirectory() && !dir.mkdirs()) {
                 return Tools.error("Cannot create directory: " + dir);
@@ -728,26 +802,23 @@ public final class WriteTools {
                 om.setOntologyDocumentIRI(ont, previousDoc);
                 throw e;
             }
-            return Tools.json()
+            Tools.Json ok = Tools.json()
                     .put("saved", true)
                     .put("path", file.toString())
-                    .put("format", format.getClass().getSimpleName())
-                    .result();
-        }
-        IRI doc = om.getOntologyDocumentIRI(ont);
-        if (!isFileDocument(doc)) {
-            return Tools.error("This ontology has not been saved to a file yet (current document: "
-                    + doc + "). Pass 'path' to choose where to write it, e.g. \"/path/to/ontology.ttl\".");
+                    .put("format", format.getClass().getSimpleName());
+            attachLossy(ok, obo, lossy);
+            return ok.result();
         }
         saveOrThrow(mm, ont);
-        return Tools.json()
+        Tools.Json ok = Tools.json()
                 .put("saved", true)
-                .put("path", new File(doc.toURI()).toString())
-                .result();
+                .put("path", file.toString());
+        attachLossy(ok, obo, lossy);
+        return ok.result();
     }
 
     private static CallToolResult verifiedSave(ToolContext ctx, String summary, String path,
-            boolean atomic, boolean backup) {
+            boolean atomic, boolean backup, String onLossy) {
         CallToolResult denied = checkWriteAllowed(ctx, summary);
         if (denied != null) {
             return denied;
@@ -759,6 +830,20 @@ public final class WriteTools {
         // cut short by the default EDT bound like the install hop below.
         VerifiedSaveCapture captured = ctx.access().compute(mm -> captureVerifiedSave(ctx, mm, path,
                 lockDigest, policy.policy().digest()), SAVE_TIMEOUT_MS);
+        // Format safeguards (0.7.0 M3R, PLAN §8.3): predict serialization loss on the Protégé-free
+        // snapshot BEFORE prepare touches the target. Verified save is already fail-closed (a lossy
+        // format fails the round-trip comparison), but the OBO report gives an earlier, clearer
+        // refusal, and on_lossy=fail turns it into a clean lossy_format_refused.
+        final OWLDocumentFormat lossyFormat = captured.format;
+        final boolean isObo = FormatCompatibility.isOboFormat(lossyFormat);
+        final FormatCompatibility.OboCompatibility obo = isObo
+                ? FormatCompatibility.oboCompatibility(captured.snapshot.ontology()) : null;
+        final FormatCompatibility.LossyWarning lossy =
+                FormatCompatibility.detectLoss(captured.snapshot.ontology(), lossyFormat);
+        if (ON_LOSSY_FAIL.equals(onLossy) && lossy != null) {
+            return lossyRefusal(lossyFormat.getClass().getSimpleName(),
+                    captured.target.toString(), obo, lossy);
+        }
         try (VerifiedOntologyWriter.Prepared prepared = VerifiedOntologyWriter.prepare(
                 captured.snapshot, captured.target)) {
             ctx.writeLock().lock();
@@ -802,7 +887,7 @@ public final class WriteTools {
                     ctx.revisions().invalidate();
                     var revision = ctx.revisions().current(mm, lockDigest,
                             policy.policy().digest()).revision();
-                    return Tools.json()
+                    Tools.Json result = Tools.json()
                             .put("saved", true)
                             .put("verified", true)
                             .put("path", captured.target.toString())
@@ -813,8 +898,9 @@ public final class WriteTools {
                             .put("atomic", install.atomic())
                             .putIfNotNull("backup_path", install.backupPath() == null
                                     ? null : install.backupPath().toString())
-                            .put("revision", RevisionTools.revisionJson(revision))
-                            .result();
+                            .put("revision", RevisionTools.revisionJson(revision));
+                    attachLossy(result, obo, lossy);
+                    return result.result();
                 }, SAVE_TIMEOUT_MS);
             } finally {
                 ctx.writeLock().unlock();

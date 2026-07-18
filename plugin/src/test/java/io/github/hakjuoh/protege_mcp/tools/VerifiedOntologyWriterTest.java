@@ -360,6 +360,71 @@ class VerifiedOntologyWriterTest {
         assertTrue(Files.readString(target).contains("http://example.org/anon#A"));
     }
 
+    // ------------------------------------------------------------------ round-trip class (PLAN §8.3)
+
+    @Test
+    void aNormalVerifiedSaveIsClassifiedByteForByte() throws Exception {
+        Path target = temp.resolve("bfb.ttl");
+        try (var prepared = VerifiedOntologyWriter.prepare(
+                VerifiedOntologyWriter.snapshot(classOntology(), new TurtleDocumentFormat()), target)) {
+            assertTrue(prepared.verification.identical());
+            assertEquals(VerifiedOntologyWriter.ROUND_TRIP_BYTE_FOR_BYTE,
+                    prepared.verification.roundTripClass(),
+                    "re-serializing the reloaded artifact reproduces the written bytes");
+            assertEquals("byte_for_byte", prepared.verification.toJson().get("round_trip_class"),
+                    "round_trip.round_trip_class is emitted");
+        }
+    }
+
+    @Test
+    void roundTripClassIsAxiomIdenticalWhenTheBytesAreNotReproducible() throws Exception {
+        // Feed the classifier an artifact whose bytes cannot equal the re-serialization of the
+        // reloaded ontology: identical axioms but not byte-for-byte -> axiom_identical.
+        Path artifact = temp.resolve("not-the-serialization.ttl");
+        Files.writeString(artifact, "these bytes are not a serialization of the ontology");
+        assertEquals(VerifiedOntologyWriter.ROUND_TRIP_AXIOM_IDENTICAL,
+                VerifiedOntologyWriter.roundTripClass(true, classOntology(),
+                        new TurtleDocumentFormat(), artifact));
+        // A non-identical round trip is never byte_for_byte either.
+        assertEquals(VerifiedOntologyWriter.ROUND_TRIP_AXIOM_IDENTICAL,
+                VerifiedOntologyWriter.roundTripClass(false, classOntology(),
+                        new TurtleDocumentFormat(), artifact));
+    }
+
+    @Test
+    void logicallyEquivalentRoundTripClassIsReservedButNeverEmitted() throws Exception {
+        // The enum value exists for stability, but verified save runs no reasoner and must never emit it.
+        assertEquals("logically_equivalent", VerifiedOntologyWriter.ROUND_TRIP_LOGICALLY_EQUIVALENT);
+        Path target = temp.resolve("reserved.ttl");
+        try (var prepared = VerifiedOntologyWriter.prepare(
+                VerifiedOntologyWriter.snapshot(classOntology(), new TurtleDocumentFormat()), target)) {
+            String cls = prepared.verification.roundTripClass();
+            assertTrue(cls.equals(VerifiedOntologyWriter.ROUND_TRIP_BYTE_FOR_BYTE)
+                            || cls.equals(VerifiedOntologyWriter.ROUND_TRIP_AXIOM_IDENTICAL),
+                    "only byte_for_byte or axiom_identical are ever emitted, got " + cls);
+        }
+    }
+
+    @Test
+    void anonymousIndividualRejectionStaysDistinctFromALossyRoundTrip() throws Exception {
+        // Blank-node instability is rejected outright before any classification — it is NOT reported as
+        // a lossy/axiom-identical round trip (PLAN §8.3 keeps the two regimes distinct).
+        var manager = OWLManager.createOWLOntologyManager();
+        var df = manager.getOWLDataFactory();
+        var ontology = manager.createOntology(IRI.create("urn:verified:anon-distinct"));
+        manager.addAxiom(ontology, df.getOWLClassAssertionAxiom(
+                df.getOWLThing(), df.getOWLAnonymousIndividual()));
+        Path target = temp.resolve("anon-distinct.ttl");
+
+        ToolArgException e = assertThrows(ToolArgException.class, () ->
+                VerifiedOntologyWriter.prepare(
+                        VerifiedOntologyWriter.snapshot(ontology, new TurtleDocumentFormat()), target));
+        assertTrue(e.getMessage().contains("anonymous individuals"), e.getMessage());
+        assertFalse(e.getMessage().contains("round trip"),
+                "an anon-individual rejection is not phrased as a round-trip loss");
+        assertFalse(Files.exists(target), "nothing was written for the rejected save");
+    }
+
     /** A small named ontology (one declared class in {@code http://example.org/save#}). */
     private static OWLOntology classOntology() throws Exception {
         var manager = OWLManager.createOWLOntologyManager();
