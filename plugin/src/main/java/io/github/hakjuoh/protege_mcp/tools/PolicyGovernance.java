@@ -344,6 +344,13 @@ final class PolicyGovernance {
             active.forEach((focus, values) -> values.forEach(
                     value -> identities.add(focus + "\u0000" + value)));
             out.put("identity_digest", FindingIdentity.digest(identities));
+            // Complete per-row identity set (ADR 0004 decision 3), qualified by the rule id and
+            // covering the ACTIVE (non-waived) offenders exactly like the digest above. Carried
+            // through the reserved side-channel key and stripped before serialization.
+            if (!identities.isEmpty()) {
+                out.put(ModulePolicyGovernance.ATTRIBUTION_KEY, identities.stream()
+                        .map(identity -> id + "|" + identity).toList());
+            }
             out.put("suggestion", suggestion);
             if (!focuses.isEmpty()) out.put("examples", focuses.subList(0, Math.min(bounded, focuses.size())));
             if (!details.isEmpty()) out.put("details", details.subList(0, Math.min(bounded, details.size())));

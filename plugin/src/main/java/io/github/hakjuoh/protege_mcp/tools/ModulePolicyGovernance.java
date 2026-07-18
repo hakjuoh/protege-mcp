@@ -16,7 +16,25 @@ import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 /** Policy-v1 module namespace and loaded-import governance checks. */
 final class ModulePolicyGovernance {
 
+    /**
+     * Reserved in-map side channel carrying the COMPLETE per-row finding identities behind a
+     * check's capped {@code examples} (ADR 0004 decision 3). NEVER serialized: every consumer that
+     * folds these check maps into a public result must strip this key first
+     * ({@link QcSuiteTools#governanceStage} moves it into {@code QcStageResult.attributionIdentities}).
+     */
+    static final String ATTRIBUTION_KEY = "__attribution_identities";
+
     private ModulePolicyGovernance() {
+    }
+
+    /** Strip the {@link #ATTRIBUTION_KEY} side channel from {@code check} into {@code identitiesOut}. */
+    @SuppressWarnings("unchecked")
+    static void drainAttributionIdentities(Map<String, Object> check,
+            java.util.Collection<String> identitiesOut) {
+        Object identities = check.remove(ATTRIBUTION_KEY);
+        if (identities instanceof List<?>) {
+            identitiesOut.addAll((List<String>) identities);
+        }
     }
 
     static List<Map<String, Object>> moduleChecks(ProjectPolicy policy, int limit) {
@@ -99,7 +117,7 @@ final class ModulePolicyGovernance {
      * {@code https://ex.org/ns-ext/X}, {@code https://ex.org/ns.ext/X} or
      * {@code https://ex.org/ns_ext/X}.
      */
-    private static boolean ownsEntity(String namespace, String entity) {
+    static boolean ownsEntity(String namespace, String entity) {
         if (namespace.isEmpty() || !entity.startsWith(namespace)) return false;
         if (!Character.isLetterOrDigit(namespace.charAt(namespace.length() - 1))) return true;
         if (entity.length() == namespace.length()) return true;
@@ -112,7 +130,7 @@ final class ModulePolicyGovernance {
      * match, ownership is attributed to the most specific declaration alone, so an umbrella
      * owner never claims a submodule's terms.
      */
-    private static String mostSpecificOwnedNamespace(String entity, Set<String> namespaces) {
+    static String mostSpecificOwnedNamespace(String entity, Set<String> namespaces) {
         String best = null;
         for (String namespace : namespaces) {
             if (ownsEntity(namespace, entity)
@@ -164,10 +182,14 @@ final class ModulePolicyGovernance {
         check.put("severity", severity);
         check.put("title", title);
         check.put("count", count);
-        check.put("identity_digest", FindingIdentity.digest(
-                identities.stream().map(FindingIdentity::object).toList()));
+        List<String> rowIdentities = identities.stream().map(FindingIdentity::object).toList();
+        check.put("identity_digest", FindingIdentity.digest(rowIdentities));
         check.put("suggestion", suggestion);
         check.put("examples", sample(identities, limit));
+        // Complete per-row identity set (qualified by the check id, mirroring the structural
+        // stage's discipline) behind the capped examples — stripped before serialization.
+        check.put(ATTRIBUTION_KEY, rowIdentities.stream()
+                .map(identity -> id + "|" + identity).toList());
         return check;
     }
 

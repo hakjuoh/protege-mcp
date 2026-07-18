@@ -647,10 +647,11 @@ public final class QcSuiteTools {
             boolean checkOwnership, PolicyGovernance.Rules rules,
             List<Map<String, Object>> projectChecks, int limit) {
         // Collect the STABLE gating identities of the intrinsic governance checks (ownership /
-        // import_layering is enabled by default even with no policy) for verified-apply attribution.
-        // The rule-driven PolicyGovernance / module project checks only run WITH a validated policy,
-        // where attribution uses the result-state gate (not baseline subtraction), so they need not be
-        // collected here — no-policy attribution only ever sees the intrinsic policyChecks findings.
+        // import_layering is enabled by default even with no policy) for verified-apply attribution,
+        // PLUS the complete per-row identity sets the rule-driven PolicyGovernance / module project
+        // checks now publish through the reserved side channel (ADR 0004 decision 3: member-level
+        // stage deltas need the full sets, not count/digest heuristics). No-policy behavior is
+        // unchanged — without a validated policy those checks contribute no identities.
         Set<String> gatingIdentities = new LinkedHashSet<>();
         List<Map<String, Object>> checks = GovernanceTools.policyChecks(snapshot.modelManager(),
                 snapshot.active(), snapshot.closure(), iriPattern, requiredNamespaces,
@@ -658,7 +659,17 @@ public final class QcSuiteTools {
         checks.addAll(PolicyGovernance.checks(snapshot.active(), snapshot.closure(), rules,
                 LocalDate.now(ZoneOffset.UTC), limit));
         checks.addAll(projectChecks);
-        QcStageResult stage = governanceStage(checks);
+        // Drain the side channel from a COPY of every check map before the list becomes the
+        // serialized summary: the reserved key must never appear in a public result, and the
+        // originals stay intact because config-owned module checks are reused by the baseline
+        // attribution re-run (mutating them would starve the second run's identity sets).
+        List<Map<String, Object>> sanitized = new ArrayList<>();
+        for (Map<String, Object> check : checks) {
+            Map<String, Object> copy = new LinkedHashMap<>(check);
+            ModulePolicyGovernance.drainAttributionIdentities(copy, gatingIdentities);
+            sanitized.add(copy);
+        }
+        QcStageResult stage = governanceStage(sanitized);
         stage.attributionIdentities = Set.copyOf(gatingIdentities);
         return stage;
     }
@@ -739,7 +750,9 @@ public final class QcSuiteTools {
         // check that could not run is NEVER silently dropped to PASS. aggregate() maps this level vs fail_on.
         int issueLevel = invariantIssueLevel(run.get("invariants"));
         String verdict = issueLevel >= 3 ? FAIL : issueLevel == 2 ? WARN : issueLevel == 1 ? INFO : PASS;
-        return new QcStageResult(INVARIANTS, true, verdict, summary, null);
+        QcStageResult stage = new QcStageResult(INVARIANTS, true, verdict, summary, null);
+        stage.attributionIdentities = Set.copyOf(resultIdentities(run.get("invariants"), "violated"));
+        return stage;
     }
 
     @SuppressWarnings("unchecked")
@@ -789,13 +802,25 @@ public final class QcSuiteTools {
         if (inferenceCaveats > 0) {
             summary.put("inference_caveats", inferenceCaveats);
         }
-        return new QcStageResult(CQS, true, failed > 0 ? FAIL : PASS, summary, null);
+        QcStageResult stage = new QcStageResult(CQS, true, failed > 0 ? FAIL : PASS, summary, null);
+        stage.attributionIdentities = Set.copyOf(resultIdentities(run.get("questions"), "pass"));
+        return stage;
     }
 
     /** Digest complete failed result rows while ignoring volatile execution timing. */
     private static String resultIdentityDigest(Object value, String verdictKey) {
-        if (!(value instanceof List<?> rows)) return FindingIdentity.digest(List.of());
+        return FindingIdentity.digest(resultIdentities(value, verdictKey));
+    }
+
+    /**
+     * The complete per-row identity strings of the FAILED result rows (a CQ that did not pass, an
+     * invariant that was violated or errored), with volatile execution timing removed — exactly the
+     * strings {@code resultIdentityDigest} folds into the public digest, now also published through
+     * the {@code QcStageResult.attributionIdentities} side channel (ADR 0004 decision 3).
+     */
+    static List<String> resultIdentities(Object value, String verdictKey) {
         List<String> identities = new ArrayList<>();
+        if (!(value instanceof List<?> rows)) return identities;
         for (Object valueRow : rows) {
             if (!(valueRow instanceof Map<?, ?> row)) continue;
             boolean failed = "pass".equals(verdictKey)
@@ -808,7 +833,7 @@ public final class QcSuiteTools {
             });
             identities.add(FindingIdentity.object(stable));
         }
-        return FindingIdentity.digest(identities);
+        return identities;
     }
 
     /** Count the per-CQ result maps that carry a {@code caveats} entry (a soft degradation qualifier). */
@@ -827,7 +852,7 @@ public final class QcSuiteTools {
     }
 
     @SuppressWarnings("unchecked")
-    private static int countCqErrors(Object questions) {
+    static int countCqErrors(Object questions) {
         if (!(questions instanceof List)) {
             return 0;
         }
@@ -841,7 +866,7 @@ public final class QcSuiteTools {
     }
 
     @SuppressWarnings("unchecked")
-    private static int countInferenceCaveats(Object questions) {
+    static int countInferenceCaveats(Object questions) {
         if (!(questions instanceof List)) {
             return 0;
         }
@@ -910,8 +935,10 @@ public final class QcSuiteTools {
             return QcStageResult.skipped(SHACL, "SHACL data snapshot was not captured.");
         }
         Map<String, Object> r;
+        List<String> gatingIdentities = new ArrayList<>();
         try {
-            r = ShaclTools.validate(dataTurtle, shapesText, shapesPath, limit, timeout);
+            r = ShaclTools.validate(dataTurtle, shapesText, shapesPath, limit, timeout,
+                    gatingIdentities);
         } catch (RuntimeException e) {
             // A malformed shapes graph is a config error for THIS stage — surface it as a failed (errored)
             // stage rather than aborting the whole suite.
@@ -929,7 +956,9 @@ public final class QcSuiteTools {
         summary.put("identity_digest", r.get("identity_digest"));
         // Violations fail; a warning-only report warns; info-only (or conformant) passes.
         String verdict = violations > 0 ? FAIL : warnings > 0 ? WARN : num(r.get("infos")) > 0 ? INFO : PASS;
-        return new QcStageResult(SHACL, true, verdict, summary, null);
+        QcStageResult stage = new QcStageResult(SHACL, true, verdict, summary, null);
+        stage.attributionIdentities = Set.copyOf(gatingIdentities);
+        return stage;
     }
 
     /** Strict project stage over the union of every policy-referenced shapes file. */
@@ -941,7 +970,9 @@ public final class QcSuiteTools {
             return QcStageResult.errored(SHACL, "SHACL data snapshot was not captured.");
         }
         try {
-            Map<String, Object> result = ShaclTools.validate(dataTurtle, shapesPaths, limit, timeout);
+            List<String> gatingIdentities = new ArrayList<>();
+            Map<String, Object> result = ShaclTools.validate(dataTurtle, shapesPaths, limit, timeout,
+                    gatingIdentities);
             int violations = num(result.get("violations"));
             int warnings = num(result.get("warnings"));
             Map<String, Object> summary = new LinkedHashMap<>();
@@ -951,9 +982,11 @@ public final class QcSuiteTools {
             summary.put("infos", result.get("infos"));
             summary.put("identity_digest", result.get("identity_digest"));
             summary.put("shape_files", shapesPaths.stream().map(Path::toString).toList());
-            return new QcStageResult(SHACL, true,
+            QcStageResult stage = new QcStageResult(SHACL, true,
                     violations > 0 ? FAIL : warnings > 0 ? WARN
                             : num(result.get("infos")) > 0 ? INFO : PASS, summary, null);
+            stage.attributionIdentities = Set.copyOf(gatingIdentities);
+            return stage;
         } catch (RuntimeException e) {
             return QcStageResult.errored(SHACL, e.getMessage() == null
                     ? e.getClass().getSimpleName() : e.getMessage());

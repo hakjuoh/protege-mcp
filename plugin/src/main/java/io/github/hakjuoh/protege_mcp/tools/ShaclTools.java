@@ -9,6 +9,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -107,18 +108,37 @@ public final class ShaclTools {
      */
     static Map<String, Object> validate(byte[] dataTurtle, String shapesText, String shapesPath, int limit,
             long timeoutMs) {
-        Callable<Map<String, Object>> task = () -> validateOnThread(dataTurtle, shapesText, shapesPath, limit);
+        return validate(dataTurtle, shapesText, shapesPath, limit, timeoutMs, null);
+    }
+
+    /**
+     * As above, additionally exposing the COMPLETE gating (Violation/Warning) per-result identity
+     * strings behind the capped {@code results} list through {@code identitiesOut} (ADR 0004
+     * decision 3) — a non-serialized side channel; the returned JSON is unchanged. Only trust the
+     * collection when this call returns normally.
+     */
+    static Map<String, Object> validate(byte[] dataTurtle, String shapesText, String shapesPath, int limit,
+            long timeoutMs, Collection<String> identitiesOut) {
+        Callable<Map<String, Object>> task = () -> validateOnThread(dataTurtle,
+                loadShapesTask(shapesText, shapesPath), limit, identitiesOut);
         return bounded(task, timeoutMs);
     }
 
     /** Validate one shared data snapshot against the union of policy-referenced local shape graphs. */
     static Map<String, Object> validate(byte[] dataTurtle, List<Path> shapesPaths, int limit,
             long timeoutMs) {
+        return validate(dataTurtle, shapesPaths, limit, timeoutMs, null);
+    }
+
+    /** Policy-shapes validation with the complete gating identity side channel (see above). */
+    static Map<String, Object> validate(byte[] dataTurtle, List<Path> shapesPaths, int limit,
+            long timeoutMs, Collection<String> identitiesOut) {
         if (shapesPaths == null || shapesPaths.isEmpty()) {
             throw new ToolArgException("No policy SHACL shape files were resolved.");
         }
         List<Path> copy = List.copyOf(shapesPaths);
-        return bounded(() -> validateOnThread(dataTurtle, copy, limit), timeoutMs);
+        return bounded(() -> validateOnThread(dataTurtle, () -> loadShapes(copy), limit,
+                identitiesOut), timeoutMs);
     }
 
     private static Map<String, Object> bounded(Callable<Map<String, Object>> task, long timeoutMs) {
@@ -163,18 +183,13 @@ public final class ShaclTools {
     }
 
     /** The actual validation body (TCCL-scoped Jena work); runs inline or on the bounded worker thread. */
-    private static Map<String, Object> validateOnThread(byte[] dataTurtle, String shapesText,
-            String shapesPath, int limit) {
-        return validateOnThread(dataTurtle, loadShapesTask(shapesText, shapesPath), limit);
-    }
-
-    private static Map<String, Object> validateOnThread(byte[] dataTurtle, List<Path> shapesPaths,
-            int limit) {
-        return validateOnThread(dataTurtle, () -> loadShapes(shapesPaths), limit);
+    private static Map<String, Object> validateOnThread(byte[] dataTurtle,
+            Callable<Model> shapesLoader, int limit) {
+        return validateOnThread(dataTurtle, shapesLoader, limit, null);
     }
 
     private static Map<String, Object> validateOnThread(byte[] dataTurtle,
-            Callable<Model> shapesLoader, int limit) {
+            Callable<Model> shapesLoader, int limit, Collection<String> identitiesOut) {
         ClassLoader previousTccl = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(ShaclTools.class.getClassLoader());
         try {
@@ -196,7 +211,7 @@ public final class ShaclTools {
             } catch (RuntimeException e) {
                 throw new ToolArgException("SHACL validation failed: " + msg(e));
             }
-            return reportJson(report, limit);
+            return reportJson(report, limit, identitiesOut);
         } finally {
             Thread.currentThread().setContextClassLoader(previousTccl);
         }
@@ -294,7 +309,8 @@ public final class ShaclTools {
      * Render the validation report. Extracts each {@code sh:ValidationResult} by querying the report's RDF
      * (robust across jena-shacl minor API changes) rather than the {@code ReportEntry} accessors.
      */
-    private static Map<String, Object> reportJson(ValidationReport report, int limit) {
+    private static Map<String, Object> reportJson(ValidationReport report, int limit,
+            Collection<String> identitiesOut) {
         boolean conforms = report.conforms();
         Model reportModel = ModelFactory.createModelForGraph(report.getGraph());
         // Group by the validation-result node so a result with several sh:resultMessage values (e.g. a
@@ -334,22 +350,36 @@ public final class ShaclTools {
                 } else if ("Info".equals(severity)) {
                     infos++;
                 }
+                RDFNode shape = s.get("shape");
                 Map<String, Object> identity = new LinkedHashMap<>();
                 putIfNotNull(identity, "focus_node", str(s.get("focus")));
                 putIfNotNull(identity, "result_path", str(s.get("path")));
                 putIfNotNull(identity, "value", str(s.get("value")));
                 putIfNotNull(identity, "severity", severity);
                 putIfNotNull(identity, "constraint_component", localName(str(s.get("component"))));
-                putIfNotNull(identity, "source_shape", str(s.get("shape")));
+                putIfNotNull(identity, "source_shape", str(shape));
                 String message = str(s.get("message"));
                 putIfNotNull(identity, "message", message == null || message.isEmpty() ? null : message);
                 if ("Violation".equals(severity) || "Warning".equals(severity)) {
-                    gatingIdentities.add(FindingIdentity.object(identity));
+                    // Identity inputs must exclude parse-local blank-node labels: the shapes
+                    // document is re-parsed per validation, so an anonymous property shape's label
+                    // differs across parses of the SAME document and would make identical findings
+                    // look different — corrupting semantic_diff stage deltas and the verified-apply
+                    // baseline comparison. source_shape joins the identity only as a URI resource;
+                    // the volatile label stays in the human-facing result row above.
+                    Map<String, Object> stable = new LinkedHashMap<>(identity);
+                    if (shape != null && !shape.isURIResource()) {
+                        stable.remove("source_shape");
+                    }
+                    gatingIdentities.add(FindingIdentity.object(stable));
                 }
                 if (results.size() < cap) {
                     results.add(identity);
                 }
             }
+        }
+        if (identitiesOut != null) {
+            identitiesOut.addAll(gatingIdentities);
         }
         int total = violations + warnings + infos;
         Map<String, Object> m = new LinkedHashMap<>();

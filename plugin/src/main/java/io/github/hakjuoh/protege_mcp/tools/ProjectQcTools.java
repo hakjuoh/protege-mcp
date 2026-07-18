@@ -314,7 +314,7 @@ final class ProjectQcTools {
         }
     }
 
-    private static List<CompetencyQuestion> loadPolicyCqs(ProjectPolicy policy) {
+    static List<CompetencyQuestion> loadPolicyCqs(ProjectPolicy policy) {
         Map<String, Object> cqPolicy = object(object(policy.effective(), "validation"),
                 "competency_questions");
         String convention = string(cqPolicy, "convention");
@@ -381,7 +381,7 @@ final class ProjectQcTools {
         return expanded;
     }
 
-    private static PolicyGovernance.Rules governanceRules(Map<String, Object> root) {
+    static PolicyGovernance.Rules governanceRules(Map<String, Object> root) {
         Map<String, Object> prefixes = object(root, "prefixes");
         Map<String, Object> annotations = object(root, "annotations");
         Map<String, Object> labels = object(annotations, "labels");

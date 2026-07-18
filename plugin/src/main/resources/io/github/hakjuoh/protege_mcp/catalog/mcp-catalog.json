@@ -2678,7 +2678,7 @@
     }
   }, {
     "name" : "semantic_diff",
-    "description" : "Classify an asserted semantic diff while retaining diff_ontologies as the fast exact axiom primitive. Reports ontology/import/ontology-annotation changes, added and removed entities by type, unique exact-label rename candidates (never automatic rewrites), per-entity annotation/lifecycle/replacement deltas, asserted axioms grouped by type and affected IRI, and a conservative compatibility classification (any logical axiom added or removed is potentially_breaking). Unresolved right_document imports are reported and, with include_imports, force potentially_breaking instead of diffing a silently truncated closure. This 0.6 prototype supports mode=asserted; inferred/both fail explicitly rather than returning incomplete results.",
+    "description" : "Classify a semantic diff while retaining diff_ontologies as the fast exact axiom primitive. mode=asserted (default) reports ontology/import/ontology-annotation changes, added and removed entities by type, unique exact-label rename candidates (never automatic rewrites), per-entity annotation/lifecycle/replacement deltas, asserted axioms grouped by type and affected IRI, and a conservative compatibility classification (any logical axiom added or removed is potentially_breaking). mode=inferred|both adds the inferred-diff-v1 entailment set, computed by one explicitly recorded reasoner over both flattened sides: consistency, class satisfiability, named-class subsumption and equivalence closure deltas, named individual types, and candidate-bounded disjointness (asserted DisjointClasses/DisjointUnion candidates only); property hierarchies, characteristics, and assertions are machine-readably excluded, and every category fails closed with an error rather than an empty result. With policy_path, the module_ownership policy delta (modules[].owned_namespaces) and member-level CQ/invariant/SHACL/governance stage_deltas are also reported (the governance delta is scope: policy_rules_only — rule-driven annotation/lifecycle/waiver checks per side, not run_project_qc's intrinsic or module/import governance checks); errored inferred or stage-delta evidence forces potentially_breaking. Unresolved right_document imports are reported and, with include_imports, force potentially_breaking instead of diffing a silently truncated closure.",
     "input_schema" : {
       "type" : "object",
       "properties" : {
@@ -2700,7 +2700,20 @@
         },
         "mode" : {
           "type" : "string",
-          "description" : "asserted (default); inferred/both are not in this prototype."
+          "enum" : [ "asserted", "inferred", "both" ],
+          "description" : "asserted (default), inferred, or both."
+        },
+        "reasoner" : {
+          "type" : "string",
+          "description" : "Installed Protégé reasoner name or id used to classify both sides in mode=inferred|both (default: the current Protégé selection; see list_reasoners)."
+        },
+        "timeout_ms" : {
+          "type" : "integer",
+          "description" : "Total mode=inferred|both budget in ms covering all reasoner interaction and policy stage-delta evaluation (default 120000; non-positive values are coerced back to 120000)."
+        },
+        "policy_path" : {
+          "type" : "string",
+          "description" : "Project policy file driving the module_ownership and stage_deltas categories in mode=inferred|both; authorized like other policy_path tools. An unresolvable or invalid policy errors both categories fail-closed."
         },
         "limit" : {
           "type" : "integer",

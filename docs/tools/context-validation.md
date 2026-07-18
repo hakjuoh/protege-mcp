@@ -235,18 +235,33 @@ If neither `right` nor `right_document` is provided, if `left`/`right` names no 
 
 ## `semantic_diff`
 
-Classifies an asserted ontology diff into release-oriented categories while retaining
-`diff_ontologies` as the fast exact-axiom primitive. It reports header/import changes, entity adds and
-removals by type, conservative unique exact-label rename candidates, annotation/lifecycle/replacement
-deltas, and asserted axioms grouped by type and affected IRI. Rename rows are evidence, never automatic
-rewrite instructions. Import IRIs the `right_document` loader could not resolve are reported, and with
-`include_imports=true` they force `potentially_breaking`: a truncated right closure fails closed
-instead of passing a review gate as `metadata_only` or identical. The 0.6 prototype supports
-`mode=asserted`; `inferred` and `both` fail explicitly.
+Classifies an ontology diff into release-oriented categories while retaining
+`diff_ontologies` as the fast exact-axiom primitive. `mode=asserted` (the default) reports
+header/import changes, entity adds and removals by type, conservative unique exact-label rename
+candidates, annotation/lifecycle/replacement deltas, and asserted axioms grouped by type and affected
+IRI. Rename rows are evidence, never automatic rewrite instructions. Import IRIs the `right_document`
+loader could not resolve are reported, and with `include_imports=true` they force
+`potentially_breaking`: a truncated right closure fails closed instead of passing a review gate as
+`metadata_only` or identical.
+
+`mode=inferred|both` additionally evaluates the `inferred-diff-v1` entailment set (ADR 0004): both
+sides are flattened and classified sequentially by one explicitly recorded reasoner (the current
+Protégé selection, or `reasoner`), reporting consistency, class satisfiability, named-class
+subsumption and equivalence closure deltas, named individual types, and candidate-bounded
+disjointness — the candidates are only the class pairs named together in an asserted
+`DisjointClasses`/`DisjointUnion` axiom on either side, and the scope label discloses this. Property
+hierarchies, characteristics, and assertions are machine-readably excluded, and every category fails
+closed: an operation the reasoner or budget could not answer becomes an errored category, never a
+silently empty one. `mode=both` keeps the asserted sections byte-identical to `mode=asserted` apart
+from the single result-level `compatibility` block. With `policy_path`, two policy-driven categories
+are added beside the entailment set: `module_ownership` (terms whose owning module per
+`modules[].owned_namespaces` differs between sides) and member-level `stage_deltas` for the policy's
+required CQ/invariant/SHACL/governance stages.
 
 *Read-only.* A `right_document` is loaded privately — resolving its imports through the workspace's
 known logical-to-document mappings and any sibling `catalog-v001.xml` — and is never attached to the
-workspace.
+workspace. Inferred-mode classification runs on isolated flattened copies; no live reasoner state is
+touched.
 
 **Arguments**
 
@@ -256,7 +271,10 @@ workspace.
 | `right` | string | conditional | — | Loaded ontology IRI/version; exactly one of this and `right_document`. |
 | `right_document` | string | conditional | — | Document loaded privately; exactly one of this and `right`. |
 | `include_imports` | boolean | no | false | Include each side's loaded imports closure. |
-| `mode` | string | no | asserted | Only `asserted` is supported in 0.6. |
+| `mode` | string | no | asserted | `asserted`, `inferred`, or `both`. |
+| `reasoner` | string | no | current selection | Installed Protégé reasoner name or id used to classify both sides in `mode=inferred\|both` (see `list_reasoners`). |
+| `timeout_ms` | integer | no | 120000 | Total `mode=inferred\|both` budget in ms covering all reasoner interaction and stage-delta evaluation. (Non-positive values are coerced back to 120000.) |
+| `policy_path` | string | no | — | Project policy file driving `module_ownership` and `stage_deltas` in `mode=inferred\|both`; authorized like other `policy_path` tools. Refused (never silently ignored) with `mode=asserted`; an unresolvable or invalid policy errors both categories fail-closed. |
 | `limit` | integer | no | 50 | Maximum samples per category. |
 | `network` | string | no | — | Request-level network control for loading `right_document`, composed most-restrictive-wins with the project policy: `deny` refuses every remote fetch with an explicit error attributed to `request network=deny`; `allow` abstains and never overrides a policy deny, an invalid policy, a missing `network:access` capability, or a restricted no-policy state. |
 
@@ -269,10 +287,14 @@ workspace.
 - `rename_candidates`: array `{from, to, entity_type, evidence}`; emitted only for unambiguous exact-label pairs.
 - `annotation_changes`: array `{focus_iri, added, removed, categories}`.
 - `asserted_axioms`: `added`/`removed` objects with `count`, `groups`, and `truncated`.
-- `compatibility`: object `{classification, policy_driven, anonymous_individual_churn, caveat}`. The classification is conservative: `potentially_breaking` when the header changed (ontology id or imports declarations), any entity or logical axiom was removed, any logical axiom was added (OWL is monotonic — a new axiom such as a `DisjointClasses` can make previously consistent data inconsistent), or the right closure was truncated under `include_imports=true`; `metadata_only` when there is no logical change and no entity was added; `non_breaking` otherwise (new entities carrying only declarations and annotations). `anonymous_individual_churn` flags blank-node values — in axioms or ontology-header annotations — whose parse-local NodeIDs can make a re-parsed document look changed; the caveat then explains that such churn may be spurious.
+- `inferred`: present in `mode=inferred|both`; the `inferred-diff-v1` categories `{entailment_set, excluded_categories, consistency, satisfiability, subsumption, equivalence, types, disjointness, errored_categories}` over the shared named signature Σ (consistency/satisfiability use each side's full named signature), with bounded samples, exact counts, per-side `direct`/`indirect` labels, transitively reduced subsumption deltas, and the `asserted_candidates` disjointness scope label (with disclosed truncation at the candidate cap). An inconsistent side suppresses the member-level categories with a caveat (`categories_suppressed: true`); a category that could not be answered carries an `error` and is listed in `errored_categories`. On overall expiry the whole section degrades to `{entailment_set, error}`.
+- `reasoner`: configuration-parity metadata of the recorded reasoner that classified both sides; a told-only reasoner is disclosed here. Inferred results are relative to this reasoner, never presented as reasoner-independent OWL truth.
+- `module_ownership`: present in `mode=inferred|both`; the `modules[].owned_namespaces` policy delta. With a loaded valid policy declaring owned namespaces: `{available: true, count, changes, truncated?}`, each change row `{iri, was_module, now_module}` (a side's owner is `null` when the term is absent from that side's named signature or unowned; co-owned namespaces list the owning module IRIs comma-joined), sorted with bounded samples and the exact `count`. Without such a policy: `{available: false, reason}`. A policy that failed to resolve, load, or validate: `{error}` — fail-closed, never silently absent.
+- `stage_deltas`: present in `mode=inferred|both`; member-level finding-identity deltas for the policy's required `cqs`/`invariants`/`shacl`/`governance` stages evaluated against both sides — `{available: true}` plus one object per evaluated stage, each either `{entered: {count, items, truncated?}, left: {count, items, truncated?}}` (complete finding identities present on only the right/left side, sorted with bounded samples and exact counts) or `{error}` when that stage could not be evaluated on a side (for example an inference-dependent CQ or invariant fails closed rather than running incompletely). The governance delta carries `scope: "policy_rules_only"`: it covers only the policy's rule-driven annotation/lifecycle/waiver checks evaluated per side — NOT the intrinsic `run_project_qc` governance checks (`iri_policy`, required namespaces/annotations, ownership, import layering) or the module/import checks, which need live workspace context a foreign right side does not have. Without `policy_path`: `{available: false, reason}`; an unresolvable/invalid policy or an abandoned evaluation: `{error}`.
+- `compatibility`: object `{classification, policy_driven, anonymous_individual_churn, caveat}`, emitted once per result. The asserted classification is conservative: `potentially_breaking` when the header changed (ontology id or imports declarations), any entity or logical axiom was removed, any logical axiom was added (OWL is monotonic — a new axiom such as a `DisjointClasses` can make previously consistent data inconsistent), or the right closure was truncated under `include_imports=true`; `metadata_only` when there is no logical change and no entity was added; `non_breaking` otherwise (new entities carrying only declarations and annotations). In `mode=inferred|both` the block additionally fails closed on inferred and policy evidence: a consistency transition, newly unsatisfiable classes, an errored inferred section or category, suppressed member-level categories, or an errored stage delta forces `potentially_breaking` with a caveat naming the missing evidence; asserted caveat strings are preserved verbatim. `anonymous_individual_churn` flags blank-node values — in axioms or ontology-header annotations — whose parse-local NodeIDs can make a re-parsed document look changed; the caveat then explains that such churn may be spurious.
 
 **Example**
 
 ```json
-{ "right_document": "/workspace/releases/next.ttl", "mode": "asserted", "limit": 100 }
+{ "right_document": "/workspace/releases/next.ttl", "mode": "both", "reasoner": "HermiT", "policy_path": ".protege-mcp/project.yaml", "limit": 100 }
 ```

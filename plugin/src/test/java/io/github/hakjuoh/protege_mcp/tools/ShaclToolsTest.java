@@ -87,6 +87,28 @@ class ShaclToolsTest {
     }
 
     @Test
+    void findingIdentitiesAreStableAcrossTwoParsesOfTheSameShapesDocument() {
+        // SHAPES uses an ANONYMOUS property shape: each validate() call re-parses the document,
+        // and Jena mints fresh parse-local blank-node labels every parse. Those labels must never
+        // reach the finding identities (identity_digest / the identitiesOut side channel), or
+        // identical findings on the two semantic_diff sides — and across the verified-apply
+        // baseline re-run — would look different (phantom entered/left rows).
+        byte[] data = data("ex:alice a ex:Person .\n");
+        List<String> firstIdentities = new java.util.ArrayList<>();
+        List<String> secondIdentities = new java.util.ArrayList<>();
+        Map<String, Object> first = ShaclTools.validate(data, SHAPES, null, 1000, 0L, firstIdentities);
+        Map<String, Object> second = ShaclTools.validate(data, SHAPES, null, 1000, 0L, secondIdentities);
+
+        assertFalse(firstIdentities.isEmpty(), "the violation must produce a gating identity");
+        assertEquals(new java.util.TreeSet<>(firstIdentities), new java.util.TreeSet<>(secondIdentities),
+                "parse-local blank-node labels must not leak into finding identities");
+        assertEquals(first.get("identity_digest"), second.get("identity_digest"),
+                "the public digest must be parse-stable too");
+        // The volatile label may still appear in the human-facing result row.
+        assertTrue(results(first).get(0).containsKey("source_shape"));
+    }
+
+    @Test
     void malformedShapesGraphIsAToolArgError() {
         // A shapes document that is not valid Turtle is a caller error, not a crash.
         assertFalse(isValidShapes("this is not turtle @@@"));
