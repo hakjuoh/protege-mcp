@@ -18,7 +18,7 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
 
-At the time of writing: **2,932 tests, green** (2,880 plugin, 9 standalone-CLI,
+At the time of writing: **2,930 tests, green** (2,878 plugin, 9 standalone-CLI,
 and 43 core tests), across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
 pure helpers of `ui`, the headless CLI, and the extractable `ro_crate` interoperability package. Coverage is
 measured by **JaCoCo** (`mvn verify`) and a floor on
@@ -85,10 +85,11 @@ With the safety net in place, the three god-classes were decomposed **behavior-p
 *extract-class + keep-a-thin-delegating-facade* pattern (public entry points and call-sites unchanged, so
 the whole suite stays green after every step):
 
-- **`Tools` (754 → 383 LOC)** → 7 focused classes in `io.github.hakjuoh.protege_mcp.tools`: `ToolArgs`,
-  `ToolResults`, `ToolSchemas`, `EntityResolver`, `EntityRendering`, `EntityJson`, `AnnotationBuilder`.
-  `Tools` keeps one-line delegators plus the nested `Tools.Json` / `Tools.SchemaBuilder` types (referenced
-  as types across the codebase, so they stay put).
+- **`Tools` (754 → 383 LOC)** → focused classes in `io.github.hakjuoh.protege_mcp.tools`: `ToolArgs`,
+  `ToolResults`, `EntityResolver`, `EntityRendering`, `EntityJson`, `AnnotationBuilder`. `Tools` keeps
+  one-line delegators plus the nested `Tools.Json` type. (The `ToolSchemas` / `Tools.SchemaBuilder`
+  schema helpers extracted here were later retired entirely when tool metadata — descriptions and input
+  schemas — moved into the shared `mcp-catalog.json` resource resolved by `McpCatalog`.)
 - **`ToolCatalog`** → the hardcoded 16-provider list became a single package-private `PROVIDERS` list
   iterated by `buildAll`; `ToolCatalogTest`'s two duplicated lists now iterate that same source of truth.
 - **`ChatView`** → pure logic extracted to headless classes in `io.github.hakjuoh.protege_mcp.chat`:

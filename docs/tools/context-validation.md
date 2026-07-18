@@ -214,6 +214,11 @@ One of `right` or `right_document` must be supplied.
 - `common`: integer, count of axioms shared by both sides.
 - `only_in_left`: array of axiom rows present only in `left`, capped at `limit`.
 - `only_in_right`: array of axiom rows present only in `right`, capped at `limit`.
+- `right_document_unresolved_imports`: array of import IRIs the right side's loader could not
+  resolve; present only when `right_document` was given (empty when everything resolved).
+- `caveat`: string warning that the right side's imports closure is truncated and the verdict may be
+  affected; present only when `include_imports=true` and `right_document_unresolved_imports` is
+  non-empty.
 
 If neither `right` nor `right_document` is provided, if `left`/`right` names no loaded ontology, or if the comparison document cannot be loaded, the call returns an error object.
 

@@ -60,12 +60,14 @@ public final class DiffTools {
                         importNetwork = rules.importNetworkRule();
                     }
                     // Load the comparison document OFF the EDT (network/parse), then diff on the EDT.
+                    List<String> unresolvedRight = rightDoc != null ? new ArrayList<>() : null;
                     Set<OWLAxiom> rightAxioms = rightDoc != null
-                            ? loadDocumentAxioms(rightDoc, includeImports, logicalOnly, importNetwork)
+                            ? loadDocumentAxioms(rightDoc, includeImports, logicalOnly, importNetwork,
+                                    unresolvedRight)
                             : null;
                     String rightLabel = rightDoc != null ? rightDoc : rightRef;
                     return ctx.access().compute(mm -> diff(mm, leftRef, rightRef, rightAxioms, rightLabel,
-                            includeImports, logicalOnly, limit));
+                            includeImports, logicalOnly, limit, unresolvedRight));
                 });
         tools.tool("semantic_diff",
                 (ex, req) -> {
@@ -115,7 +117,7 @@ public final class DiffTools {
 
     private static CallToolResult diff(OWLModelManager mm, String leftRef, String rightRef,
             Set<OWLAxiom> preloadedRight, String rightLabel, boolean includeImports, boolean logicalOnly,
-            int limit) {
+            int limit, List<String> unresolvedRightImports) {
         OWLOntology left = leftRef == null ? mm.getActiveOntology()
                 : OntologyDocumentTools.findLoadedOntology(mm, leftRef);
         if (left == null) {
@@ -137,7 +139,7 @@ public final class DiffTools {
 
         Diff d = diff(leftAxioms, rightAxioms);
         boolean identical = d.onlyLeft.isEmpty() && d.onlyRight.isEmpty();
-        return Tools.json()
+        Tools.Json out = Tools.json()
                 .put("left", labelOf(left.getOntologyID()))
                 .put("right", rightLabel)
                 .put("include_imports", includeImports)
@@ -147,8 +149,20 @@ public final class DiffTools {
                 .put("right_axioms", rightAxioms.size())
                 .put("common", leftAxioms.size() - d.onlyLeft.size())
                 .put("only_in_left", Tools.axiomList(mm, d.onlyLeft, limit))
-                .put("only_in_right", Tools.axiomList(mm, d.onlyRight, limit))
-                .result();
+                .put("only_in_right", Tools.axiomList(mm, d.onlyRight, limit));
+        if (unresolvedRightImports != null) {
+            // Mirror semantic_diff: a truncated right closure must be visible on the verdict, or a
+            // dropped import could flip identical/only_in_left silently.
+            List<String> unresolved = unresolvedRightImports.stream().distinct().sorted().toList();
+            out.put("right_document_unresolved_imports", unresolved);
+            if (includeImports && !unresolved.isEmpty()) {
+                out.put("caveat", "The right side's imports closure is truncated - unresolved imports: "
+                        + String.join(", ", unresolved)
+                        + ". Their axioms are invisible to this diff and can flip its verdict in "
+                        + "either direction.");
+            }
+        }
+        return out.result();
     }
 
     /** The two one-sided differences of the axiom sets. Package-visible and pure for unit testing. */
@@ -191,8 +205,9 @@ public final class DiffTools {
     }
 
     private static Set<OWLAxiom> loadDocumentAxioms(String source, boolean closure,
-            boolean logicalOnly, DirectAccessPolicy.NetworkRule networkRule) {
-        return collect(loadDocument(source, List.of(), new ArrayList<>(), networkRule),
+            boolean logicalOnly, DirectAccessPolicy.NetworkRule networkRule,
+            Collection<String> unresolvedOut) {
+        return collect(loadDocument(source, List.of(), unresolvedOut, networkRule),
                 closure, logicalOnly);
     }
 
@@ -219,12 +234,20 @@ public final class DiffTools {
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                 .setFollowRedirects(networkRule.followRedirects());
         try (OntologyDocumentTools.NetworkImportBlocker blocker =
-                OntologyDocumentTools.NetworkImportBlocker.install(manager, networkRule)) {
+                OntologyDocumentTools.NetworkImportBlocker.install(manager, networkRule);
+                OntologyDocumentTools.UnsupportedImportFallback fallback =
+                        OntologyDocumentTools.UnsupportedImportFallback.install(manager)) {
             OntologyDocumentTools.addWorkspaceImportMappers(manager, mappings, blocker);
             OntologyDocumentTools.addFolderCatalogMapper(manager, normalized, blocker);
             OWLOntology loaded = manager.loadOntologyFromOntologyDocument(
                     OntologyDocumentTools.documentSource(normalized), config);
-            blocker.failIfBlocked(normalized);
+            // Same closing steps as load_ontology/merge: restore fallback-satisfied IRIs (an
+            // unsupported scheme such as a URN) to the caller's unresolved list, then apply the
+            // policy verdict — so all three document loaders report the same structured diagnostic
+            // instead of diff leaking a raw OWLAPI factory error.
+            OntologyDocumentTools.finishUnsupportedImports(loaded, fallback, unresolvedOut,
+                    MissingImportsMode.SILENT, normalized);
+            blocker.failIfBlocked(normalized, unresolvedOut);
             return loaded;
         } catch (OWLOntologyCreationException e) {
             throw new ToolArgException("Could not load comparison document '" + normalized + "': "

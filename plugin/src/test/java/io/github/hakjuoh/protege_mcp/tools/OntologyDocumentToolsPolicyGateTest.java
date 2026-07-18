@@ -94,6 +94,111 @@ class OntologyDocumentToolsPolicyGateTest {
     }
 
     @Test
+    void refusedSiblingCatalogOnlyFailsWhenAnImportNeedsResolution(@TempDir Path temp)
+            throws Exception {
+        Path project = Files.createDirectories(temp.resolve("project"));
+        Path root = project.resolve("root.ttl");
+        Files.writeString(root, ontology("https://example.org/root"));
+        Files.writeString(project.resolve("catalog-v001.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+                  <nextCatalog catalog="https://network-must-not-be-used.invalid/catalog.xml"/>
+                </catalog>
+                """);
+        DirectAccessPolicy.Rules rules = rules(project,
+                Set.of(DirectAccessPolicy.PROJECT_READ, DirectAccessPolicy.NETWORK));
+
+        for (Method loader : loaders()) {
+            assertDoesNotThrow(() -> invoke(loader, root.toString(), 1_000,
+                    MissingImportsMode.WARN, List.of(), rules.importNetworkRule()),
+                    "an unused unsafe sibling catalog must not block the root ontology");
+        }
+
+        Files.writeString(root, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/root> a owl:Ontology ;
+                    owl:imports <urn:example:catalog-only-import> .
+                """);
+        for (Method loader : loaders()) {
+            Throwable denied = assertThrows(Throwable.class,
+                    () -> invoke(loader, root.toString(), 1_000, MissingImportsMode.WARN,
+                            List.of(), rules.importNetworkRule()));
+            assertInstanceOf(ToolArgException.class, denied);
+            assertTrue(denied.getMessage().contains("folder catalog"), denied.getMessage());
+            assertTrue(denied.getMessage().contains("catalog-only-import"), denied.getMessage());
+        }
+    }
+
+    @Test
+    void refusedSiblingCatalogFailsAnImportThatResolvesThroughAnotherChannel(@TempDir Path temp)
+            throws Exception {
+        // The refused catalog, had it been safe to install, would have been the highest-priority
+        // mapper. An import that instead resolves through a lower-priority channel (here an
+        // authorized in-project workspace mapping) may load content the catalog pins differently,
+        // so the load must fail closed rather than silently substitute the channel.
+        Path project = Files.createDirectories(temp.resolve("project"));
+        String imported = "https://example.org/catalog-pinned";
+        Path root = project.resolve("root.ttl");
+        Files.writeString(root, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/root> a owl:Ontology ; owl:imports <%s> .
+                """.formatted(imported));
+        Files.writeString(project.resolve("catalog-v001.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+                  <nextCatalog catalog="https://network-must-not-be-used.invalid/catalog.xml"/>
+                </catalog>
+                """);
+        Path inRoot = project.resolve("workspace-imported.ttl");
+        Files.writeString(inRoot, ontology(imported));
+        List<OntologyDocumentTools.ImportMapping> workspace = List.of(
+                new OntologyDocumentTools.ImportMapping(IRI.create(imported),
+                        IRI.create(inRoot.toUri())));
+        DirectAccessPolicy.Rules rules = rules(project,
+                Set.of(DirectAccessPolicy.PROJECT_READ, DirectAccessPolicy.NETWORK));
+
+        for (Method loader : loaders()) {
+            Throwable denied = assertThrows(Throwable.class,
+                    () -> invoke(loader, root.toString(), 1_000, MissingImportsMode.WARN,
+                            workspace, rules.importNetworkRule()));
+            assertInstanceOf(ToolArgException.class, denied);
+            assertTrue(denied.getMessage().contains("had to resolve without the folder catalog"),
+                    denied.getMessage());
+            assertTrue(denied.getMessage().contains(imported), denied.getMessage());
+        }
+    }
+
+    @Test
+    void refusedSiblingCatalogDoesNotBlockAVacuousSelfImport(@TempDir Path temp) throws Exception {
+        // Functional syntax assigns the ontology ID before the Import(...) is requested, so OWLAPI
+        // links the self-import in memory without consulting any IRI mapper — the refused catalog
+        // could not have redirected it, and the load must not be refused for it.
+        Path project = Files.createDirectories(temp.resolve("project"));
+        Path root = project.resolve("self.ofn");
+        Files.writeString(root, """
+                Ontology(<https://example.org/self>
+                Import(<https://example.org/self>)
+                )
+                """);
+        Files.writeString(project.resolve("catalog-v001.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+                  <nextCatalog catalog="https://network-must-not-be-used.invalid/catalog.xml"/>
+                </catalog>
+                """);
+        DirectAccessPolicy.Rules rules = rules(project,
+                Set.of(DirectAccessPolicy.PROJECT_READ, DirectAccessPolicy.NETWORK));
+
+        for (Method loader : loaders()) {
+            assertDoesNotThrow(() -> invoke(loader, root.toString(), 1_000,
+                    MissingImportsMode.WARN, List.of(), rules.importNetworkRule()),
+                    "a purely in-memory self-import must not trip the deferred catalog refusal");
+        }
+        assertDoesNotThrow(() -> DiffTools.loadDocument(root.toString(), List.of(),
+                new ArrayList<>(), rules.importNetworkRule()));
+    }
+
+    @Test
     void workspaceMappingTargetsOutsideTheProjectAreRefusedWhileInRootTargetsResolve(
             @TempDir Path temp) throws Exception {
         Path project = Files.createDirectories(temp.resolve("project"));

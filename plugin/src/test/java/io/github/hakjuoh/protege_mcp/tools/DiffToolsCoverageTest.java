@@ -83,10 +83,17 @@ class DiffToolsCoverageTest {
     private static CallToolResult callDiff(OWLModelManager mm, String leftRef, String rightRef,
             Set<OWLAxiom> preloadedRight, String rightLabel, boolean includeImports, boolean logicalOnly,
             int limit) throws Exception {
+        return callDiff(mm, leftRef, rightRef, preloadedRight, rightLabel, includeImports, logicalOnly,
+                limit, null);
+    }
+
+    private static CallToolResult callDiff(OWLModelManager mm, String leftRef, String rightRef,
+            Set<OWLAxiom> preloadedRight, String rightLabel, boolean includeImports, boolean logicalOnly,
+            int limit, java.util.List<String> unresolvedRightImports) throws Exception {
         Method m = priv("diff", OWLModelManager.class, String.class, String.class, Set.class,
-                String.class, boolean.class, boolean.class, int.class);
+                String.class, boolean.class, boolean.class, int.class, java.util.List.class);
         return (CallToolResult) m.invoke(null, mm, leftRef, rightRef, preloadedRight, rightLabel,
-                includeImports, logicalOnly, limit);
+                includeImports, logicalOnly, limit, unresolvedRightImports);
     }
 
     @SuppressWarnings("unchecked")
@@ -419,6 +426,29 @@ class DiffToolsCoverageTest {
         assertEquals(Boolean.FALSE, s.get("logical_only"), "logical_only flag echoed");
         assertEquals(1, onlyCount(s, "only_in_left"), "one axiom only in left");
         assertEquals(1, onlyCount(s, "only_in_right"), "one axiom only in right");
+    }
+
+    @Test
+    void diffMmSurfacesUnresolvedRightDocumentImportsWithACaveat() throws Exception {
+        OWLOntologyManager m = OWLManager.createOWLOntologyManager();
+        OWLDataFactory df = m.getOWLDataFactory();
+        OWLAxiom decl = df.getOWLDeclarationAxiom(cls(df, "A"));
+        OWLOntology left = ontologyWith(m, "http://example.org/left4", decl);
+        OWLModelManager mm = FakeModelManager.over(left);
+
+        Set<OWLAxiom> right = new LinkedHashSet<>(Arrays.asList(decl));
+        CallToolResult r = callDiff(mm, null, null, right, "right-doc", true, false, 50,
+                new java.util.ArrayList<>(Arrays.asList("urn:example:missing")));
+
+        assertFalse(r.isError());
+        Map<String, Object> s = structured(r);
+        assertEquals(Arrays.asList("urn:example:missing"),
+                s.get("right_document_unresolved_imports"),
+                "an unresolved right-document import must be visible on the verdict");
+        assertTrue(String.valueOf(s.get("caveat")).contains("truncated"),
+                "an include_imports diff over a truncated closure needs an explicit caveat");
+        assertEquals(Boolean.TRUE, s.get("identical"),
+                "the axiom verdict itself is unchanged by the caveat");
     }
 
     @Test

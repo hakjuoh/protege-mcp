@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -288,8 +289,8 @@ public final class OntologyDocumentTools {
             // priority, so version-controlled project resolution overrides stale interactive hints.
             addFolderCatalogMapper(manager, normalized, blocker);
             OWLOntology primary = manager.loadOntologyFromOntologyDocument(documentSource(normalized), config);
-            blocker.failIfBlocked(normalized);
             finishUnsupportedImports(primary, fallback, unresolvedImports, missingImports, normalized);
+            blocker.failIfBlocked(normalized, unresolvedImports);
             return new LoadedDocument(normalized, manager, primary,
                     manager.getOntologyDocumentIRI(primary), unresolvedImports,
                     resolvedImportEdges(manager), missingImports);
@@ -597,8 +598,8 @@ public final class OntologyDocumentTools {
             addFolderCatalogMapper(manager, normalized, blocker);
             OWLOntology sourceOntology = manager.loadOntologyFromOntologyDocument(
                     documentSource(normalized), config);
-            blocker.failIfBlocked(normalized);
             finishUnsupportedImports(sourceOntology, fallback, unresolvedImports, missingImports, normalized);
+            blocker.failIfBlocked(normalized, unresolvedImports);
             ImportTools.ImportReport imports = ImportTools.analyze(sourceOntology);
             return new LoadedOntology(
                     normalized,
@@ -627,6 +628,7 @@ public final class OntologyDocumentTools {
         private final Path placeholder;
         private final IRI placeholderIri;
         private final Map<String, String> blocked = new LinkedHashMap<>();
+        private String catalogRefusal;
         private final OWLOntologyIRIMapper mapper;
 
         private NetworkImportBlocker(OWLOntologyManager manager,
@@ -680,26 +682,87 @@ public final class OntologyDocumentTools {
             }
         }
 
-        void failIfBlocked(String source) {
-            if (blocked.isEmpty()) return;
-            Map.Entry<String, String> firstEntry = blocked.entrySet().iterator().next();
-            String first = firstEntry.getKey();
-            String reason = first.regionMatches(true, 0, "jar:", 0, 4)
-                    ? "nested jar: import sources are refused because they obscure the filesystem/host boundary"
-                    : firstEntry.getValue() != null
-                    ? firstEntry.getValue()
-                    : !rule.capabilityAllowed()
-                    ? "the authenticated principal lacks network:access"
-                    : !rule.allowed() ? "imports.network=deny"
-                    : "the host is outside network.allowed_hosts";
-            throw new ToolArgException("Could not load ontology document '" + source
-                    + "': remote import '" + first + "' was required, but "
-                    + reason + ". Provide a local workspace/catalog mapping or change the reviewed policy.");
+        void failIfBlocked(String source, Collection<String> unresolvedImports) {
+            if (!blocked.isEmpty()) {
+                Map.Entry<String, String> firstEntry = blocked.entrySet().iterator().next();
+                String first = firstEntry.getKey();
+                String reason = first.regionMatches(true, 0, "jar:", 0, 4)
+                        ? "nested jar: import sources are refused because they obscure the filesystem/host boundary"
+                        : firstEntry.getValue() != null
+                        ? firstEntry.getValue()
+                        : !rule.capabilityAllowed()
+                        ? "the authenticated principal lacks network:access"
+                        : !rule.allowed() ? "imports.network=deny"
+                        : "the host is outside network.allowed_hosts";
+                throw new ToolArgException("Could not load ontology document '" + source
+                        + "': remote import '" + first + "' was required, but "
+                        + reason + ". Provide a local workspace/catalog mapping or change the reviewed policy.");
+            }
+            if (catalogRefusal == null) {
+                return;
+            }
+            if (!unresolvedImports.isEmpty()) {
+                String first = unresolvedImports.iterator().next();
+                throw new ToolArgException("Could not load ontology document '" + source
+                        + "': required import '" + first + "' remained unresolved because "
+                        + catalogRefusal + ".");
+            }
+            // When installed, the folder catalog is the highest-priority mapper — the project source
+            // of truth that overrides workspace hints and direct dereference. So an import this load
+            // resolved through ANY other channel (a workspace mapping, a direct file read, a
+            // permitted network fetch) may have been pinned to different reviewed content by the
+            // refused catalog. Succeeding would silently substitute that channel for the catalog;
+            // only a load that resolved no import at all can safely ignore the refusal.
+            String resolvedWithoutCatalog = firstResolvedImport();
+            if (resolvedWithoutCatalog != null) {
+                throw new ToolArgException("Could not load ontology document '" + source
+                        + "': import '" + resolvedWithoutCatalog
+                        + "' had to resolve without the folder catalog, which could pin it to "
+                        + "different reviewed content, because " + catalogRefusal + ".");
+            }
+        }
+
+        /**
+         * The lexicographically first import IRI that actually resolved during this load, or null
+         * when the closure needed no import resolution. Placeholder ontologies are removed before
+         * {@link #failIfBlocked} runs, so a fallback-satisfied IRI never counts as resolved here.
+         */
+        private String firstResolvedImport() {
+            String first = null;
+            for (OWLOntology ontology : manager.getOntologies()) {
+                for (OWLImportsDeclaration declaration : ontology.getImportsDeclarations()) {
+                    OWLOntology target = manager.getImportedOntology(declaration);
+                    if (target == null || target.equals(ontology)) {
+                        // Unresolved (reported separately), or a vacuous self-import: OWLAPI links
+                        // an already-registered ontology ID before consulting any IRI mapper, so
+                        // the refused catalog could not have redirected this edge, and the loop
+                        // adds no content beyond the document the caller explicitly targeted.
+                        continue;
+                    }
+                    String iri = declaration.getIRI().toString();
+                    if (first == null || iri.compareTo(first) < 0) {
+                        first = iri;
+                    }
+                }
+            }
+            return first;
         }
 
         /** Record a blocked resolution so {@link #failIfBlocked} can explain a failed load. */
         void recordBlocked(String logical, String reason) {
             blocked.putIfAbsent(logical, reason);
+        }
+
+        /**
+         * Remember that the sibling catalog could not be installed safely. Its mere presence is not
+         * an error: the load fails only when the closure needed import resolution at all — an import
+         * left unresolved may have needed the catalog, and an import resolved through another channel
+         * may have been pinned differently by it. A document that resolves no import loads normally.
+         */
+        void recordCatalogRefusal(String reason) {
+            if (catalogRefusal == null) {
+                catalogRefusal = reason;
+            }
         }
 
         /**
@@ -789,7 +852,7 @@ public final class OntologyDocumentTools {
      * IRI is restored to the caller's unresolved-import list, so warn/silent/error retain their documented
      * semantics and no placeholder can enter the Protégé workspace.
      */
-    private static final class UnsupportedImportFallback implements AutoCloseable {
+    static final class UnsupportedImportFallback implements AutoCloseable {
         private final OWLOntologyManager manager;
         private final Path placeholder;
         private final IRI placeholderIri;
@@ -865,8 +928,8 @@ public final class OntologyDocumentTools {
         }
     }
 
-    private static void finishUnsupportedImports(OWLOntology primary,
-            UnsupportedImportFallback fallback, List<String> unresolvedImports,
+    static void finishUnsupportedImports(OWLOntology primary,
+            UnsupportedImportFallback fallback, Collection<String> unresolvedImports,
             MissingImportsMode mode, String normalized) {
         fallback.removePlaceholderOntology();
         // Streaming parsers can encounter a URN before assigning the importing ontology's ID, not
@@ -1117,13 +1180,13 @@ public final class OntologyDocumentTools {
         if (blocker.networkRestricted() || blocker.filesystemConfined()) {
             String unsafe = unsafeFolderCatalog(catalog, blocker);
             if (unsafe != null) {
-                blocker.recordBlocked("catalog:" + unsafe,
+                blocker.recordCatalogRefusal(
                         "the folder catalog is not safe to resolve offline under a confining project "
                                 + "policy (" + unsafe + "): a symlinked/out-of-project catalog, a DOCTYPE, "
                                 + "or catalog delegation (nextCatalog/delegateURI) is refused so nothing "
                                 + "can be read out of scope or dereferenced over the network before "
                                 + "authorization. Inline the mappings into catalog-v001.xml to resolve "
-                                + "them offline.");
+                                + "them offline");
                 return;
             }
         }

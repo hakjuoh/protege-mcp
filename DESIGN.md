@@ -291,6 +291,9 @@ window close → McpServerHook.dispose() → unregister + stop off-EDT (bounded 
 
 The tool layer is `ToolCatalog` + `ToolRegistry` + `ToolSpecs` + `ToolContext` + the per-category
 `*Tools` providers (`ReadTools` / `WriteTools` / `ReasonerTools` / …, one `register` contribution each).
+Built-in tool and prompt metadata (names, descriptions, input schemas, prompt arguments) lives in the
+validated `mcp-catalog.json` resource resolved by `catalog/McpCatalog`; providers register only a name
+plus its handler, and `ToolRegistry` wraps every handler in the shared exception-to-MCP-error guard.
 
 ---
 
@@ -397,7 +400,7 @@ reusing the shipping primitives (the single-undo transactional apply, the embedd
   never traverse.
 - **Project-policy QC (0.6.0).** `ProjectPolicyLoader` performs strict YAML/schema/semantic validation,
   deterministic defaulting/digesting, and real-path confinement before `ProjectQcTools` constructs a
-  `QcSuiteTools.RunConfig`. One EDT phase captures the semantic fingerprint, loaded closure, renderings,
+  `QcRunConfig`. One EDT phase captures the semantic fingerprint, loaded closure, renderings,
   prefixes, CQ inputs, and the selected reasoner's factory/exact plugin configuration/recommended buffering;
   heavy execution continues off-EDT. One private reasoner over the flattened no-network closure supplies both
   the logical gate and inferred SPARQL materialization, so every completed stage names the same snapshot.
@@ -1061,7 +1064,8 @@ model alias already ships, and long-context compaction is owned by the CLI's age
 | `oauth/OAuthMetadataServlet` | RFC 9728 + RFC 8414 discovery documents |
 | `oauth/OAuthStore` | clients/auth-codes/access/refresh tokens; persisted, size-bounded |
 | `oauth/OAuthSupport`, `oauth/PkceUtil` | shared helpers; PKCE S256 + constant-time compare |
-| `tools/ToolCatalog`, `ToolSpecs`, `ToolContext` | tool aggregation, spec factory, handler context |
+| `tools/ToolCatalog`, `ToolRegistry`, `ToolSpecs`, `ToolContext` | tool aggregation, guarded registration sink, spec factory, handler context |
+| `catalog/McpCatalog` | validated `mcp-catalog.json` resource: every built-in tool/prompt's name, description, input schema, and prompt arguments |
 | `tools/ReadTools`, `WriteTools`, `EntityRefactorTools`, `ReasonerTools`, `Axioms` | the §5 tools + structured-axiom support |
 | `tools/Tools`, `tools/ToolArgException` | shared OWLAPI/finder/render helpers; an invalid-argument signal turned into a non-fatal MCP error result |
 | `prompts/PromptCatalog`, `PromptSpecs`, `PromptProvider`, `PromptRegistry`, `PromptTemplate` | prompt aggregation, spec factory, provider SAM, fluent sink, render SAM (mirrors the tools registry pattern) |

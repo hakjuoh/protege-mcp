@@ -41,6 +41,11 @@ public final class ToolRegistry {
      */
     public ToolRegistry tool(String name, String description, Map<String, Object> inputSchema,
             BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
+        if (handler == null) {
+            // The guard wrapper would otherwise hide a null handler from the SDK builder's
+            // validation, deferring the failure to the first call instead of registration.
+            throw new IllegalArgumentException("Tool '" + name + "' registered without a handler.");
+        }
         BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> guarded =
                 (exchange, request) -> Tools.guard(() -> handler.apply(exchange, request));
         specs.add(ToolSpecs.of(name, description, inputSchema, guarded));

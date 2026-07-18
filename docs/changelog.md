@@ -113,6 +113,9 @@ filesystem/network, locked-import, module-governance, and legacy verified-apply 
   so automation does not undo a good batch, while `verify=rollback` still fails closed on the same
   unverifiable gate. The baseline re-run is bracketed against concurrent workspace edits so a
   mid-attribution GUI change is flagged (`concurrent_change`) rather than misattributed.
+- `diff_ontologies` with a `right_document` reports `right_document_unresolved_imports` (plus an
+  explicit truncation caveat when `include_imports=true`), mirroring `semantic_diff`, so an
+  unloadable import can no longer silently truncate the right closure and flip the verdict.
 - Module ownership attribution now covers SWRL rule-head named-individual arguments, including
   `SameIndividual`/`DifferentIndividuals` head atoms, so a foreign module cannot assert identity on
   another module's individual without a violation.
@@ -127,11 +130,15 @@ filesystem/network, locked-import, module-governance, and legacy verified-apply 
   external DTD/entities during resolution (a pre-authorization SSRF, and — with a confined filesystem —
   an arbitrary out-of-project/XXE file read), before any mapping is authorized. The folder-catalog
   resolver is therefore installed only for a catalog that is in-project, is not a symlink, parses
-  cleanly, and contains no DOCTYPE and no delegation element; otherwise it is refused with a clear
-  reason (inline the mappings into `catalog-v001.xml` to resolve them offline). A delegation-free
-  catalog's `<uri>`/`<rewrite*>` targets are still resolved locally and re-gated by the existing
-  mapping authorization. When both axes are fully open (or no policy is loaded), the full catalog
-  resolver is unchanged.
+  cleanly, and contains no DOCTYPE and no delegation element; otherwise the resolver is not installed,
+  and a load whose closure needs any import resolution fails with a clear reason (inline the mappings
+  into `catalog-v001.xml` to resolve them offline) — whether an import was left unresolved or had to
+  resolve through a lower-priority channel (a workspace mapping, a direct file read, or a permitted
+  network fetch) that the refused catalog could pin to different reviewed content. An unsafe sibling
+  catalog does not block a document that needs no external import resolution (a vacuous self-import
+  stays permitted: OWLAPI links it in memory before any mapper could run). A delegation-free catalog's `<uri>`/`<rewrite*>` targets
+  are still resolved locally and re-gated by the existing mapping authorization. When both axes are
+  fully open (or no policy is loaded), the full catalog resolver is unchanged.
 - `apply_changes verify=rollback` now attributes non-reasoner stages (profile, structural, governance)
   by diffing the complete stable gating-finding identity set, so a batch that removes standing
   violations while introducing a fresh one — lowering the total count — is still prevented, while a

@@ -69,7 +69,8 @@ live in the core module under `core/src/main/java/`:
 | --- | --- |
 | `server` | The embedded HTTP MCP server: lifecycle (`McpServerManager`, `McpServerController`), Jetty host (`EmbeddedHttpServer`), auth (`AccessTokenFilter`), and `OntologyAccess` (marshals tool work onto the EDT). |
 | `oauth` | The embedded OAuth authorization server (dynamic client registration, PKCE, consent, token store). |
-| `tools` | The tool implementations. Each `*Tools.java` builds a list of `SyncToolSpecification`s; `ToolCatalog` aggregates them all. |
+| `tools` | The tool implementations. Each `*Tools.java` registers its handlers into the shared `ToolRegistry`; `ToolCatalog` aggregates all providers. |
+| `catalog` | `McpCatalog` — loads and fail-fast-validates the `mcp-catalog.json` resource holding every built-in tool/prompt's name, description, input schema, and prompt arguments. |
 | `prompts` | The guided MCP prompts. `Prompts.java` registers the templates; `PromptCatalog` aggregates the providers (mirrors the `tools` registry pattern). |
 | `contracts` (core module) | Versioned project/revision/finding/stage/gate records; matching JSON Schemas are packaged under `core/src/main/resources/schema`. |
 | `core` module | Compiles Protégé-free contracts, policy loading, fingerprints, and semantic diff for reuse by adapters; sources under `core/src/main/java/`. |
@@ -83,20 +84,30 @@ The plugin's extension points (views, tabs, preference panels, the editor-kit ho
 
 ## How to add a tool
 
-1. **Write the spec.** In the appropriate `*Tools.java` (or a new one), build a `SyncToolSpecification`
-   with `ToolSpecs.of(name, description, inputSchema, handler)`:
+1. **Declare the metadata.** Add an entry (`name`, `description`, `input_schema`) to the shared
+   catalog resource
+   [`mcp-catalog.json`](https://github.com/hakjuoh/protege-mcp/blob/main/plugin/src/main/resources/io/github/hakjuoh/protege_mcp/catalog/mcp-catalog.json):
    - `name` — a stable, snake_case tool name.
    - `description` — what it does and when to use it (LLM clients rely on this).
-   - `inputSchema` — a JSON Schema `Map` (use the `Tools.schema()` / property helpers).
-   - `handler` — read args with `Tools.args(req)`, do the work, and return a structured result via
-     `Tools.json().put(...).result()`. For **reads**, run through `ctx.access().compute(...)`; for
-     **writes**, gate with the read-only / confirm-write check and apply via `applyChanges` so the edit
-     is GUI-visible and undoable.
-2. **Register it.** Make sure your `*Tools.specs(ctx)` is added in
-   [`ToolCatalog.buildAll`](https://github.com/hakjuoh/protege-mcp/blob/main/plugin/src/main/java/io/github/hakjuoh/protege_mcp/tools/ToolCatalog.java).
-3. **Test it.** Add a unit test for the core, and extend `ToolPipelineTest` if it participates in the
+   - `input_schema` — a JSON Schema object. The catalog is validated fail-fast (unique names,
+     well-formed schemas), and a handler registered under a name with no catalog entry fails server
+     assembly with a clear error.
+2. **Write the handler.** In the appropriate `*Tools.java` (or a new one), register it inside
+   `register(ToolRegistry, ToolContext)` with `registry.tool("your_tool_name", handler)`: read args
+   with `Tools.args(req)`, do the work, and return a structured result via
+   `Tools.json().put(...).result()`. For **reads**, run through `ctx.access().compute(...)`; for
+   **writes**, gate with the read-only / confirm-write check and apply via `applyChanges` so the edit
+   is GUI-visible and undoable. Thrown exceptions cross `ToolRegistry`'s shared guard and become
+   structured MCP errors — do not add a per-tool guard. (The four-argument
+   `registry.tool(name, description, inputSchema, handler)` overload serves extensions and focused
+   tests whose metadata is not in the built-in catalog; it is guarded the same way. `ToolSpecs.of`
+   is the raw spec factory with **no** error boundary — never register with it directly.)
+3. **Register the provider.** A new `*Tools` class must add its `NewTools::register` reference to the
+   `PROVIDERS` list in
+   [`ToolCatalog`](https://github.com/hakjuoh/protege-mcp/blob/main/plugin/src/main/java/io/github/hakjuoh/protege_mcp/tools/ToolCatalog.java).
+4. **Test it.** Add a unit test for the core, and extend `ToolPipelineTest` if it participates in the
    end-to-end flow.
-4. **Document it.** Add the tool to the matching page under
+5. **Document it.** Add the tool to the matching page under
    [Tools](tools/) (arguments + returns), and bump the tool count in the README.
 
 {: .tip }
