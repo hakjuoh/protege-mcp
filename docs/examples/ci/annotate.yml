@@ -1,0 +1,34 @@
+# Example CONSUMER workflow: the TRUSTED annotation half of the fork-safe pipeline.
+# Copy this to .github/workflows/ontology-ci-annotate.yml in YOUR ontology repository, alongside the
+# general-owl.yml / obo.yml PR workflow.
+#
+# It triggers on `workflow_run` (the "Ontology CI" validation run completing). GitHub always runs a
+# workflow_run workflow from your repository's DEFAULT branch, so a fork PR can never modify this
+# trusted code — this is the ONLY workflow that holds pull-requests: write. It downloads the
+# untrusted run's artifact as data, verifies it (integrity + an exact filename allowlist), posts the
+# PR comment, and turns red if the gate failed. It never executes anything the artifact contains.
+
+name: Ontology CI annotate
+
+on:
+  workflow_run:
+    # Must match the `name:` of the PR (validation) workflow above.
+    workflows: [Ontology CI]
+    types: [completed]
+
+jobs:
+  annotate:
+    # Grant exactly the scopes the reusable annotator needs (a reusable workflow cannot exceed these).
+    # No security-events: write — the annotator deliberately has no code-scanning upload path, so an
+    # artifact-supplied SARIF can never reach base-repo code scanning.
+    permissions:
+      contents: read
+      actions: read          # download the artifact from the triggering run
+      pull-requests: write   # post/update the PR comment
+    # Pin by full commit SHA in production: v-tags in hakjuoh/protege-mcp are occasionally re-cut.
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-annotate.yml@v0.7.0
+    with:
+      run_id: ${{ github.event.workflow_run.id }}
+      producer_event: ${{ github.event.workflow_run.event }}
+      producer_conclusion: ${{ github.event.workflow_run.conclusion }}
+      expected_workflow: Ontology CI

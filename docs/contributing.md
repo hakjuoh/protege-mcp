@@ -59,6 +59,11 @@ transport, EDT marshalling, and a live reasoner — is covered by a manual
 on JDK 17 (Temurin) for every push and pull request to `main`. Keep it green: a PR that fails to build
 or test will not be merged.
 
+Separately, this project **publishes** a reusable, fork-safe ontology-CI workflow
+(`.github/workflows/ontology-ci.yml` + `ontology-annotate.yml`) for downstream ontology projects to
+gate their own PRs with the headless CLI. It is not part of this repo's own build; see the
+[Ontology CI guide](ci.html).
+
 ## Project layout
 
 Runtime plugin sources live under `plugin/src/main/java/io/github/hakjuoh/protege_mcp/`; the Maven reactor has

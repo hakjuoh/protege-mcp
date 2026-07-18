@@ -1,0 +1,226 @@
+# Reusable ontology-CI gate for CONSUMER projects (not this repo's own build — that is ci.yml).
+#
+# What it gates (be honest about the boundary):
+#   * POLICY VALIDATION — `validate --project <policy> --no-network`: the project policy is
+#     well-formed, its references resolve, and its local assets exist.
+#   * ASSERTED SEMANTIC DIFF — `diff --left <baseline> --right <ontology> --no-network`: the
+#     asserted-only semantic change between the base-branch ontology and the PR's ontology
+#     (imports are never dereferenced; a private empty placeholder satisfies each one).
+#
+# What it does NOT gate: the reasoner-/profile-/governance-/invariants-/CQ-/SHACL-dependent
+# project QC gate. The headless CLI cannot run those stages (no bundled reasoner); they need the
+# in-Protégé `run_project_qc` tool or a future bundled-reasoner headless runner. This workflow is a
+# policy-validation + asserted-diff gate, never a full ontology QC gate.
+#
+# Fork-safe by construction (PLAN §10.4): this workflow is the UNTRUSTED half. A consumer calls it
+# from a `pull_request`-triggered caller (never `pull_request_target`), so a fork PR runs it with a
+# read-only token and no secrets. It grants only `contents: read`, holds no PR-write or
+# security-events scope, and writes its verdict ONLY to an uploaded artifact. The TRUSTED half
+# (ontology-annotate.yml, run from the consumer's default branch via `workflow_run`) reads that
+# artifact as data and posts the annotation. The gate flags here are fixed (`--no-network`, no
+# external paths, no credentials), so a PR that edits its own policy cannot relax how it is judged.
+#
+# Requires protege-mcp-cli 0.7.0+ (the first release that ships `validate --no-network` and
+# `diff --check`). Tags in hakjuoh/protege-mcp are occasionally re-cut (moved), so `cli_version`
+# pins a release and consumers should pin THIS workflow itself by full commit SHA (see docs/ci.md).
+
+name: Ontology CI (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: 'Path to the project policy (.protege-mcp/project.yaml).'
+        type: string
+        default: '.protege-mcp/project.yaml'
+      ontology:
+        description: 'Path to the candidate ontology document to diff. Empty disables the diff.'
+        type: string
+        default: ''
+      diff_check:
+        description: >-
+          Turn the asserted diff into an identity gate (`diff --check`, exit 1 on ANY difference).
+          Leave false for a PR that intentionally edits the ontology; enable it only for a
+          reproducibility / no-drift check where the two inputs are expected to be identical.
+        type: boolean
+        default: false
+      cli_version:
+        description: 'protege-mcp-cli release to download (0.7.0+). Pin to a release you reviewed.'
+        type: string
+        default: '0.7.0'
+      java_version:
+        description: 'Temurin JDK version used to run the CLI.'
+        type: string
+        default: '17'
+      runner:
+        description: 'Runner label for the validation job.'
+        type: string
+        default: 'ubuntu-latest'
+      artifact_name:
+        description: 'Name of the results artifact the trusted annotator consumes.'
+        type: string
+        default: 'ontology-ci-results'
+
+# Least privilege: the untrusted validation job only needs to read the repository. It never gets
+# pull-requests: write or security-events: write — those live solely in the trusted annotator.
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ${{ inputs.runner }}
+    permissions:
+      contents: read
+    steps:
+      # PR head is the candidate under review. actions/checkout defaults to the pull_request merge
+      # ref, so this is the untrusted proposed code — treated as data only.
+      - name: Check out the candidate (PR head)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # The BASE branch establishes the diff baseline, so the PR cannot rewrite what it is compared
+      # against. base.sha is an immutable commit id (safe to pass as a checkout ref input).
+      - name: Check out the base-branch baseline
+        if: ${{ github.event_name == 'pull_request' && inputs.ontology != '' }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: __baseline__
+
+      - name: Set up Temurin JDK
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          java-version: ${{ inputs.java_version }}
+          distribution: temurin
+
+      # Download the published CLI and VERIFY it before running anything. The release publishes a
+      # bare-basename `.sha256` sidecar, so `sha256sum -c` verifies the jar in the working directory.
+      # --retry-all-errors rides the brief 404 window a release re-cut opens (delete+recreate).
+      - name: Download and verify the protege-mcp CLI
+        id: cli
+        env:
+          CLI_VERSION: ${{ inputs.cli_version }}
+        run: |
+          base="https://github.com/hakjuoh/protege-mcp/releases/download/v${CLI_VERSION}"
+          jar="protege-mcp-cli-${CLI_VERSION}-all.jar"
+          curl --fail --location --retry 3 --retry-all-errors --max-time 180 -o "$jar" "${base}/${jar}"
+          curl --fail --location --retry 3 --retry-all-errors --max-time 60 -o "${jar}.sha256" "${base}/${jar}.sha256"
+          sha256sum -c "${jar}.sha256"
+          java -jar "$jar" --version
+          echo "jar=${GITHUB_WORKSPACE}/${jar}" >> "$GITHUB_OUTPUT"
+
+      # POLICY GATE. --no-network is fixed here regardless of the policy contents, so a PR that sets
+      # network:allow or allow_external_paths:true in its own policy cannot loosen the gate judging
+      # it. --format json is written to the artifact for the trusted annotator to read as data.
+      - name: Validate project policy
+        id: policy
+        env:
+          JAR: ${{ steps.cli.outputs.jar }}
+          PROJECT: ${{ inputs.project }}
+          RESULTS: ${{ runner.temp }}/results
+        run: |
+          # Results live in a FRESH directory OUTSIDE the fork checkout ($RUNNER_TEMP), so a PR that
+          # commits tracked files under results/ can never mix into the artifact the trusted job reads.
+          rm -rf "$RESULTS"
+          mkdir -p "$RESULTS"
+          set +e
+          java -jar "$JAR" validate --project "$PROJECT" --format json --no-network \
+            > "$RESULTS/policy-validate.json" 2> "$RESULTS/policy-validate.err"
+          code=$?
+          set -e
+          printf '%s' "$code" > "$RESULTS/policy-validate.exit"
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "Policy validation exit: $code"
+          cat "$RESULTS/policy-validate.json" || true
+          cat "$RESULTS/policy-validate.err" || true
+
+      # ASSERTED-DIFF GATE / REPORT. Report-only by default (exit 0); --check makes it an identity
+      # gate. Exit 3 (a document that could not be loaded) always fails. A missing baseline file
+      # (new ontology) is recorded, not failed.
+      - name: Asserted semantic diff against the baseline
+        id: diff
+        if: ${{ github.event_name == 'pull_request' && inputs.ontology != '' }}
+        env:
+          JAR: ${{ steps.cli.outputs.jar }}
+          LEFT: __baseline__/${{ inputs.ontology }}
+          RIGHT: ${{ inputs.ontology }}
+          CHECK: ${{ inputs.diff_check }}
+          RESULTS: ${{ runner.temp }}/results
+        run: |
+          mkdir -p "$RESULTS"
+          if [ ! -f "$LEFT" ]; then
+            printf '%s' "baseline-absent" > "$RESULTS/diff.status"
+            echo "No baseline ontology at $LEFT (new file); skipping the asserted diff."
+            exit 0
+          fi
+          args=(diff --left "$LEFT" --right "$RIGHT" --no-network)
+          if [ "$CHECK" = "true" ]; then args+=(--check); fi
+          set +e
+          java -jar "$JAR" "${args[@]}" > "$RESULTS/diff.json" 2> "$RESULTS/diff.err"
+          code=$?
+          set -e
+          printf '%s' "$code" > "$RESULTS/diff.exit"
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "Diff exit: $code"
+
+      # Provenance + integrity manifest so the trusted annotator can verify producer/run/digest/size
+      # before it trusts anything. Values written here are structurally constrained (ids, a hex sha,
+      # an integer PR number, workflow author-controlled inputs) — never free-form event text.
+      - name: Assemble result metadata
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CLI_VERSION: ${{ inputs.cli_version }}
+          WORKFLOW: ${{ github.workflow }}
+          RESULTS: ${{ runner.temp }}/results
+        run: |
+          mkdir -p "$RESULTS"
+          cd "$RESULTS"
+          printf '%s' "${PR_NUMBER:-}" > pr-number.txt
+          jq -n \
+            --arg run_id "$RUN_ID" \
+            --arg run_attempt "$RUN_ATTEMPT" \
+            --arg workflow "$WORKFLOW" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg cli_version "$CLI_VERSION" \
+            '{producer_run_id:$run_id, producer_run_attempt:$run_attempt, producer_workflow:$workflow, head_sha:$head_sha, cli_version:$cli_version, scope:"policy_validation+asserted_diff"}' \
+            > meta.json
+          # Bare-basename checksums so the annotator verifies with `sha256sum -c` after download.
+          # Write via a temp file outside this directory so find never enumerates the file being
+          # written (avoids a read/write-same-file pipeline).
+          find . -maxdepth 1 -type f ! -name manifest.sha256 -printf '%P\0' \
+            | sort -z | xargs -0 sha256sum > "$RUNNER_TEMP/manifest.sha256"
+          mv "$RUNNER_TEMP/manifest.sha256" manifest.sha256
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: error
+
+      # The untrusted job's own conclusion IS the PR check status for the gate. Fail after uploading
+      # so the annotator can still report the failure. Diff exit 1 only occurs under --check.
+      - name: Enforce the gate
+        env:
+          POLICY_EXIT: ${{ steps.policy.outputs.exit }}
+          DIFF_EXIT: ${{ steps.diff.outputs.exit }}
+        run: |
+          fail=0
+          if [ "${POLICY_EXIT:-2}" != "0" ]; then
+            echo "::error::Policy gate failed (exit ${POLICY_EXIT:-2})."
+            fail=1
+          fi
+          # Exhaustive and fail-closed: ANY non-zero diff exit fails the gate (never fall through open).
+          if [ -n "${DIFF_EXIT:-}" ] && [ "$DIFF_EXIT" != "0" ]; then
+            case "$DIFF_EXIT" in
+              1) echo "::error::Asserted-diff identity gate failed (ontologies differ)." ;;
+              2) echo "::error::Asserted diff hit a configuration/usage error (exit 2)." ;;
+              3) echo "::error::A diff input could not be loaded (exit 3)." ;;
+              *) echo "::error::Asserted diff failed (exit ${DIFF_EXIT})." ;;
+            esac
+            fail=1
+          fi
+          exit "$fail"

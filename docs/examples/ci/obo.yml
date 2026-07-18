@@ -1,0 +1,31 @@
+# Example CONSUMER workflow: gate an OBO / ROBOT-compatible ontology project on every pull request.
+# Copy this to .github/workflows/ontology-ci.yml in YOUR ontology repository.
+#
+# Pairs with docs/examples/project-policy/obo.yaml (OBO IRIs, IAO definitions, ELK/EL profile). Like
+# the general-OWL example it is the UNTRUSTED half — read-only, `pull_request` (never
+# pull_request_target) — and calls the reusable validation workflow.
+#
+# HONEST SCOPE: this gate validates the project policy and an asserted semantic diff only. It does NOT
+# run the reasoner (ELK), OWL 2 EL profile conformance, or the governance/invariants/CQ project-QC
+# stages — the headless CLI bundles no reasoner. In an OBO/ROBOT setup, complement this workflow with
+# a ROBOT job (e.g. `robot reason`, `robot report`, `robot verify` over your CQ SPARQL) for the
+# reasoner-dependent QC, and keep this workflow for the policy + asserted-diff gate.
+
+name: Ontology CI
+
+on:
+  pull_request:
+
+jobs:
+  ontology-ci:
+    permissions:
+      contents: read
+    # Pin by full commit SHA in production: v-tags in hakjuoh/protege-mcp are occasionally re-cut
+    # (moved), so `@v0.7.0` is NOT an immutable reference.
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.7.0
+    with:
+      project: .protege-mcp/project.yaml
+      # The OBO edit file (matches root_artifact in the paired obo.yaml policy).
+      ontology: example-edit.owl
+      cli_version: '0.7.0'
+      diff_check: false

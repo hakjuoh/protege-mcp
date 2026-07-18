@@ -1,0 +1,34 @@
+# Example CONSUMER workflow: gate a general OWL ontology project on every pull request.
+# Copy this to .github/workflows/ontology-ci.yml in YOUR ontology repository.
+#
+# Pairs with docs/examples/project-policy/general-owl.yaml (modules, labels/definitions, IRI policy).
+# This is the UNTRUSTED half: it runs on `pull_request` (never pull_request_target) so a fork PR gets
+# a read-only token and no secrets. It calls the reusable validation workflow, which validates the
+# project policy and runs an asserted semantic diff, then uploads the verdict as an artifact. The
+# trusted annotate.yml wrapper posts the PR comment afterwards.
+#
+# This gate validates the project policy and an asserted diff only — it does NOT run the reasoner /
+# profile / governance / invariants / CQ / SHACL project-QC stages (the headless CLI has no bundled
+# reasoner). Complement it with an in-Protégé `run_project_qc` gate, or ROBOT `reason`/`report`, for
+# the reasoner-dependent checks.
+
+name: Ontology CI
+
+on:
+  pull_request:
+
+jobs:
+  ontology-ci:
+    # Least privilege passed to the reusable workflow: read the repo, nothing else.
+    permissions:
+      contents: read
+    # Pin by full commit SHA in production: v-tags in hakjuoh/protege-mcp are occasionally re-cut
+    # (moved), so `@v0.7.0` is NOT an immutable reference. `@v0.7.0` is shown here for readability.
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.7.0
+    with:
+      project: .protege-mcp/project.yaml
+      ontology: ontology.ttl
+      # protege-mcp-cli 0.7.0+ is required (first release with `validate --no-network`/`diff --check`).
+      cli_version: '0.7.0'
+      # Report-only diff (exit 0 on differences); the PR is expected to change the ontology.
+      diff_check: false

@@ -1,0 +1,232 @@
+# TRUSTED annotation half of the fork-safe ontology-CI pipeline (PLAN §10.4).
+#
+# A consumer calls this from a `workflow_run`-triggered wrapper. GitHub always runs a workflow_run
+# workflow from the repository's DEFAULT branch, so a fork PR can never modify this trusted code, and
+# it is the only place PR-write scope lives. It downloads the untrusted validation run's artifact AS
+# DATA, verifies producer / run-id / digest / size AND an exact filename allowlist before trusting a
+# single byte, then posts a PR comment and propagates the gate verdict to this check's conclusion. It
+# NEVER executes any string or path taken from the artifact.
+#
+# Honesty boundary: the comment reports the POLICY-VALIDATION verdict and the ASSERTED-DIFF result
+# only. It does not (and must not) claim a reasoner/profile/governance/invariants/CQ/SHACL QC pass.
+# There is deliberately NO SARIF/code-scanning upload here: the headless CLI emits no SARIF, so
+# uploading an artifact-supplied SARIF would poison base-repo code scanning with untrusted fork input.
+# SARIF code-scanning arrives only when a future TRUSTED in-pipeline step (a bundled-reasoner headless
+# QC runner) produces it directly — never from a downloaded artifact.
+
+name: Ontology CI annotate (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      run_id:
+        description: 'ID of the untrusted validation run (github.event.workflow_run.id).'
+        type: string
+        required: true
+      producer_event:
+        description: 'Event that triggered the validation run (github.event.workflow_run.event).'
+        type: string
+        default: ''
+      producer_conclusion:
+        description: 'Conclusion of the validation run (success/failure/...).'
+        type: string
+        default: ''
+      expected_workflow:
+        description: 'Optional producer workflow name to require in the artifact metadata.'
+        type: string
+        default: ''
+      artifact_name:
+        description: 'Name of the results artifact to download.'
+        type: string
+        default: 'ontology-ci-results'
+      max_artifact_bytes:
+        description: 'Reject an artifact larger than this many bytes (defense against a hostile blob).'
+        type: number
+        default: 5242880
+
+# Declared here to document intent; the effective token scope is whatever the CALLER grants (a
+# reusable workflow cannot exceed its caller). The example wrapper grants exactly these. No
+# security-events: write — this job intentionally has no code-scanning upload path.
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  annotate:
+    # Only annotate PR-produced runs. A push/other producer has no PR to comment on.
+    if: ${{ inputs.producer_event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      # Download by run-id from the SAME repository (fork PRs run in the base repo's Actions), so the
+      # artifact is our own run's output, not fork-controlled infrastructure.
+      - name: Download the validation artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.artifact_name }}
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: incoming
+
+      # Verify BEFORE trusting: total size cap, checksum manifest, an integer PR number, and that the
+      # metadata's producer run-id matches the run that triggered us. Any failure aborts.
+      - name: Verify artifact integrity and provenance
+        id: verify
+        env:
+          MAX_BYTES: ${{ inputs.max_artifact_bytes }}
+          EXPECTED_RUN_ID: ${{ inputs.run_id }}
+          EXPECTED_WORKFLOW: ${{ inputs.expected_workflow }}
+        run: |
+          cd incoming
+          # ALLOWLIST FIRST, fail-closed: the artifact may contain ONLY these exact basenames. A fork
+          # PR that smuggled an extra file (e.g. a planted results.sarif or a diff.json when the diff
+          # step was skipped) is rejected here before anything downstream can read it. `sha256sum -c`
+          # only checks files LISTED in the manifest, so an unlisted extra would otherwise slip past.
+          while IFS= read -r -d '' f; do
+            case "$f" in
+              policy-validate.json|policy-validate.err|policy-validate.exit) : ;;
+              diff.json|diff.err|diff.exit|diff.status) : ;;
+              meta.json|pr-number.txt|manifest.sha256) : ;;
+              *) echo "::error::Unexpected file in artifact: ${f}"; exit 1 ;;
+            esac
+          done < <(find . -mindepth 1 -printf '%P\0')
+          total="$(du -sb . | cut -f1)"
+          if [ "$total" -gt "$MAX_BYTES" ]; then
+            echo "::error::Artifact is ${total} bytes, over the ${MAX_BYTES}-byte cap."
+            exit 1
+          fi
+          test -f manifest.sha256
+          sha256sum -c manifest.sha256
+          pr="$(cat pr-number.txt)"
+          if ! printf '%s' "$pr" | grep -Eq '^[0-9]+$'; then
+            echo "::error::pr-number.txt is not an integer."
+            exit 1
+          fi
+          meta_run_id="$(jq -r '.producer_run_id // empty' meta.json)"
+          if [ "$meta_run_id" != "$EXPECTED_RUN_ID" ]; then
+            echo "::error::meta.json run id ($meta_run_id) does not match the triggering run ($EXPECTED_RUN_ID)."
+            exit 1
+          fi
+          if [ -n "$EXPECTED_WORKFLOW" ]; then
+            meta_wf="$(jq -r '.producer_workflow // empty' meta.json)"
+            if [ "$meta_wf" != "$EXPECTED_WORKFLOW" ]; then
+              echo "::error::meta.json producer workflow ($meta_wf) does not match expected ($EXPECTED_WORKFLOW)."
+              exit 1
+            fi
+          fi
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+
+      # Build the comment purely as DATA with jq (a data processor — it never evaluates its input as
+      # code). The resulting markdown is only ever posted as a PR comment body, never fed to a shell
+      # or an action input that could evaluate it.
+      - name: Build the annotation comment
+        env:
+          PRODUCER_CONCLUSION: ${{ inputs.producer_conclusion }}
+        run: |
+          cd incoming
+          pol_exit="$(cat policy-validate.exit 2>/dev/null || echo '?')"
+          valid="$(jq -r 'try (.valid|tostring) catch "unknown"' policy-validate.json 2>/dev/null || echo 'unknown')"
+          digest="$(jq -r 'try (.policy_digest // "n/a") catch "n/a"' policy-validate.json 2>/dev/null || echo 'n/a')"
+          errcount="$(jq -r 'try ((.errors // []) | length) catch 0' policy-validate.json 2>/dev/null || echo 0)"
+          warncount="$(jq -r 'try ((.warnings // []) | length) catch 0' policy-validate.json 2>/dev/null || echo 0)"
+          cli_version="$(jq -r '.cli_version // "?"' meta.json 2>/dev/null || echo '?')"
+          head_sha="$(jq -r '.head_sha // "?"' meta.json 2>/dev/null || echo '?')"
+          run_id="$(jq -r '.producer_run_id // "?"' meta.json 2>/dev/null || echo '?')"
+
+          case "$pol_exit" in
+            0) verdict="passed"; icon="[PASS]" ;;
+            1) verdict="failed (policy invalid)"; icon="[FAIL]" ;;
+            2) verdict="errored (policy could not be loaded)"; icon="[ERROR]" ;;
+            *) verdict="unknown"; icon="[?]" ;;
+          esac
+
+          # shellcheck disable=SC2016  # The single-quoted printf strings below carry LITERAL Markdown
+          # backticks (e.g. `run_project_qc`, `owl:imports`) for the PR comment; they must not expand.
+          {
+            printf '## %s Ontology CI: policy %s\n\n' "$icon" "$verdict"
+            printf '**Scope:** project-policy validation + asserted semantic diff. '
+            printf 'This gate does **not** run the reasoner/profile/governance/invariants/CQ/SHACL '
+            printf 'project-QC stages — those need the in-Protégé `run_project_qc` tool or a future '
+            printf 'bundled-reasoner headless runner.\n\n'
+            printf '### Policy validation\n\n'
+            printf -- '- Valid: `%s`\n' "$valid"
+            printf -- '- Errors: `%s`  Warnings: `%s`\n' "$errcount" "$warncount"
+            printf -- '- Policy digest: `%s`\n' "$digest"
+            printf -- '- CLI exit: `%s`\n\n' "$pol_exit"
+            if [ "$errcount" != "0" ]; then
+              printf '#### Errors\n\n'
+              jq -r 'try ((.errors // [])[:50][] | "- **" + (.code // "error") + "** " + ((.path // "") | if . == "" then "" else "`" + . + "` " end) + "— " + ((.message // "") | gsub("\n";" "))) catch empty' \
+                policy-validate.json 2>/dev/null || true
+              printf '\n'
+            fi
+            if [ -f diff.json ]; then
+              identical="$(jq -r 'try (.identical|tostring) catch "unknown"' diff.json 2>/dev/null || echo 'unknown')"
+              compat="$(jq -r 'try (.compatibility.classification // .compatibility // "n/a") catch "n/a"' diff.json 2>/dev/null || echo 'n/a')"
+              diff_exit="$(cat diff.exit 2>/dev/null || echo '?')"
+              printf '### Asserted semantic diff\n\n'
+              printf -- '- Identical: `%s`\n' "$identical"
+              printf -- '- Compatibility: `%s`\n' "$compat"
+              printf -- '- CLI exit: `%s`\n\n' "$diff_exit"
+              printf '_Asserted-only: `owl:imports` targets are never fetched; each is satisfied by a '
+              printf 'private empty placeholder and listed under `*_unresolved_imports`._\n\n'
+            elif [ -f diff.status ]; then
+              printf '### Asserted semantic diff\n\n'
+              printf '_No base-branch baseline for the ontology (new file); diff skipped._\n\n'
+            fi
+            printf -- '---\n'
+            printf '_Producer run `%s` · head `%s` · CLI `%s` · validation run conclusion `%s`. ' \
+              "$run_id" "$head_sha" "$cli_version" "${PRODUCER_CONCLUSION:-unknown}"
+            printf 'Richer JUnit/SARIF code-scanning annotations arrive with the headless QC runner._\n'
+          } > ../comment.md
+
+      - name: Post or update the PR comment
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          PR: ${{ steps.verify.outputs.pr }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- protege-mcp-ontology-ci -->';
+            const prNumber = parseInt(process.env.PR, 10);
+            if (!Number.isInteger(prNumber)) {
+              core.setFailed('verified PR number is not an integer');
+              return;
+            }
+            const body = marker + '\n' + fs.readFileSync('comment.md', 'utf8');
+            const { owner, repo } = context.repo;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: prNumber, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            }
+
+      # Propagate the verified gate verdict to THIS check's conclusion, so a consumer that makes the
+      # trusted annotate job their required merge gate actually blocks a failing PR. The comment is
+      # posted above first; this step then turns the check red on a failing gate. The exit files were
+      # already integrity-verified (allowlist + sha256sum -c), so they are trusted data read as ints.
+      - name: Propagate the gate verdict to this check
+        run: |
+          cd incoming
+          fail=0
+          pol_exit="$(cat policy-validate.exit 2>/dev/null || echo 2)"
+          if [ "$pol_exit" != "0" ]; then
+            echo "::error::Policy gate failed (exit ${pol_exit})."
+            fail=1
+          fi
+          # Present only when the diff actually ran (absent when skipped or baseline-absent).
+          if [ -f diff.exit ]; then
+            diff_exit="$(cat diff.exit)"
+            if [ "$diff_exit" != "0" ]; then
+              echo "::error::Asserted-diff gate failed/errored (exit ${diff_exit})."
+              fail=1
+            fi
+          fi
+          exit "$fail"

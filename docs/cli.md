@@ -94,6 +94,13 @@ that branched specifically on `2` for a failed policy should now branch on `1`.
 
 Release assets include SHA-256 sidecars, the project license, and third-party notices.
 
+## Continuous integration
+
+To gate pull requests in your own ontology repository with these commands, use the reusable
+GitHub Actions workflow described on the [Ontology CI](ci.html) page. It downloads and verifies this
+CLI, runs the policy-validation and asserted-diff gates with a fork-safe two-workflow architecture,
+and annotates the PR — honestly scoped to what the headless CLI can do (no reasoner QC).
+
 ## Not yet available headlessly
 
 The following roadmap commands are **not** shipped as CLI commands — invoking them prints a clear
