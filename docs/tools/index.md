@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **78 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **79 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -23,6 +23,15 @@ locked-import verification, module namespace/import governance, and isolated cha
 {:toc}
 
 ---
+
+## New tools in 0.7.0
+
+Version 0.7.0 adds **1 tool** so far to the 78-tool v0.6.x surface. Existing tool arguments and default
+interactive behavior remain compatible.
+
+| Task | New tools | What they add |
+| --- | --- | --- |
+| Transactional editing | [`rebase_change_set`](editing.html#rebase_change_set) | Deterministically re-resolve a cached preview at the current revision; a changed resolution fails closed for human review. |
 
 ## New tools in 0.6.0
 
@@ -91,7 +100,7 @@ The top-level [Prompts](../prompts/) guide packages these flows for one-click us
 
 ### [Editing — entities & axioms](editing.html)
 `preview_changes` · `apply_changes` · `preview_change_set` · `commit_change_set` ·
-`discard_change_set` · `create_class` · `create_entity` · `create_term` ·
+`discard_change_set` · `rebase_change_set` · `create_class` · `create_entity` · `create_term` ·
 `create_terms` · `create_property` · `create_properties` · `add_subclass_of` · `add_annotation` · `set_label` · `add_axiom` ·
 `remove_axiom` · `rename_entity` · `delete_entity` · `deprecate_entity` · `move_class`
 

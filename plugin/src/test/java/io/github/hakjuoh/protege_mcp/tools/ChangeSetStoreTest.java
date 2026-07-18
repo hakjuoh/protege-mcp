@@ -98,6 +98,7 @@ class ChangeSetStoreTest {
         ModelRevision revision = new ModelRevision("00000000-0000-4000-8000-000000000001", 0,
                 "sha256:" + "a".repeat(64), "sha256:" + "b".repeat(64));
         return new ChangeSetStore.Draft(revision, null, null, null, null, null,
-                Collections.emptyList(), List.of(), Map.of(), null, true, List.of(), bytes);
+                Collections.emptyList(), List.of(), Map.of(), null, true, List.of(),
+                ChangeSetTools.KIND_OPERATIONS, Map.of(), List.of(), bytes);
     }
 }

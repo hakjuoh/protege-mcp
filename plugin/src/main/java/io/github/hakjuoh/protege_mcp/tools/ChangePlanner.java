@@ -52,6 +52,7 @@ final class ChangePlanner {
         Set<OWLAxiom> simulated = new LinkedHashSet<>(initial);
         List<Map<String, Object>> rows = new ArrayList<>();
         List<String> errors = new ArrayList<>();
+        String[] resolved = new String[operations.size()];
 
         for (int i = 0; i < operations.size(); i++) {
             Map<String, Object> item = operations.get(i);
@@ -65,6 +66,10 @@ final class ChangePlanner {
                     throw new ToolArgException("Unsupported op '" + op + "'. Use add or remove.");
                 }
                 OWLAxiom axiom = Axioms.build(mm, item);
+                // PRE-simulation resolution identity: rebase compares this per-request signature
+                // against a later re-plan, so a no-op absorbed by final-set semantics still proves
+                // the operand resolved to the same axiom.
+                resolved[i] = op + RESOLVED_SEPARATOR + axiom;
                 row.put("axiom", Tools.axiomJson(mm, axiom));
                 boolean present = simulated.contains(axiom);
                 if ("add".equals(op)) {
@@ -89,6 +94,12 @@ final class ChangePlanner {
                 String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 row.put("error", message);
                 errors.add("operation " + i + ": " + message);
+                // The message text is renderer/state-dependent; the signature records only THAT the
+                // position failed, so error→error at one position compares stable while
+                // error→resolved (or the reverse) is a resolution change. Overwrites the resolved
+                // entry when the failure (e.g. a strict minting refusal) happened after the operand
+                // itself resolved.
+                resolved[i] = RESOLVED_ERROR;
             }
             rows.add(row);
         }
@@ -141,7 +152,7 @@ final class ChangePlanner {
         summary.put("no_ops", summaryNoOps);
         summary.put("errors", errors.size());
         return new Plan(List.copyOf(normalized), List.copyOf(rows), summary, List.copyOf(errors),
-                estimatedBytes);
+                estimatedBytes, List.of(resolved));
     }
 
     /**
@@ -154,12 +165,38 @@ final class ChangePlanner {
      */
     static Plan prepared(OWLModelManager mm, List<OWLOntologyChange> changes,
             List<? extends OWLEntity> created, String kind) {
+        return prepared(mm, changes, created, kind, null);
+    }
+
+    /**
+     * @param resolutionOverride the pre-filter resolution entries collected while BUILDING the
+     *        changes (see CurationTools.CurationChanges) — the curation change list itself is
+     *        state-dependent (already-asserted axioms are dropped, declarations are injected), so
+     *        signing it would make a rebase conflict on unrelated concurrent edits; {@code null}
+     *        derives the signature from the raw change list instead.
+     */
+    static Plan prepared(OWLModelManager mm, List<OWLOntologyChange> changes,
+            List<? extends OWLEntity> created, String kind, List<String> resolutionOverride) {
         OWLOntology active = mm.getActiveOntology();
         Set<OWLAxiom> initial = new LinkedHashSet<>(active.getAxioms());
         Set<OWLAxiom> simulated = new LinkedHashSet<>(initial);
+        List<String> resolved = new ArrayList<>(created.size() + changes.size());
+        // The curation resolution product is the minted entity list plus the operand resolution
+        // sequence: a spec whose name/expression re-resolves differently, or whose minted IRI is
+        // not deterministic, changes this signature and fails a rebase closed.
+        for (OWLEntity entity : created) {
+            resolved.add("created" + RESOLVED_SEPARATOR + entity.getIRI());
+        }
+        if (resolutionOverride != null) {
+            resolved.addAll(resolutionOverride);
+        }
         for (OWLOntologyChange change : changes) {
             if (!change.isAxiomChange()) {
                 throw new ToolArgException("Change-set preflight supports axiom changes only.");
+            }
+            if (resolutionOverride == null) {
+                resolved.add((change.isAddAxiom() ? "add" : "remove")
+                        + RESOLVED_SEPARATOR + change.getAxiom());
             }
             if (change.isAddAxiom()) {
                 simulated.add(change.getAxiom());
@@ -207,7 +244,8 @@ final class ChangePlanner {
         summary.put("removes", removes.size());
         summary.put("no_ops", noOps);
         summary.put("errors", 0);
-        return new Plan(List.copyOf(normalized), List.copyOf(rows), summary, List.of(), bytes);
+        return new Plan(List.copyOf(normalized), List.copyOf(rows), summary, List.of(), bytes,
+                List.copyOf(resolved));
     }
 
     private static Set<OWLEntity> newEntitiesAfterSimulation(Set<OWLOntology> closure,
@@ -225,9 +263,20 @@ final class ChangePlanner {
     }
 
     record Plan(List<NormalizedChange> changes, List<Map<String, Object>> operations,
-            Map<String, Object> summary, List<String> errors, long estimatedBytes) {
+            Map<String, Object> summary, List<String> errors, long estimatedBytes,
+            List<String> resolved) {
         boolean committable() {
             return errors.isEmpty();
         }
     }
+
+    /**
+     * Separator inside {@link Plan#resolved} signature entries. Entries are compared as whole
+     * strings (never parsed back), and the leading token comes from a fixed vocabulary
+     * (add/remove/created/error), so a plain space stays unambiguous and keeps the entry
+     * human-readable when a conflict result echoes it back for review.
+     */
+    static final String RESOLVED_SEPARATOR = " ";
+    /** Signature marker for a request position that failed to resolve/build. */
+    static final String RESOLVED_ERROR = "error";
 }

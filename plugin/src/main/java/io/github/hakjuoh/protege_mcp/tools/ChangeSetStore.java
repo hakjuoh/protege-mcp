@@ -191,6 +191,12 @@ final class ChangeSetStore {
         final Map<String, Object> preflight;
         final boolean committable;
         final List<String> reasons;
+        /** Which planner produced this entry: operations, create_terms, or create_properties. */
+        final String plannerKind;
+        /** The minimal raw request subset the planner needs, replayed verbatim by rebase. */
+        final Map<String, Object> plannerArguments;
+        /** The per-request-position resolution signature the rebase comparison pins. */
+        final List<String> resolved;
         private State state = State.READY;
 
         Entry(String id, long createdAt, long expiresAt, long estimatedBytes, Draft draft) {
@@ -211,6 +217,10 @@ final class ChangeSetStore {
                     : Collections.unmodifiableMap(new LinkedHashMap<>(draft.preflight));
             this.committable = draft.committable;
             this.reasons = List.copyOf(draft.reasons);
+            this.plannerKind = draft.plannerKind;
+            this.plannerArguments = Collections.unmodifiableMap(
+                    new LinkedHashMap<>(draft.plannerArguments));
+            this.resolved = List.copyOf(draft.resolved);
         }
 
         String expiresAtIso() {
@@ -222,7 +232,8 @@ final class ChangeSetStore {
             String policyDigest, String preflightDigest, String importLockDigest,
             List<NormalizedChange> changes, List<Map<String, Object>> operations,
             Map<String, Object> summary, Map<String, Object> preflight, boolean committable,
-            List<String> reasons, long estimatedBytes) { }
+            List<String> reasons, String plannerKind, Map<String, Object> plannerArguments,
+            List<String> resolved, long estimatedBytes) { }
 
     record Lookup(Entry entry, String error) { }
 

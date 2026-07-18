@@ -191,7 +191,7 @@ class ChangeSetToolsTest {
                 throw new IllegalStateException(e);
             }
             return ChangePlanner.plan(mm, List.of(op), false);
-        }));
+        }, ChangeSetTools.KIND_OPERATIONS, Map.of("operations", List.of(op), "strict", false)));
 
         assertEquals(Boolean.TRUE, preview.get("preview_invalidated"), preview::toString);
         assertEquals("revision_changed_during_preview", preview.get("error_code"));

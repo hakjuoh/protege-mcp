@@ -1239,6 +1239,24 @@
       "additionalProperties" : false
     }
   }, {
+    "name" : "rebase_change_set",
+    "description" : "Deterministically re-resolve a cached change-set preview against the current ontology revision. Read-only: the live ontology is never modified. When every original request position re-resolves to exactly the same axioms, a NEW preview change set is created at the current base revision with a fresh isolated preflight, and the original preview is kept until discarded or expired (discard it after committing the rebased one). When any referenced name now resolves to a different IRI, an operand newly fails to resolve, or a minted IRI is not deterministic (auto-generated ID preferences), the rebase fails closed with error_code=rebase_conflict listing the differing positions plus both complete revision envelopes for human review — a revision mismatch is never auto-merged. Previews from preview_change_set, create_terms preview=true, and create_properties preview=true are all rebasable, and the original request's gates/timeout_ms/include_impact are replayed so the rebased preview reproduces the original preflight contract exactly.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "change_set_id" : {
+          "type" : "string",
+          "description" : "The cached preview to rebase."
+        },
+        "ttl_seconds" : {
+          "type" : "integer",
+          "description" : "Cache lifetime of the NEW preview in seconds (1-3600, default 900)."
+        }
+      },
+      "required" : [ "change_set_id" ],
+      "additionalProperties" : false
+    }
+  }, {
     "name" : "create_term",
     "description" : "Create a class WITH its curation suite in one undoable step (vs. create_class + several add_axiom calls): mints the class (same 'iri'/'namespace'/'label'/'label_lang'/'no_label' options as create_class), adds a definition ('definition', default property rdfs:comment — set 'definition_property' e.g. skos:definition), any extra 'annotations', one or more 'parents' (each a class name, IRI or Manchester restriction such as 'hasPart some Cell'), and optional 'equivalent_to' class expressions for a defined class. Reports the created term and any 'new_entities' the operands introduced; strict=true refuses to mint an unrecognised operand.",
     "input_schema" : {

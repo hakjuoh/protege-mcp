@@ -48,17 +48,37 @@ public final class ChangeSetTools {
                     return Tools.json().put("change_set_id", id).put("discarded", discarded)
                             .putIfNotNull("error_code", discarded ? null : "unknown_change_set").result();
                 });
+        tools.tool("rebase_change_set",
+                (ex, req) -> {
+                    Map<String, Object> arguments = Tools.args(req);
+                    return rebase(ctx, ex, arguments);
+                });
     }
 
     static CallToolResult preview(ToolContext ctx, Map<String, Object> arguments) {
         List<Map<String, Object>> operations = Tools.objList(arguments, "operations");
         boolean strict = Tools.optBool(arguments, "strict", false);
-        return previewPrepared(ctx, arguments, mm -> ChangePlanner.plan(mm, operations, strict));
+        Map<String, Object> replay = new LinkedHashMap<>();
+        replay.put("operations", operations);
+        replay.put("strict", strict);
+        return previewPrepared(ctx, arguments, mm -> ChangePlanner.plan(mm, operations, strict),
+                KIND_OPERATIONS, replay, null, null);
     }
+
+    /** Planner kinds retained per entry so a rebase can re-run the exact producing pipeline. */
+    static final String KIND_OPERATIONS = "operations";
+    static final String KIND_CREATE_TERMS = "create_terms";
+    static final String KIND_CREATE_PROPERTIES = "create_properties";
 
     /** Shared preview/QC/cache pipeline for low-level and high-level curation planners. */
     static CallToolResult previewPrepared(ToolContext ctx, Map<String, Object> arguments,
-            PreparedPlanner planner) {
+            PreparedPlanner planner, String plannerKind, Map<String, Object> replayArguments) {
+        return previewPrepared(ctx, arguments, planner, plannerKind, replayArguments, null, null);
+    }
+
+    static CallToolResult previewPrepared(ToolContext ctx, Map<String, Object> arguments,
+            PreparedPlanner planner, String plannerKind, Map<String, Object> replayArguments,
+            ChangeSetStore.Entry rebaseSource, Map<String, Object> extraResultFields) {
         String impact = Tools.optString(arguments, "include_impact");
         if (impact != null && !Set.of("none", "asserted").contains(impact.toLowerCase())) {
             return Tools.error("include_impact must be none or asserted for preview_change_set.");
@@ -96,10 +116,38 @@ public final class ChangeSetTools {
             return Tools.error(e.getMessage());
         }
 
+        // The retained replay must reproduce the ORIGINAL preflight contract, not just the planner
+        // inputs: 'gates' decides which stages a no-policy preview requires, 'timeout_ms' can only
+        // tighten a policy budget, and 'include_impact' shapes the result. Dropping any of them
+        // would let a rebase silently run a weaker (or spuriously stricter) gate than the preview
+        // it claims to reproduce. Copied here, once, so every producer — present and future —
+        // retains them without remembering to.
+        Map<String, Object> retainedReplay = new LinkedHashMap<>(replayArguments);
+        for (String preflightShaping : List.of("gates", "timeout_ms", "include_impact")) {
+            if (arguments.containsKey(preflightShaping)) {
+                retainedReplay.put(preflightShaping, arguments.get(preflightShaping));
+            }
+        }
+
         Captured captured = ctx.access().compute(mm -> {
             var revision = ctx.revisions().current(mm, importLockDigest, policy.digest()).revision();
-            return new Captured(revision, planner.plan(mm), reasonerSelection(mm));
+            OWLOntology active = mm.getActiveOntology();
+            String activeIri = active.getOntologyID().getOntologyIRI().orNull() == null
+                    ? null : active.getOntologyID().getOntologyIRI().orNull().toString();
+            String activeVersionIri = active.getOntologyID().getVersionIRI().orNull() == null
+                    ? null : active.getOntologyID().getVersionIRI().orNull().toString();
+            return new Captured(revision, planner.plan(mm), reasonerSelection(mm),
+                    activeIri, activeVersionIri);
         });
+
+        // A rebase pins its resolution comparison to the SAME captured plan this preview would
+        // cache: comparing in a separate earlier hop would leave a window in which a concurrent
+        // rename slips between the verification and the cached delta. A mismatch short-circuits
+        // before QC and caches nothing — the original entry stays untouched for human review.
+        if (rebaseSource != null
+                && !captured.plan.resolved().equals(rebaseSource.resolved)) {
+            return rebaseConflict(rebaseSource, captured);
+        }
 
         List<String> reasons = new ArrayList<>(captured.plan.errors());
         if (policyState.error() != null) {
@@ -116,7 +164,8 @@ public final class ChangeSetTools {
         String retainedPolicyPath = policy.path() == null ? null : policy.path().toString();
         long retainedBeforePreflight = captured.plan.estimatedBytes()
                 + estimate(captured.plan.operations()) + estimate(captured.plan.summary())
-                + estimate(reasons) + estimate(configuredPolicyPath) + estimate(retainedPolicyPath);
+                + estimate(reasons) + estimate(configuredPolicyPath) + estimate(retainedPolicyPath)
+                + estimate(retainedReplay) + estimate(captured.plan.resolved());
         ChangeSetStore.validateEntryBounds(captured.plan.changes().size(), retainedBeforePreflight);
 
         Map<String, Object> preflight = null;
@@ -173,6 +222,13 @@ public final class ChangeSetTools {
             invalidated.put("error_code", "revision_changed_during_preview");
             invalidated.put("current_revision", RevisionTools.revisionJson(finalRevision));
             putSatisfiability(invalidated, preflight);
+            if (rebaseSource != null) {
+                // The rebase verified resolution but cached nothing; say both, explicitly.
+                invalidated.put("rebased", false);
+            }
+            if (extraResultFields != null) {
+                invalidated.putAll(extraResultFields);
+            }
             return Tools.ok(invalidated);
         }
 
@@ -185,10 +241,12 @@ public final class ChangeSetTools {
                 retainedPolicyPath, policy.digest(), preflightDigest,
                 importLockDigest, captured.plan.changes(), captured.plan.operations(),
                 captured.plan.summary(), preflight, committable, reasons,
+                plannerKind, retainedReplay, captured.plan.resolved(),
                 captured.plan.estimatedBytes() + estimate(preflight)
                         + estimate(captured.plan.operations()) + estimate(captured.plan.summary())
                         + estimate(reasons) + estimate(configuredPolicyPath)
-                        + estimate(retainedPolicyPath));
+                        + estimate(retainedPolicyPath) + estimate(retainedReplay)
+                        + estimate(captured.plan.resolved()));
         ChangeSetStore.Entry entry = ctx.changeSets().put(draft, ttlSeconds * 1_000L);
         Map<String, Object> result = basePreview(captured, preflight, reasons, assertedImpact);
         result.put("change_set_id", entry.id);
@@ -202,6 +260,155 @@ public final class ChangeSetTools {
         }
         result.put("snapshot_consistent", true);
         result.put("live_mutated", false);
+        if (extraResultFields != null) {
+            result.putAll(extraResultFields);
+        }
+        return Tools.ok(result);
+    }
+
+    /**
+     * Deterministic re-resolution of a cached preview at the current revision (read-only: the live
+     * ontology is never modified; success mints a NEW preview entry and keeps the original). The
+     * resolution comparison runs inside the same captured hop as the plan that would be cached, so
+     * a rename landing between "verified" and "cached" is impossible; any resolution difference —
+     * a name resolving to another IRI, a newly failing operand, a nondeterministically minted IRI —
+     * fails closed with a {@code rebase_conflict} result for human review. A revision mismatch is
+     * the trigger for rebasing, never something to merge through.
+     */
+    static CallToolResult rebase(ToolContext ctx, io.modelcontextprotocol.server.McpSyncServerExchange ex,
+            Map<String, Object> arguments) {
+        String id = Tools.reqString(arguments, "change_set_id");
+        ChangeSetStore.Lookup lookup = ctx.changeSets().claim(id);
+        if (lookup.entry() == null) {
+            Map<String, Object> refused = new LinkedHashMap<>();
+            refused.put("change_set_id", id);
+            refused.put("rebased", false);
+            refused.put("error_code", lookup.error());
+            return Tools.ok(refused);
+        }
+        ChangeSetStore.Entry source = lookup.entry();
+        // The claim is held for the WHOLE rebase (released in the finally): a claimed entry is
+        // skipped by capacity eviction and sweep, so caching the new preview cannot evict its own
+        // source, and a concurrent commit of the source during the rebase's QC pass is refused as
+        // change_set_in_progress instead of racing it.
+        try {
+            DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
+                    source.configuredPolicyPath);
+            Map<String, Object> replay = new LinkedHashMap<>(source.plannerArguments);
+            Map<String, Object> preview = new LinkedHashMap<>(source.plannerArguments);
+            if (source.configuredPolicyPath != null) {
+                preview.put("policy_path", source.configuredPolicyPath);
+            }
+            if (arguments.get("ttl_seconds") != null) {
+                preview.put("ttl_seconds", arguments.get("ttl_seconds"));
+            }
+            preview = rules.authorizedPolicyArguments(preview);
+
+            PreparedPlanner planner = plannerFor(source.plannerKind, replay);
+            if (planner == null) {
+                Map<String, Object> refused = new LinkedHashMap<>();
+                refused.put("change_set_id", id);
+                refused.put("rebased", false);
+                refused.put("error_code", "rebase_unsupported");
+                refused.put("reason", "this change set does not carry a replayable plan");
+                return Tools.ok(refused);
+            }
+            Map<String, Object> extra = new LinkedHashMap<>();
+            extra.put("rebased_from", id);
+            extra.put("resolution_verified", true);
+            try {
+                return previewPrepared(ctx, preview, planner, source.plannerKind,
+                        source.plannerArguments, source, extra);
+            } catch (ToolArgException e) {
+                // A re-plan that cannot even run (a strict minting refusal after a concurrent
+                // delete, an exhausted cache) is a failed rebase, not a transport error: report it
+                // structured, with the original entry untouched.
+                Map<String, Object> failed = new LinkedHashMap<>();
+                failed.put("change_set_id", id);
+                failed.put("rebased", false);
+                failed.put("error_code", "rebase_failed");
+                failed.put("reason", e.getMessage());
+                failed.put("base_revision", RevisionTools.revisionJson(source.baseRevision));
+                return Tools.ok(failed);
+            }
+        } finally {
+            ctx.changeSets().release(source);
+        }
+    }
+
+    private static PreparedPlanner plannerFor(String kind, Map<String, Object> replay) {
+        if (kind == null) {
+            return null;
+        }
+        switch (kind) {
+            case KIND_OPERATIONS: {
+                List<Map<String, Object>> operations = Tools.objList(replay, "operations");
+                boolean strict = Tools.optBool(replay, "strict", false);
+                return mm -> ChangePlanner.plan(mm, operations, strict);
+            }
+            case KIND_CREATE_TERMS: {
+                List<Map<String, Object>> terms = Tools.objList(replay, "terms");
+                boolean strict = Tools.optBool(replay, "strict", false);
+                String namespace = Tools.optString(replay, "namespace");
+                String definitionProperty = Tools.optString(replay, "definition_property");
+                return mm -> CurationTools.planTerms(mm, terms, strict, namespace,
+                        definitionProperty);
+            }
+            case KIND_CREATE_PROPERTIES: {
+                List<Map<String, Object>> properties = Tools.objList(replay, "properties");
+                boolean strict = Tools.optBool(replay, "strict", false);
+                String namespace = Tools.optString(replay, "namespace");
+                String definitionProperty = Tools.optString(replay, "definition_property");
+                String propertyType = Tools.optString(replay, "property_type");
+                return mm -> CurationTools.planProperties(mm, properties, strict, namespace,
+                        definitionProperty, propertyType);
+            }
+            default:
+                return null;
+        }
+    }
+
+    /** Bounded per-position resolution differences a human can act on. */
+    private static final int MAX_REBASE_CONFLICT_ROWS = 25;
+
+    private static CallToolResult rebaseConflict(ChangeSetStore.Entry source, Captured captured) {
+        List<String> was = source.resolved;
+        List<String> now = captured.plan.resolved();
+        List<Map<String, Object>> conflicts = new ArrayList<>();
+        int total = 0;
+        int positions = Math.max(was.size(), now.size());
+        for (int i = 0; i < positions; i++) {
+            String before = i < was.size() ? was.get(i) : null;
+            String after = i < now.size() ? now.get(i) : null;
+            if (java.util.Objects.equals(before, after)) {
+                continue;
+            }
+            total++;
+            if (conflicts.size() < MAX_REBASE_CONFLICT_ROWS) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("position", i);
+                row.put("was", before);
+                row.put("now", after);
+                conflicts.add(row);
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("change_set_id", source.id);
+        result.put("rebased", false);
+        result.put("error_code", "rebase_conflict");
+        result.put("reason", "re-resolution at the current revision produced a different result; "
+                + "review the differing positions, then preview the corrected request explicitly");
+        result.put("conflicts", conflicts);
+        result.put("total_conflicts", total);
+        if (total > conflicts.size()) {
+            result.put("conflicts_truncated", true);
+        }
+        Map<String, Object> activeOntology = new LinkedHashMap<>();
+        activeOntology.put("iri", captured.activeOntologyIri);
+        activeOntology.put("version_iri", captured.activeVersionIri);
+        result.put("active_ontology", activeOntology);
+        result.put("base_revision", RevisionTools.revisionJson(source.baseRevision));
+        result.put("current_revision", RevisionTools.revisionJson(captured.revision));
         return Tools.ok(result);
     }
 
@@ -571,7 +778,8 @@ public final class ChangeSetTools {
     }
 
     private record Captured(ModelRevision revision, ChangePlanner.Plan plan,
-            ReasonerSelection reasonerSelection) { }
+            ReasonerSelection reasonerSelection, String activeOntologyIri,
+            String activeVersionIri) { }
 
     @FunctionalInterface
     interface PreparedPlanner {

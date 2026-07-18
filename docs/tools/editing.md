@@ -258,6 +258,59 @@ Removes an uncommitted memory-only preview from this Protégé window. It never 
 { "change_set_id": "018f..." }
 ```
 
+## `rebase_change_set`
+
+Deterministically re-resolves a cached preview against the current ontology revision, for when the
+workspace moved on after `preview_change_set` (a `revision_conflict` at commit is the usual trigger).
+*Read-only* — the live ontology is never modified. When every original request position re-resolves to
+exactly the same axioms, a **new** preview change set is created at the current base revision with a
+fresh isolated preflight; the original preview is kept until discarded or expired (discard it after
+committing the rebased one). When any referenced name now resolves to a different IRI, an operand newly
+fails to resolve, or a minted IRI is not deterministic (auto-generated ID preferences), the rebase fails
+closed with `error_code=rebase_conflict` listing the differing positions plus both complete revision
+envelopes for human review — a revision mismatch is never auto-merged, and the resolution comparison
+runs inside the same captured hop as the plan that would be cached, so a concurrent rename cannot slip
+between verification and caching. Previews from `preview_change_set`, `create_terms preview=true`, and
+`create_properties preview=true` are all rebasable.
+
+The rebased preview reproduces the original preflight contract exactly: the original request's
+`gates`, `timeout_ms`, and `include_impact` are retained with the preview and replayed, so a rebase can
+never run a weaker (or spuriously stricter) gate than the preview it replaces.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `change_set_id` | string | yes | — | The cached preview to rebase. |
+| `ttl_seconds` | integer | no | 900 | Cache lifetime of the new preview in seconds (1–3600). |
+
+**Returns**
+
+- `change_set_id`, `expires_at`, `base_revision`, `normalized_changes`, `operations`, `summary`,
+  `preflight`, `committable`, `committable_reasons`, `satisfiability_checked`, `policy_loaded`,
+  `policy_digest`, `preflight_contract_digest`, `snapshot_consistent`, `live_mutated`: on success, the
+  full `preview_change_set` result shape for the **new** preview at the current revision.
+- `rebased_from`, `resolution_verified`: the original id and `true`, on success and on the
+  revision-changed shape below.
+- `rebased`: `false` on every non-success shape; success omits it (the new preview's fields answer).
+- `error_code`: `rebase_conflict`, `rebase_failed` (with `reason`; the re-plan could not run, for
+  example a strict minting refusal after a concurrent delete), `rebase_unsupported`,
+  `unknown_change_set`, `change_set_in_progress`, or `revision_changed_during_preview` (resolution
+  verified but the workspace moved again during the preflight; nothing was cached).
+- `conflicts`, `total_conflicts`, `conflicts_truncated`: on `rebase_conflict`, the differing positions
+  as `{position, was, now}` rows (`was`/`now` are `add`/`remove`/`created` entries or `error`; at most
+  25 rows, truncation flagged).
+- `active_ontology`: on `rebase_conflict`, the active ontology's `iri` and `version_iri` at comparison
+  time.
+- `base_revision`, `current_revision`: on `rebase_conflict`, the complete original and current
+  revision envelopes.
+
+**Example**
+
+```json
+{ "change_set_id": "018f...", "ttl_seconds": 900 }
+```
+
 ## `create_class`
 
 Creates a named class. Give a full `iri`, or a `namespace` to mint the IRI in (IRI = `namespace` + `name` — useful when terms live in a shared namespace distinct from the ontology IRI), else the IRI is minted from `name` using Protégé's entity-creation settings. An `rdfs:label` (`label` or `name`, tagged with `label_lang`) is added unless `no_label`. Optionally attaches a `parent` superclass.

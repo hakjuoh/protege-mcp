@@ -111,8 +111,18 @@ public final class CurationTools {
                             return Tools.error("preview=true cannot be combined with verify; isolated "
                                     + "change-set preflight replaces post-apply verification.");
                         }
+                        Map<String, Object> replay = new LinkedHashMap<>();
+                        replay.put("terms", termSpecs);
+                        replay.put("strict", strict);
+                        if (defaultNamespace != null) {
+                            replay.put("namespace", defaultNamespace);
+                        }
+                        if (defaultDefProp != null) {
+                            replay.put("definition_property", defaultDefProp);
+                        }
                         return ChangeSetTools.previewPrepared(ctx, a,
-                                mm -> planTerms(mm, termSpecs, strict, defaultNamespace, defaultDefProp));
+                                mm -> planTerms(mm, termSpecs, strict, defaultNamespace, defaultDefProp),
+                                ChangeSetTools.KIND_CREATE_TERMS, replay);
                     }
                     String summary = "create_terms (" + termSpecs.size() + ")"
                             + (ApplyVerify.MODE_NONE.equals(verify) ? "" : " (verify=" + verify + ")");
@@ -165,8 +175,21 @@ public final class CurationTools {
                             return Tools.error("preview=true cannot be combined with verify; isolated "
                                     + "change-set preflight replaces post-apply verification.");
                         }
+                        Map<String, Object> replay = new LinkedHashMap<>();
+                        replay.put("properties", specs);
+                        replay.put("strict", strict);
+                        if (defNs != null) {
+                            replay.put("namespace", defNs);
+                        }
+                        if (defDef != null) {
+                            replay.put("definition_property", defDef);
+                        }
+                        if (defType != null) {
+                            replay.put("property_type", defType);
+                        }
                         return ChangeSetTools.previewPrepared(ctx, a,
-                                mm -> planProperties(mm, specs, strict, defNs, defDef, defType));
+                                mm -> planProperties(mm, specs, strict, defNs, defDef, defType),
+                                ChangeSetTools.KIND_CREATE_PROPERTIES, replay);
                     }
                     String summary = "create_properties (" + specs.size() + ")"
                             + (ApplyVerify.MODE_NONE.equals(verify) ? "" : " (verify=" + verify + ")");
@@ -272,7 +295,7 @@ public final class CurationTools {
     static List<OWLOntologyChange> termAxioms(OWLDataFactory df, OWLOntology ont, OWLClass cls,
             List<OWLClassExpression> parents, List<OWLClassExpression> equivalents,
             OWLAnnotationProperty defProp, String defText, String defLang, Set<OWLAnnotation> extra) {
-        List<OWLOntologyChange> changes = new ArrayList<>();
+        CurationChanges changes = new CurationChanges();
         for (OWLClassExpression parent : parents) {
             add(changes, ont, df.getOWLSubClassOfAxiom(cls, parent));
         }
@@ -286,7 +309,7 @@ public final class CurationTools {
     /** Object-property axioms from the create_property operands (resolution needs the model manager). */
     private static List<OWLOntologyChange> objectPropertyAxioms(OWLModelManager mm, OWLDataFactory df,
             OWLOntology ont, OWLObjectProperty prop, Map<String, Object> a) {
-        List<OWLOntologyChange> changes = new ArrayList<>();
+        CurationChanges changes = new CurationChanges();
         String domain = Tools.optString(a, "domain");
         if (domain != null) {
             add(changes, ont, df.getOWLObjectPropertyDomainAxiom(prop,
@@ -318,7 +341,7 @@ public final class CurationTools {
     /** Data-property axioms from the create_property operands (resolution needs the model manager). */
     private static List<OWLOntologyChange> dataPropertyAxioms(OWLModelManager mm, OWLDataFactory df,
             OWLOntology ont, OWLDataProperty prop, Map<String, Object> a) {
-        List<OWLOntologyChange> changes = new ArrayList<>();
+        CurationChanges changes = new CurationChanges();
         String domain = Tools.optString(a, "domain");
         if (domain != null) {
             add(changes, ont, df.getOWLDataPropertyDomainAxiom(prop,
@@ -398,8 +421,69 @@ public final class CurationTools {
 
     /** Add an {@link AddAxiom} for {@code ax} unless the ontology already asserts it. */
     private static void add(List<OWLOntologyChange> changes, OWLOntology ont, OWLAxiom ax) {
+        if (changes instanceof CurationChanges recording) {
+            recording.addIntended(ont, ax);
+            return;
+        }
         if (!ont.containsAxiom(ax)) {
             changes.add(new AddAxiom(ont, ax));
+        }
+    }
+
+    /**
+     * Change list that additionally records the INTENDED resolution sequence — every axiom a spec
+     * resolved to, BEFORE the already-asserted filter drops it from the change list. A curation
+     * rebase compares this sequence, not the state-dependent filtered changes: an axiom that a
+     * concurrent commit already asserted must rebase as a no-op (mirroring the operations planner's
+     * pre-simulation signature), and injected declarations must not perturb positions. Only the
+     * batch builders use this type; the direct create_* paths keep plain lists and are unaffected.
+     */
+    static final class CurationChanges extends ArrayList<OWLOntologyChange> {
+        private static final long serialVersionUID = 1L;
+        private final List<String> resolution = new ArrayList<>();
+
+        /** Record the intended axiom, then append the add only when the ontology lacks it. */
+        void addIntended(OWLOntology ont, OWLAxiom ax) {
+            resolution.add("add" + ChangePlanner.RESOLVED_SEPARATOR + ax);
+            if (!ont.containsAxiom(ax)) {
+                super.add(new AddAxiom(ont, ax));
+            }
+        }
+
+        @Override
+        public boolean add(OWLOntologyChange change) {
+            record(change);
+            return super.add(change);
+        }
+
+        @Override
+        public boolean addAll(java.util.Collection<? extends OWLOntologyChange> other) {
+            if (other instanceof CurationChanges nested) {
+                // The nested builder already recorded its intended sequence, including entries the
+                // filter dropped from its change list — merge the record, copy the changes as-is.
+                resolution.addAll(nested.resolution);
+                boolean changed = false;
+                for (OWLOntologyChange change : other) {
+                    changed |= super.add(change);
+                }
+                return changed;
+            }
+            boolean changed = false;
+            for (OWLOntologyChange change : other) {
+                changed |= add(change);
+            }
+            return changed;
+        }
+
+        private void record(OWLOntologyChange change) {
+            if (change.isAxiomChange()) {
+                resolution.add((change.isAddAxiom() ? "add" : "remove")
+                        + ChangePlanner.RESOLVED_SEPARATOR + change.getAxiom());
+            }
+        }
+
+        List<String> resolution() {
+            return List.copyOf(resolution);
         }
     }
 
@@ -522,7 +606,7 @@ public final class CurationTools {
             String defaultNamespace, String defaultDefProp) {
         OWLDataFactory df = mm.getOWLDataFactory();
         OWLOntology ont = mm.getActiveOntology();
-        List<OWLOntologyChange> changes = new ArrayList<>();
+        CurationChanges changes = new CurationChanges();
         List<OWLClass> created = new ArrayList<>();
         Set<OWLEntity> createdSet = new LinkedHashSet<>();
         for (int i = 0; i < termSpecs.size(); i++) {
@@ -552,7 +636,7 @@ public final class CurationTools {
                         + e.getMessage() + " Nothing was applied.");
             }
         }
-        return new BuiltBatch(changes, createdSet, created);
+        return new BuiltBatch(changes, createdSet, created, changes.resolution());
     }
 
     /** The create_properties batch body; see {@link #createTermsBatch}. */
@@ -573,7 +657,7 @@ public final class CurationTools {
             String defNs, String defDef, String defType) {
         OWLDataFactory df = mm.getOWLDataFactory();
         OWLOntology ont = mm.getActiveOntology();
-        List<OWLOntologyChange> changes = new ArrayList<>();
+        CurationChanges changes = new CurationChanges();
         List<OWLEntity> created = new ArrayList<>();
         Set<OWLEntity> createdSet = new LinkedHashSet<>();
         for (int i = 0; i < specs.size(); i++) {
@@ -595,7 +679,7 @@ public final class CurationTools {
                         + e.getMessage() + " Nothing was applied.");
             }
         }
-        return new BuiltBatch(changes, createdSet, created);
+        return new BuiltBatch(changes, createdSet, created, changes.resolution());
     }
 
     private static ChangePlanner.Plan planBatchCuration(OWLModelManager mm, BuiltBatch batch,
@@ -617,12 +701,15 @@ public final class CurationTools {
         }
         WriteTools.declareMinted(mm.getOWLDataFactory(), ontology, minted, changes);
         WriteTools.declareUsedAnnotationProperties(mm.getOWLDataFactory(), ontology, changes);
-        return ChangePlanner.prepared(mm, changes, batch.created, kind);
+        // The rebase signature comes from the builder's intended-resolution record, NOT this change
+        // list: the injected declarations above and the already-asserted filter are ontology-state
+        // artifacts, and signing them would conflict a rebase on unrelated concurrent edits.
+        return ChangePlanner.prepared(mm, changes, batch.created, kind, batch.resolution);
     }
 
 
     private record BuiltBatch(List<OWLOntologyChange> changes, Set<OWLEntity> createdSet,
-            List<? extends OWLEntity> created) { }
+            List<? extends OWLEntity> created, List<String> resolution) { }
 
     /**
      * Apply a whole batch of curated terms as ONE transaction. Mirrors {@link #applyCuration} but for many
