@@ -16,7 +16,6 @@ import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
-import org.semanticweb.owlapi.util.SimpleIRIMapper;
 
 import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
 
@@ -73,9 +72,15 @@ public final class DiffTools {
                         return Tools.error("Provide 'right' (a loaded ontology IRI/version) or "
                                 + "'right_document' (a document to load and compare against).");
                     }
+                    DirectAccessPolicy.NetworkRule importNetwork = null;
+                    if (rightDoc != null) {
+                        DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex);
+                        rightDoc = rules.authorizeSource(rightDoc).value();
+                        importNetwork = rules.importNetworkRule();
+                    }
                     // Load the comparison document OFF the EDT (network/parse), then diff on the EDT.
                     Set<OWLAxiom> rightAxioms = rightDoc != null
-                            ? loadDocumentAxioms(rightDoc, includeImports, logicalOnly)
+                            ? loadDocumentAxioms(rightDoc, includeImports, logicalOnly, importNetwork)
                             : null;
                     String rightLabel = rightDoc != null ? rightDoc : rightRef;
                     return ctx.access().compute(mm -> diff(mm, leftRef, rightRef, rightAxioms, rightLabel,
@@ -118,15 +123,19 @@ public final class DiffTools {
                     boolean includeImports = Tools.optBool(a, "include_imports", false);
                     List<String> unresolvedImports = new ArrayList<>();
                     final OWLOntology loaded;
+                    DirectAccessPolicy.NetworkRule importNetwork = null;
                     if (rightDocument == null) {
                         loaded = null;
                     } else {
+                        DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex);
+                        rightDocument = rules.authorizeSource(rightDocument).value();
+                        importNetwork = rules.importNetworkRule();
                         // Resolve the comparison document's imports the same way load_ontology does:
                         // snapshot the workspace's immutable logical->document IRI pairs on the EDT,
                         // then fetch and parse off it (with the sibling catalog still winning).
                         List<OntologyDocumentTools.ImportMapping> mappings = ctx.access()
                                 .compute(OntologyDocumentTools::workspaceImportMappings);
-                        loaded = loadDocument(rightDocument, mappings, unresolvedImports);
+                        loaded = loadDocument(rightDocument, mappings, unresolvedImports, importNetwork);
                     }
                     return ctx.access().compute(mm -> {
                         OWLOntology left = leftRef == null ? mm.getActiveOntology()
@@ -219,6 +228,12 @@ public final class DiffTools {
         return collect(loadDocument(source, List.of(), new ArrayList<>()), closure, logicalOnly);
     }
 
+    private static Set<OWLAxiom> loadDocumentAxioms(String source, boolean closure,
+            boolean logicalOnly, DirectAccessPolicy.NetworkRule networkRule) {
+        return collect(loadDocument(source, List.of(), new ArrayList<>(), networkRule),
+                closure, logicalOnly);
+    }
+
     /**
      * Package-visible for tests. Registers the supplied workspace import mappings before the sibling
      * catalog (OWLAPI gives the most recently added mapper priority, and the version-controlled
@@ -228,20 +243,27 @@ public final class DiffTools {
      */
     static OWLOntology loadDocument(String source, List<OntologyDocumentTools.ImportMapping> mappings,
             Collection<String> unresolvedOut) {
+        return loadDocument(source, mappings, unresolvedOut,
+                new DirectAccessPolicy.NetworkRule(true, Set.of(), true, true));
+    }
+
+    static OWLOntology loadDocument(String source, List<OntologyDocumentTools.ImportMapping> mappings,
+            Collection<String> unresolvedOut, DirectAccessPolicy.NetworkRule networkRule) {
         String normalized = OntologyDocumentTools.normalizeSource(source);
         OWLOntologyManager manager = OwlManagers.create();
         manager.addMissingImportListener(
                 event -> unresolvedOut.add(event.getImportedOntologyURI().toString()));
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
-                .setFollowRedirects(true);
-        for (OntologyDocumentTools.ImportMapping mapping : mappings) {
-            manager.getIRIMappers().add(new SimpleIRIMapper(mapping.logical, mapping.document));
-        }
-        OntologyDocumentTools.addFolderCatalogMapper(manager, normalized);
-        try {
-            return manager.loadOntologyFromOntologyDocument(
+                .setFollowRedirects(networkRule.followRedirects());
+        try (OntologyDocumentTools.NetworkImportBlocker blocker =
+                OntologyDocumentTools.NetworkImportBlocker.install(manager, networkRule)) {
+            OntologyDocumentTools.addWorkspaceImportMappers(manager, mappings, blocker);
+            OntologyDocumentTools.addFolderCatalogMapper(manager, normalized, blocker);
+            OWLOntology loaded = manager.loadOntologyFromOntologyDocument(
                     OntologyDocumentTools.documentSource(normalized), config);
+            blocker.failIfBlocked(normalized);
+            return loaded;
         } catch (OWLOntologyCreationException e) {
             throw new ToolArgException("Could not load comparison document '" + normalized + "': "
                     + OwlParsingErrors.conciseMessage(e));

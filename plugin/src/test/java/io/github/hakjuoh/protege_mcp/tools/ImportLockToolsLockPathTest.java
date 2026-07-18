@@ -66,6 +66,38 @@ class ImportLockToolsLockPathTest {
     }
 
     @Test
+    void derivedDefaultsStayAuthorizedWhenCompatibilityPathsAreDisabled(@TempDir Path temp)
+            throws Exception {
+        // policy_required mode: no policy, the local-admin compatibility opt-in is OFF. A caller-selected
+        // path is refused, but the beside-active lockfile/catalog are DERIVED from the open document and
+        // must still work — the preference governs caller-selected paths only (matches save_ontology).
+        boolean savedCompat = prefs.getBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, true);
+        prefs.putBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, false);
+        try {
+            ToolContext ctx = context(temp);
+            // A caller-selected path is still refused in this mode.
+            assertThrows(ToolArgException.class, () -> ImportLockTools.write(ctx,
+                    Map.of("path", temp.resolve("elsewhere.lock.json").toString())));
+
+            // The argument-less (derived beside-active) write/verify succeed.
+            Map<String, Object> written = structured(ImportLockTools.write(context(temp), Map.of()));
+            assertEquals(true, written.get("written"), () -> written.toString());
+            assertTrue(Files.isRegularFile(temp.resolve("imports.lock.json")));
+            Map<String, Object> verified = structured(ImportLockTools.verify(context(temp), Map.of()));
+            assertEquals(true, verified.get("valid"), () -> verified.toString());
+
+            Files.writeString(temp.resolve("catalog-v001.xml"),
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                    + "<catalog xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\"/>\n");
+            Map<String, Object> catalog = structured(ImportLockTools.validateCatalog(context(temp),
+                    Map.of()));
+            assertEquals(true, catalog.get("valid"), () -> catalog.toString());
+        } finally {
+            prefs.putBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, savedCompat);
+        }
+    }
+
+    @Test
     void writeRefusesWhenDeclaredLockfileDidNotResolve(@TempDir Path temp) throws Exception {
         Path policy = writePolicy(temp, "imports:\n  lockfile: config/imports.lock.json\n");
         ToolContext ctx = context(temp);
@@ -179,6 +211,117 @@ class ImportLockToolsLockPathTest {
                 () -> ImportLockTools.verify(ctx, Map.of("policy_path", "\0")));
         assertTrue(refusal.getMessage().contains("Invalid policy_path"),
                 "an unresolvable policy reference must refuse defaulting: " + refusal.getMessage());
+    }
+
+    @Test
+    void explicitPathBootstrapsTheDeclaredLockfileUnderADiscoveredInvalidPolicy(@TempDir Path temp)
+            throws Exception {
+        // The documented bootstrap: the DISCOVERED project.yaml declares a lockfile that does not
+        // exist yet, which makes the policy loaded-but-invalid (asset_missing). An explicit path
+        // pointing at the declared location must still write — refusing would leave no tool-surface
+        // way to ever create the declared file.
+        Files.createDirectories(temp.resolve(".protege-mcp"));
+        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
+                discoveredPolicy("bootstrap"));
+        Path declared = temp.resolve("config/imports.lock.json");
+
+        Map<String, Object> result = structured(ImportLockTools.write(context(temp),
+                Map.of("path", declared.toString())));
+
+        assertEquals(true, result.get("written"), () -> result.toString());
+        assertEquals(declared.toString(), result.get("path"));
+        assertTrue(Files.isRegularFile(declared), "the declared lockfile location must be created");
+        // With the declared file present the policy validates again, so the documented follow-up —
+        // policy-defaulted verification — works end to end.
+        Map<String, Object> verified = structured(ImportLockTools.verify(context(temp), Map.of()));
+        assertEquals(true, verified.get("valid"), () -> verified.toString());
+    }
+
+    @Test
+    void verifyReportsOnTheDeclaredLocationUnderADiscoveredInvalidPolicy(@TempDir Path temp)
+            throws Exception {
+        // Before the bootstrap write exists, verify with the explicit (relative) path must REPORT on
+        // the declared location — rooted at the canonical project_root, never at the process CWD —
+        // rather than refuse because the discovered policy is invalid.
+        Files.createDirectories(temp.resolve(".protege-mcp"));
+        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
+                discoveredPolicy("bootstrap-verify"));
+
+        Map<String, Object> result = structured(ImportLockTools.verify(context(temp),
+                Map.of("path", "config/imports.lock.json")));
+
+        assertEquals(false, result.get("valid"), () -> result.toString());
+        assertTrue(String.valueOf(result.get("errors")).contains("missing"), () -> result.toString());
+        String reported = String.valueOf(result.get("path"));
+        assertTrue(reported.startsWith(temp.toRealPath().toString()),
+                "the relative path must resolve below the canonical project root: " + reported);
+        assertTrue(reported.endsWith("config/imports.lock.json"), reported);
+    }
+
+    @Test
+    void bootstrapExplicitPathStaysContainedInTheCanonicalProjectRoot(@TempDir Path temp)
+            throws Exception {
+        // The bootstrap carve-out must not become a policy-invalid escape hatch: canonical
+        // project_root containment still applies, and an invalid policy can never grant external
+        // paths.
+        Files.createDirectories(temp.resolve(".protege-mcp"));
+        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
+                discoveredPolicy("bootstrap-escape"));
+        ToolContext ctx = context(temp);
+
+        ToolArgException refusal = assertThrows(ToolArgException.class,
+                () -> ImportLockTools.write(ctx, Map.of("path", "../escaped-imports.lock.json")));
+
+        assertTrue(refusal.getMessage().contains("outside project_root"), refusal.getMessage());
+        assertFalse(Files.exists(temp.toRealPath().getParent().resolve("escaped-imports.lock.json")),
+                "nothing may be written outside the project root");
+    }
+
+    @Test
+    void relativeExplicitPathsRootAtTheCanonicalProjectRootNotTheProcessCwd(@TempDir Path temp)
+            throws Exception {
+        // Protégé's CWD is / for a .app launch and arbitrary for a terminal launch; the contract
+        // roots relative direct paths at the policy's canonical project_root instead. Pre-fix they
+        // were pre-absolutized against the CWD, which either spuriously refused an in-project file
+        // or silently wrote beside the process CWD.
+        Files.createDirectories(temp.resolve(".protege-mcp"));
+        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
+                ProjectPolicyFixtures.minimalPolicy("relative-paths", ONTOLOGY_IRI)
+                + "validation:\n  required_stages: [structural]\n");
+        ToolContext ctx = context(temp);
+
+        Map<String, Object> written = structured(ImportLockTools.write(ctx,
+                Map.of("path", "nested/imports.lock.json")));
+
+        assertEquals(true, written.get("written"), () -> written.toString());
+        assertTrue(Files.isRegularFile(temp.resolve("nested/imports.lock.json")),
+                "the relative target must land below the project root");
+        assertTrue(String.valueOf(written.get("path")).startsWith(temp.toRealPath().toString()),
+                () -> "the reported path must be the project-rooted target: " + written);
+        assertFalse(Files.exists(Path.of("nested/imports.lock.json").toAbsolutePath()),
+                "nothing may resolve against the process working directory");
+
+        Map<String, Object> verified = structured(ImportLockTools.verify(ctx,
+                Map.of("path", "nested/imports.lock.json")));
+        assertEquals(true, verified.get("valid"), () -> verified.toString());
+    }
+
+    @Test
+    void validateCatalogResolvesRelativePathsAgainstTheProjectRoot(@TempDir Path temp) throws Exception {
+        Files.createDirectories(temp.resolve(".protege-mcp"));
+        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
+                ProjectPolicyFixtures.minimalPolicy("relative-catalog", ONTOLOGY_IRI)
+                + "validation:\n  required_stages: [structural]\n");
+        Files.writeString(temp.resolve("catalog-v001.xml"),
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<catalog xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\"/>\n");
+
+        Map<String, Object> result = structured(ImportLockTools.validateCatalog(context(temp),
+                Map.of("path", "catalog-v001.xml")));
+
+        assertEquals(true, result.get("valid"), () -> result.toString());
+        assertTrue(String.valueOf(result.get("catalog")).startsWith(temp.toRealPath().toString()),
+                () -> "the catalog path must resolve below the canonical root: " + result);
     }
 
     @Test

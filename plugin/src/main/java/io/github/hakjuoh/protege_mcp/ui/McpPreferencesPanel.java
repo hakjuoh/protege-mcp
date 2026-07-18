@@ -36,6 +36,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
     private JCheckBox autoStartCheck;
     private JCheckBox readOnlyCheck;
     private JCheckBox confirmWritesCheck;
+    private JCheckBox unrestrictedNoPolicyPathsCheck;
 
     @Override
     public void initialise() throws Exception {
@@ -104,6 +105,9 @@ public class McpPreferencesPanel extends PreferencesPanel {
                 p.getBoolean(McpConfig.KEY_READ_ONLY, false));
         confirmWritesCheck = new JCheckBox("Confirm each write with a dialog",
                 p.getBoolean(McpConfig.KEY_CONFIRM_WRITES, false));
+        unrestrictedNoPolicyPathsCheck = new JCheckBox(
+                "Allow unrestricted local-admin paths when no project policy is loaded",
+                p.getBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, true));
 
         PreferencesLayoutPanel panel = new PreferencesLayoutPanel();
         panel.addGroup("Connection");
@@ -145,8 +149,11 @@ public class McpPreferencesPanel extends PreferencesPanel {
         panel.addGroup("Safety");
         panel.addGroupComponent(readOnlyCheck);
         panel.addGroupComponent(confirmWritesCheck);
+        panel.addGroupComponent(unrestrictedNoPolicyPathsCheck);
         panel.addHelpText(PreferencesText.wrapped(
-                "Read-only and confirmation apply immediately, without a restart."));
+                "Read-only, confirmation, and the no-policy path compatibility switch apply "
+                        + "immediately, without a restart. Disable the compatibility switch to require "
+                        + "a project policy before any caller-selected local path or document URL."));
         add(panel);
     }
 
@@ -173,6 +180,8 @@ public class McpPreferencesPanel extends PreferencesPanel {
         p.putBoolean(McpConfig.KEY_AUTOSTART, autoStartCheck.isSelected());
         p.putBoolean(McpConfig.KEY_READ_ONLY, readOnlyCheck.isSelected());
         p.putBoolean(McpConfig.KEY_CONFIRM_WRITES, confirmWritesCheck.isSelected());
+        p.putBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS,
+                unrestrictedNoPolicyPathsCheck.isSelected());
     }
 
     @Override

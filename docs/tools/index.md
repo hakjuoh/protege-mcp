@@ -12,6 +12,10 @@ All **78 tools** the MCP server exposes, grouped by task. Each category page doc
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
+Version 0.6.1 keeps the 78-tool surface unchanged while enforcing direct path/network policy, automatic
+locked-import verification, module namespace/import governance, and isolated change-set preflight for
+`apply_changes verify=report|rollback`.
+
 ## Table of contents
 {: .no_toc .text-delta }
 
@@ -64,8 +68,8 @@ A safe natural-language editing loop:
 
 **Orient** (`get_ontology_context` / `get_entity_context`) → **ground** a name to an IRI, or confirm it
 would mint a new one (`search_entities` — `would_mint` / `best_match`) → **preview** an edit
-(`preview_changes`) → **apply & verify in one call** (`apply_changes` with `verify=rollback` reverts an
-edit that breaks the reasoner) → **gate** with the requirements suite and invariants
+(`preview_changes`) → **apply & verify in one call** (`apply_changes` with `verify=rollback` prevents a
+delta that fails the effective change-set gate) → **gate** with the requirements suite and invariants
 (`run_competency_questions`, `verify_ontology`, or the umbrella `run_qc_suite`).
 
 The top-level [Prompts](../prompts/) guide packages these flows for one-click use in an MCP client.

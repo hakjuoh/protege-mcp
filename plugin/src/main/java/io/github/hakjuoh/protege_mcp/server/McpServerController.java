@@ -352,6 +352,12 @@ public final class McpServerController implements ManagedServer {
         return McpConfig.prefs().getBoolean(McpConfig.KEY_CONFIRM_WRITES, false);
     }
 
+    /** Live compatibility switch for caller-selected paths when no project policy exists. */
+    public boolean isUnrestrictedNoPolicyPathsAllowed() {
+        return McpConfig.prefs().getBoolean(
+                McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, true);
+    }
+
     public String getLastError() {
         return lastError;
     }

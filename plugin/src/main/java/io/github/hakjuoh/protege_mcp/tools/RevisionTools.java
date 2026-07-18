@@ -38,7 +38,12 @@ public final class RevisionTools {
                         .str("policy_path", "Optional explicit local project policy; otherwise discover "
                                 + ".protege-mcp/project.yaml from the active ontology document upward.")
                         .build(),
-                (ex, req) -> Tools.guard(() -> get(ctx, Tools.args(req))));
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> arguments = Tools.args(req);
+                    DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
+                            Tools.optString(arguments, "policy_path"));
+                    return get(ctx, rules.authorizedPolicyArguments(arguments));
+                }));
     }
 
     static io.modelcontextprotocol.spec.McpSchema.CallToolResult get(ToolContext ctx,

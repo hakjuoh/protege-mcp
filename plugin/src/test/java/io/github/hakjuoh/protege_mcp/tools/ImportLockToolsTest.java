@@ -20,13 +20,77 @@ import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
+import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
+import io.github.hakjuoh.protege_mcp.server.McpServerController;
+import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 class ImportLockToolsTest {
 
     @TempDir
     Path temp;
+
+    @Test
+    void validateCatalogReportsPolicyRefusedEntriesPerEntryInsteadOfAbortingTheScan() throws Exception {
+        // A catalog entry whose target the direct-access policy refuses (here: caller-selected paths
+        // disabled with no policy) makes rules.readPath throw a ToolArgException — a RuntimeException
+        // the per-entry IllegalArgumentException catch does NOT catch. Before the fix that escaped to
+        // the outer catch and aborted the WHOLE scan as a fake "could not parse catalog" failure,
+        // dropping every other entry, the nextCatalog chain, and fabricating unmapped_imports. Now it
+        // is a per-entry outside_project status and the scan completes. The catalog itself is derived
+        // beside the active document (an authorized implicit path); only the entry targets are refused.
+        Files.createDirectories(temp.resolve("lib"));
+        Files.writeString(temp.resolve("lib/a.owl"), "<x/>\n");
+        Files.writeString(temp.resolve("lib/b.owl"), "<x/>\n");
+        Files.writeString(temp.resolve("catalog-v001.xml"), "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<catalog xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\">\n"
+                + "  <uri name=\"https://example.org/a\" uri=\"lib/a.owl\"/>\n"
+                + "  <uri name=\"https://example.org/b\" uri=\"lib/b.owl\"/>\n"
+                + "  <nextCatalog catalog=\"other/catalog-v001.xml\"/>\n"
+                + "</catalog>\n");
+
+        McpConfig.prefs().putBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, false);
+        try {
+            Map<String, Object> result = structured(ImportLockTools.validateCatalog(
+                    controlledContext(temp.resolve("ontology.ttl"), "https://example.org/b"),
+                    Map.of("compare_imports", true)));
+
+            List<?> entries = (List<?>) result.get("entries");
+            assertEquals(2, entries.size(), () -> "both entries must be scanned, not dropped: " + result);
+            for (Object value : entries) {
+                assertEquals("policy_refused", ((Map<?, ?>) value).get("status"), result::toString);
+            }
+            List<?> errors = (List<?>) result.get("errors");
+            assertFalse(errors.stream().anyMatch(e -> String.valueOf(e).contains("could not parse")),
+                    () -> "a policy-refused entry must not be misreported as a parse failure: " + errors);
+            assertEquals(1, ((List<?>) result.get("next_catalogs")).size(),
+                    () -> "the nextCatalog after the refused entry must still be reported: " + result);
+            // The import mapped by the second entry was scanned into names, so it is neither fabricated
+            // as unmapped nor as delegated.
+            assertEquals(List.of(), result.get("unmapped_imports"), result::toString);
+            assertEquals(List.of(), result.get("delegated_imports"), result::toString);
+        } finally {
+            McpConfig.prefs().putBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, true);
+        }
+    }
+
+    /**
+     * A context with a real controller (so the no-policy compatibility switch is consulted) whose
+     * active ontology reports {@code documentIri} as its document — the beside-active catalog default
+     * derives from that folder.
+     */
+    private ToolContext controlledContext(Path documentIri, String... importIris) throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology active = manager.createOntology(IRI.create("https://example.org/active"));
+        manager.setOntologyDocumentIRI(active, IRI.create(documentIri.toUri()));
+        for (String importIri : importIris) {
+            manager.applyChange(new org.semanticweb.owlapi.model.AddImport(active,
+                    manager.getOWLDataFactory().getOWLImportsDeclaration(IRI.create(importIri))));
+        }
+        return new ToolContext(HeadlessAccess.over(FakeModelManager.over(active)),
+                new McpServerController(new OntologyAccess(null)));
+    }
 
     @Test
     void parsesStrictRelativeLockEntry() throws Exception {

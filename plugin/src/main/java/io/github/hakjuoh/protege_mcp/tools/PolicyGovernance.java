@@ -340,6 +340,10 @@ final class PolicyGovernance {
             out.put("severity", severity);
             out.put("title", title);
             out.put("count", focuses.size());
+            List<String> identities = new ArrayList<>();
+            active.forEach((focus, values) -> values.forEach(
+                    value -> identities.add(focus + "\u0000" + value)));
+            out.put("identity_digest", FindingIdentity.digest(identities));
             out.put("suggestion", suggestion);
             if (!focuses.isEmpty()) out.put("examples", focuses.subList(0, Math.min(bounded, focuses.size())));
             if (!details.isEmpty()) out.put("details", details.subList(0, Math.min(bounded, details.size())));

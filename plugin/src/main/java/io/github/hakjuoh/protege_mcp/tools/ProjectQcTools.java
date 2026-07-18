@@ -143,7 +143,8 @@ final class ProjectQcTools {
         return new QcSuiteTools.RunConfig(stages, required, failOn, profile, limit, timeout,
                 invariants, cqs, null, null, shacl, iriPattern, namespaces,
                 requiredAnnotations, true, governanceRules(root), disabled, severity, true, configuredReasoner,
-                string(root, "root_ontology"), interopConfig);
+                string(root, "root_ontology"), interopConfig,
+                ModulePolicyGovernance.moduleChecks(policy, limit));
     }
 
     /**
@@ -160,19 +161,41 @@ final class ProjectQcTools {
         Map<String, Object> imports = object(policy.effective(), "imports");
         boolean failOnMissing = Boolean.TRUE.equals(imports.get("fail_on_missing"));
         boolean locked = "locked".equals(string(imports, "mode"));
-        if ((!failOnMissing && !locked) || execution.missingImports.isEmpty()) {
-            return;
-        }
         List<Map<String, Object>> findings = (List<Map<String, Object>>) result.computeIfAbsent(
                 "findings", key -> new ArrayList<Map<String, Object>>());
-        for (Map<String, Object> row : execution.missingImports) {
-            String iri = String.valueOf(row.get("import_iri"));
-            findings.add(finding("imports.unresolved", "imports", "error",
-                    "Required import could not be resolved: " + iri
-                            + " (policy imports." + (locked ? "mode=locked" : "fail_on_missing=true")
-                            + " forbids a partial closure).", Map.of("import_iri", iri)));
+        if ((failOnMissing || locked) && !execution.missingImports.isEmpty()) {
+            for (Map<String, Object> row : execution.missingImports) {
+                String iri = String.valueOf(row.get("import_iri"));
+                findings.add(finding("imports.unresolved", "imports", "error",
+                        "Required import could not be resolved: " + iri
+                                + " (policy imports." + (locked ? "mode=locked" : "fail_on_missing=true")
+                                + " forbids a partial closure).", Map.of("import_iri", iri)));
+            }
+            result.put("gate", "error");
         }
-        result.put("gate", "error");
+        if (locked) {
+            Map<String, Object> verification = execution.importReport == null
+                    ? Map.of("valid", false, "errors",
+                            List.of("project QC did not capture the loaded import graph"))
+                    : ImportLockTools.verifyForGate(policy, execution.importReport,
+                            execution.fingerprint, execution.closureFingerprint);
+            result.put("import_lock_verification", verification);
+            if (!Boolean.TRUE.equals(verification.get("valid"))) {
+                // Coordinates and disk hashes matching while the loaded content is not attested is a
+                // distinct failure: the disk files are lock-faithful, but the in-memory closure QC
+                // validated diverged from them (e.g. an unsaved edit of an imported ontology).
+                boolean contentDivergence =
+                        Boolean.FALSE.equals(verification.get("loaded_content_verified"));
+                findings.add(contentDivergence
+                        ? finding("imports.loaded_content_divergence", "imports", "error",
+                                "The loaded import closure content does not provably match the "
+                                        + "imports.lockfile-verified on-disk documents.", verification)
+                        : finding("imports.lock_mismatch", "imports", "error",
+                                "The loaded import closure does not match imports.lockfile content.",
+                                verification));
+                result.put("gate", "error");
+            }
+        }
     }
 
     private static List<CompetencyQuestion> loadPolicyCqs(ProjectPolicy policy) {

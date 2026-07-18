@@ -409,6 +409,181 @@ class ChangeSetToolsTest {
     }
 
     @Test
+    void applyChangesRollbackUsesChangeSetGateAndPreventsLiveMutation(@TempDir Path temp)
+            throws Exception {
+        Path docDir = Files.createDirectories(temp.resolve("sub"));
+        writeGovernedPolicy(temp);
+        OWLOntology ontology = ontology(docDir);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+        Map<String, Object> operation = removeFooLabelOperation();
+
+        Map<String, Object> result = structured(ChangeSetApplyVerify.apply(ctx, "rollback", 60_000,
+                "adversarial namespace change", List.of(operation), false));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+        assertEquals(0, ((Number) summary.get("errors")).intValue(), result::toString);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> verify = (Map<String, Object>) result.get("verify");
+
+        assertEquals("change_set_preflight", verify.get("verification_path"), verify::toString);
+        assertEquals("fail", verify.get("gate"), verify::toString);
+        assertEquals(Boolean.TRUE, verify.get("regression"), verify::toString);
+        assertEquals(Boolean.TRUE, verify.get("prevented_before_apply"), verify::toString);
+        assertEquals(Boolean.FALSE, verify.get("applied"), verify::toString);
+        assertTrue(ontology.containsAxiom(fooLabelAxiom(ontology)),
+                "rollback mode must retain the live label removed only in the rejected snapshot");
+        // The prevented payload must not claim the batch landed: the released row/summary fields
+        // describe what actually applied, and here nothing did.
+        assertEquals(Boolean.FALSE, summary.get("single_undo"), summary::toString);
+        assertEquals(0, ((Number) summary.get("removed")).intValue(), summary::toString);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.get("operations");
+        assertEquals(Boolean.FALSE, rows.get(0).get("removed"), rows::toString);
+    }
+
+    @Test
+    void rollbackWithoutReasonerOrPolicyIsRefusedOutright(@TempDir Path temp) throws Exception {
+        Path docDir = Files.createDirectories(temp.resolve("sub"));
+        OWLOntology ontology = ontology(docDir);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+
+        var refused = ChangeSetApplyVerify.apply(ctx, "rollback", 60_000,
+                "unguarded rollback", List.of(removeFooLabelOperation()), false);
+
+        assertEquals(Boolean.TRUE, refused.isError(), () -> String.valueOf(refused.content()));
+        assertTrue(String.valueOf(refused.content()).contains("needs a reasoner"),
+                () -> String.valueOf(refused.content()));
+        assertTrue(ontology.containsAxiom(fooLabelAxiom(ontology)),
+                "the refused batch must not touch the live ontology");
+    }
+
+    @Test
+    void reportModeCommitsUnderALoadedButInvalidPolicy(@TempDir Path temp) throws Exception {
+        Path docDir = Files.createDirectories(temp.resolve("sub"));
+        Path dir = Files.createDirectories(temp.resolve(".protege-mcp"));
+        ProjectPolicyFixtures.writePolicy(dir.resolve("project.yaml"),
+                ProjectPolicyFixtures.minimalPolicy("governed", ONTOLOGY_IRI)
+                        + "modules:\n  - ontology_iri: https://example.org/missing\n"
+                        + "    path: missing.rdf\n");
+        OWLOntology ontology = ontology(docDir);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+
+        Map<String, Object> result = structured(ChangeSetApplyVerify.apply(ctx, "report", 60_000,
+                "review under an invalid policy", List.of(removeFooLabelOperation()), false));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> verify = (Map<String, Object>) result.get("verify");
+
+        assertEquals("error", verify.get("gate"), verify::toString);
+        assertEquals(Boolean.TRUE, verify.get("applied"), verify::toString);
+        assertEquals(null, verify.get("error_code"),
+                "report mode must commit under the same invalid policy verify=none accepts");
+        assertFalse(ontology.containsAxiom(fooLabelAxiom(ontology)),
+                "report mode commits the batch and surfaces the failing verdict");
+    }
+
+    @Test
+    void rollbackUnderALoadedButInvalidPolicyStaysPrevented(@TempDir Path temp) throws Exception {
+        Path docDir = Files.createDirectories(temp.resolve("sub"));
+        Path dir = Files.createDirectories(temp.resolve(".protege-mcp"));
+        ProjectPolicyFixtures.writePolicy(dir.resolve("project.yaml"),
+                ProjectPolicyFixtures.minimalPolicy("governed", ONTOLOGY_IRI)
+                        + "modules:\n  - ontology_iri: https://example.org/missing\n"
+                        + "    path: missing.rdf\n");
+        OWLOntology ontology = ontology(docDir);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+
+        Map<String, Object> result = structured(ChangeSetApplyVerify.apply(ctx, "rollback", 60_000,
+                "rollback under an invalid policy", List.of(removeFooLabelOperation()), false));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> verify = (Map<String, Object>) result.get("verify");
+
+        assertEquals("error", verify.get("gate"), verify::toString);
+        assertEquals(Boolean.TRUE, verify.get("prevented_before_apply"), verify::toString);
+        assertTrue(ontology.containsAxiom(fooLabelAxiom(ontology)),
+                "an unproducible verdict must keep failing closed in rollback mode");
+    }
+
+    @Test
+    void netZeroCancellationBatchLandsNothingThroughVerify(@TempDir Path temp) throws Exception {
+        Path docDir = Files.createDirectories(temp.resolve("sub"));
+        OWLOntology ontology = ontology(docDir);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+        String property = ONTOLOGY_IRI + "#undeclaredNote";
+        Map<String, Object> add = new LinkedHashMap<>();
+        add.put("op", "add");
+        add.put("axiom_type", "annotation_assertion");
+        add.put("subject", ONTOLOGY_IRI + "#Foo");
+        add.put("property", property);
+        add.put("value", "temporary");
+        Map<String, Object> remove = new LinkedHashMap<>(add);
+        remove.put("op", "remove");
+        int before = ontology.getAxiomCount();
+
+        Map<String, Object> result = structured(ChangeSetApplyVerify.apply(ctx, "report", 60_000,
+                "net-zero cancellation", List.of(add, remove), false));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> verify = (Map<String, Object>) result.get("verify");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+
+        assertEquals(before, ontology.getAxiomCount(), "a cancelled batch must not land the "
+                + "declaration side effects the isolated gate never evaluated");
+        assertEquals("pass", verify.get("gate"), verify::toString);
+        assertEquals(Boolean.FALSE, verify.get("applied"), verify::toString);
+        assertEquals(Boolean.FALSE, summary.get("single_undo"), summary::toString);
+    }
+
+    @Test
+    void preflightConfigHonorsTheDocumentedTimeoutBudget(@TempDir Path temp) throws Exception {
+        Path docDir = Files.createDirectories(temp.resolve("sub"));
+        OWLOntology ontology = ontology(docDir);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+        RevisionTools.PolicyState noPolicy = RevisionTools.resolvePolicy(ctx, null);
+        assertFalse(noPolicy.policy().loaded());
+        assertEquals(5_000, ChangeSetTools.preflightConfig(noPolicy,
+                Map.<String, Object>of("timeout_ms", 5_000),
+                ChangeSetTools.ReasonerSelection.NONE).timeout);
+
+        writeGovernedPolicy(temp);
+        RevisionTools.PolicyState governed = RevisionTools.resolvePolicy(ctx, null);
+        assertTrue(governed.policy().valid(), () -> governed.policy().issues().toString());
+        int policyBudget = ChangeSetTools.preflightConfig(governed, Map.of(),
+                ChangeSetTools.ReasonerSelection.NONE).timeout;
+        assertEquals(policyBudget, ChangeSetTools.preflightConfig(governed,
+                Map.<String, Object>of("timeout_ms", policyBudget + 1_000_000),
+                ChangeSetTools.ReasonerSelection.NONE).timeout,
+                "the documented argument can only tighten the policy's reproducible budget");
+        assertEquals(1_000, ChangeSetTools.preflightConfig(governed,
+                Map.<String, Object>of("timeout_ms", 1_000),
+                ChangeSetTools.ReasonerSelection.NONE).timeout);
+    }
+
+    @Test
+    void applyChangesReportUsesSameGateButKeepsTheLiveMutation(@TempDir Path temp)
+            throws Exception {
+        Path docDir = Files.createDirectories(temp.resolve("sub"));
+        writeGovernedPolicy(temp);
+        OWLOntology ontology = ontology(docDir);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+        Map<String, Object> operation = removeFooLabelOperation();
+
+        Map<String, Object> result = structured(ChangeSetApplyVerify.apply(ctx, "report", 60_000,
+                "review namespace change", List.of(operation), false));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+        assertEquals(0, ((Number) summary.get("errors")).intValue(), result::toString);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> verify = (Map<String, Object>) result.get("verify");
+
+        assertEquals("change_set_preflight", verify.get("verification_path"), verify::toString);
+        assertEquals("fail", verify.get("gate"), verify::toString);
+        assertEquals(Boolean.TRUE, verify.get("regression"), verify::toString);
+        assertEquals(Boolean.TRUE, verify.get("applied"), verify::toString);
+        assertFalse(ontology.containsAxiom(fooLabelAxiom(ontology)),
+                "report mode retains the label removal after surfacing the gate regression");
+    }
+
+    @Test
     void commitHopTimeoutIsHonestAboutThePossiblyAppliedDelta(@TempDir Path temp) throws Exception {
         Path docDir = Files.createDirectories(temp.resolve("sub"));
         writeDiscoveredPolicy(temp, "root-policy");
@@ -482,6 +657,33 @@ class ChangeSetToolsTest {
                 + "validation:\n"
                 + "  required_stages: [structural]\n"
                 + "  fail_on: error\n");
+    }
+
+    private static void writeGovernedPolicy(Path directory) throws Exception {
+        Path dir = Files.createDirectories(directory.resolve(".protege-mcp"));
+        ProjectPolicyFixtures.writePolicy(dir.resolve("project.yaml"),
+                ProjectPolicyFixtures.minimalPolicy("governed", ONTOLOGY_IRI)
+                + "annotations:\n"
+                + "  required: [http://www.w3.org/2000/01/rdf-schema#label]\n"
+                + "validation:\n"
+                + "  required_stages: [governance]\n"
+                + "  fail_on: warning\n");
+    }
+
+    private static Map<String, Object> removeFooLabelOperation() {
+        Map<String, Object> operation = new LinkedHashMap<>();
+        operation.put("op", "remove");
+        operation.put("axiom_type", "annotation_assertion");
+        operation.put("subject", ONTOLOGY_IRI + "#Foo");
+        operation.put("property", "http://www.w3.org/2000/01/rdf-schema#label");
+        operation.put("value", "Foo");
+        return operation;
+    }
+
+    private static org.semanticweb.owlapi.model.OWLAxiom fooLabelAxiom(OWLOntology ontology) {
+        OWLDataFactory df = ontology.getOWLOntologyManager().getOWLDataFactory();
+        return df.getOWLAnnotationAssertionAxiom(df.getRDFSLabel(),
+                IRI.create(ONTOLOGY_IRI + "#Foo"), df.getOWLLiteral("Foo"));
     }
 
     private static Map<String, Object> committablePreview(ToolContext ctx) {

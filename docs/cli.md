@@ -6,7 +6,7 @@ nav_order: 9
 # Headless CLI
 {: .no_toc }
 
-Version 0.6.0 ships a separately tested Java 17 artifact,
+Version {{ site.version }} ships a separately tested Java 17 artifact,
 `protege-mcp-cli-<version>-all.jar`. It embeds OWLAPI, contains no Protégé editor classes, and does not
 need a local Maven repository after download. The existing `protege-mcp-<version>.jar` remains the
 Protégé OSGi plugin and is not a standalone launcher.
@@ -14,9 +14,9 @@ Protégé OSGi plugin and is not a standalone launcher.
 ## Commands
 
 ```bash
-java -jar protege-mcp-cli-0.6.0-all.jar --version
-java -jar protege-mcp-cli-0.6.0-all.jar validate-policy --project .protege-mcp/project.yaml
-java -jar protege-mcp-cli-0.6.0-all.jar diff --left previous.ttl --right current.ttl
+java -jar protege-mcp-cli-{{ site.version }}-all.jar --version
+java -jar protege-mcp-cli-{{ site.version }}-all.jar validate-policy --project .protege-mcp/project.yaml
+java -jar protege-mcp-cli-{{ site.version }}-all.jar diff --left previous.ttl --right current.ttl
 ```
 
 `validate-policy` prints the resolved path/root, canonical policy digest, and structured validation

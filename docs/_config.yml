@@ -14,7 +14,7 @@ remote_theme: just-the-docs/just-the-docs@v0.12.0
 
 # Current release version, mirrored from pom.xml. The version-consistency gate
 # keeps this value and the other distribution metadata in sync.
-version: 0.6.0
+version: 0.6.1
 
 # Project site lives at https://hakjuoh.github.io/protege-mcp/
 url: https://hakjuoh.github.io

@@ -80,11 +80,13 @@ public final class ProjectPolicyFixtures {
         Files.createDirectories(root);
 
         String rootArtifact = (String) interop.get("root_artifact");
+        String ontologyIri = (String) policy.get("root_ontology");
         Path artifact = root.resolve(rootArtifact).normalize();
         Files.createDirectories(artifact.getParent());
         if (!Files.exists(artifact)) {
             Files.writeString(artifact,
-                    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<> a owl:Ontology .\n",
+                    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<" + ontologyIri
+                            + "> a owl:Ontology .\n",
                     StandardCharsets.UTF_8);
         }
 
@@ -94,7 +96,6 @@ public final class ProjectPolicyFixtures {
         String descriptor = (String) metadata.getOrDefault("path",
                 "ro-crate-1.0".equals(format)
                         ? "ro-crate-metadata.jsonld" : "ro-crate-metadata.json");
-        String ontologyIri = (String) policy.get("root_ontology");
         String projectId = (String) policy.get("project_id");
         String profile = (String) interop.get("profile");
         List<String> profiles = new ArrayList<>();

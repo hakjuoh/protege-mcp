@@ -13,6 +13,10 @@ either an interactive or strict reproducible **quality-control gate**. They
 close the **propose → ground → verify → confirm** loop — pair them with `apply_changes verify=`
 ([Editing](editing.html)) and `search_entities` grounding ([Explore & search](explore-search.html)).
 
+In 0.6.1, caller-selected filesystem paths require request-scoped project read/write capabilities and
+are confined by the effective policy; project/change-set gates also verify locked import content, module
+namespace ownership, cycles, and loaded import identity conflicts automatically.
+
 ## Table of contents
 {: .no_toc .text-delta }
 
@@ -85,9 +89,12 @@ ROBOT-compatible `.rq` files for [`run_project_qc`](#run_project_qc); their lead
 Discover and return the effective project policy. An explicit local `policy_path` wins; otherwise the tool
 walks from the active ontology document upward for `.protege-mcp/project.yaml`. It strictly parses YAML,
 validates schema v1, applies deterministic defaults, and checks the active ontology IRI, installed required
-reasoner, CURIEs/regexes, referenced files, project-root confinement, and symlink escapes. No policy is a
-compatible interactive state: `policy_loaded=false` and `path_mode=legacy_local_admin_unrestricted` are
-reported explicitly. *Read-only.*
+reasoner, CURIEs/regexes, referenced files, project-root confinement, and symlink escapes. With the
+default preferences, no policy is a compatible interactive state: `policy_loaded=false` and
+`path_mode=legacy_local_admin_unrestricted` are reported explicitly. When **Allow unrestricted
+local-admin paths when no project policy is loaded** is disabled in Settings ▸ MCP, the same state
+reports `path_mode=policy_required` and every caller-selected path or document URL is refused until a
+policy loads (saves and sidecars derived from the already-open document still work). *Read-only.*
 
 **Arguments**
 
@@ -100,7 +107,7 @@ reported explicitly. *Read-only.*
 - `policy_loaded`: boolean; whether a file was selected.
 - `valid`: boolean; schema, semantic, live-context, and path validation outcome.
 - `discovery`: `explicit`, `discovered`, or `none`.
-- `path_mode`: `policy_confined` or the reported legacy compatibility mode.
+- `path_mode`: `policy_confined` (a policy governs paths), `legacy_local_admin_unrestricted` (no policy, compatibility preference on), or `policy_required` (no policy, compatibility preference off — caller-selected paths refused).
 - `active_ontology_iri`: active ontology IRI, or null for an anonymous ontology.
 - `policy_path` / `project_root`: resolved local paths when loaded.
 - `policy_digest`: SHA-256 over canonical effective policy data (comments/key order do not change it).
@@ -165,7 +172,8 @@ errored required stage is `gate=error` and takes precedence over a separate fail
   individuals explicitly degrade the digest to a same-session token.
 - `reasoner`: the reasoner selected at the shared-snapshot boundary.
 - `required_stages`, `stages_ran`, `stages_skipped`, `fail_on`, and `stages` (each includes `required` and
-  strict `status`).
+  strict `status`). Gating stage details include `identity_digest`, a SHA-256 identity over the complete
+  finding set used for baseline attribution even when public examples are capped.
 - `details`: normalized gate metadata — `{fail_on, missing_required_stages?}`. A completed reasoner stage's details include `reasoner_configuration` with requested and
   runtime-exposed parity/caveat fields.
 - `findings`: common finding objects with `id`, `source`, `severity`, `message`, `focus_iri`, `axiom`, `path`,
@@ -178,6 +186,8 @@ errored required stage is `gate=error` and takes precedence over a separate fail
   error detected before capture reports `mode=none`, `same_snapshot=false`, and
   `closure_fingerprint=null`.
 - `resolved_assets`: exact policy assets used.
+- `import_lock_verification`: automatic full coordinate/checksum comparison when `imports.mode` is
+  `locked`; any mismatch forces `gate=error` and an `imports.lock_mismatch` finding.
 - `surface`: `run_project_qc` (or `run_qc_suite` when invoked through its `policy_path` compatibility entry).
 - `errors`: structured policy/configuration errors when validation cannot start.
 
@@ -251,7 +261,7 @@ Validate the active ontology's imports-closure RDF against a **SHACL shapes grap
 | `limit` | integer | no | `1000` | Max validation results to return. |
 | `timeout_ms` | integer | no | `120000` | Time budget for **both** the data snapshot and the validation. |
 
-**Returns** `conforms` (boolean), `total_results`, the `violations` / `warnings` / `infos` counts and `worst_severity`, plus `results[]` — each `{focus_node, result_path, value, severity, constraint_component, source_shape, message}` (capped at `limit`, with `truncated` when more remain).
+**Returns** `conforms` (boolean), `total_results`, the `violations` / `warnings` / `infos` counts, `worst_severity`, and `identity_digest` (SHA-256 over all violation/warning identities), plus `results[]` — each `{focus_node, result_path, value, severity, constraint_component, source_shape, message}` (capped at `limit`, with `truncated` when more remain).
 
 ## `add_competency_question`
 

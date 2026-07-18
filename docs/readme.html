@@ -52,6 +52,18 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h3>Version information</h3>
 
+<h4>v0.6.1</h4>
+<ul>
+    <li>Direct filesystem paths are confined to the canonical project root and authorized with
+        request-scoped project read/write and external-path capabilities; project network/import modes
+        and host allowlists now stop unapproved dereference.</li>
+    <li>Locked import coordinates and checksums are verified automatically by project QC and change-set
+        preflight. Module files are checked against declared ontology IRIs, owned namespaces are enforced,
+        and import cycles/identity conflicts join governance.</li>
+    <li><code>apply_changes verify=report|rollback</code> now uses the isolated change-set gate;
+        rollback rejects a failing delta before live mutation. The surface remains 78 tools and 11 prompts.</li>
+</ul>
+
 <h4>v0.6.0</h4>
 <ul>
     <li>Project policy becomes executable: three new tools discover and validate strict

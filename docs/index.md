@@ -63,6 +63,9 @@ Everything an AI client does flows through Protégé's own model manager, so:
   conformance, IRI policy, required annotations, module ownership / import layering), load persisted
   invariants/CQs/SHACL from a checked-in policy, and distinguish a validation failure from a check that
   could not run.
+- **Enforce project boundaries.** Policy-relative paths stay below the canonical project root, remote
+  documents/imports require explicit network policy and capability, and locked import content is checked
+  automatically before a project gate or change-set commit can pass.
 - **Exchange a portable project identity.** Validate RO-Crate metadata and compute a W3C RDFC-1.0
   identity for the asserted root RDF dataset, while keeping dependency checksums in an import lock.
 - **No API key stored by Protégé.** The Ontology Assistant reuses your existing CLI login; nothing is

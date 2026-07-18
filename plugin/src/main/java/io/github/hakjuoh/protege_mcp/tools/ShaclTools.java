@@ -87,6 +87,9 @@ public final class ShaclTools {
                     Map<String, Object> a = Tools.args(req);
                     String shapesText = Tools.optString(a, "shapes");
                     String shapesPath = Tools.optString(a, "shapes_path");
+                    if (!isBlank(shapesPath)) {
+                        shapesPath = DirectAccessPolicy.resolve(ctx, ex).readPath(shapesPath).toString();
+                    }
                     boolean includeInferred = Tools.optBool(a, "include_inferred", false);
                     int limit = Tools.optInt(a, "limit", 1000);
                     int timeout = Tools.optInt(a, "timeout_ms", 120_000);
@@ -335,6 +338,7 @@ public final class ShaclTools {
                 + "}\n"
                 + "GROUP BY ?r";
         List<Map<String, Object>> results = new ArrayList<>();
+        List<String> gatingIdentities = new ArrayList<>();
         int violations = 0;
         int warnings = 0;
         int infos = 0;
@@ -351,18 +355,20 @@ public final class ShaclTools {
                 } else if ("Info".equals(severity)) {
                     infos++;
                 }
+                Map<String, Object> identity = new LinkedHashMap<>();
+                putIfNotNull(identity, "focus_node", str(s.get("focus")));
+                putIfNotNull(identity, "result_path", str(s.get("path")));
+                putIfNotNull(identity, "value", str(s.get("value")));
+                putIfNotNull(identity, "severity", severity);
+                putIfNotNull(identity, "constraint_component", localName(str(s.get("component"))));
+                putIfNotNull(identity, "source_shape", str(s.get("shape")));
+                String message = str(s.get("message"));
+                putIfNotNull(identity, "message", message == null || message.isEmpty() ? null : message);
+                if ("Violation".equals(severity) || "Warning".equals(severity)) {
+                    gatingIdentities.add(FindingIdentity.object(identity));
+                }
                 if (results.size() < cap) {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    putIfNotNull(row, "focus_node", str(s.get("focus")));
-                    putIfNotNull(row, "result_path", str(s.get("path")));
-                    putIfNotNull(row, "value", str(s.get("value")));
-                    putIfNotNull(row, "severity", severity);
-                    putIfNotNull(row, "constraint_component", localName(str(s.get("component"))));
-                    putIfNotNull(row, "source_shape", str(s.get("shape")));
-                    // GROUP_CONCAT yields "" (not unbound) when a result has no message — treat as absent.
-                    String message = str(s.get("message"));
-                    putIfNotNull(row, "message", message == null || message.isEmpty() ? null : message);
-                    results.add(row);
+                    results.add(identity);
                 }
             }
         }
@@ -373,6 +379,7 @@ public final class ShaclTools {
         m.put("violations", violations);
         m.put("warnings", warnings);
         m.put("infos", infos);
+        m.put("identity_digest", FindingIdentity.digest(gatingIdentities));
         String worst = violations > 0 ? "Violation" : warnings > 0 ? "Warning" : infos > 0 ? "Info" : null;
         if (worst != null) {
             m.put("worst_severity", worst);

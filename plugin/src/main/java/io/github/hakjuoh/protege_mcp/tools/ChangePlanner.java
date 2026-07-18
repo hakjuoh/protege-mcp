@@ -26,10 +26,24 @@ final class ChangePlanner {
     }
 
     static Plan plan(OWLModelManager mm, List<Map<String, Object>> operations, boolean strict) {
+        return plan(mm, operations, strict, false);
+    }
+
+    /** Plan the valid subset retained by released apply_changes partial-error semantics. */
+    static Plan planForApply(OWLModelManager mm, List<Map<String, Object>> operations,
+            boolean strict) {
+        return plan(mm, operations, strict, true);
+    }
+
+    private static Plan plan(OWLModelManager mm, List<Map<String, Object>> operations,
+            boolean strict, boolean retainValidSubsetOnError) {
         if (operations.isEmpty()) {
             throw new ToolArgException("Provide at least one operation in 'operations'.");
         }
-        if (operations.size() > MAX_OPERATIONS) {
+        // The cap protects the preview STORE's retained entries. A verified apply retains nothing,
+        // and apply_changes accepted arbitrarily sized batches before the 0.6.1 migration — capping
+        // only its verify= modes would break released calls.
+        if (!retainValidSubsetOnError && operations.size() > MAX_OPERATIONS) {
             throw new ToolArgException("operations exceeds the maximum of " + MAX_OPERATIONS + ".");
         }
         OWLOntology active = mm.getActiveOntology();
@@ -90,7 +104,7 @@ final class ChangePlanner {
         // the declaration injection below so injected declarations never join the reconciliation.
         int summaryNoOps = (operations.size() - errors.size()) - adds.size() - removes.size();
 
-        if (errors.isEmpty()) {
+        if (errors.isEmpty() || retainValidSubsetOnError) {
             Set<OWLEntity> minted = new LinkedHashSet<>();
             for (OWLAxiom axiom : adds) {
                 minted.addAll(PreviewTools.newEntities(closure, axiom));

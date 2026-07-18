@@ -217,6 +217,161 @@ class ProjectQcToolsTest {
     }
 
     @Test
+    void lockedPolicyAutomaticallyRejectsATamperedImport(@TempDir Path temp) throws Exception {
+        Path importedPath = temp.resolve("imported.ttl");
+        Files.writeString(importedPath, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/imported> a owl:Ontology .\n");
+        String sha = RevisionTools.sha256File(importedPath).substring("sha256:".length());
+        Path lock = temp.resolve("imports.lock.json");
+        Files.writeString(lock, "{\"version\":1,\"imports\":[{"
+                + "\"ontology_iri\":\"https://example.org/imported\","
+                + "\"version_iri\":null,\"document\":\"imported.ttl\","
+                + "\"sha256\":\"" + sha + "\",\"direct\":true}]}\n");
+        Path policy = writePolicy(temp, "[structural]",
+                "imports:\n  mode: locked\n  fail_on_missing: true\n"
+                        + "  lockfile: imports.lock.json\n  network: deny\n", "error");
+
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology imported = manager.loadOntologyFromOntologyDocument(importedPath.toFile());
+        OWLOntology active = manager.createOntology(IRI.create(ONTOLOGY_IRI));
+        manager.setOntologyFormat(active, new TurtleDocumentFormat());
+        manager.setOntologyDocumentIRI(active, IRI.create(temp.resolve("ontology.ttl").toUri()));
+        manager.applyChange(new org.semanticweb.owlapi.model.AddImport(active,
+                manager.getOWLDataFactory().getOWLImportsDeclaration(
+                        imported.getOntologyID().getOntologyIRI().get())));
+        ToolContext context = new ToolContext(HeadlessAccess.over(FakeModelManager.over(active)), null);
+
+        Map<String, Object> pass = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+        assertEquals("pass", pass.get("gate"), () -> pass.toString());
+        Files.writeString(importedPath, Files.readString(importedPath) + "# tampered\n");
+        Map<String, Object> rejected = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+        assertEquals("error", rejected.get("gate"));
+        assertTrue(String.valueOf(rejected.get("findings")).contains("imports.lock_mismatch"));
+        assertTrue(String.valueOf(rejected.get("import_lock_verification"))
+                .contains("mismatched_entries"));
+    }
+
+    @Test
+    void lockedGateFailsClosedOnAnUnsavedInMemoryEditOfALockedImport(@TempDir Path temp) throws Exception {
+        // The lock pins on-disk bytes while QC validates the LOADED closure. An unsaved in-memory
+        // edit of an imported ontology keeps every coordinate and disk hash intact, so a gate that
+        // only re-hashes files reports pass while reasoning over axioms matching no lockfile content.
+        // The gate must attest the loaded content itself, fail closed on the divergence with its own
+        // finding, and recover once the edit is undone.
+        Path importedPath = temp.resolve("imported.ttl");
+        Files.writeString(importedPath, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/imported> a owl:Ontology .\n");
+        String sha = RevisionTools.sha256File(importedPath).substring("sha256:".length());
+        Files.writeString(temp.resolve("imports.lock.json"), "{\"version\":1,\"imports\":[{"
+                + "\"ontology_iri\":\"https://example.org/imported\","
+                + "\"version_iri\":null,\"document\":\"imported.ttl\","
+                + "\"sha256\":\"" + sha + "\",\"direct\":true}]}\n");
+        Path policy = writePolicy(temp, "[structural]",
+                "imports:\n  mode: locked\n  fail_on_missing: true\n"
+                        + "  lockfile: imports.lock.json\n  network: deny\n", "error");
+
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology imported = manager.loadOntologyFromOntologyDocument(importedPath.toFile());
+        OWLOntology active = manager.createOntology(IRI.create(ONTOLOGY_IRI));
+        manager.setOntologyFormat(active, new TurtleDocumentFormat());
+        manager.setOntologyDocumentIRI(active, IRI.create(temp.resolve("ontology.ttl").toUri()));
+        manager.applyChange(new org.semanticweb.owlapi.model.AddImport(active,
+                manager.getOWLDataFactory().getOWLImportsDeclaration(
+                        imported.getOntologyID().getOntologyIRI().get())));
+        ToolContext context = new ToolContext(HeadlessAccess.over(FakeModelManager.over(active)), null);
+
+        Map<String, Object> pass = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+        assertEquals("pass", pass.get("gate"), () -> pass.toString());
+        assertEquals(true, ((Map<?, ?>) pass.get("import_lock_verification"))
+                        .get("loaded_content_verified"),
+                "a clean locked run must attest the loaded content, not only the disk hashes");
+
+        var unsaved = manager.getOWLDataFactory().getOWLDeclarationAxiom(manager.getOWLDataFactory()
+                .getOWLClass(IRI.create("https://example.org/imported#UnsavedEdit")));
+        manager.addAxiom(imported, unsaved);
+        Map<String, Object> rejected = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+        assertEquals("error", rejected.get("gate"),
+                "coordinates and disk hashes still match; only loaded-content attestation catches this");
+        assertTrue(String.valueOf(rejected.get("findings")).contains("imports.loaded_content_divergence"),
+                () -> rejected.toString());
+        Map<?, ?> verification = (Map<?, ?>) rejected.get("import_lock_verification");
+        assertEquals(false, verification.get("valid"));
+        assertEquals(false, verification.get("loaded_content_verified"));
+        assertEquals(List.of(), verification.get("mismatched_entries"),
+                "the on-disk bytes still match the lock; the divergence is in the loaded content");
+
+        manager.removeAxiom(imported, unsaved);
+        Map<String, Object> recovered = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+        assertEquals("pass", recovered.get("gate"), () -> recovered.toString());
+    }
+
+    @Test
+    void moduleOwnedNamespaceViolationAloneFailsTheProjectGate(@TempDir Path temp) throws Exception {
+        // Wiring pin, not a unit re-test: ModulePolicyGovernance.moduleChecks reaches the gate only
+        // through ProjectQcTools.config → RunConfig.projectGovernanceChecks → the governance-stage
+        // merge. This policy's ONLY violation is a foreign-namespace definition, so replacing that
+        // wiring with an empty list flips this end-to-end gate back to pass.
+        writeModuleDocument(temp.resolve("owner.ttl"), "https://example.org/owner",
+                "<https://example.org/ns/Owned> a owl:Class .");
+        writeModuleDocument(temp.resolve("foreign.ttl"), "https://example.org/foreign",
+                "<https://example.org/ns/Hijacked> a owl:Class .",
+                "<https://example.org/ns/Hijacked> rdfs:label \"hijacked\" .");
+        Path policy = temp.resolve("policy.yaml");
+        ProjectPolicyFixtures.writePolicy(policy,
+                ProjectPolicyFixtures.minimalPolicy("modules", ONTOLOGY_IRI)
+                        + "modules:\n"
+                        + "  - ontology_iri: https://example.org/owner\n"
+                        + "    path: owner.ttl\n"
+                        + "    owned_namespaces: ['https://example.org/ns/']\n"
+                        + "  - ontology_iri: https://example.org/foreign\n"
+                        + "    path: foreign.ttl\n"
+                        + "validation:\n  required_stages: [governance]\n  fail_on: error\n");
+
+        Map<String, Object> result = run(temp, policy, false);
+
+        assertEquals("fail", result.get("gate"), () -> result.toString());
+        assertTrue(String.valueOf(result.get("findings")).contains("module_owned_namespace"),
+                "the module-ownership violation must surface in the gate findings: " + result);
+    }
+
+    @Test
+    void loadedImportIdentityConflictAloneGatesTheProjectQc(@TempDir Path temp) throws Exception {
+        // Wiring pin for the other governance merge: ModulePolicyGovernance.importChecks reaches
+        // the gate only through the QC suite's governance-stage merge over the phase-1 import
+        // report. Two loaded versions of one logical import are this run's ONLY violation.
+        Path policy = writePolicy(temp, "[governance]", "", "error");
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology active = manager.createOntology(IRI.create(ONTOLOGY_IRI));
+        manager.setOntologyFormat(active, new TurtleDocumentFormat());
+        manager.setOntologyDocumentIRI(active, IRI.create(temp.resolve("ontology.ttl").toUri()));
+        String logical = "https://example.org/upstream";
+        manager.createOntology(new org.semanticweb.owlapi.model.OWLOntologyID(
+                IRI.create(logical), IRI.create(logical + "/1")));
+        manager.createOntology(new org.semanticweb.owlapi.model.OWLOntologyID(
+                IRI.create(logical), IRI.create(logical + "/2")));
+        OWLDataFactory df = manager.getOWLDataFactory();
+        manager.applyChange(new org.semanticweb.owlapi.model.AddImport(active,
+                df.getOWLImportsDeclaration(IRI.create(logical + "/1"))));
+        manager.applyChange(new org.semanticweb.owlapi.model.AddImport(active,
+                df.getOWLImportsDeclaration(IRI.create(logical + "/2"))));
+        ToolContext context = new ToolContext(HeadlessAccess.over(FakeModelManager.over(active)), null);
+
+        Map<String, Object> result = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+
+        // The error-severity check fails the ran governance stage, so the gate verdict is "fail"
+        // (a stage that RAN and found violations, unlike the "error" of an unproducible verdict).
+        assertEquals("fail", result.get("gate"), () -> result.toString());
+        assertTrue(String.valueOf(result.get("findings")).contains("import_identity_conflict"),
+                "the loaded import-identity conflict must surface in the gate findings: " + result);
+    }
+
+    @Test
     void registersThreePolicyToolsWithOptionalPaths() {
         ToolRegistry registry = new ToolRegistry();
         ProjectPolicyTools.register(registry, new ToolContext(null, null));
@@ -225,6 +380,19 @@ class ProjectQcToolsTest {
         registry.build().forEach(spec -> assertFalse(
                 ((List<?>) spec.tool().inputSchema().getOrDefault("required", List.of()))
                         .contains("policy_path")));
+    }
+
+    /** A standalone Turtle module document, as in {@link ModulePolicyGovernanceTest}. */
+    private static void writeModuleDocument(Path path, String ontology, String... turtle)
+            throws Exception {
+        StringBuilder document = new StringBuilder(
+                "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                        + "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n"
+                        + "<" + ontology + "> a owl:Ontology .\n");
+        for (String line : turtle) {
+            document.append(line).append('\n');
+        }
+        Files.writeString(path, document.toString());
     }
 
     private static Path writePolicy(Path temp, String stages, String extra, String failOn) throws Exception {

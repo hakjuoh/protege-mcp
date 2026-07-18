@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.tools;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -57,8 +58,21 @@ public final class CatalogTools {
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
-                    String path = Tools.optString(a, "path");
+                    String configuredPath = Tools.optString(a, "path");
                     boolean directOnly = Tools.optBool(a, "direct_imports_only", false);
+                    DirectAccessPolicy.Rules accessRules = DirectAccessPolicy.resolve(ctx, ex);
+                    final String path;
+                    if (configuredPath != null) {
+                        path = accessRules.writePath(configuredPath).toString();
+                    } else {
+                        Path target = ctx.access().compute(mm -> {
+                            OWLOntology active = mm.getActiveOntology();
+                            return SidecarPaths.resolveSidecarFile(mm.getOWLOntologyManager(), active,
+                                    null, CATALOG_NAME).toPath();
+                        });
+                        accessRules.implicitPath(target, true);
+                        path = null;
+                    }
                     CallToolResult denied = WriteTools.checkWriteAllowed(ctx,
                             "write catalog-v001.xml for the active ontology's imports");
                     if (denied != null) {

@@ -12,8 +12,8 @@ import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
  * <p>Also carries the server-level {@linkplain #writeLock() write mutex}. MCP handlers run on
  * multi-threaded transport threads ({@code immediateExecution(true)}) and {@link OntologyAccess#compute}
  * only serialises each <em>individual</em> EDT hop, holding no lock across a multi-hop sequence. A tool
- * that must keep the model coherent across several hops — notably {@code apply_changes(verify)}, whose
- * pre-snapshot → apply → classify → post-read → conditional-undo spans multiple hops — takes this lock so
+ * that must keep the model coherent across several hops — notably change-set-backed verified apply, whose
+ * isolated preflight and final revision/policy revalidation precede one live commit — takes this lock so
  * two such calls cannot interleave. One instance is built per server start and threaded to every provider,
  * so it is effectively server-wide. (Interactive GUI edits cannot take the lock; tools additionally detect
  * an intervening change, so the lock is the fast path, not the only guard.)

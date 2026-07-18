@@ -31,7 +31,12 @@ public final class ProjectPolicyTools {
                         + "checked for missing/escaping assets, invalid CURIEs/regexes, active-ontology "
                         + "mismatch, and unavailable required reasoners. With no policy, interactive legacy "
                         + "behavior is unchanged and policy_loaded=false is explicit.",
-                schema(), (ex, req) -> Tools.guard(() -> run(ctx, Tools.args(req), false)));
+                schema(), (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> arguments = Tools.args(req);
+                    DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
+                            Tools.optString(arguments, "policy_path"));
+                    return run(ctx, rules.authorizedPolicyArguments(arguments), false);
+                }));
 
         tools.tool("validate_project_policy",
                 "Validate a discovered or explicit project policy before ontology QC. Returns structured "
@@ -39,7 +44,12 @@ public final class ProjectPolicyTools {
                         + "fields, missing required assets, traversal/symlink escapes, malformed regexes, "
                         + "unknown CURIE prefixes, a root-ontology mismatch, or a missing required reasoner "
                         + "make valid=false. Validation never mutates the ontology or policy file.",
-                schema(), (ex, req) -> Tools.guard(() -> run(ctx, Tools.args(req), true)));
+                schema(), (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> arguments = Tools.args(req);
+                    DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
+                            Tools.optString(arguments, "policy_path"));
+                    return run(ctx, rules.authorizedPolicyArguments(arguments), true);
+                }));
 
         tools.tool("run_project_qc",
                 "Run the effective project policy as a strict reproducible QC gate. Every configured "
@@ -52,7 +62,12 @@ public final class ProjectPolicyTools {
                         .str("policy_path", "Optional explicit local project policy; otherwise discover it.")
                         .integer("limit", "Maximum samples per stage (default 25).")
                         .build(),
-                (ex, req) -> Tools.guard(() -> ProjectQcTools.run(ctx, Tools.args(req), true)));
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> arguments = Tools.args(req);
+                    DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
+                            Tools.optString(arguments, "policy_path"));
+                    return ProjectQcTools.run(ctx, rules.authorizedPolicyArguments(arguments), true);
+                }));
     }
 
     private static Map<String, Object> schema() {
@@ -80,7 +95,9 @@ public final class ProjectPolicyTools {
         PolicyContext live = ctx.access().compute(ProjectPolicyTools::capture);
         ProjectPolicy policy = ProjectPolicyLoader.load(explicit, live.documentPath,
                 live.activeOntologyIri, live.installedReasoners);
-        return Tools.ok(toJson(policy, live, requirePolicy));
+        boolean compatibility = ctx.controller() == null
+                || ctx.controller().isUnrestrictedNoPolicyPathsAllowed();
+        return Tools.ok(toJson(policy, live, requirePolicy, compatibility));
     }
 
     static PolicyContext capture(org.protege.editor.owl.model.OWLModelManager mm) {
@@ -122,12 +139,13 @@ public final class ProjectPolicyTools {
     }
 
     private static Map<String, Object> toJson(ProjectPolicy policy, PolicyContext live,
-            boolean requirePolicy) {
+            boolean requirePolicy, boolean unrestrictedNoPolicyPaths) {
         Map<String, Object> json = new LinkedHashMap<>();
         json.put("policy_loaded", policy.loaded());
         json.put("valid", policy.valid());
         json.put("discovery", policy.discovery());
-        json.put("path_mode", policy.loaded() ? "policy_confined" : "legacy_local_admin_unrestricted");
+        json.put("path_mode", policy.loaded() ? "policy_confined"
+                : unrestrictedNoPolicyPaths ? "legacy_local_admin_unrestricted" : "policy_required");
         json.put("active_ontology_iri", live.activeOntologyIri);
         if (policy.path() != null) {
             json.put("policy_path", policy.path().toString());

@@ -38,6 +38,9 @@ public final class McpConfig {
     public static final String KEY_BROKER_LINGER_SECONDS = "brokerLingerSeconds";
     public static final String KEY_READ_ONLY = "readOnly";
     public static final String KEY_CONFIRM_WRITES = "confirmWrites";
+    /** Keep the pre-policy direct-path behavior for local-admin sessions (default true). */
+    public static final String KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS =
+            "allowUnrestrictedNoPolicyPaths";
     public static final String KEY_TOKEN = "bearerToken";
     /** Persisted embedded-OAuth state (registered clients + access/refresh tokens) as a JSON blob. */
     public static final String KEY_OAUTH_STATE = "oauthState";

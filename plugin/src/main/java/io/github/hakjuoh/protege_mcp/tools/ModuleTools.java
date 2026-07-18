@@ -96,6 +96,7 @@ public final class ModuleTools {
                     String iriStr = Tools.optString(a, "iri");
                     String path = Tools.optString(a, "path");
                     if (path != null) {
+                        path = DirectAccessPolicy.resolve(ctx, ex).writePath(path).toString();
                         // Fail fast on an unrecognized extension — BEFORE the confirmation dialog,
                         // the closure snapshot and the (potentially minutes-long) extraction, not
                         // after them in saveModuleToFile.

@@ -21,6 +21,130 @@ each section is also published as the body of its
 
 ---
 
+## [0.6.1] - 2026-07-16
+
+**Project-policy intent is now enforced at every remaining direct I/O and change-set boundary.**
+This patch release keeps the public surface at **78 tools and 11 prompts** while closing the
+filesystem/network, locked-import, module-governance, and legacy verified-apply gaps left by 0.6.0.
+
+### Added
+- Request-scoped filesystem capabilities for project reads/writes and external paths. Policy-relative
+  paths resolve below the canonical project root, symlink escapes fail closed, and external paths need
+  both `filesystem.allow_external_paths: true` and the `filesystem:external` capability.
+- Runtime enforcement of `network.default`, `network.allowed_hosts`, and the `imports.network`
+  override. A denied remote import is stopped before dereference; authorized local workspace/catalog
+  mappings still satisfy HTTP ontology IRIs offline, while direct `file:` imports and mapping targets
+  are confined to the project filesystem. Nested `jar:` sources are refused, and host allowlists
+  disable unchecked redirects.
+- Module document checks for declared ontology-IRI mismatches, `modules[].owned_namespaces`
+  governance (including explicit co-ownership), import-cycle warnings, and import identity/version/
+  document conflict errors. Ownership violations mean *defining* a foreign term — any subject-position
+  or constraining axiom (SubClassOf subject, class equivalence/disjointness/keys, property
+  domain/range/characteristics/equivalence/inverse/chains, datatype definitions, individual identity
+  and subject assertions, SWRL rule heads; ObjectInverseOf is unwrapped to the named property); bare supporting declarations and pure references (a foreign superclass or
+  range) — the kind OWLAPI module extraction adds — are permitted. Matching is boundary-aware: a
+  namespace ending alphanumeric owns the exact IRI or continuations across a structural separator
+  (`/`, `#`, `:`) only, so owning `…/ns` never captures `…/ns2/…`, `…/ns-ext/…`, `…/ns.ext/…`, or
+  `…/ns_ext/…`, and each entity is attributed to its most specific owned namespace. An uninspectable
+  module document fails governance closed with `module_inspection_failed`, and module inspections are
+  cached by document path and content hash so repeated policy loads stop re-parsing unchanged files.
+- A compatibility preference that can disable unrestricted local-admin paths when no project policy
+  is loaded.
+
+### Changed
+- `imports.mode: locked` now verifies the complete lock content automatically in
+  `run_project_qc` and change-set preflight, including coordinates and SHA-256 content, instead of
+  checking only that imports resolved and a lockfile existed. The gate additionally attests that the
+  disk bytes it hashed are the content the isolated QC snapshot actually consumed: an unsaved
+  in-memory edit of a locked import, or a document swapped around the load, fails closed with a
+  distinct `imports.loaded_content_divergence` error. The attestation parses the whole locked
+  closure once (leaf-first, no network) so legitimate cross-import typing does not false-fail, and
+  it hashes the exact bytes it parses in a single read so a swap-around-parse cannot attest bytes
+  nobody hashed. Relative lockfile/catalog paths resolve against the canonical `project_root` (never
+  the process working directory), the documented explicit-path lockfile bootstrap works again while
+  a discovered policy is still invalid (capability-checked, confined to the canonical project root),
+  and beside-document lock/catalog defaults stay authorized under the no-policy compatibility opt-out.
+- `apply_changes verify=report|rollback` now uses the same isolated policy/change-set gate as
+  `preview_change_set`. Rollback mode rejects a failing delta before live mutation; report mode
+  surfaces the same verdict and commits once after revision, policy, preflight-asset, and lock
+  revalidation. With no policy loaded, `regression` keeps its released batch-attributed meaning: a
+  `gate=fail` verdict is re-checked against the unchanged baseline, so a legacy unsatisfiable class
+  or standing warning reports `baseline_gate` instead of blocking every batch, and
+  `newly_unsatisfiable` names the classes this batch broke. Complete finding-identity sets supplement
+  counts, so replacing a standing offender with a different one — even while the total count drops — is
+  still a regression, while a pure removal is not. A policy gate stays absolute; a `gate=error` verdict
+  cannot be computed, so `verify=rollback` fails closed (prevents the batch) while `verify=report`
+  commits and reports `regression=false` with `gate=error`. Rollback with no policy and no selected reasoner is refused up
+  front, as before 0.6.1. The committed delta is exactly the normalized delta the gate evaluated,
+  the documented `timeout_ms` budget is honored (tighten-only under a policy), verify batches are
+  not capped at the preview store's 2,000-operation bound, and the commit hop uses the same 120 s
+  budget and timeout honesty as `commit_change_set`. Existing arguments and top-level
+  operation/summary fields are unchanged — and on a prevented rollback or pre-commit conflict they
+  now truthfully report that nothing landed.
+
+### Fixed
+- Caller-selected paths on save/load/merge/create, SHACL, module extraction, catalogs, import locks,
+  CQ sidecars, and related policy/QC surfaces can no longer bypass project containment or request
+  capabilities.
+- `apply_changes` verified apply no longer relies on shared live undo history and therefore cannot
+  undo an unrelated GUI edit. A rejected rollback reports `prevented_before_apply=true`.
+  (`create_terms`/`create_properties` keep their documented reasoner-verified apply-then-rollback
+  path; use their `preview=true` mode for gated, apply-nothing-on-failure intake.)
+- `get_project_policy`, `validate_project_policy`, `run_project_qc`, and `get_model_revision` return
+  their structured diagnostics (`valid=false` issues, `gate=error`, the revision envelope) for a
+  loaded-but-invalid policy again; filesystem/network authorization still refuses at use time until
+  the policy validates, and `verify=report` commits under the same invalid policy that
+  `verify=none` accepts instead of misreporting `policy_conflict`.
+- Argument-less `save_ontology` (and sidecar/catalog targets derived from the already-open document)
+  no longer require the no-policy local-admin compatibility profile — the preference governs
+  caller-selected paths, exactly as documented.
+- Module policies can no longer name a file whose actual ontology IRI differs from the configured
+  module IRI.
+- `validate_catalog` reports a per-entry `policy_refused` status for a catalog entry the project
+  policy will not read (outside `project_root` with external paths disabled) and keeps scanning,
+  instead of aborting the whole catalog as a false "could not parse catalog" failure that dropped
+  every other entry, the `nextCatalog` chain, and fabricated `unmapped_imports`.
+- With no policy loaded, `apply_changes verify=rollback` attribution now diffs the complete
+  unsatisfiable-class set, not the display-capped 25-item window, so an ontology with more than 25
+  pre-existing unsatisfiable classes no longer has every clean batch conservatively prevented (and a
+  genuinely new unsatisfiability is still named beyond the window).
+- `apply_changes verify=report` no longer labels a batch a regression when the gate merely *errored*
+  (for example an isolated classification timeout): it reports `regression=false` with `gate=error`
+  so automation does not undo a good batch, while `verify=rollback` still fails closed on the same
+  unverifiable gate. The baseline re-run is bracketed against concurrent workspace edits so a
+  mid-attribution GUI change is flagged (`concurrent_change`) rather than misattributed.
+- Module ownership attribution now covers SWRL rule-head named-individual arguments, including
+  `SameIndividual`/`DifferentIndividuals` head atoms, so a foreign module cannot assert identity on
+  another module's individual without a violation.
+- A malformed `policy_path` (invalid platform path) returns the tool's structured
+  `policy_path_invalid` envelope again instead of a bare error, explicit-`policy_path` diagnostics
+  work even when a discovered invalid policy has no resolvable `project_root`, and a no-policy network
+  denial attributes the compatibility preference rather than a non-existent `network.default`.
+- Under a confining project policy — network-restricted (`network.default: deny` or a host allowlist)
+  or filesystem-confined (`allow_external_paths: false`) — a folder `catalog-v001.xml` can no longer
+  dereference anything over the network, or read a file outside the project, before authorization. The
+  catalog's own XML resolver follows delegations (`<nextCatalog>`/`<delegateURI>`) and a DOCTYPE's
+  external DTD/entities during resolution (a pre-authorization SSRF, and — with a confined filesystem —
+  an arbitrary out-of-project/XXE file read), before any mapping is authorized. The folder-catalog
+  resolver is therefore installed only for a catalog that is in-project, is not a symlink, parses
+  cleanly, and contains no DOCTYPE and no delegation element; otherwise it is refused with a clear
+  reason (inline the mappings into `catalog-v001.xml` to resolve them offline). A delegation-free
+  catalog's `<uri>`/`<rewrite*>` targets are still resolved locally and re-gated by the existing
+  mapping authorization. When both axes are fully open (or no policy is loaded), the full catalog
+  resolver is unchanged.
+- `apply_changes verify=rollback` now attributes non-reasoner stages (profile, structural, governance)
+  by diffing the complete stable gating-finding identity set, so a batch that removes standing
+  violations while introducing a fresh one — lowering the total count — is still prevented, while a
+  pure removal (or shrinking a standing group) is correctly treated as an improvement and allowed.
+
+### Testing
+- Added adversarial coverage for symlink escapes, external-path dual authorization, no-policy
+  compatibility denial, host allowlists, import-network overrides, pre-dereference remote-import
+  blocking, direct/catalog-mapped local-import escapes, nested `jar:file:` sources, module namespace
+  co-ownership/violations, module IRI mismatches, tampered locked imports, partial-error batch parity,
+  and rollback/report parity on the isolated change-set gate.
+
+
 ## [0.6.0] - 2026-07-15
 
 **Project policy is now an executable runtime contract: Protégé MCP discovers and validates checked-in

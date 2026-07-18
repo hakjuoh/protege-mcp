@@ -27,11 +27,15 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 
 - **78 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
   govern, extract modules, run SWRL rules, SPARQL and SHACL, and reason.
+- **Enforced project boundaries** (`0.6.1`) — direct paths are confined to the canonical project root
+  with request-scoped filesystem capabilities, policy network/import controls block unapproved fetches,
+  locked-import checksums are automatic gates, and verified rollback rejects a failing delta before it
+  reaches the live ontology.
 - **One endpoint, any number of windows** (`0.5.0`) — a shared **broker** owns the configured port
   across every Protégé window and instance and routes each MCP session to a live window, so one fixed
   URL (`http://127.0.0.1:8123/mcp`) always works.
-- **Safe, testable authoring** (`0.4.0`) — `apply_changes verify=report|rollback` classifies the reasoner
-  and reverts an edit that makes a class unsatisfiable or the ontology inconsistent; a re-runnable
+- **Safe, testable authoring** (`0.4.0`, strengthened in `0.6.1`) — `apply_changes
+  verify=report|rollback` runs the isolated project/change-set gate before commit; a re-runnable
   **competency-question suite** and SPARQL **invariants** (`verify_ontology`) catch regressions; a single
   **`run_qc_suite`** gate rolls up reasoner + profile + structural + invariants + CQ checks; and
   `search_entities` now returns `score`/`match_kind` + `would_mint` so an assistant grounds a term before

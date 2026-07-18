@@ -35,8 +35,8 @@ public final class ChangeSetTools {
                         + "private ontology snapshot, and run policy/default QC before any live edit. "
                         + "With no policy, the default gate includes the reasoner stage whenever a "
                         + "reasoner is selected: inconsistency or ANY unsatisfiable class in the changed "
-                        + "snapshot blocks the commit (result-state semantics — stricter than "
-                        + "verify=rollback's regression check; pass explicit gates to override). "
+                        + "snapshot blocks the commit (the same result-state semantics used by "
+                        + "apply_changes verify=report|rollback; pass explicit gates to override). "
                         + "satisfiability_checked=false in the result means no reasoner verdict gated "
                         + "this preview. Returns a memory-only, workspace-scoped change_set_id, complete "
                         + "base revision, expiry, normalized summary, preflight gate, and committable "
@@ -44,7 +44,12 @@ public final class ChangeSetTools {
                         + "8,000 normalized changes, ~2 MiB each) and expire after 15 minutes by "
                         + "default. Nothing is applied and no Undo entry is created.",
                 previewSchema(),
-                (ex, req) -> Tools.guard(() -> preview(ctx, Tools.args(req))));
+                (ex, req) -> Tools.guard(() -> {
+                    Map<String, Object> arguments = Tools.args(req);
+                    DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex,
+                            Tools.optString(arguments, "policy_path"));
+                    return preview(ctx, rules.authorizedPolicyArguments(arguments));
+                }));
 
         tools.tool("commit_change_set",
                 "Commit an earlier preview exactly once. Requires its change_set_id and the COMPLETE "
@@ -55,7 +60,10 @@ public final class ChangeSetTools {
                         + "one applyChanges broadcast, and report the new revision and Undo logging. Any "
                         + "conflict applies nothing; no auto-merge occurs.",
                 commitSchema(),
-                (ex, req) -> Tools.guard(() -> commit(ctx, Tools.args(req))));
+                (ex, req) -> Tools.guard(() -> {
+                    DirectAccessPolicy.requireCapability(ex, DirectAccessPolicy.PROJECT_READ);
+                    return commit(ctx, Tools.args(req));
+                }));
 
         tools.tool("discard_change_set",
                 "Explicitly remove an uncommitted memory-only preview from this Protégé window. "
@@ -295,10 +303,17 @@ public final class ChangeSetTools {
         return result;
     }
 
-    private static QcSuiteTools.RunConfig preflightConfig(RevisionTools.PolicyState state,
+    static QcSuiteTools.RunConfig preflightConfig(RevisionTools.PolicyState state,
             Map<String, Object> arguments, ReasonerSelection selection) {
+        // apply_changes' documented timeout_ms is the preflight budget. It can only TIGHTEN a
+        // policy's reasoning.timeout_ms — the policy stays the reproducible ceiling.
+        Integer requestedTimeout = arguments.get("timeout_ms") instanceof Number number
+                ? Math.max(1, number.intValue()) : null;
         if (state.policy().loaded() && state.policy().valid()) {
-            return ProjectQcTools.config(state.policy(), state.live(), arguments);
+            QcSuiteTools.RunConfig config = ProjectQcTools.config(state.policy(), state.live(),
+                    arguments);
+            return requestedTimeout == null || requestedTimeout >= config.timeout
+                    ? config : config.withTimeout(requestedTimeout);
         }
         List<String> requested = Tools.stringList(arguments, "gates");
         List<String> required = requested;
@@ -324,11 +339,14 @@ public final class ChangeSetTools {
         legacy.put("required_stages", required);
         legacy.put("fail_on", "warn");
         legacy.put("limit", 25);
+        if (requestedTimeout != null) {
+            legacy.put("timeout_ms", requestedTimeout);
+        }
         return QcSuiteTools.RunConfig.legacy(legacy);
     }
 
     /** The reasoner-selection state the preview's captured hop observed. */
-    private enum ReasonerSelection {
+    enum ReasonerSelection {
         /** No reasoner subsystem, or Protégé's None selection: preview without the stage, honestly. */
         NONE,
         /** A working selection was captured: the stage runs and is required. */
@@ -345,7 +363,7 @@ public final class ChangeSetTools {
      * reproduces the failure as a gate error instead of silently dropping the one verdict the user
      * configured a reasoner to provide.
      */
-    private static ReasonerSelection reasonerSelection(OWLModelManager mm) {
+    static ReasonerSelection reasonerSelection(OWLModelManager mm) {
         OWLReasonerManager manager;
         try {
             manager = mm.getOWLReasonerManager();
@@ -549,7 +567,7 @@ public final class ChangeSetTools {
      * live inputs the loader needs — document path, active ontology IRI, installed reasoners — are
      * model state, so they are re-derived from {@code mm} directly and the loader runs synchronously.
      */
-    private static ProjectPolicy effectivePolicy(OWLModelManager mm, String configured) {
+    static ProjectPolicy effectivePolicy(OWLModelManager mm, String configured) {
         Path explicit = null;
         if (configured != null) {
             try {

@@ -45,9 +45,9 @@ counterpart — run it against the built `v{{ site.version }}` jar before publis
 | --- | --- | --- |
 | 14 | `search_entities` query=an existing class **name** | ranked `items` with `score`/`match_kind`; `would_mint=false`, `best_match`=its IRI |
 | 15 | `search_entities` query=a novel single word | `would_mint=true`, `best_match=null` |
-| 16 | `apply_changes` `verify=rollback` with a clean batch (e.g. a `subclass_of` between two satisfiable classes) | `verify.regression=false`, `verify.applied=true`; the edit stays and is one undo entry |
-| 17 | `apply_changes` `verify=rollback` with a batch that makes a class unsatisfiable (e.g. subclass of two disjoint classes) | `verify.regression=true`, `verify.rolled_back=true`, `newly_unsatisfiable` names the class; the model is back to its prior state (nothing added) |
-| 18 | Repeat #17 with `verify=report` | `regression=true`, `rolled_back=false`; the edit **stays** (undo it manually) |
+| 16 | `apply_changes` `verify=rollback` with a clean batch (e.g. a `subclass_of` between two satisfiable classes) | `verification_path=change_set_preflight`, `gate=pass`, `verify.applied=true`; the edit stays and is one undo entry |
+| 17 | `apply_changes` `verify=rollback` with a batch that fails the effective gate (e.g. makes a class unsatisfiable or violates required governance) | `gate=fail`, `regression=true`, `prevented_before_apply=true`, `applied=false`; the live model/Undo history never received the delta |
+| 18 | Repeat #17 with `verify=report` | the same failing `preflight` is returned with `applied=true`; the edit **stays** (undo it manually) |
 | 19 | `add_competency_question` text=`…`, query=a `SELECT`, expected=`nonEmpty` | echoes `convention` + `target` (a `cqs/…​.rq` file appears next to the document) |
 | 20 | `list_competency_questions` | the CQ appears, tagged with its `convention` |
 | 21 | `run_competency_questions` | per-CQ `pass`, overall `{passed, failed, gate}` |
@@ -91,19 +91,30 @@ counterpart — run it against the built `v{{ site.version }}` jar before publis
 
 | # | Step | Expect |
 | --- | --- | --- |
-| 42 | Connect a fresh MCP client and inspect initialize/list responses | server version is `0.6.0`; exactly 78 tools and 11 prompts are advertised; the 0.5.0 required arguments remain compatible |
+| 42 | Connect a fresh MCP client and inspect initialize/list responses | server version is `0.6.1`; exactly 78 tools and 11 prompts are advertised; the 0.5.0 required arguments remain compatible |
 | 43 | Save a valid `.protege-mcp/project.yaml` above the active ontology and call `get_project_policy`, then remove it and repeat | the first call reports the discovered path, deterministic defaults/digest, and `valid=true`; the second reports `policy_loaded=false` without changing legacy QC behavior |
 | 44 | Call `validate_project_policy` with a missing required asset, a traversal/URL path, and a symlink escaping the project root | every case is rejected before QC with a path-specific validation issue; no external file is read |
 | 45 | Run `run_project_qc` once with a clean required invariant, once with a matching violation, and once with a malformed or missing required invariant | the gates are respectively `pass`, `fail`, and `error`; malformed/missing execution never becomes a policy failure or vacuous pass |
 | 46 | Configure a required reasoner different from the selected reasoner; then select the required reasoner without classifying it and run QC while making a GUI edit | mismatch returns `gate=error`; the matching run uses the captured private reasoner, leaves the live reasoner status unchanged, reports `reasoner_configuration`, and consistently evaluates the pre-edit snapshot |
 | 47 | Run project QC over an ontology containing an anonymous individual | the result exposes `fingerprint_stability=session_only`, `release_stable=false`, and a warning without leaking a raw blank-node identifier |
 | 48 | Configure persisted invariant/CQ directories and SHACL files in more than one supported RDF format | every resolved asset is listed deterministically and evaluated; an inferred-required query that cannot obtain inferred data yields `gate=error` |
-| 49 | Inspect `plugin/target/protege-mcp-{{ site.version }}.jar` | both versioned schemas are packaged and the OSGi/MCP versions report `0.6.0` |
+| 49 | Inspect `plugin/target/protege-mcp-{{ site.version }}.jar` | both versioned schemas are packaged and the OSGi/MCP versions report `0.6.1` |
 | 50 | Run project QC with reasoner + profile + structural + governance + invariant + CQ + a deliberately slow SHACL stage, then make a GUI label edit after validation starts | the GUI remains responsive; `validation_snapshot.mode=isolated`, `same_snapshot=true`, and its `stages` list names all seven stages; the result reflects the pre-edit snapshot while the GUI edit remains live, never a mixture |
 | 51 | Set a short project reasoner timeout and run a deliberately slow/private test reasoner (or controlled slow fixture) | reasoner stage is `error`, the late private result is never accepted, the live ontology/reasoner/Undo history is unchanged, and a subsequent QC run is unaffected |
 | 52 | On the **real OSGi runtime** (not a headless test), call `preview_change_set` with any operation and `run_qc_suite stages=[structural]` | the preflight/isolated snapshot runs to a real `gate`, **never** `preflight_error: … referenced from a method is not visible from class loader …`. The isolated snapshot builds a JDK dynamic `Proxy` of `OWLModelManager`; under Felix that proxy must link every package in the interface's whole super-interface/signature closure, which bnd's `org.protege.editor.owl.*` wildcard only imports when statically referenced — so a Protégé upgrade adding a signature-only package silently reappears here and only here (flat-classpath unit tests always pass). The `Import-Package` force-imports in `plugin/pom.xml` list that closure; re-derive it if this fails |
 
-Any step that errors, freezes the UI, or does not appear in Protégé's editor/undo stack is a release
-blocker — capture the JSON error and the Protégé log. Steps 16–18 must **never** undo an unrelated edit:
-if a GUI edit happens between apply and re-classification, expect `verify.concurrent_change=true` and no
-rollback.
+### 0.6.1 — enforced project boundaries
+
+| # | Step | Expect |
+| --- | --- | --- |
+| 53 | With a valid policy, pass a relative direct path and then a symlink that escapes `project_root` to a document/SHACL/module/catalog tool | the relative path resolves below the canonical root; the symlink escape is refused before I/O |
+| 54 | Try an outside path with `filesystem.allow_external_paths: false`, then set it to `true` and retry | the opt-out call is refused with the documented outside-project message; the opt-in call succeeds. (Every live principal carries the full local-admin capability set, so the `filesystem:external`-denied leg is not reproducible on the real runtime — it is pinned by unit tests with a synthesized restricted principal.) |
+| 55 | Set network/import modes and a host allowlist; load a denied remote import, then map the same HTTP ontology IRI to a local catalog file | denied dereference fails explicitly without a request; the local mapping succeeds offline; allowlisted root URLs do not follow redirects outside the allowlist |
+| 56 | Write a matching import lock, run project QC, modify one imported file, and rerun QC/change-set preview | the first gate can pass; both later gates return `error`, `imports.lock_mismatch`, and `import_lock_verification.valid=false` |
+| 57 | Configure a module with the wrong ontology IRI, then a subject-position axiom **defining** a term under another module's `owned_namespaces` (a bare foreign declaration must NOT trip it); also test an explicit co-owner | the wrong file IRI is a policy error; the foreign definition fails governance while the bare declaration passes; a declared co-owner passes |
+| 58 | Load imports with a cycle and with an ontology/version/document identity conflict | governance reports `import_cycle` as warning and `import_identity_conflict` as error |
+| 59 | Disable the no-policy local-admin path compatibility preference and retry a caller-selected path without a policy | the path is refused and `get_project_policy.path_mode` reports `policy_required` |
+
+Any unexpected error, UI freeze, or missing committed edit is a release blocker — capture the JSON error
+and the Protégé log. Steps 16–18 must never undo an unrelated edit: verified rollback now performs all
+checks on an isolated snapshot and either prevents the delta or commits it once after final revalidation.

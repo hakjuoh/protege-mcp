@@ -9,6 +9,13 @@ nav_order: 6
 
 Tools for loading whole OWL documents into the Protégé workspace, choosing the active edit target, minting new ontologies, inspecting the resolved import graph, writing an OASIS import catalog so a reconstructed module re-opens with its imports resolved offline, and extracting a signature-based locality module from the loaded ontologies.
 
+As of 0.6.1, every caller-selected/implicit local path on these tools is authorized against the
+request-scoped filesystem capabilities and effective project root. Remote sources require
+`network:access` plus `network.default: allow`; import dereference uses the stricter `imports.network`
+override and host allowlist. Existing local workspace/catalog mappings remain usable with network denied
+when their resolved documents pass project filesystem authorization. Direct `file:` imports are confined
+and canonicalized; nested `jar:` document/import sources are refused.
+
 ## Table of contents
 {: .no_toc .text-delta }
 
@@ -266,6 +273,10 @@ declares. Only a policy that declares no lockfile (or no policy at all) verifies
 beside the active document.
 
 *Read-only and no-network.*
+
+When the effective policy uses `imports.mode: locked`, this same content comparison runs automatically
+inside `run_project_qc` and `preview_change_set`/verified `apply_changes`; an explicit call remains useful
+for diagnostics and CI-style standalone inspection.
 
 **Arguments**
 

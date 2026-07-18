@@ -54,13 +54,23 @@ Applies a batch of axiom add/remove operations in ONE call — the same `operati
 
 *Mutating (undoable)* — honours `strict` (skips any add that would mint a brand-new entity from an unrecognized IRI/name) and reports `new_entities`. Edits the active ontology; new-entity detection is against the imports closure.
 
-**Reasoner-verified apply (0.4.0).** Set `verify=report` or `verify=rollback` to classify the reasoner
-after applying and detect a **regression** — a class that became unsatisfiable, or an ontology that
-became inconsistent, *because of this batch*. `report` keeps the batch and returns the verdict; `rollback`
-additionally reverts the whole batch in one undo when a regression is attributable. The pre-read → apply →
-classify → post-read → undo sequence runs under a server-level write mutex, and an intervening GUI edit
-between apply and re-classification degrades to `report` semantics rather than blind-undoing. Requires a
-reasoner selected in Protégé (warm = 1 classification, cold = 2).
+**Change-set-verified apply (0.6.1).** Set `verify=report` or `verify=rollback` to run the same isolated
+policy/change-set gate used by `preview_change_set`. With a policy, its required interoperability,
+reasoner/profile/governance/structural/invariant/CQ/SHACL and import-lock checks apply and the gate
+verdict is absolute; without one, the normal change-set defaults apply and `regression` keeps its
+released batch-attributed meaning — a `gate=fail` verdict is re-run against the unchanged baseline, and
+findings the baseline already produced (a legacy unsatisfiable class, a standing structural warning) are
+reported via `baseline_gate` without blocking the batch. Attribution compares complete finding identities
+as well as counts, so replacing one standing offender with a different offender at the same count remains
+a regression. `gate=error` always stays fail-closed. With no
+policy loaded, `rollback` refuses up front when no reasoner is selected (use `verify=report`,
+`verify=none`, or select one). `rollback` prevents a regression before live mutation, so it never uses
+shared Undo history. `report` returns the same verdict but commits the batch — including under a
+loaded-but-invalid policy, whose issues surface as a `gate=error` preflight. The committed delta is
+EXACTLY the normalized delta the gate evaluated (a net-zero cancellation batch lands nothing, not even
+declaration side effects). Immediately before the single live commit — bounded by the same 120 s hop
+budget as `commit_change_set` — the workspace revision, policy digest/path, preflight assets, import
+lock, and exact normalized delta are rechecked.
 
 **Arguments**
 
@@ -68,14 +78,28 @@ reasoner selected in Protégé (warm = 1 classification, cold = 2).
 | --- | --- | --- | --- | --- |
 | `operations` | array | yes | — | Axiom changes to apply; each item is an `add_axiom`/`remove_axiom` operand set (`axiom_type` + operands) plus optional `op` = `add`/`remove`. |
 | `strict` | boolean | no | `false` | If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name. |
-| `verify` | string | no | `none` | `none` \| `report` \| `rollback` — reasoner-verify the batch (see above). |
-| `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs. |
+| `verify` | string | no | `none` | `none` \| `report` \| `rollback` — run the isolated change-set gate (see above). |
+| `timeout_ms` | integer | no | 60000 | Time budget in ms for the isolated preflight gate. With a policy it can only tighten the policy's `reasoning.timeout_ms`; it never extends it. |
 
 **Returns**
 
 - `operations`: array of per-op rows, each `{index, op, axiom}` plus, for adds, `applied` (bool), optional `note` (e.g. `"already present"`) and `new_entities` (array); for removes, `removed` (bool) and optional `note` (`"not present"`). A failed op carries `error` (including a strict-mint refusal).
 - `summary`: `{operations, added, removed, no_ops, errors, single_undo, new_entities}` — `single_undo` is true when at least one change was applied; `new_entities` is the aggregated introduced-entity list.
-- `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}`.
+- When a rollback is prevented (or a pre-commit conflict applies nothing), the rows and summary report
+  what actually landed — `applied`/`removed` false, `added`/`removed`/`no_ops` 0, `single_undo` false,
+  `new_entities` empty — never the simulated predictions; the evaluated delta remains visible in
+  `verify.preflight`.
+- `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable,
+  rolled_back, applied, classification_started, classification_completed, note}` plus
+  `verification_path=change_set_preflight`, `gate`, the complete `preflight` result, optional
+  `policy_digest`, `prevented_before_apply` for a rejected rollback, or `error_code` if the pinned live
+  revision/policy changed before commit (a revision race also sets `concurrent_change=true`).
+  `newly_unsatisfiable` is populated from the no-policy baseline comparison; `rolled_back` is always
+  false (a failing rollback is *prevented*, never applied-then-undone). Optional companions:
+  `reasoner` (the isolated reasoner's name when the stage ran), `was_inconsistent` (the baseline was
+  already inconsistent), `classification_failed` (the stage errored, e.g. a timeout — then
+  `classification_started=true` but `classification_completed=false`), and `baseline_gate` (the
+  unchanged baseline's verdict when attribution ran).
 
 **Example**
 
@@ -98,8 +122,8 @@ Normalizes structured axiom operations, applies that exact delta to a private on
 runs project-policy QC — or, when no policy exists, the default gates: **reasoner** (whenever a
 reasoner is selected in Protégé), profile, governance, and structural. The reasoner gate evaluates the
 *result* state of the changed snapshot: inconsistency or any unsatisfiable class fails the gate and
-blocks the commit, which is stricter than `apply_changes verify=rollback`'s regression check (pass
-explicit `gates` to override). With no reasoner selected the preview still works and reports
+blocks the commit; `apply_changes verify=report|rollback` now consumes this same gate (pass explicit
+`gates` here to override a no-policy preview). With no reasoner selected the preview still works and reports
 `satisfiability_checked=false`. It creates a memory-only, workspace-scoped preview; the live ontology
 and Undo history are untouched. Entries expire after 15 minutes by default and are bounded by
 per-entry/store size limits: at most 2,000 operations per preview, at most 8,000 normalized
@@ -344,7 +368,7 @@ Creates a class WITH its curation suite in one undoable step (versus `create_cla
 
 The batch form of `create_term`: creates many classes, each with its full curation suite, in ONE undoable transaction (one `undo_change` reverts every term). Each item in `terms` takes the same fields as `create_term` (`name` or a full `iri`, plus `iri`/`namespace`/`label`/`label_lang`/`no_label`/`definition`/`definition_property`/`definition_lang`/`parents`/`equivalent_to`/`annotations`); the top-level `namespace` and `definition_property` act as **defaults** applied to any term that omits its own. Reach for it to intake a set of related terms in a single move. Because nothing lands in the ontology until the whole batch commits, a term that references another term from the same batch must refer to it **by full IRI**.
 
-*Mutating (undoable)* — the whole batch applies as one undoable transaction; honours `strict` (refuses to mint an unrecognised operand) and reports `new_entities`. New-entity detection is against the imports closure. **Atomic**: a malformed term (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing. Optionally set `verify=report|rollback` to classify the reasoner after applying and detect a regression, exactly as in `apply_changes` (see its "Reasoner-verified apply" section); `rollback` undoes the whole batch when one is found.
+*Mutating (undoable)* — the whole batch applies as one undoable transaction; honours `strict` (refuses to mint an unrecognised operand) and reports `new_entities`. New-entity detection is against the imports closure. **Atomic**: a malformed term (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing. Optionally set `verify=report|rollback` to run the **reasoner-verified apply**: the batch applies live, the selected reasoner re-classifies, and a regression (a newly unsatisfiable class or newly inconsistent ontology) is flagged; `rollback` then reverts the whole batch as one Undo entry — unlike `apply_changes`, whose 0.6.1 verify modes use the isolated change-set gate and prevent a failing batch *before* it applies. For the gated, apply-nothing-on-failure workflow here, use `preview=true` + `commit_change_set`.
 
 **Arguments**
 
@@ -371,7 +395,7 @@ The batch form of `create_term`: creates many classes, each with its full curati
 - `no_ops`: changes duplicated within the batch, already asserted, or cancelled — skipped, present
   only when non-zero.
 - `new_entities`: array of entities the operands introduced (present only when non-empty).
-- `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}` — same shape as `apply_changes`.
+- `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}` — the reasoner-verified-apply shape. Unlike `apply_changes`' 0.6.1 change-set gate, there is no `verification_path`/`gate`/`preflight`, and `rolled_back=true` is possible (the batch applied and was then undone as one entry).
 - With `preview=true`, returns the same shape as preview_change_set — `change_set_id`: preview id;
   `base_revision`: revision envelope; `expires_at`: expiry; `summary`: normalized counts (including
   `no_ops`); `preflight`: the gate; `committable`: the decision — and does not return live `created` rows.
@@ -444,7 +468,7 @@ Creates an object or data property WITH its axioms in one undoable step. It mint
 
 Creates MANY object/data properties in ONE undoable transaction — the array form of `create_property` (mirroring how `create_terms` is the array form of `create_term`). `properties` is an array; each item takes the same fields as `create_property` (only `name` is required). Top-level `namespace`, `definition_property` and `property_type` are **defaults** applied to any item that omits its own. Reach for it when intake hands you a batch of properties (e.g. a domain's relation vocabulary) so they land — and undo — as one unit.
 
-*Mutating (undoable)* — the whole batch is a SINGLE undoable change (one `undo_change` reverts every property) and is **atomic**: a malformed item (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing. `strict=true` refuses the batch if any operand would be minted as a new, empty entity. To reference another property in the SAME batch (e.g. as `inverse_of` / `super_properties`), give it an explicit `iri`/`namespace` and reference its full IRI (nothing is in the ontology until the batch commits). Optionally set `verify=report|rollback` to classify the reasoner after applying and detect a regression, exactly as in `apply_changes` (see its "Reasoner-verified apply" section); `rollback` undoes the whole batch when one is found.
+*Mutating (undoable)* — the whole batch is a SINGLE undoable change (one `undo_change` reverts every property) and is **atomic**: a malformed item (or a duplicate IRI within the batch) aborts the whole batch with an indexed error, applying nothing. `strict=true` refuses the batch if any operand would be minted as a new, empty entity. To reference another property in the SAME batch (e.g. as `inverse_of` / `super_properties`), give it an explicit `iri`/`namespace` and reference its full IRI (nothing is in the ontology until the batch commits). Optionally set `verify=report|rollback` to run the **reasoner-verified apply**: the batch applies live, the selected reasoner re-classifies, and a regression (a newly unsatisfiable class or newly inconsistent ontology) is flagged; `rollback` then reverts the whole batch as one Undo entry — unlike `apply_changes`, whose 0.6.1 verify modes use the isolated change-set gate and prevent a failing batch *before* it applies. For the gated, apply-nothing-on-failure workflow here, use `preview=true` + `commit_change_set`.
 
 **Arguments**
 
@@ -472,7 +496,7 @@ Creates MANY object/data properties in ONE undoable transaction — the array fo
 - `applied`: number of changes that actually landed.
 - `no_ops`: changes duplicated within the batch, already asserted, or cancelled — skipped, present
   only when non-zero.
-- `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}` — same shape as `apply_changes`.
+- `verify` *(when `verify != none`)*: `{mode, regression, inconsistent, newly_unsatisfiable, rolled_back, applied, classification_started, classification_completed, reasoner, concurrent_change?, was_inconsistent?, note}` — the reasoner-verified-apply shape. Unlike `apply_changes`' 0.6.1 change-set gate, there is no `verification_path`/`gate`/`preflight`, and `rolled_back=true` is possible (the batch applied and was then undone as one entry).
 - With `preview=true`, returns the same shape as preview_change_set — `change_set_id`: preview id;
   `base_revision`: revision envelope; `expires_at`: expiry; `summary`: normalized counts (including
   `no_ops`); `preflight`: the gate; `committable`: the decision — and applies nothing live.

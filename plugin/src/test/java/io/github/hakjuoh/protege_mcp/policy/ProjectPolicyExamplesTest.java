@@ -49,8 +49,10 @@ class ProjectPolicyExamplesTest {
     private static void materializeCompanions(Path project, String yaml) throws Exception {
         Map<String, Object> policy = YAML.readValue(yaml, Map.class);
         for (Object module : list(policy.get("modules"))) {
-            touch(project, (String) map(module).get("path"),
-                    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<> a owl:Ontology .\n");
+            Map<String, Object> configured = map(module);
+            touch(project, (String) configured.get("path"),
+                    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<"
+                            + configured.get("ontology_iri") + "> a owl:Ontology .\n");
         }
         touch(project, (String) map(policy.get("imports")).get("lockfile"), "{}\n");
         Map<String, Object> validation = map(policy.get("validation"));

@@ -27,7 +27,7 @@ class MainTest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         assertEquals(0, Main.run(new String[] {"--version"}, new PrintStream(out), new PrintStream(err)));
-        assertEquals("protege-mcp-cli 0.6.0", out.toString().trim());
+        assertEquals("protege-mcp-cli 0.6.1", out.toString().trim());
 
         assertEquals(2, Main.run(new String[] {"unknown"}, new PrintStream(out), new PrintStream(err)));
         assertTrue(err.toString().contains("Usage:"));

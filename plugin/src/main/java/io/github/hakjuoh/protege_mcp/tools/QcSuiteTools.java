@@ -88,7 +88,22 @@ public final class QcSuiteTools {
                         + "workflow, where any missing required stage is an error. The overall 'gate' fails "
                         + "when the worst stage reaches 'fail_on' (none | warn | error, default error).",
                 suiteSchema(),
-                (ex, req) -> Tools.guard(() -> runSuite(ctx, Tools.args(req))));
+                (ex, req) -> Tools.guard(() -> {
+                    String shapes = Tools.optString(Tools.args(req), "shacl_shapes_path");
+                    Map<String, Object> arguments = Tools.args(req);
+                    String policyPath = Tools.optString(arguments, "policy_path");
+                    DirectAccessPolicy.Rules rules = null;
+                    if (policyPath != null) {
+                        rules = DirectAccessPolicy.resolve(ctx, ex, policyPath);
+                        arguments = rules.authorizedPolicyArguments(arguments);
+                    }
+                    if (shapes != null) {
+                        if (rules == null) rules = DirectAccessPolicy.resolve(ctx, ex);
+                        arguments = new LinkedHashMap<>(arguments);
+                        arguments.put("shacl_shapes_path", rules.readPath(shapes).toString());
+                    }
+                    return runSuite(ctx, arguments);
+                }));
     }
 
     // ================================================================== orchestration
@@ -148,9 +163,11 @@ public final class QcSuiteTools {
             results.add(profileStage(p1, config.profileName, config.limit));
         }
         if (config.stages.contains(GOVERNANCE)) {
+            List<Map<String, Object>> projectChecks = new ArrayList<>(config.projectGovernanceChecks);
+            projectChecks.addAll(ModulePolicyGovernance.importChecks(p1.importReport, config.limit));
             results.add(governanceStage(p1.validationSnapshot, config.iriPattern,
                     config.requiredNamespaces, config.requiredAnnotations, config.checkOwnership,
-                    config.policyGovernance, config.limit));
+                    config.policyGovernance, projectChecks, config.limit));
         }
         if (config.stages.contains(STRUCTURAL)) {
             results.add(structuralStage(p1.validationSnapshot, config.disabledStructural,
@@ -196,7 +213,7 @@ public final class QcSuiteTools {
                 p1.selectedReasoner, preconditionError,
                 p1.validationSnapshot == null ? "none" : "isolated", isolatedStages,
                 p1.validationSnapshot != null || config.stages.isEmpty(), p1.closureFingerprint,
-                p1.missingImports);
+                p1.missingImports, p1.importReport);
     }
 
     /** Everything phase 1 gathers on the model thread. */
@@ -211,6 +228,7 @@ public final class QcSuiteTools {
         String reasonerCaptureError;
         boolean needInferred;
         List<Map<String, Object>> missingImports = Collections.emptyList();
+        ImportTools.ImportReport importReport;
     }
 
     private static Phase1 phase1(OWLModelManager mm, RunConfig config,
@@ -264,7 +282,8 @@ public final class QcSuiteTools {
         if (config.projectMode) {
             // Capture the import-closure state in the SAME model-thread hop as the snapshot below, so a
             // concurrent edit cannot resolve a missing import between QC and a fail-closed import check.
-            p1.missingImports = ImportTools.analyze(mm.getActiveOntology()).missingImports;
+            p1.importReport = ImportTools.analyze(mm.getActiveOntology());
+            p1.missingImports = p1.importReport.missingImports;
         }
         boolean needSnapshot = !config.stages.isEmpty();
         if (needSnapshot) {
@@ -358,11 +377,18 @@ public final class QcSuiteTools {
             boolean consistent = reasoner.isConsistent();
             int unsat = 0;
             Map<String, Object> unsatisfiable = Map.of("count", 0, "items", List.of());
+            Set<String> unsatIris = null;
             if (consistent) {
                 Set<org.semanticweb.owlapi.model.OWLClass> classes =
                         reasoner.getUnsatisfiableClasses().getEntitiesMinusBottom();
                 unsat = classes.size();
                 unsatisfiable = Tools.entityList(snapshot.modelManager(), classes, config.limit);
+                // Capture the COMPLETE IRI set (the display list above is capped at config.limit) so
+                // verified-apply attribution can diff full sets instead of a truncated window.
+                unsatIris = new java.util.LinkedHashSet<>();
+                for (org.semanticweb.owlapi.model.OWLClass cls : classes) {
+                    unsatIris.add(cls.getIRI().toString());
+                }
             }
             if (p1.needInferred) {
                 snapshot = consistent
@@ -389,6 +415,9 @@ public final class QcSuiteTools {
                     ? new StageResult(REASONER, true,
                             consistent && unsat == 0 ? PASS : FAIL, summary, null)
                     : null;
+            if (stage != null && unsatIris != null) {
+                stage.attributionUnsatIris = java.util.Set.copyOf(unsatIris);
+            }
             return new ReasoningOutcome(stage, snapshot);
         } catch (RuntimeException e) {
             String message = "isolated classification failed: "
@@ -539,6 +568,7 @@ public final class QcSuiteTools {
         int warnings = 0;   // only warning-severity smells gate; info findings are reported, not gated
         int errors = 0;
         List<Map<String, Object>> checks = new ArrayList<>();
+        Set<String> gatingIdentities = new LinkedHashSet<>();
         for (ValidationTools.Finding f : findings) {
             if (disabled.contains(f.id)) {
                 continue;
@@ -550,7 +580,24 @@ public final class QcSuiteTools {
                 c.put("id", f.id);
                 c.put("severity", severity);
                 c.put("count", f.count());
+                List<String> identities = new ArrayList<>();
+                List<String> entityIdentities = new ArrayList<>();
+                f.entities.forEach(entity -> {
+                    String id = FindingIdentity.entity(entity);
+                    identities.add(id);
+                    entityIdentities.add(id);
+                });
+                f.details.forEach(detail -> identities.add("detail\u0000" + detail));
+                c.put("identity_digest", FindingIdentity.digest(identities));
                 checks.add(c);
+                if ("error".equals(severity) || "warning".equals(severity)
+                        || "warn".equals(severity)) {
+                    // Only gating-severity findings feed attribution; qualify each identity with the
+                    // check id so the same entity under two different smells stays distinct.
+                    for (String identity : entityIdentities) {
+                        gatingIdentities.add(f.id + "|" + identity);
+                    }
+                }
                 if ("error".equals(severity)) {
                     errors += f.count();
                 } else if ("warning".equals(severity) || "warn".equals(severity)) {
@@ -563,9 +610,11 @@ public final class QcSuiteTools {
         summary.put("warnings", warnings);
         summary.put("errors", errors);
         summary.put("checks", checks);
-        return new StageResult(STRUCTURAL, true,
+        StageResult stage = new StageResult(STRUCTURAL, true,
                 errors > 0 ? FAIL : warnings > 0 ? WARN : surfaceInfo && total > 0 ? INFO : PASS,
                 summary, null);
+        stage.attributionIdentities = Set.copyOf(gatingIdentities);
+        return stage;
     }
 
     static StageResult governanceStage(OWLModelManager mm, Pattern iriPattern,
@@ -580,18 +629,35 @@ public final class QcSuiteTools {
             List<String> requiredNamespaces, List<String> requiredAnnotations,
             boolean checkOwnership, int limit) {
         return governanceStage(snapshot, iriPattern, requiredNamespaces, requiredAnnotations,
-                checkOwnership, PolicyGovernance.Rules.empty(), limit);
+                checkOwnership, PolicyGovernance.Rules.empty(), List.of(), limit);
     }
 
     static StageResult governanceStage(IsolatedValidationSnapshot snapshot, Pattern iriPattern,
             List<String> requiredNamespaces, List<String> requiredAnnotations,
             boolean checkOwnership, PolicyGovernance.Rules rules, int limit) {
+        return governanceStage(snapshot, iriPattern, requiredNamespaces, requiredAnnotations,
+                checkOwnership, rules, List.of(), limit);
+    }
+
+    static StageResult governanceStage(IsolatedValidationSnapshot snapshot, Pattern iriPattern,
+            List<String> requiredNamespaces, List<String> requiredAnnotations,
+            boolean checkOwnership, PolicyGovernance.Rules rules,
+            List<Map<String, Object>> projectChecks, int limit) {
+        // Collect the STABLE gating identities of the intrinsic governance checks (ownership /
+        // import_layering is enabled by default even with no policy) for verified-apply attribution.
+        // The rule-driven PolicyGovernance / module project checks only run WITH a validated policy,
+        // where attribution uses the result-state gate (not baseline subtraction), so they need not be
+        // collected here — no-policy attribution only ever sees the intrinsic policyChecks findings.
+        Set<String> gatingIdentities = new LinkedHashSet<>();
         List<Map<String, Object>> checks = GovernanceTools.policyChecks(snapshot.modelManager(),
                 snapshot.active(), snapshot.closure(), iriPattern, requiredNamespaces,
-                requiredAnnotations, checkOwnership, limit);
+                requiredAnnotations, checkOwnership, limit, gatingIdentities);
         checks.addAll(PolicyGovernance.checks(snapshot.active(), snapshot.closure(), rules,
                 LocalDate.now(ZoneOffset.UTC), limit));
-        return governanceStage(checks);
+        checks.addAll(projectChecks);
+        StageResult stage = governanceStage(checks);
+        stage.attributionIdentities = Set.copyOf(gatingIdentities);
+        return stage;
     }
 
     private static StageResult governanceStage(List<Map<String, Object>> checks) {
@@ -620,10 +686,11 @@ public final class QcSuiteTools {
         if (profile == null || p1.validationSnapshot == null) {
             return StageResult.skipped(PROFILE, "profile check skipped (owl_profile=" + profileName + ").");
         }
+        Set<String> profileIdentities = new LinkedHashSet<>();
         Map<String, Object> check = GovernanceTools.profileCheck(profile, profileName,
                 p1.validationSnapshot.queries().assertedOntology(),
                 p1.validationSnapshot.active().getAxioms(),
-                p1.validationSnapshot.active().getAnnotations(), limit);
+                p1.validationSnapshot.active().getAnnotations(), limit, profileIdentities);
         // Gate on OWNED conformance: a module that merely imports a non-DL upstream (e.g. BFO) must not fail
         // this stage — only its OWN axioms leaving the profile should. Imported violations are context only.
         boolean ownedInProfile = Boolean.TRUE.equals(check.get("owned_in_profile"));
@@ -632,10 +699,13 @@ public final class QcSuiteTools {
         summary.put("in_profile", check.get("in_profile"));
         summary.put("owned_in_profile", ownedInProfile);
         summary.put("violations", check.get("count"));
+        summary.put("identity_digest", check.get("identity_digest"));
         if (check.get("imported_violations") != null) {
             summary.put("imported_violations", check.get("imported_violations"));
         }
-        return new StageResult(PROFILE, true, ownedInProfile ? PASS : FAIL, summary, null);
+        StageResult stage = new StageResult(PROFILE, true, ownedInProfile ? PASS : FAIL, summary, null);
+        stage.attributionIdentities = Set.copyOf(profileIdentities);
+        return stage;
     }
 
     static StageResult invariantsStage(SuiteSnapshot snap, List<Invariants.Invariant> invariants,
@@ -653,6 +723,7 @@ public final class QcSuiteTools {
         summary.put("checked", run.get("checked"));
         summary.put("violations", violations);
         summary.put("errors", errors);   // checks that could not run / were rejected — fail-closed
+        summary.put("identity_digest", resultIdentityDigest(run.get("invariants"), "violated"));
         // An include_inferred invariant that ran but over a truncated inferred snapshot is surfaced
         // (never silently gated to PASS): project mode escalates this to a stage error above.
         int inferenceCaveats = countInferenceCaveats(run.get("invariants"));
@@ -700,6 +771,7 @@ public final class QcSuiteTools {
         summary.put("total", run.get("total"));
         summary.put("passed", run.get("passed"));
         summary.put("failed", failed);
+        summary.put("identity_digest", resultIdentityDigest(run.get("questions"), "pass"));
         int errors = countCqErrors(run.get("questions"));
         if (errors > 0) {
             summary.put("errors", errors);
@@ -715,6 +787,25 @@ public final class QcSuiteTools {
             summary.put("inference_caveats", inferenceCaveats);
         }
         return new StageResult(CQS, true, failed > 0 ? FAIL : PASS, summary, null);
+    }
+
+    /** Digest complete failed result rows while ignoring volatile execution timing. */
+    private static String resultIdentityDigest(Object value, String verdictKey) {
+        if (!(value instanceof List<?> rows)) return FindingIdentity.digest(List.of());
+        List<String> identities = new ArrayList<>();
+        for (Object valueRow : rows) {
+            if (!(valueRow instanceof Map<?, ?> row)) continue;
+            boolean failed = "pass".equals(verdictKey)
+                    ? !Boolean.TRUE.equals(row.get(verdictKey))
+                    : Boolean.TRUE.equals(row.get(verdictKey)) || row.get("error") != null;
+            if (!failed) continue;
+            Map<String, Object> stable = new LinkedHashMap<>();
+            row.forEach((key, entryValue) -> {
+                if (!"ms".equals(String.valueOf(key))) stable.put(String.valueOf(key), entryValue);
+            });
+            identities.add(FindingIdentity.object(stable));
+        }
+        return FindingIdentity.digest(identities);
     }
 
     /** Count the per-CQ result maps that carry a {@code caveats} entry (a soft degradation qualifier). */
@@ -832,6 +923,7 @@ public final class QcSuiteTools {
         summary.put("violations", violations);
         summary.put("warnings", warnings);
         summary.put("infos", r.get("infos"));
+        summary.put("identity_digest", r.get("identity_digest"));
         // Violations fail; a warning-only report warns; info-only (or conformant) passes.
         String verdict = violations > 0 ? FAIL : warnings > 0 ? WARN : num(r.get("infos")) > 0 ? INFO : PASS;
         return new StageResult(SHACL, true, verdict, summary, null);
@@ -854,6 +946,7 @@ public final class QcSuiteTools {
             summary.put("violations", violations);
             summary.put("warnings", warnings);
             summary.put("infos", result.get("infos"));
+            summary.put("identity_digest", result.get("identity_digest"));
             summary.put("shape_files", shapesPaths.stream().map(Path::toString).toList());
             return new StageResult(SHACL, true,
                     violations > 0 ? FAIL : warnings > 0 ? WARN
@@ -907,6 +1000,36 @@ public final class QcSuiteTools {
     }
 
     /** Strict pass/fail/error gate used by project policy and opt-in strict legacy calls. */
+    /**
+     * The COMPLETE, uncapped set of unsatisfiable-class IRIs the reasoner stage found (or null when the
+     * stage did not run consistently). Verified-apply attribution diffs these full sets so a display cap
+     * on the public {@code unsatisfiable_classes.items} never truncates a baseline comparison.
+     */
+    static Set<String> reasonerUnsatIris(SuiteExecution execution) {
+        if (execution == null) return null;
+        for (StageResult result : execution.results) {
+            if (REASONER.equals(result.stage)) {
+                return result.attributionUnsatIris();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The complete gating-finding identity set a non-reasoner stage recorded for attribution, or null
+     * when the stage did not run or is not instrumented. Verified-apply attribution set-diffs these so
+     * a swap that lowers the total count is still caught and a pure removal is not misattributed.
+     */
+    static Set<String> stageAttributionIdentities(SuiteExecution execution, String stage) {
+        if (execution == null) return null;
+        for (StageResult result : execution.results) {
+            if (stage.equals(result.stage)) {
+                return result.attributionIdentities();
+            }
+        }
+        return null;
+    }
+
     static Map<String, Object> strictResult(SuiteExecution execution, Set<String> requiredStages,
             String failOn, int policyVersion, String policyDigest, boolean policyLoaded) {
         Map<String, StageResult> byStage = new LinkedHashMap<>();
@@ -1088,6 +1211,15 @@ public final class QcSuiteTools {
         final Map<String, Object> summary; // nullable
         final String reason;               // why it was skipped (when !ran)
         final boolean executionError;
+        // Attribution side channel (never serialized): the COMPLETE, uncapped set of unsatisfiable
+        // class IRIs behind the reasoner stage's display-capped `unsatisfiable_classes.items`. The
+        // verified-apply baseline comparison must diff full sets, not the 25-item public window.
+        private java.util.Set<String> attributionUnsatIris;
+        // Attribution side channel (never serialized): the COMPLETE set of gating-finding identities
+        // for a non-reasoner stage (profile/structural). Baseline attribution set-diffs these so a
+        // batch that swaps a fresh violation in while removing others (total count DOWN) is still
+        // caught, and a pure removal (subset) is not misattributed as a regression.
+        private java.util.Set<String> attributionIdentities;
 
         StageResult(String stage, boolean ran, String verdict, Map<String, Object> summary,
                 String reason) {
@@ -1117,6 +1249,16 @@ public final class QcSuiteTools {
             Map<String, Object> summary = new LinkedHashMap<>();
             summary.put("error", reason);
             return new StageResult(stage, true, FAIL, summary, reason, true);
+        }
+
+        /** Uncapped unsatisfiable-class IRIs for attribution; null unless the reasoner ran consistent. */
+        java.util.Set<String> attributionUnsatIris() {
+            return attributionUnsatIris;
+        }
+
+        /** Complete gating-finding identities for a non-reasoner stage; null when not instrumented. */
+        java.util.Set<String> attributionIdentities() {
+            return attributionIdentities;
         }
 
         Map<String, Object> toJson() {
@@ -1151,6 +1293,8 @@ public final class QcSuiteTools {
         final String closureFingerprint;
         /** Unresolved imports observed in the SAME model-thread hop as the snapshot (project mode). */
         final List<Map<String, Object>> missingImports;
+        /** Full already-loaded graph captured in the snapshot hop (project mode only). */
+        final ImportTools.ImportReport importReport;
 
         SuiteExecution(List<StageResult> results, OntologyFingerprint fingerprint,
                 boolean snapshotConsistent, String selectedReasoner, String preconditionError) {
@@ -1165,6 +1309,16 @@ public final class QcSuiteTools {
                 boolean snapshotConsistent, String selectedReasoner, String preconditionError,
                 String snapshotMode, List<String> snapshotStages, boolean sameValidationSnapshot,
                 String closureFingerprint, List<Map<String, Object>> missingImports) {
+            this(results, fingerprint, snapshotConsistent, selectedReasoner, preconditionError,
+                    snapshotMode, snapshotStages, sameValidationSnapshot, closureFingerprint,
+                    missingImports, null);
+        }
+
+        SuiteExecution(List<StageResult> results, OntologyFingerprint fingerprint,
+                boolean snapshotConsistent, String selectedReasoner, String preconditionError,
+                String snapshotMode, List<String> snapshotStages, boolean sameValidationSnapshot,
+                String closureFingerprint, List<Map<String, Object>> missingImports,
+                ImportTools.ImportReport importReport) {
             this.results = List.copyOf(results);
             this.fingerprint = fingerprint;
             this.snapshotConsistent = snapshotConsistent;
@@ -1175,6 +1329,7 @@ public final class QcSuiteTools {
             this.sameValidationSnapshot = sameValidationSnapshot;
             this.closureFingerprint = closureFingerprint;
             this.missingImports = List.copyOf(missingImports);
+            this.importReport = importReport;
         }
     }
 
@@ -1205,6 +1360,7 @@ public final class QcSuiteTools {
         final String requiredReasoner;
         final String requiredOntologyIri;
         final InteroperabilityConfig interoperability;
+        final List<Map<String, Object>> projectGovernanceChecks;
 
         RunConfig(Set<String> stages, Set<String> requiredStages, String failOn, String profileName,
                 int limit, int timeout, List<Invariants.Invariant> invariants,
@@ -1215,6 +1371,23 @@ public final class QcSuiteTools {
                 Set<String> disabledStructural, Map<String, String> structuralSeverity,
                 boolean projectMode, String requiredReasoner, String requiredOntologyIri,
                 InteroperabilityConfig interoperability) {
+            this(stages, requiredStages, failOn, profileName, limit, timeout, invariants, policyCqs,
+                    shaclShapes, shaclShapesPath, shaclPaths, iriPattern, requiredNamespaces,
+                    requiredAnnotations, checkOwnership, policyGovernance, disabledStructural,
+                    structuralSeverity, projectMode, requiredReasoner, requiredOntologyIri,
+                    interoperability, List.of());
+        }
+
+        RunConfig(Set<String> stages, Set<String> requiredStages, String failOn, String profileName,
+                int limit, int timeout, List<Invariants.Invariant> invariants,
+                List<CompetencyQuestion> policyCqs, String shaclShapes, String shaclShapesPath,
+                List<Path> shaclPaths, Pattern iriPattern, List<String> requiredNamespaces,
+                List<String> requiredAnnotations, boolean checkOwnership,
+                PolicyGovernance.Rules policyGovernance,
+                Set<String> disabledStructural, Map<String, String> structuralSeverity,
+                boolean projectMode, String requiredReasoner, String requiredOntologyIri,
+                InteroperabilityConfig interoperability,
+                List<Map<String, Object>> projectGovernanceChecks) {
             this.stages = Collections.unmodifiableSet(new LinkedHashSet<>(stages));
             this.requiredStages = Collections.unmodifiableSet(new LinkedHashSet<>(requiredStages));
             this.failOn = failOn;
@@ -1238,6 +1411,16 @@ public final class QcSuiteTools {
             this.requiredReasoner = requiredReasoner;
             this.requiredOntologyIri = requiredOntologyIri;
             this.interoperability = interoperability;
+            this.projectGovernanceChecks = List.copyOf(projectGovernanceChecks);
+        }
+
+        /** Same configuration with a different stage time budget. */
+        RunConfig withTimeout(int timeoutMs) {
+            return new RunConfig(stages, requiredStages, failOn, profileName, limit, timeoutMs,
+                    invariants, policyCqs, shaclShapes, shaclShapesPath, shaclPaths, iriPattern,
+                    requiredNamespaces, requiredAnnotations, checkOwnership, policyGovernance,
+                    disabledStructural, structuralSeverity, projectMode, requiredReasoner,
+                    requiredOntologyIri, interoperability, projectGovernanceChecks);
         }
 
         static RunConfig legacy(Map<String, Object> a) {
@@ -1262,7 +1445,7 @@ public final class QcSuiteTools {
                     Tools.stringList(a, "required_annotations"),
                     Tools.optBool(a, "check_ownership", true), PolicyGovernance.Rules.empty(),
                     Collections.emptySet(),
-                    Collections.emptyMap(), false, null, null, null);
+                    Collections.emptyMap(), false, null, null, null, List.of());
         }
     }
 

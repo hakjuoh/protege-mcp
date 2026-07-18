@@ -29,7 +29,7 @@ import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
 /** Minimal Java 17 headless surface proving the core has no Protégé runtime dependency. */
 public final class Main {
 
-    public static final String VERSION = "0.6.0";
+    public static final String VERSION = "0.6.1";
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(SerializationFeature.INDENT_OUTPUT)
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);

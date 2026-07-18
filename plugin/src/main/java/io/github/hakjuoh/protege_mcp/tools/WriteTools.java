@@ -2,6 +2,7 @@ package io.github.hakjuoh.protege_mcp.tools;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -238,10 +239,10 @@ public final class WriteTools {
                         + "unrecognized IRI/name. Note: because nothing is applied until the batch "
                         + "completes, an operation that references an entity introduced by an EARLIER "
                         + "operation in the same batch must refer to it by full IRI. Optionally set "
-                        + "verify=report|rollback to classify the reasoner after applying and detect a "
-                        + "regression (a NEWLY unsatisfiable class or a NEWLY inconsistent ontology): "
-                        + "report keeps the batch and returns the verdict; rollback additionally undoes "
-                        + "the whole batch when a regression is found (default none = no reasoner pass).",
+                        + "verify=report|rollback to run the same isolated policy/change-set gate used by "
+                        + "preview_change_set: report returns the verdict and commits the batch, while "
+                        + "rollback prevents a failing batch before it reaches the live ontology "
+                        + "(default none = direct apply with no gate).",
                 applyChangesSchema(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
@@ -261,8 +262,8 @@ public final class WriteTools {
                     if (timeout <= 0) {
                         timeout = 60_000;
                     }
-                    return ApplyVerify.verifiedApply(ctx, verify, timeout, summary, "apply_changes",
-                            mm -> applyBatchData(mm, operations, strict));
+                    DirectAccessPolicy.requireCapability(ex, DirectAccessPolicy.PROJECT_READ);
+                    return ChangeSetApplyVerify.apply(ctx, verify, timeout, summary, operations, strict);
                 }));
 
         tools.tool("set_label",
@@ -398,15 +399,29 @@ public final class WriteTools {
                         .build(),
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
-                    String path = Tools.optString(a, "path");
+                    String configuredPath = Tools.optString(a, "path");
                     boolean all = Tools.optBool(a, "all", false);
                     boolean verifyRoundTrip = Tools.optBool(a, "verify_round_trip", false);
                     boolean atomic = Tools.optBool(a, "atomic", false);
                     boolean backup = Tools.optBool(a, "backup", false);
-                    if (all && path != null) {
+                    if (all && configuredPath != null) {
                         return Tools.error("'all' saves every dirty ontology to its own existing "
                                 + "document and cannot be combined with 'path' (a save-as targets "
                                 + "only the active ontology).");
+                    }
+                    DirectAccessPolicy.Rules accessRules = DirectAccessPolicy.resolve(ctx, ex);
+                    final String path;
+                    if (configuredPath != null) {
+                        path = accessRules.writePath(configuredPath).toString();
+                    } else {
+                        // Argument-less saves and all=true write back to the documents already open
+                        // in Protégé — derived targets, not caller-selected paths. Authorize each one
+                        // before confirmation or serialization begins.
+                        List<String> targets = ctx.access().compute(mm -> saveTargets(mm, all));
+                        for (String target : targets) {
+                            accessRules.implicitPath(java.nio.file.Path.of(target), true);
+                        }
+                        path = null;
                     }
                     if (all) {
                         if (verifyRoundTrip || atomic || backup) {
@@ -434,6 +449,19 @@ public final class WriteTools {
      * a false failure. Same rationale (and value) as the document tools' merge/load bound.
      */
     private static final long SAVE_TIMEOUT_MS = 120_000L;
+
+    private static List<String> saveTargets(OWLModelManager mm, boolean all) {
+        List<String> targets = new ArrayList<>();
+        Collection<OWLOntology> ontologies = all
+                ? mm.getDirtyOntologies() : List.of(mm.getActiveOntology());
+        for (OWLOntology ontology : ontologies) {
+            IRI document = mm.getOWLOntologyManager().getOntologyDocumentIRI(ontology);
+            if (isFileDocument(document)) {
+                targets.add(new File(document.toURI()).getAbsolutePath());
+            }
+        }
+        return targets;
+    }
 
     /** Apply the read-only + confirmation gates, then run {@code body} on the EDT. */
     static CallToolResult write(ToolContext ctx, String summary,
@@ -667,15 +695,18 @@ public final class WriteTools {
 
     /**
      * apply_changes' schema is preview_changes' operations[] plus the optional 'strict' flag and the
-     * 0.4.0 reasoner-verification knobs ('verify' enum + 'timeout_ms').
+     * change-set-gate knobs ('verify' enum + 'timeout_ms').
      */
     private static Map<String, Object> applyChangesSchema() {
         Map<String, Object> schema = PreviewTools.operationsSchema();
         @SuppressWarnings("unchecked")
         Map<String, Object> props = (Map<String, Object>) schema.get("properties");
         props.put("strict", Tools.boolProperty(STRICT_DESC));
-        props.put("verify", Tools.stringProperty(CurationTools.VERIFY_DESC));
-        props.put("timeout_ms", Tools.intProperty(CurationTools.VERIFY_TIMEOUT_DESC));
+        props.put("verify", Tools.stringProperty("none (default) | report | rollback. With report or "
+                + "rollback, run the isolated policy/change-set gate before commit. report commits and "
+                + "returns a failing verdict; rollback prevents a failing batch before live mutation."));
+        props.put("timeout_ms", Tools.intProperty("Time budget in ms for the isolated preflight gate. "
+                + "Default 60000."));
         return schema;
     }
 
@@ -694,13 +725,22 @@ public final class WriteTools {
 
     /**
      * The batch-apply core, returning the raw result map ({@code {operations, summary}}) rather than a
-     * wrapped {@link CallToolResult}, so the reasoner-verify path ({@link ApplyVerify}) can apply the
-     * batch inside its own EDT hop and read {@code summary.single_undo} to know whether anything was
-     * committed (and thus whether there is a history entry to undo). See {@link #applyBatch} for the
-     * behaviour contract.
+     * wrapped {@link CallToolResult}, so direct and change-set-verified paths share one live commit
+     * implementation. See {@link #applyBatch} for the behaviour contract.
      */
     static Map<String, Object> applyBatchData(OWLModelManager mm, List<Map<String, Object>> operations,
             boolean strict) {
+        return batchData(mm, operations, strict, true);
+    }
+
+    /** Build the released apply_changes payload against the live revision without mutating it. */
+    static Map<String, Object> simulateBatchData(OWLModelManager mm,
+            List<Map<String, Object>> operations, boolean strict) {
+        return batchData(mm, operations, strict, false);
+    }
+
+    private static Map<String, Object> batchData(OWLModelManager mm,
+            List<Map<String, Object>> operations, boolean strict, boolean apply) {
         OWLOntology ont = mm.getActiveOntology();
         Set<OWLOntology> closure = ont.getImportsClosure();
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -781,7 +821,7 @@ public final class WriteTools {
         Set<OWLEntity> mintedAll = newEntitiesIntroducedByAxioms(closure, simAdded);
         declareMinted(mm.getOWLDataFactory(), ont, mintedAll, toApply);  // declare side-effect entities
         declareUsedAnnotationProperties(mm.getOWLDataFactory(), ont, toApply);
-        if (!toApply.isEmpty()) {
+        if (apply && !toApply.isEmpty()) {
             mm.applyChanges(toApply);  // one broadcast → one Protégé undo entry for the whole batch
         }
         Map<String, Object> summary = new LinkedHashMap<>();

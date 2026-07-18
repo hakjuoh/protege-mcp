@@ -18,6 +18,11 @@ import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLDataFactory;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
+import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
+
 /** {@link DiffTools#diff} — the pure axiom-set partition behind diff_ontologies / round-trip checks. */
 class DiffToolsTest {
 
@@ -68,5 +73,106 @@ class DiffToolsTest {
         assertTrue(error.getMessage().contains("registered parsers"), error.getMessage());
         assertFalse(error.getMessage().contains("Detailed logs:"), error.getMessage());
         assertTrue(error.getMessage().length() < 2_000);
+    }
+
+    @Test
+    void forbiddenRemoteImportsFailBeforeNetworkDereference(@TempDir Path temp) throws Exception {
+        Path root = temp.resolve("root.ttl");
+        Files.writeString(root, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/root> a owl:Ontology ;
+                    owl:imports <https://network-must-not-be-used.invalid/import.ttl> .
+                """);
+        DirectAccessPolicy.NetworkRule offline = new DirectAccessPolicy.NetworkRule(
+                false, Set.of(), false, true);
+
+        ToolArgException denied = org.junit.jupiter.api.Assertions.assertThrows(
+                ToolArgException.class, () -> DiffTools.loadDocument(root.toString(),
+                        java.util.List.of(), new java.util.ArrayList<>(), offline));
+
+        assertTrue(denied.getMessage().contains("imports.network=deny"), denied.getMessage());
+        assertTrue(denied.getMessage().contains("network-must-not-be-used.invalid"),
+                denied.getMessage());
+    }
+
+    @Test
+    void forbiddenLocalImportsFailBeforeOutsideProjectDereference(@TempDir Path temp)
+            throws Exception {
+        Path project = Files.createDirectories(temp.resolve("project"));
+        Path outside = temp.resolve("outside.ttl");
+        Files.writeString(outside, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/outside> a owl:Ontology .
+                """);
+        Path root = project.resolve("root.ttl");
+        Files.writeString(root, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/root> a owl:Ontology ;
+                    owl:imports <%s> .
+                """.formatted(outside.toUri()));
+        Path policyPath = project.resolve(".protege-mcp/project.yaml");
+        ProjectPolicyFixtures.writePolicy(policyPath,
+                ProjectPolicyFixtures.minimalPolicy("local-import", "https://example.org/root")
+                        + "filesystem:\n  allow_external_paths: false\n"
+                        + "imports:\n  network: deny\n"
+                        + "validation:\n  required_stages: [structural]\n");
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+        DirectAccessPolicy.Rules rules = new DirectAccessPolicy.Rules(policy,
+                new AuthenticatedPrincipal(1, "test", "test", "Test",
+                        Set.of(DirectAccessPolicy.PROJECT_READ), null));
+        ToolArgException denied = org.junit.jupiter.api.Assertions.assertThrows(
+                ToolArgException.class, () -> DiffTools.loadDocument(root.toString(),
+                        java.util.List.of(), new java.util.ArrayList<>(),
+                        rules.importNetworkRule()));
+
+        assertTrue(denied.getMessage().contains("local import path is outside"),
+                denied.getMessage());
+        assertTrue(denied.getMessage().contains("outside project_root"), denied.getMessage());
+    }
+
+    @Test
+    void siblingCatalogCannotMapAnImportOutsideTheProject(@TempDir Path temp) throws Exception {
+        Path project = Files.createDirectories(temp.resolve("project"));
+        Path outside = temp.resolve("outside.ttl");
+        Files.writeString(outside, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/catalog-outside> a owl:Ontology .
+                """);
+        String imported = "https://example.org/catalog-alias";
+        Path root = project.resolve("root.ttl");
+        Files.writeString(root, """
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <https://example.org/root> a owl:Ontology ; owl:imports <%s> .
+                """.formatted(imported));
+        Files.writeString(project.resolve("catalog-v001.xml"), """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
+                  <uri name="%s" uri="../outside.ttl"/>
+                </catalog>
+                """.formatted(imported));
+        Path policyPath = project.resolve(".protege-mcp/project.yaml");
+        ProjectPolicyFixtures.writePolicy(policyPath,
+                ProjectPolicyFixtures.minimalPolicy("catalog-import", "https://example.org/root")
+                        + "filesystem:\n  allow_external_paths: false\n"
+                        + "imports:\n  network: deny\n"
+                        + "validation:\n  required_stages: [structural]\n");
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+        DirectAccessPolicy.Rules rules = new DirectAccessPolicy.Rules(policy,
+                new AuthenticatedPrincipal(1, "test", "test", "Test",
+                        Set.of(DirectAccessPolicy.PROJECT_READ), null));
+        IRI mapped = new org.protege.xmlcatalog.owlapi.XMLCatalogIRIMapper(
+                project.resolve("catalog-v001.xml").toFile()).getDocumentIRI(IRI.create(imported));
+        assertTrue(mapped != null, "the adversarial catalog entry must resolve in the real mapper");
+        assertTrue(rules.importNetworkRule().fileImportDenial(mapped.toURI()) != null,
+                "the resolved catalog target must be outside project_root");
+
+        ToolArgException denied = org.junit.jupiter.api.Assertions.assertThrows(
+                ToolArgException.class, () -> DiffTools.loadDocument(root.toString(),
+                        java.util.List.of(), new java.util.ArrayList<>(),
+                        rules.importNetworkRule()));
+
+        assertTrue(denied.getMessage().contains("mapping target"), denied.getMessage());
+        assertTrue(denied.getMessage().contains("outside project_root"), denied.getMessage());
+        assertTrue(denied.getMessage().contains(imported), denied.getMessage());
     }
 }

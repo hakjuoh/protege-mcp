@@ -83,7 +83,11 @@ public final class OntologyMetadataTools {
                 (ex, req) -> Tools.guard(() -> {
                     Map<String, Object> a = Tools.args(req);
                     String iri = Tools.reqString(a, "iri");
-                    String document = Tools.optString(a, "document");
+                    String configuredDocument = Tools.optString(a, "document");
+                    DirectAccessPolicy.Rules accessRules = configuredDocument == null ? null
+                            : DirectAccessPolicy.resolve(ctx, ex);
+                    final String document = configuredDocument == null ? null
+                            : accessRules.authorizeSource(configuredDocument).value();
                     int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);
                     CallToolResult denied = WriteTools.checkWriteAllowed(ctx, "add import " + iri);
                     if (denied != null) {
@@ -101,7 +105,8 @@ public final class OntologyMetadataTools {
                         return mm.getOWLOntologyManager().getImportedOntology(decl) != null;
                     });
                     if (!resolved && document != null) {
-                        CallToolResult loadResult = OntologyDocumentTools.doLoad(ctx, document, timeoutMs, true);
+                        CallToolResult loadResult = OntologyDocumentTools.doLoad(ctx, document, timeoutMs,
+                                true, MissingImportsMode.WARN, accessRules.importNetworkRule());
                         if (Boolean.TRUE.equals(loadResult.isError())) {
                             return loadResult;
                         }

@@ -3,10 +3,12 @@ package io.github.hakjuoh.protege_mcp.tools;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import org.protege.editor.owl.model.OWLModelManager;
 
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 
 /**
  * The competency-question suite (F3): a re-runnable requirements suite over the active ontology. CQs pair
@@ -50,7 +52,7 @@ public final class CompetencyQuestionTools {
                                 + "(optional; omit to follow an existing store, else defaults to "
                                 + "robot-sparql-dir, or ontology-annotations when the ontology is unsaved).")
                         .build(),
-                (ex, req) -> Tools.guard(() -> addCq(ctx, Tools.args(req))));
+                (ex, req) -> Tools.guard(() -> addCq(ctx, Tools.args(req), lazyRules(ctx, ex))));
 
         tools.tool("list_competency_questions",
                 "List every competency question found across all storage conventions (robot-sparql-dir "
@@ -58,7 +60,10 @@ public final class CompetencyQuestionTools {
                         + "its 'convention'. Reports 'conventions_found' and any 'skipped' entries that "
                         + "could not be parsed (malformed input is isolated, never fatal).",
                 Tools.emptySchema(),
-                (ex, req) -> Tools.guard(() -> ctx.access().compute(CompetencyQuestionTools::listCq)));
+                (ex, req) -> Tools.guard(() -> {
+                    authorizeSidecars(ctx, lazyRules(ctx, ex), false);
+                    return ctx.access().compute(CompetencyQuestionTools::listCq);
+                }));
 
         tools.tool("remove_competency_question",
                 "Remove a competency question by id. Pass 'convention' to disambiguate when the same id "
@@ -68,7 +73,7 @@ public final class CompetencyQuestionTools {
                         .str("convention", "robot-sparql-dir | sidecar-manifest | ontology-annotations "
                                 + "(optional; required only when the id exists in several stores).")
                         .build(),
-                (ex, req) -> Tools.guard(() -> removeCq(ctx, Tools.args(req))));
+                (ex, req) -> Tools.guard(() -> removeCq(ctx, Tools.args(req), lazyRules(ctx, ex))));
 
         tools.tool("run_competency_questions",
                 "Re-run the competency-question suite against the active ontology and report, per CQ, "
@@ -86,12 +91,16 @@ public final class CompetencyQuestionTools {
                         .integer("timeout_ms", "Per-query time budget in ms (default 120000).")
                         .str("fail_on", "Gate policy: none (default) | any.")
                         .build(),
-                (ex, req) -> Tools.guard(() -> runCq(ctx, Tools.args(req))));
+                (ex, req) -> Tools.guard(() -> {
+                    authorizeSidecars(ctx, lazyRules(ctx, ex), false);
+                    return runCq(ctx, Tools.args(req));
+                }));
     }
 
     // ================================================================== add
 
-    private static CallToolResult addCq(ToolContext ctx, Map<String, Object> a) {
+    private static CallToolResult addCq(ToolContext ctx, Map<String, Object> a,
+            Supplier<DirectAccessPolicy.Rules> rules) {
         String query = Tools.reqString(a, "query");
         String convention = Tools.optString(a, "convention");
         // Compute #1 (read-only): resolve which store + path so the consent prompt can name it.
@@ -102,6 +111,7 @@ public final class CompetencyQuestionTools {
         });
         String conv = resolved[0];
         String target = resolved[1];
+        authorizeConventionTarget(ctx, rules, conv, true);
         CallToolResult denied = WriteTools.checkWriteAllowed(ctx,
                 "add competency question to " + target + " (" + conv + ")");
         if (denied != null) {
@@ -186,9 +196,11 @@ public final class CompetencyQuestionTools {
 
     // ================================================================== remove
 
-    private static CallToolResult removeCq(ToolContext ctx, Map<String, Object> a) {
+    private static CallToolResult removeCq(ToolContext ctx, Map<String, Object> a,
+            Supplier<DirectAccessPolicy.Rules> rules) {
         String id = Tools.reqString(a, "id");
         String convention = Tools.optString(a, "convention");
+        authorizeSidecars(ctx, rules, false);
         // Compute #1: find which store(s) hold this id.
         List<String> holders = ctx.access().compute(mm -> {
             CqContext c = CqContext.of(mm);
@@ -218,6 +230,7 @@ public final class CompetencyQuestionTools {
                     + String.join(", ", holders) + "). Pass convention= to choose which to remove from.");
         }
         String conv = holders.get(0);
+        authorizeConventionTarget(ctx, rules, conv, true);
         CallToolResult denied = WriteTools.checkWriteAllowed(ctx,
                 "remove competency question '" + id + "' from " + conv);
         if (denied != null) {
@@ -232,6 +245,12 @@ public final class CompetencyQuestionTools {
                     .put("convention", conv)
                     .result();
         });
+    }
+
+    /** Backward-compatible method-level test seam. */
+    @SuppressWarnings("unused")
+    private static CallToolResult removeCq(ToolContext ctx, Map<String, Object> a) {
+        return removeCq(ctx, a, lazyRules(ctx, null));
     }
 
     // ================================================================== run
@@ -306,6 +325,51 @@ public final class CompetencyQuestionTools {
             default:
                 return "the active ontology (annotations)";
         }
+    }
+
+    private static void authorizeSidecars(ToolContext ctx,
+            Supplier<DirectAccessPolicy.Rules> rules,
+            boolean write) {
+        List<java.nio.file.Path> paths = ctx.access().compute(mm -> {
+            CqContext c = CqContext.of(mm);
+            List<java.nio.file.Path> out = new ArrayList<>();
+            if (c.cqsDir() != null) out.add(c.cqsDir().toPath());
+            if (c.manifestFile() != null) out.add(c.manifestFile().toPath());
+            return out;
+        });
+        for (java.nio.file.Path path : paths) {
+            rules.get().implicitPath(path, write);
+        }
+    }
+
+    private static void authorizeConventionTarget(ToolContext ctx,
+            Supplier<DirectAccessPolicy.Rules> rules,
+            String convention, boolean write) {
+        java.nio.file.Path target = ctx.access().compute(mm -> {
+            CqContext c = CqContext.of(mm);
+            if (Cq.CONV_ROBOT.equals(convention) && c.cqsDir() != null) {
+                return c.cqsDir().toPath();
+            }
+            if (Cq.CONV_MANIFEST.equals(convention) && c.manifestFile() != null) {
+                return c.manifestFile().toPath();
+            }
+            return null;
+        });
+        if (target != null) rules.get().implicitPath(target, write);
+    }
+
+    /** Resolve filesystem policy at most once, and only if a file-backed CQ store is touched. */
+    private static Supplier<DirectAccessPolicy.Rules> lazyRules(ToolContext ctx,
+            McpSyncServerExchange exchange) {
+        return new Supplier<>() {
+            private DirectAccessPolicy.Rules value;
+
+            @Override
+            public DirectAccessPolicy.Rules get() {
+                if (value == null) value = DirectAccessPolicy.resolve(ctx, exchange);
+                return value;
+            }
+        };
     }
 
     /** The loaded suite for one run: matching CQs, the shared snapshot, and load-skip warnings. */

@@ -332,7 +332,8 @@ class ProjectPolicyLoaderTest {
     void discoveredDotDirectoryPolicyReachesSourcesBesideIt(@TempDir Path temp) throws Exception {
         Path root = temp.resolve("repo");
         Path policyPath = root.resolve(".protege-mcp/project.yaml");
-        write(root.resolve("ontology.ttl"), "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n");
+        write(root.resolve("ontology.ttl"), "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/ontology> a owl:Ontology .\n");
         write(policyPath, minimal("example")
                 + "modules:\n"
                 + "  - {ontology_iri: 'https://example.org/ontology', path: ontology.ttl}\n"
@@ -349,7 +350,8 @@ class ProjectPolicyLoaderTest {
         Path root = temp.resolve("repo");
         Path src = root.resolve("src");
         Path policyPath = root.resolve(".protege-mcp/project.yaml");
-        write(src.resolve("ontology.ttl"), "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n");
+        write(src.resolve("ontology.ttl"), "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/ontology> a owl:Ontology .\n");
         write(policyPath, minimal("example")
                 + "project_root: src\n"
                 + "modules:\n"
@@ -360,6 +362,22 @@ class ProjectPolicyLoaderTest {
         assertTrue(policy.valid(), () -> policy.issues().toString());
         assertEquals(src.toRealPath(), policy.projectRoot());
         assertEquals(List.of(src.resolve("ontology.ttl").toRealPath()), policy.assets().get("modules"));
+    }
+
+    @Test
+    void moduleOntologyIriMustMatchThePolicyDeclaration(@TempDir Path temp) throws Exception {
+        Path policyPath = temp.resolve("policy.yaml");
+        write(temp.resolve("module.ttl"), "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/actual> a owl:Ontology .\n");
+        write(policyPath, minimal("module-mismatch")
+                + "modules:\n"
+                + "  - {ontology_iri: 'https://example.org/declared', path: module.ttl}\n"
+                + "validation:\n  required_stages: [governance]\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+
+        assertFalse(policy.valid());
+        assertCode(policy, "module_ontology_iri_mismatch");
     }
 
     @Test

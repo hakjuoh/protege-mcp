@@ -84,7 +84,7 @@ class PublicContractSnapshotTest {
     private static final Path PROMPT_DOC = Path.of("docs", "prompts.md");
     /** Explicit review point for a future release that intentionally changes tool guidance. */
     private static final Set<String> INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V050 = Set.of(
-            "load_ontology", "run_qc_suite", "save_ontology");
+            "apply_changes", "load_ontology", "run_qc_suite", "save_ontology");
     /** Explicit review point for titles, output schemas, annotations, metadata, or icons. */
     private static final Set<String> INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050 = Set.of();
     /**
@@ -93,7 +93,7 @@ class PublicContractSnapshotTest {
      * the governance stage the runtime always accepted).
      */
     private static final Set<String> INTENTIONAL_ARGUMENT_DESCRIPTION_CHANGES_SINCE_V050 = Set.of(
-            "run_qc_suite.stages");
+            "apply_changes.timeout_ms", "apply_changes.verify", "run_qc_suite.stages");
     /** Explicit review point for a future release that intentionally rewrites workflow guidance. */
     private static final Set<String> INTENTIONAL_PROMPT_TEXT_CHANGES_SINCE_V050 = Set.of(
             "audit_ontology", "add_subclass_safely", "model_domain", "refactor_entity_safely",

@@ -6,10 +6,9 @@ nav_order: 7
 # Project policy contracts
 {: .no_toc }
 
-Version 0.6.0 delivers the executable project-policy workflow plus workspace revision envelopes,
-memory-only preflight/commit change sets, verified atomic saves, deterministic import locks, asserted
-semantic diff, and a standalone headless CLI prototype. Calls with no policy retain the existing
-interactive defaults.
+Version 0.6.1 enforces the executable project policy at direct filesystem/network boundaries, verifies
+locked import content automatically, applies module ownership/import-graph governance, and routes
+`apply_changes verify=` through isolated change-set preflight. The tool/prompt surface remains 78/11.
 {: .note }
 
 For a user-focused setup guide, including a complete crate example and an explanation of the two
@@ -69,7 +68,8 @@ or textual IPv6 addresses including the IPv4-mapped forms.
 
 The runtime loader adds checks JSON Schema cannot perform: referenced-file existence, canonical
 project-root containment (including symlink resolution), CURIE prefix resolution, Java-regex compilation,
-duplicate module coordinates, active/root ontology agreement, and installed required-reasoner availability.
+duplicate module coordinates, each module file's actual ontology IRI, active/root ontology agreement, and
+installed required-reasoner availability.
 It rejects duplicate YAML keys, trailing YAML documents, inputs over 1 MiB, URL-shaped asset paths, missing
 glob matches, and assets escaping `project_root` unless the policy explicitly enables the local-admin
 external-path compatibility profile.
@@ -79,7 +79,8 @@ Discovery order is:
 1. explicit `policy_path`;
 2. the nearest `.protege-mcp/project.yaml` found while walking from the active local ontology document
    toward the filesystem root;
-3. no policy (`policy_loaded=false`), which preserves the 0.5.x interactive behavior.
+3. no policy (`policy_loaded=false`), which uses the local-admin compatibility mode unless the user disables
+   **Allow unrestricted local-admin paths when no project policy is loaded** in Settings ▸ MCP.
 
 A policy stored in a directory named `.protege-mcp` anchors the project at that directory's parent —
 the directory that contains `.protege-mcp` — so the canonical layout keeps ontology sources beside the
@@ -90,6 +91,18 @@ paths and glob bases, competency-question paths, and the release output director
 the effective project root, never against the process working directory. Effective defaults
 are materialized before a canonical `policy_digest` is computed, so YAML comments and key order do not
 change the digest.
+
+The same containment rule now governs caller-selected and implicit paths used by ontology load/create/
+merge/save, SHACL shapes, locality-module output, catalogs, import locks, and CQ sidecars. Reads/writes
+require `filesystem:project:read` / `filesystem:project:write`; an outside path additionally requires
+both `filesystem.allow_external_paths: true` and `filesystem:external`. Canonical existing ancestors are
+resolved before the decision, so an in-project symlink cannot escape the root. With no policy loaded,
+targets *derived from the already-open document* — an argument-less save, a catalog or CQ sidecar beside
+it — are exempt from the local-admin compatibility opt-in, which governs caller-selected paths only.
+A discovered policy that is loaded but invalid refuses every filesystem/network authorization at use
+time until it validates, while the diagnostic tools (`get_project_policy`, `validate_project_policy`,
+`run_project_qc`, `get_model_revision`) still return their structured invalid-policy results so the
+policy can be repaired.
 
 ## Executable QC
 
@@ -136,21 +149,49 @@ graphs are unioned locally. CQ policy paths support `robot-sparql-dir`, `sidecar
 `ontology-annotations`.
 
 The governance stage enforces configured label-language/preferred-label cardinality, definition
-presence/language/literal datatype/non-placeholder text, lifecycle status/replacement integrity, and active
-or expired waivers. Active waivers remain visible with `waived_count`; expired waivers become findings.
+presence/language/literal datatype/non-placeholder text, lifecycle status/replacement integrity, active
+or expired waivers, and `modules[].owned_namespaces` against terms **defined** in each configured module
+file. An axiom defines every named entity it constrains: a named `SubClassOf` subject; each named member
+of an `EquivalentClasses`, `DisjointClasses`, `DisjointUnion`, property-equivalence/disjointness or
+`InverseObjectProperties` axiom; a `HasKey` class; a `DatatypeDefinition` datatype; a property
+domain/range/characteristic subject or chain super-property; an annotation-assertion subject; each named
+member of a `SameIndividual`/`DifferentIndividuals` axiom; the subject individual of a class or
+(negative) property assertion; and a class/property named in a SWRL rule head. A property spelled
+`ObjectInverseOf(p)` is unwrapped to `p`, so inverting a foreign property does not evade the check. Bare
+supporting declarations of foreign entities — the kind OWLAPI module
+extraction adds for referenced terms — are permitted; merely referencing a foreign term (as the
+superclass of an owned subject, inside an owned class's expression, or as the class or object of an
+assertion about an owned individual) is likewise legal. Ownership matching is boundary-aware: a
+namespace ending in a delimiter (`…/ns/`, `…/ns#`, or the OBO-style `…/GO_`) owns every extension,
+while a namespace ending alphanumeric owns the exact IRI and continuations across a structural IRI
+separator (`/`, `#`, `:`) only — owning `…/ns` captures `…/ns/X` and `…/ns#X` but never the siblings
+`…/ns2/…`, `…/ns-ext/…`, `…/ns.ext/…` or `…/ns_ext/…`. Each entity is attributed to its most specific
+owned namespace only.
+Namespaces may have explicit co-owners; a project that deliberately augments another module's terms
+should declare co-ownership or leave that namespace unowned. A module document that cannot be inspected
+fails the stage closed with `module_inspection_failed`. Loaded import cycles are warnings — note that a
+policy with `fail_on: warning` therefore fails its gate on a cycle; ontology/version/document identity
+conflicts are errors. Active waivers remain visible with `waived_count`; expired waivers become
+findings.
 `write_import_lock`, `verify_import_lock`, and `validate_catalog` provide deterministic no-network dependency
 checks. `run_project_qc` now fails closed on an unresolved import closure when the policy sets
-`imports.fail_on_missing: true` or `imports.mode: locked`, but it does not yet verify lockfile checksums
-automatically (use `verify_import_lock`). Policy capabilities are also not yet applied to every legacy tool's
-direct path argument, and module declaration conflicts/import cycles remain inspection findings rather than a
-complete release-bundle gate.
+`imports.fail_on_missing: true` or `imports.mode: locked`. Locked mode also compares the complete loaded
+coordinate set and every local artifact SHA-256 automatically in `run_project_qc` and change-set preflight,
+and then attests that those disk bytes are the content the isolated snapshot actually consumed — an
+unsaved in-memory edit of a locked import (or a document swapped around the load) turns the gate to
+`error` with `imports.loaded_content_divergence`. Relative lockfile/catalog arguments resolve against the
+canonical `project_root`; `verify_import_lock` remains available for an explicit standalone check.
 
-Reserved (schema-accepted, not yet enforced): the `network.default`/`network.allowed_hosts` fields, the
-`imports.network` override, the `modules[].owned_namespaces` declarations, and the
-`release.format`/`release.require_version_iri`/`release.require_clean_round_trip` fields validate and carry
-defaults but are not yet consulted at runtime — in particular, namespace ownership is not yet checked
-against module contents. They are accepted now so policies can declare intent without a schema break when
-enforcement lands.
+`network.default`, `network.allowed_hosts`, and the `imports.network` override govern direct document URLs
+and remote import dereference and require `network:access`. A local workspace/catalog mapping may still
+satisfy an HTTP ontology IRI while offline only when its resolved document passes the same project
+filesystem policy. Direct `file:` imports are checked and pinned to their authorized canonical path;
+nested `jar:` sources are refused because they obscure the filesystem/host boundary. When a host allowlist
+is active, redirects are disabled because OWLAPI does not expose a policy callback for the redirect target.
+
+Reserved (schema-accepted, not yet enforced): the `release.format`,
+`release.require_version_iri`, and `release.require_clean_round_trip` fields validate and carry defaults but
+are not yet consulted by a release-bundle workflow.
 
 ## Common result contracts
 
@@ -215,7 +256,7 @@ prompt snapshots include their argument contracts and deterministic rendered mes
 removing or changing an existing argument, adding a required prompt argument, or dropping a documented
 result field. New optional fields remain possible through an explicitly reviewed contract change.
 
-The 0.6.0 surface is 78 tools + 11 prompts. Later additions within the milestone are
+The 0.6.1 surface remains 78 tools + 11 prompts. The 0.6.0 additions within the milestone were
 `get_model_revision`, the three change-set tools, verified save options, `semantic_diff`, and the three
 import-lock/catalog tools; existing required arguments and interactive defaults remain backward-compatible.
 

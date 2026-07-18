@@ -36,6 +36,34 @@ class ChangePlannerTest {
     }
 
     @Test
+    void verifiedApplyPlanningIsNotBoundByThePreviewCap() throws Exception {
+        var manager = OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(IRI.create("http://example.org/cap"));
+        var df = manager.getOWLDataFactory();
+        manager.addAxiom(ontology, df.getOWLDeclarationAxiom(
+                df.getOWLClass(IRI.create("http://example.org/cap#A"))));
+        manager.addAxiom(ontology, df.getOWLDeclarationAxiom(
+                df.getOWLClass(IRI.create("http://example.org/cap#B"))));
+        Map<String, Object> add = subclass("http://example.org/cap#A",
+                "http://example.org/cap#B", "add");
+        List<Map<String, Object>> operations = new java.util.ArrayList<>();
+        for (int i = 0; i <= ChangePlanner.MAX_OPERATIONS; i++) {
+            operations.add(add);
+        }
+
+        // apply_changes accepted arbitrarily sized batches before the 0.6.1 verify migration; the
+        // cap protects only retained preview entries.
+        ChangePlanner.Plan plan = ChangePlanner.planForApply(FakeModelManager.over(ontology),
+                operations, false);
+        assertTrue(plan.committable(), plan.errors().toString());
+
+        ToolArgException capped = org.junit.jupiter.api.Assertions.assertThrows(
+                ToolArgException.class,
+                () -> ChangePlanner.plan(FakeModelManager.over(ontology), operations, false));
+        assertTrue(capped.getMessage().contains("maximum"), capped.getMessage());
+    }
+
+    @Test
     void addThenRemoveCancelsToAnEmptyExactDelta() throws Exception {
         var manager = OWLManager.createOWLOntologyManager();
         var ontology = manager.createOntology(IRI.create("http://example.org/cancel"));
@@ -71,6 +99,32 @@ class ChangePlannerTest {
         assertFalse(plan.committable());
         assertEquals(1, plan.errors().size());
         assertEquals(0, ontology.getAxiomCount());
+    }
+
+    @Test
+    void applyCompatibilityPlanIncludesDeclarationsForValidOperationsBesideAnError()
+            throws Exception {
+        var manager = OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(IRI.create("http://example.org/partial"));
+        Map<String, Object> bad = new LinkedHashMap<>();
+        bad.put("op", "explode");
+        bad.put("axiom_type", "subclass_of");
+        Map<String, Object> valid = new LinkedHashMap<>();
+        valid.put("op", "add");
+        valid.put("axiom_type", "annotation_assertion");
+        valid.put("subject", "http://example.org/partial#A");
+        valid.put("property", "http://example.org/partial#note");
+        valid.put("value", "valid beside an error");
+
+        ChangePlanner.Plan preview = ChangePlanner.plan(FakeModelManager.over(ontology),
+                List.of(bad, valid), false);
+        ChangePlanner.Plan apply = ChangePlanner.planForApply(FakeModelManager.over(ontology),
+                List.of(bad, valid), false);
+
+        assertFalse(apply.errors().isEmpty());
+        assertEquals(1, preview.changes().size(), "an uncommittable preview keeps its old shape");
+        assertEquals(2, apply.changes().size(), apply.errors()::toString);
+        assertEquals(0, ontology.getAxiomCount(), "both planners are isolated from the live model");
     }
 
     @Test

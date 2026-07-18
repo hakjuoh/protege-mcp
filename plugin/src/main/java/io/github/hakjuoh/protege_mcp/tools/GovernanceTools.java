@@ -254,6 +254,19 @@ public final class GovernanceTools {
     static List<Map<String, Object>> policyChecks(OWLModelManager mm, OWLOntology active,
             Set<OWLOntology> closure, Pattern iriPattern, List<String> requiredNamespaces,
             List<String> requiredAnnotations, boolean checkOwnership, int limit) {
+        return policyChecks(mm, active, closure, iriPattern, requiredNamespaces, requiredAnnotations,
+                checkOwnership, limit, null);
+    }
+
+    /**
+     * As above but, when {@code gatingIdentityOut} is non-null, also collects each gating finding's
+     * STABLE per-offender identities (qualified by check id) for verified-apply attribution. The
+     * rendered maps are unchanged, so this never affects the public governance output.
+     */
+    static List<Map<String, Object>> policyChecks(OWLModelManager mm, OWLOntology active,
+            Set<OWLOntology> closure, Pattern iriPattern, List<String> requiredNamespaces,
+            List<String> requiredAnnotations, boolean checkOwnership, int limit,
+            Set<String> gatingIdentityOut) {
         Set<OWLOntology> scope = Collections.singleton(active);
         ValidationTools.Signature sig = ValidationTools.Signature.of(scope, closure);
         List<GovFinding> findings = new ArrayList<>();
@@ -270,6 +283,11 @@ public final class GovernanceTools {
         List<Map<String, Object>> rendered = new ArrayList<>();
         for (GovFinding finding : findings) {
             rendered.add(finding.toJson(limit));
+            if (gatingIdentityOut != null && finding.gates() && finding.count() > 0) {
+                for (String identity : finding.stableIdentities()) {
+                    gatingIdentityOut.add(finding.id + "|" + identity);
+                }
+            }
         }
         return rendered;
     }
@@ -586,6 +604,18 @@ public final class GovernanceTools {
      */
     static Map<String, Object> profileCheck(Profiles profile, String profileName, OWLOntology snapshot,
             Set<OWLAxiom> ownedAxioms, Set<OWLAnnotation> ownedAnnotations, int limit) {
+        return profileCheck(profile, profileName, snapshot, ownedAxioms, ownedAnnotations, limit, null);
+    }
+
+    /**
+     * As {@link #profileCheck(Profiles, String, OWLOntology, Set, Set, int)} but, when
+     * {@code identityOut} is non-null, also collects the owned-violation identity strings (the same
+     * ones behind {@code identity_digest}) so verified-apply attribution can set-diff them. The
+     * returned map is byte-for-byte unchanged, so this never affects the standalone profile output.
+     */
+    static Map<String, Object> profileCheck(Profiles profile, String profileName, OWLOntology snapshot,
+            Set<OWLAxiom> ownedAxioms, Set<OWLAnnotation> ownedAnnotations, int limit,
+            Set<String> identityOut) {
         OWLProfileReport report = profile.checkOntology(snapshot);
         Set<OWLEntity> ownedHeaderSignature = new HashSet<>();
         for (OWLAnnotation annotation : ownedAnnotations) {
@@ -618,6 +648,16 @@ public final class GovernanceTools {
         m.put("in_profile", report.isInProfile());     // the whole audited closure conforms
         m.put("owned_in_profile", ownedInProfile);      // the scope's OWN axioms conform — the actionable bit
         m.put("count", ownedViolations.size());         // owned violations (respects the audited scope)
+        m.put("identity_digest", FindingIdentity.digest(ownedViolations.stream()
+                .map(violation -> "profile\u0000" + violation.getClass().getName() + "\u0000" + violation)
+                .toList()));
+        if (identityOut != null) {
+            // A consistent per-violation identity for attribution set-diff (need not match the public
+            // digest's encoding — only stability across the changed/baseline runs matters).
+            for (OWLProfileViolation violation : ownedViolations) {
+                identityOut.add(violation.getClass().getName() + "|" + violation);
+            }
+        }
         if (importedCount > 0) {
             m.put("imported_violations", importedCount); // inherited from imports (context, not gated)
         }
@@ -751,12 +791,35 @@ public final class GovernanceTools {
             return entities.size() + axioms.size();
         }
 
+        /** Whether this finding gates (its severity contributes to the stage verdict). */
+        boolean gates() {
+            return "error".equals(severity) || "warning".equals(severity) || "warn".equals(severity);
+        }
+
+        /**
+         * The STABLE per-offender identities (entity IRIs and axioms) behind {@code identity_digest},
+         * excluding the mutable detail strings. Verified-apply attribution set-diffs these so a batch
+         * that removes standing governance violations while adding a fresh one (total count DOWN) is
+         * still caught, and a pure removal is not misattributed.
+         */
+        Set<String> stableIdentities() {
+            Set<String> out = new LinkedHashSet<>();
+            entities.forEach(entity -> out.add(FindingIdentity.entity(entity)));
+            axioms.forEach(axiom -> out.add(FindingIdentity.axiom(axiom)));
+            return out;
+        }
+
         Map<String, Object> toJson(int limit) {
+            List<String> identities = new ArrayList<>();
+            entities.forEach(entity -> identities.add(FindingIdentity.entity(entity)));
+            axioms.forEach(axiom -> identities.add(FindingIdentity.axiom(axiom)));
+            details.forEach(detail -> identities.add("detail\u0000" + detail));
             Tools.Json json = Tools.json()
                     .put("id", id)
                     .put("severity", severity)
                     .put("title", title)
                     .put("count", count())
+                    .put("identity_digest", FindingIdentity.digest(identities))
                     .put("suggestion", suggestion);
             if (!entities.isEmpty()) {
                 json.put("examples", Tools.entityList(mm, entities, limit));

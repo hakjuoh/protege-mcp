@@ -18,8 +18,8 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
 
-At the time of writing: **2,832 tests, green** (2,788 plugin, 9 standalone-CLI,
-and 35 core tests), across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
+At the time of writing: **2,932 tests, green** (2,880 plugin, 9 standalone-CLI,
+and 43 core tests), across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
 pure helpers of `ui`, the headless CLI, and the extractable `ro_crate` interoperability package. Coverage is
 measured by **JaCoCo** (`mvn verify`) and a floor on
 the `tools`/`server`/`oauth` layers gates against regressions; the EDT/subprocess-bound `ui`/`chat`
@@ -28,6 +28,21 @@ surfaces are intentionally not gated.
 Historical correction: the `v0.5.0` tag's copy of this page still said 2,044, but that tag's verified
 release commit records the actual clean run as **2,488 tests**. The count above comes from the current
 Surefire XML reports after a clean build.
+
+## Real-ontology CLI validation
+
+The final `0.6.1` shaded CLI was also exercised against immutable checkouts of two public ontology
+repositories. Temporary policy-v1/RO-Crate fixtures referenced the repositories' real module documents;
+they were kept outside this worktree.
+
+| Repository and commit | Policy/module validation | Asserted diff checks |
+| --- | --- | --- |
+| IOF ontology `ab98be6174234798a589f825994dd2aeb6fc8027` | `core/Core.rdf` and `supplychain/SupplyChain.rdf`; valid, 0 errors, 0 warnings | Core vs itself: identical, 0/0 entity and axiom changes (2 offline imports per side). Core vs SupplyChain: potentially breaking, +142/-131 entities, +1,396/-1,880 axioms (2/1 offline imports). |
+| FIBO `f59157fe156e3d91b1c045222d0a7dc06b7d78a2` | `FND/Relations/Relations.rdf` and `FND/Arrangements/Arrangements.rdf`; valid, 0 errors, 0 warnings | Relations vs itself: identical, 0/0 entity and axiom changes (9 offline imports per side). Relations vs Arrangements: potentially breaking, +6/-42 entities, +12/-124 axioms (9/5 offline imports), with the expected anonymous-individual churn caveat. |
+
+The CLI intentionally satisfies imports with a private empty placeholder for asserted-only diffs and
+reports every omitted declaration. These unresolved-import counts therefore verify the offline/no-fetch
+boundary rather than indicating an unnoticed partial load.
 
 ## Public-contract and policy-schema harnesses
 

@@ -2,6 +2,7 @@ package io.github.hakjuoh.protege_mcp.tools;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -344,6 +345,57 @@ class QcSuiteToolsTest {
         assertTrue(r.ran);
         assertEquals("pass", r.verdict, "it passes on the asserted triples");
         assertEquals(1, r.summary.get("caveats"), "the degradation caveat is surfaced, not silent");
+    }
+
+    @Test
+    void checksLessStagesDistinguishDifferentFailuresAtTheSameCount() throws Exception {
+        SuiteSnapshot snap = snapshot(false);
+        Invariants.Invariant missingLabel = new Invariants.Invariant("missing-label", "label", "error",
+                "SELECT ?c WHERE { ?c a owl:Class . FILTER NOT EXISTS { ?c rdfs:label ?l } }", false);
+        Invariants.Invariant anyClass = new Invariants.Invariant("any-class", "class", "error",
+                "ASK { ?c a owl:Class }", false);
+        QcSuiteTools.StageResult firstInvariant = QcSuiteTools.invariantsStage(snap,
+                List.of(missingLabel), 1000, 30_000);
+        QcSuiteTools.StageResult secondInvariant = QcSuiteTools.invariantsStage(snap,
+                List.of(anyClass), 1000, 30_000);
+        assertEquals(firstInvariant.summary.get("violations"), secondInvariant.summary.get("violations"));
+        assertNotEquals(firstInvariant.summary.get("identity_digest"),
+                secondInvariant.summary.get("identity_digest"));
+
+        CompetencyQuestion noIndividuals = failingNonEmptyCq("no-individuals",
+                "SELECT ?i WHERE { ?i a owl:NamedIndividual }");
+        CompetencyQuestion noProperties = failingNonEmptyCq("no-properties",
+                "SELECT ?p WHERE { ?p a owl:ObjectProperty }");
+        QcSuiteTools.StageResult firstCq = QcSuiteTools.cqsStage(snap,
+                List.of(noIndividuals), 1000, 30_000);
+        QcSuiteTools.StageResult secondCq = QcSuiteTools.cqsStage(snap,
+                List.of(noProperties), 1000, 30_000);
+        assertEquals(firstCq.summary.get("failed"), secondCq.summary.get("failed"));
+        assertNotEquals(firstCq.summary.get("identity_digest"), secondCq.summary.get("identity_digest"));
+
+        String shapePrefix = "@prefix sh: <http://www.w3.org/ns/shacl#> .\n"
+                + "@prefix ex: <" + NS + "> .\n"
+                + "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n";
+        QcSuiteTools.StageResult firstShacl = QcSuiteTools.shaclStage(snap.assertedTurtle(),
+                shapePrefix + "ex:S a sh:NodeShape ; sh:targetNode ex:Foo ; "
+                        + "sh:property [ sh:path rdfs:comment ; sh:minCount 1 ] .\n",
+                null, 1000, 30_000);
+        QcSuiteTools.StageResult secondShacl = QcSuiteTools.shaclStage(snap.assertedTurtle(),
+                shapePrefix + "ex:S a sh:NodeShape ; sh:targetNode ex:Animal ; "
+                        + "sh:property [ sh:path rdfs:comment ; sh:minCount 1 ] .\n",
+                null, 1000, 30_000);
+        assertEquals(firstShacl.summary.get("violations"), secondShacl.summary.get("violations"));
+        assertNotEquals(firstShacl.summary.get("identity_digest"),
+                secondShacl.summary.get("identity_digest"));
+    }
+
+    private static CompetencyQuestion failingNonEmptyCq(String id, String query) {
+        CompetencyQuestion cq = new CompetencyQuestion();
+        cq.id = id;
+        cq.query = query;
+        cq.expected = Expectation.nonEmpty();
+        cq.includeInferred = false;
+        return cq;
     }
 
     // ------------------------------------------------------------------ fixtures

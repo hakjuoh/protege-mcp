@@ -88,7 +88,10 @@ public final class OntologyDocumentTools {
                     int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);
                     MissingImportsMode missingImports = MissingImportsMode.parse(
                             Tools.optString(a, "missing_imports"));
-                    return doLoad(ctx, source, timeoutMs, keepActive, missingImports);
+                    DirectAccessPolicy.Rules accessRules = DirectAccessPolicy.resolve(ctx, ex);
+                    DirectAccessPolicy.Source authorized = accessRules.authorizeSource(source);
+                    return doLoad(ctx, authorized.value(), timeoutMs, keepActive, missingImports,
+                            accessRules.importNetworkRule());
                 }));
 
         tools.tool("merge_ontology_document",
@@ -121,6 +124,9 @@ public final class OntologyDocumentTools {
                     int timeoutMs = Tools.optInt(a, "connection_timeout_ms", 15_000);
                     MissingImportsMode missingImports = MissingImportsMode.parse(
                             Tools.optString(a, "missing_imports"));
+                    DirectAccessPolicy.Rules accessRules = DirectAccessPolicy.resolve(ctx, ex);
+                    DirectAccessPolicy.Source authorized = accessRules.authorizeSource(source);
+                    source = authorized.value();
                     String summary = replaceActive
                             ? "replace active ontology — delete ALL its axioms, imports and ontology "
                                     + "annotations — with " + source
@@ -134,7 +140,7 @@ public final class OntologyDocumentTools {
                     List<ImportMapping> workspaceMappings = ctx.access().compute(
                             OntologyDocumentTools::workspaceImportMappings);
                     LoadedOntology loaded = load(source, timeoutMs, missingImports,
-                            workspaceMappings);
+                            workspaceMappings, accessRules.importNetworkRule());
                     // A whole-document merge applies thousands of changes in one EDT batch, so give it a
                     // longer bound than the default — otherwise a slow-but-succeeding apply is reported
                     // as a timeout while the model keeps mutating.
@@ -197,7 +203,9 @@ public final class OntologyDocumentTools {
                     Map<String, Object> a = Tools.args(req);
                     String ontologyIri = Tools.reqString(a, "ontology_iri");
                     String versionIri = Tools.optString(a, "version_iri");
-                    String path = Tools.optString(a, "path");
+                    String configuredPath = Tools.optString(a, "path");
+                    final String path = configuredPath == null ? null
+                            : DirectAccessPolicy.resolve(ctx, ex).writePath(configuredPath).toString();
                     boolean keepActive = Tools.optBool(a, "keep_active", false);
                     CallToolResult denied = WriteTools.checkWriteAllowed(ctx,
                             "create new ontology " + ontologyIri);
@@ -287,6 +295,14 @@ public final class OntologyDocumentTools {
 
     static CallToolResult doLoad(ToolContext ctx, String source, int timeoutMs, boolean keepActive,
             MissingImportsMode missingImports) {
+        DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, null);
+        DirectAccessPolicy.Source authorized = rules.authorizeSource(source);
+        return doLoad(ctx, authorized.value(), timeoutMs, keepActive, missingImports,
+                rules.importNetworkRule());
+    }
+
+    static CallToolResult doLoad(ToolContext ctx, String source, int timeoutMs, boolean keepActive,
+            MissingImportsMode missingImports, DirectAccessPolicy.NetworkRule networkRule) {
         String normalized = normalizeSource(source);
         CallToolResult denied = WriteTools.checkWriteAllowed(ctx,
                 "load " + normalized + (keepActive ? " into the workspace" : " and make it active"));
@@ -298,7 +314,8 @@ public final class OntologyDocumentTools {
         // This mirrors Protégé's own OntologyLoader, minus its interactive modal dialogs.
         List<ImportMapping> workspaceMappings = ctx.access().compute(
                 OntologyDocumentTools::workspaceImportMappings);
-        LoadedDocument doc = fetch(normalized, timeoutMs, missingImports, workspaceMappings);
+        LoadedDocument doc = fetch(normalized, timeoutMs, missingImports, workspaceMappings,
+                networkRule);
         // Only the cheap model wiring (move the parsed closure in, switch active, refresh) runs on EDT.
         return ctx.access().compute(mm -> attach(mm, doc, keepActive), LOAD_TIMEOUT_MS);
     }
@@ -318,21 +335,31 @@ public final class OntologyDocumentTools {
      * matches what Protégé's own {@code OntologyLoader} does. Missing imports follow the caller's
      * compatibility mode and are recorded when warning/reporting is enabled.
      */
+    /** Compatibility overload retained for reflection-based callers and tests. */
     private static LoadedDocument fetch(String normalized, int timeoutMs,
             MissingImportsMode missingImports, List<ImportMapping> workspaceMappings) {
+        return fetch(normalized, timeoutMs, missingImports, workspaceMappings,
+                new DirectAccessPolicy.NetworkRule(true, Set.of(), true, true));
+    }
+
+    private static LoadedDocument fetch(String normalized, int timeoutMs,
+            MissingImportsMode missingImports, List<ImportMapping> workspaceMappings,
+            DirectAccessPolicy.NetworkRule networkRule) {
         OWLOntologyManager manager = OwlManagers.createConcurrent();
         List<String> unresolvedImports = new ArrayList<>();
         manager.addMissingImportListener(event -> unresolvedImports.add(event.getImportedOntologyURI().toString()));
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(missingImports.strategy())
-                .setFollowRedirects(true)
+                .setFollowRedirects(networkRule.followRedirects())
                 .setConnectionTimeout(timeoutMs);
-        try (UnsupportedImportFallback fallback = UnsupportedImportFallback.install(manager)) {
-            addWorkspaceImportMappers(manager, workspaceMappings);
+        try (NetworkImportBlocker blocker = NetworkImportBlocker.install(manager, networkRule);
+                UnsupportedImportFallback fallback = UnsupportedImportFallback.install(manager)) {
+            addWorkspaceImportMappers(manager, workspaceMappings, blocker);
             // Register the source-adjacent catalog last: OWLAPI gives the most recently-added mapper
             // priority, so version-controlled project resolution overrides stale interactive hints.
-            addFolderCatalogMapper(manager, normalized);
+            addFolderCatalogMapper(manager, normalized, blocker);
             OWLOntology primary = manager.loadOntologyFromOntologyDocument(documentSource(normalized), config);
+            blocker.failIfBlocked(normalized);
             finishUnsupportedImports(primary, fallback, unresolvedImports, missingImports, normalized);
             return new LoadedDocument(normalized, manager, primary,
                     manager.getOntologyDocumentIRI(primary), unresolvedImports,
@@ -610,11 +637,20 @@ public final class OntologyDocumentTools {
     // ------------------------------------------------------------------ merge_ontology_document
 
     private static LoadedOntology load(String source, int timeoutMs) {
-        return load(source, timeoutMs, MissingImportsMode.WARN, List.of());
+        return load(source, timeoutMs, MissingImportsMode.WARN, List.of(),
+                new DirectAccessPolicy.NetworkRule(true, Set.of(), true, true));
+    }
+
+    /** Compatibility overload retained for reflection-based callers and tests. */
+    private static LoadedOntology load(String source, int timeoutMs,
+            MissingImportsMode missingImports, List<ImportMapping> workspaceMappings) {
+        return load(source, timeoutMs, missingImports, workspaceMappings,
+                new DirectAccessPolicy.NetworkRule(true, Set.of(), true, true));
     }
 
     private static LoadedOntology load(String source, int timeoutMs,
-            MissingImportsMode missingImports, List<ImportMapping> workspaceMappings) {
+            MissingImportsMode missingImports, List<ImportMapping> workspaceMappings,
+            DirectAccessPolicy.NetworkRule networkRule) {
         String normalized = normalizeSource(source);
         OWLOntologyManager manager = OwlManagers.create();
         // WARN and SILENT both let OWLAPI finish parsing; ERROR makes an unresolved import abort
@@ -623,14 +659,16 @@ public final class OntologyDocumentTools {
         manager.addMissingImportListener(event -> unresolvedImports.add(event.getImportedOntologyURI().toString()));
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(missingImports.strategy())
-                .setFollowRedirects(true)
+                .setFollowRedirects(networkRule.followRedirects())
                 .setConnectionTimeout(timeoutMs);
-        try (UnsupportedImportFallback fallback = UnsupportedImportFallback.install(manager)) {
-            addWorkspaceImportMappers(manager, workspaceMappings);
+        try (NetworkImportBlocker blocker = NetworkImportBlocker.install(manager, networkRule);
+                UnsupportedImportFallback fallback = UnsupportedImportFallback.install(manager)) {
+            addWorkspaceImportMappers(manager, workspaceMappings, blocker);
             // The sibling catalog is the project source of truth and must override workspace hints.
-            addFolderCatalogMapper(manager, normalized);
+            addFolderCatalogMapper(manager, normalized, blocker);
             OWLOntology sourceOntology = manager.loadOntologyFromOntologyDocument(
                     documentSource(normalized), config);
+            blocker.failIfBlocked(normalized);
             finishUnsupportedImports(sourceOntology, fallback, unresolvedImports, missingImports, normalized);
             ImportTools.ImportReport imports = ImportTools.analyze(sourceOntology);
             return new LoadedOntology(
@@ -645,6 +683,170 @@ public final class OntologyDocumentTools {
         } catch (OWLOntologyCreationException e) {
             throw new ToolArgException("Could not load ontology document '" + normalized + "': "
                     + OwlParsingErrors.conciseMessage(e));
+        }
+    }
+
+    /**
+     * Lowest-priority import mapper that replaces only otherwise-unmapped forbidden remote imports
+     * with one private empty document, records them, and then fails the whole policy-aware load with
+     * an explicit error. Workspace and sibling-catalog mappers are added later and therefore win,
+     * so an HTTP ontology IRI mapped to a local locked file remains an offline load.
+     */
+    static final class NetworkImportBlocker implements AutoCloseable {
+        private final OWLOntologyManager manager;
+        private final DirectAccessPolicy.NetworkRule rule;
+        private final Path placeholder;
+        private final IRI placeholderIri;
+        private final Map<String, String> blocked = new LinkedHashMap<>();
+        private final OWLOntologyIRIMapper mapper;
+
+        private NetworkImportBlocker(OWLOntologyManager manager,
+                DirectAccessPolicy.NetworkRule rule, Path placeholder) {
+            this.manager = manager;
+            this.rule = rule;
+            this.placeholder = placeholder;
+            this.placeholderIri = IRI.create(placeholder.toUri());
+            this.mapper = logical -> {
+                URI uri;
+                try {
+                    uri = logical.toURI();
+                } catch (RuntimeException invalid) {
+                    return null;
+                }
+                String scheme = uri.getScheme();
+                if ("file".equalsIgnoreCase(scheme)) {
+                    try {
+                        return IRI.create(rule.authorizeFileImport(uri).toUri());
+                    } catch (IllegalArgumentException | ToolArgException denied) {
+                        blocked.putIfAbsent(logical.toString(),
+                                "the local import path is outside the authorized project filesystem ("
+                                        + denied.getMessage() + ")");
+                        return placeholderIri;
+                    }
+                }
+                if (scheme == null || !("http".equalsIgnoreCase(scheme)
+                        || "https".equalsIgnoreCase(scheme)
+                        || "ftp".equalsIgnoreCase(scheme)
+                        || "jar".equalsIgnoreCase(scheme))) {
+                    return null;
+                }
+                if (rule.permits(uri)) {
+                    return null;
+                }
+                blocked.putIfAbsent(logical.toString(), null);
+                return placeholderIri;
+            };
+            manager.getIRIMappers().add(mapper);
+        }
+
+        static NetworkImportBlocker install(OWLOntologyManager manager,
+                DirectAccessPolicy.NetworkRule rule) {
+            try {
+                Path placeholder = Files.createTempFile("protege-mcp-network-denied-", ".ofn");
+                Files.writeString(placeholder, "Ontology()\n", StandardCharsets.UTF_8);
+                return new NetworkImportBlocker(manager, rule, placeholder);
+            } catch (IOException e) {
+                throw new ToolArgException("Could not prepare policy-aware import loading: "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            }
+        }
+
+        void failIfBlocked(String source) {
+            if (blocked.isEmpty()) return;
+            Map.Entry<String, String> firstEntry = blocked.entrySet().iterator().next();
+            String first = firstEntry.getKey();
+            String reason = first.regionMatches(true, 0, "jar:", 0, 4)
+                    ? "nested jar: import sources are refused because they obscure the filesystem/host boundary"
+                    : firstEntry.getValue() != null
+                    ? firstEntry.getValue()
+                    : !rule.capabilityAllowed()
+                    ? "the authenticated principal lacks network:access"
+                    : !rule.allowed() ? "imports.network=deny"
+                    : "the host is outside network.allowed_hosts";
+            throw new ToolArgException("Could not load ontology document '" + source
+                    + "': remote import '" + first + "' was required, but "
+                    + reason + ". Provide a local workspace/catalog mapping or change the reviewed policy.");
+        }
+
+        /** Record a blocked resolution so {@link #failIfBlocked} can explain a failed load. */
+        void recordBlocked(String logical, String reason) {
+            blocked.putIfAbsent(logical, reason);
+        }
+
+        /**
+         * Whether the network rule RESTRICTS remote access — i.e. it is not fully open to any host.
+         * Only then does the strict folder-catalog gate apply: when the rule already permits arbitrary
+         * remote fetches (network=allow with no host allowlist, e.g. the default no-policy posture), the
+         * resolver's own delegation/DTD fetches are authorized anyway, so refusing catalog delegation
+         * would break legitimate offline/less-restricted loads for no security benefit.
+         */
+        boolean networkRestricted() {
+            return !(rule.allowed() && rule.capabilityAllowed() && rule.allowedHosts().isEmpty());
+        }
+
+        /**
+         * Whether the policy confines the filesystem (out-of-project reads refused). The folder-catalog
+         * gate must also run in this posture even when the network is open: the resolver's own catalog
+         * reads (a DOCTYPE's external entity, or an out-of-project delegation target) would otherwise
+         * read files outside the project before any mapping is authorized.
+         */
+        boolean filesystemConfined() {
+            DirectAccessPolicy.Rules fs = rule.filesystemRules();
+            return fs != null && fs.confinesFilesystem();
+        }
+
+        /**
+         * Authorize READING a local catalog file against the filesystem policy — project containment,
+         * symlink-resolved via canonicalCandidate — so a catalog-v001.xml (or a local delegation
+         * catalog it points at) that is a symlink to, or a {@code ../} escape out of, the project is
+         * refused instead of read. Returns true when the policy permits reading it (or there is no
+         * filesystem policy to enforce, the compatibility path).
+         */
+        boolean catalogFileAuthorized(Path file) {
+            DirectAccessPolicy.Rules fs = rule.filesystemRules();
+            if (fs == null) {
+                return true;
+            }
+            try {
+                fs.implicitPath(file, false);
+                return true;
+            } catch (RuntimeException denied) {
+                return false;
+            }
+        }
+
+        IRI authorizeMapping(IRI logical, IRI mapped) {
+            IRI authorized = authorizedMappedDocument(mapped, rule);
+            if (authorized != null) return authorized;
+            String detail = null;
+            try {
+                URI uri = mapped == null ? null : mapped.toURI();
+                if (uri != null && "file".equalsIgnoreCase(uri.getScheme())) {
+                    detail = rule.fileImportDenial(uri);
+                }
+            } catch (RuntimeException ignored) {
+                // The generic denial below remains sufficient and does not expose parser internals.
+            }
+            blocked.putIfAbsent(logical.toString(),
+                    "the workspace/catalog mapping target '" + mapped
+                            + "' is outside the authorized filesystem/network policy"
+                            + (detail == null ? "" : " (" + detail + ")"));
+            return placeholderIri;
+        }
+
+        @Override
+        public void close() {
+            manager.getIRIMappers().remove(mapper);
+            for (OWLOntology ontology : new ArrayList<>(manager.getOntologies())) {
+                if (placeholderIri.equals(manager.getOntologyDocumentIRI(ontology))) {
+                    manager.removeOntology(ontology);
+                }
+            }
+            try {
+                Files.deleteIfExists(placeholder);
+            } catch (IOException ignored) {
+                // Private empty file; cleanup must not mask the policy result.
+            }
         }
     }
 
@@ -840,11 +1042,36 @@ public final class OntologyDocumentTools {
         }
     }
 
-    private static void addWorkspaceImportMappers(OWLOntologyManager manager,
-            List<ImportMapping> mappings) {
+    static void addWorkspaceImportMappers(OWLOntologyManager manager,
+            List<ImportMapping> mappings, NetworkImportBlocker blocker) {
         for (ImportMapping mapping : mappings) {
-            manager.getIRIMappers().add(new SimpleIRIMapper(mapping.logical, mapping.document));
+            manager.getIRIMappers().add(logical -> mapping.logical.equals(logical)
+                    ? blocker.authorizeMapping(logical, mapping.document) : null);
         }
+    }
+
+    private static IRI authorizedMappedDocument(IRI document,
+            DirectAccessPolicy.NetworkRule networkRule) {
+        if (document == null) return null;
+        final URI uri;
+        try {
+            uri = document.toURI();
+        } catch (RuntimeException e) {
+            return null;
+        }
+        String scheme = uri.getScheme();
+        if ("file".equalsIgnoreCase(scheme)) {
+            try {
+                return IRI.create(networkRule.authorizeFileImport(uri).toUri());
+            } catch (IllegalArgumentException | ToolArgException denied) {
+                return null;
+            }
+        }
+        if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)
+                || "ftp".equalsIgnoreCase(scheme)) {
+            return networkRule.permits(uri) ? document : null;
+        }
+        return null;
     }
 
     static final class ImportMapping {
@@ -915,6 +1142,19 @@ public final class OntologyDocumentTools {
      */
     static void addFolderCatalogMapper(OWLOntologyManager manager, String source) {
         File asFile = localFile(source);
+        if (asFile == null || asFile.getAbsoluteFile().getParentFile() == null) return;
+        File catalog = new File(asFile.getAbsoluteFile().getParentFile(), "catalog-v001.xml");
+        if (!catalog.isFile()) return;
+        try {
+            manager.getIRIMappers().add(new XMLCatalogIRIMapper(catalog));
+        } catch (IOException | RuntimeException ignored) {
+            // Compatibility overload: a missing/malformed catalog never blocks the root document.
+        }
+    }
+
+    static void addFolderCatalogMapper(OWLOntologyManager manager, String source,
+            NetworkImportBlocker blocker) {
+        File asFile = localFile(source);
         if (asFile == null) {
             return;
         }
@@ -926,11 +1166,114 @@ public final class OntologyDocumentTools {
         if (!catalog.isFile()) {
             return;
         }
+        // XMLCatalogIRIMapper.getDocumentIRI() dereferences catalog DELEGATIONS (<nextCatalog>,
+        // <delegateURI>, ...) and a DOCTYPE's external DTD/entities over the network WHILE resolving —
+        // before authorizeMapping ever sees a mapping, following redirects and reading files we cannot
+        // bound. Precisely predicting which files that third-party resolver reads (delegation chains,
+        // xml:base scoping, symlink-vs-canonical bases) is fragile and not a sound gate, so instead of
+        // emulating it we install the resolver ONLY for a catalog that is in-project, is not a symlink,
+        // parses cleanly, and contains NO DOCTYPE and NO delegation element at all. A delegation-free
+        // catalog's <uri>/<rewrite*> mapping targets are resolved by the library and then gated by
+        // authorizeMapping, so a remote or out-of-project target is still refused there — no
+        // pre-authorization fetch is possible.
+        // Apply the strict gate under any CONFINING policy — network-restricted (SSRF risk) OR
+        // filesystem-confined (the resolver's own catalog reads, a DOCTYPE's external entity or an
+        // out-of-project delegation target, would read files outside the project before authorization).
+        // When BOTH axes are fully open (network=allow with no allowlist AND allow_external_paths, or
+        // the default no-policy posture), the resolver may follow delegations/DTDs freely — refusing
+        // them would break legitimate offline loads that use a local <nextCatalog> chain, for no
+        // security benefit. (Fully closing delegation while still following an in-project chain would
+        // require re-resolving the third-party resolver's delegation graph, which is not sound; under a
+        // confining policy such a catalog is refused with an inline-to-fix message.)
+        if (blocker.networkRestricted() || blocker.filesystemConfined()) {
+            String unsafe = unsafeFolderCatalog(catalog, blocker);
+            if (unsafe != null) {
+                blocker.recordBlocked("catalog:" + unsafe,
+                        "the folder catalog is not safe to resolve offline under a confining project "
+                                + "policy (" + unsafe + "): a symlinked/out-of-project catalog, a DOCTYPE, "
+                                + "or catalog delegation (nextCatalog/delegateURI) is refused so nothing "
+                                + "can be read out of scope or dereferenced over the network before "
+                                + "authorization. Inline the mappings into catalog-v001.xml to resolve "
+                                + "them offline.");
+                return;
+            }
+        }
         try {
-            manager.getIRIMappers().add(new XMLCatalogIRIMapper(catalog));
+            XMLCatalogIRIMapper delegate = new XMLCatalogIRIMapper(catalog);
+            manager.getIRIMappers().add(logical -> {
+                IRI mapped = delegate.getDocumentIRI(logical);
+                return mapped == null ? null : blocker.authorizeMapping(logical, mapped);
+            });
         } catch (IOException | RuntimeException ignored) {
             // A missing/malformed catalog must not block loading the document itself.
         }
+    }
+
+    /** Catalog delegation elements: any of these makes the resolver read/fetch another catalog. */
+    private static final String[] CATALOG_DELEGATION_ELEMENTS =
+            {"nextCatalog", "delegateURI", "delegatePublic", "delegateSystem"};
+
+    /**
+     * Returns the reason a folder catalog is UNSAFE to hand to {@link XMLCatalogIRIMapper} under a
+     * confining policy (network-restricted or filesystem-confined), or null when it is safe. Never
+     * touches the network. A catalog is safe
+     * only if it is an in-project, non-symlink, parseable file with NO DOCTYPE and NO delegation
+     * element — the resolver then performs only local {@code <uri>}/{@code <rewrite*>} mapping whose
+     * targets {@code authorizeMapping} re-gates. Delegation/DOCTYPE are refused OUTRIGHT rather than
+     * predicting which files the library's own resolver would dereference: its delegation-chain,
+     * {@code xml:base} and symlink handling differ subtly from any re-implementation, so emulation is
+     * not a sound gate. (No policy loaded → the compatibility overload above still uses the full
+     * resolver; this stricter gate applies only under a confining policy.)
+     */
+    private static String unsafeFolderCatalog(File catalog, NetworkImportBlocker blocker) {
+        if (!catalog.isFile()) {
+            return null;
+        }
+        Path path;
+        try {
+            path = catalog.getAbsoluteFile().toPath().normalize();
+        } catch (RuntimeException invalid) {
+            return catalog.getPath();   // cannot resolve — fail closed
+        }
+        // A symlinked catalog file is read out of its lexical location by the resolver; refuse it (a
+        // normal project catalog-v001.xml is a plain file). Containment below separately resolves
+        // symlinks/.. to refuse an out-of-project escape.
+        if (Files.isSymbolicLink(path)) {
+            return "symlinked catalog " + path;
+        }
+        if (!blocker.catalogFileAuthorized(path)) {
+            return "catalog outside the project filesystem " + path;
+        }
+        org.w3c.dom.Document document;
+        try {
+            javax.xml.parsers.DocumentBuilderFactory factory =
+                    javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(true);
+            // XXE-safe: no external entity/DTD/schema access, so this scan itself never touches the
+            // network or external files (an internal DOCTYPE is still parsed so we can detect it below).
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            document = factory.newDocumentBuilder().parse(path.toFile());
+        } catch (Exception unparseable) {
+            // Fail closed: the resolver's own (unhardened) parser might read what this one cannot.
+            return "unparseable catalog " + path;
+        }
+        // Any DOCTYPE: the resolver's unhardened parser fetches external DTD and internal-subset
+        // external parameter/general entities pre-auth. A valid OASIS catalog never declares one.
+        if (document.getDoctype() != null) {
+            return "catalog declares a DOCTYPE (its unhardened parser may fetch an external DTD/entity)";
+        }
+        // Any delegation element: the resolver would read/fetch another catalog during getDocumentIRI,
+        // before authorizeMapping, in ways this scan cannot soundly predict. Detect presence only.
+        for (String elementName : CATALOG_DELEGATION_ELEMENTS) {
+            if (document.getElementsByTagNameNS("*", elementName).getLength() > 0) {
+                return "catalog uses <" + elementName + "> delegation";
+            }
+        }
+        return null;
     }
 
     static String normalizeSource(String source) {

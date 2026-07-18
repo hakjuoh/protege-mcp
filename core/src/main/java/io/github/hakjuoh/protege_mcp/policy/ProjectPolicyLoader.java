@@ -357,6 +357,21 @@ public final class ProjectPolicyLoader {
                             "More than one module resolves to " + resolved + "."));
                 }
                 assets.computeIfAbsent("modules", k -> new ArrayList<>()).add(resolved);
+                try {
+                    ModuleDocumentInspector.Inspection inspection =
+                            ModuleDocumentInspector.inspect(resolved);
+                    if (!iri.equals(inspection.ontologyIri())) {
+                        issues.add(error("module_ontology_iri_mismatch",
+                                "modules[" + index + "].ontology_iri",
+                                "Module file " + resolved + " declares ontology IRI "
+                                        + (inspection.ontologyIri() == null ? "(anonymous)"
+                                                : inspection.ontologyIri())
+                                        + " instead of policy value " + iri + "."));
+                    }
+                } catch (IOException e) {
+                    issues.add(error("module_document_invalid", "modules[" + index + "].path",
+                            "Could not inspect module file " + resolved + ": " + e.getMessage()));
+                }
             }
             index++;
         }

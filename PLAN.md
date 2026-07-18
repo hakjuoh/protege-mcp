@@ -206,26 +206,31 @@ explicitly degraded (`session_only`), never reported as stable.
 
 ## 5. Milestone overview
 
-| Milestone | Priority | Remaining outcome | Depends on |
-| --- | --- | --- | --- |
-| M1R. Policy coverage completion | P0 | Direct path arguments and module/namespace declarations governed by policy | — |
-| M2R. Change-set completion | P0 | `verify=` migration onto change sets, `rebase_change_set` | — |
-| M3R. Import and serialization completion | P0 | Lock-verified gates, network modes, format safeguards | M1R |
-| M4R. Semantic diff completion and release workflow | P0 | Inferred/impact-aware diffs and reproducible release bundles | M3R (release-gate half) |
-| M5R. Headless runner and CI | P0 | Same validation/release behavior without Protégé, stdio MCP, CI | M3R, M4R |
-| M6. Reuse, mappings, and lifecycle | P1 | Synonym-aware reuse, SSSOM, governed term lifecycle | M1R, M2R |
-| M7R. Audit, approvals, and authorization | P1 | Capability enforcement, audit trail, approvals, revocation termination | M2R, M4R (audit slice independent) |
-| M8. Rules, async jobs, performance, integration | P1 | Predictable long-running work and stronger live-runtime confidence | cross-cutting |
-| M9. Commercial platform interoperability | P2 | Verified, drift-safe publication and round-trip verification through standards-first target profiles | M3R, M4R, M5R; M7R for remote writes |
+| Milestone | Priority | Remaining outcome | Tentative delivery | Depends on |
+| --- | --- | --- | --- | --- |
+| M1R. Policy coverage completion | P0 | Direct path arguments and module/namespace declarations governed by policy | `0.6.1` contract fixes; `0.7.0` optional/new surface | — |
+| M2R. Change-set completion | P0 | `verify=` migration onto change sets, `rebase_change_set` | `0.6.1` migration; `0.7.0` rebase tool | — |
+| M3R. Import and serialization completion | P0 | Lock-verified gates, network modes, format safeguards | `0.6.1` existing-policy enforcement; `0.7.0` new controls/reports | M1R |
+| M4R. Semantic diff completion and release workflow | P0 | Inferred/impact-aware diffs and reproducible release bundles | `0.7.0` | M3R (release-gate half) |
+| M5R. Headless runner and CI | P0 | Same validation/release behavior without Protégé, stdio MCP, CI | `0.7.0` | M3R, M4R |
+| M6. Reuse, mappings, and lifecycle | P1 | Synonym-aware reuse, SSSOM, governed term lifecycle | post-`0.7.0` | M1R, M2R |
+| M7R. Audit, approvals, and authorization | P1 | Capability enforcement, audit trail, approvals, revocation termination | `0.6.1` filesystem slice required by M1R; remainder post-`0.7.0` | M2R, M4R (audit slice independent) |
+| M8. Rules, async jobs, performance, integration | P1 | Predictable long-running work and stronger live-runtime confidence | post-`0.7.0` | cross-cutting |
+| M9. Commercial platform interoperability | P2 | Verified, drift-safe publication and round-trip verification through standards-first target profiles | post-`0.7.0` | M3R, M4R, M5R; M7R for remote writes |
 
 The `R` suffix marks milestones whose first tranche shipped in `0.6.0`; their sections below list only what
 remains. Milestones may overlap after their data contracts stabilize, and dependencies bind only the halves
-that need them: the M4R diff/impact half and the first M7R audit slice are dependency-free and ship earlier
-(§15). M1R–M5R form the remaining minimum path from an interactive assistant to an ontology DevOps workflow.
+that need them. M1R–M5R form the remaining minimum path from an interactive assistant to an ontology DevOps
+workflow. Their delivery is split by public-contract impact: `0.6.1` only corrects documented behavior through
+the existing tools, commands, request arguments, and policy schema; `0.7.0` owns every new public tool, CLI
+command, request argument, policy control, and workflow.
 
 ## 6. M1R — Policy coverage completion
 
 ### 6.1 Filesystem and capability policy for direct path arguments
+
+**Target: `0.6.1` contract correction.** This closes a security/correctness gap in existing path-taking tools;
+it does not add a tool or request argument.
 
 The project filesystem policy that already confines policy-referenced assets must apply to direct tool
 path arguments as well. This includes `save_ontology.path`, `shacl_validate.shapes_path`, module export,
@@ -246,6 +251,9 @@ The capability names align with M7R so enforcement is implemented once.
 
 ### 6.2 Module and namespace policy gates
 
+**Target: `0.6.1` for enforcement expressible by the released policy-v1 schema.** Any new policy switch or
+schema field belongs to `0.7.0`.
+
 Complete the module policy whose declaration-level checks (duplicate module IRI/path) already fail closed:
 
 - Enforce `modules[].owned_namespaces` at runtime: terms in an owned namespace defined outside the owning
@@ -253,9 +261,13 @@ Complete the module policy whose declaration-level checks (duplicate module IRI/
 - Cross-check policy module declarations against actual module file content (declared `ontology_iri`
   versus the IRI in the file), not just file existence.
 - Elevate import cycles and identity/version/document conflicts from descriptive `inspect_imports`
-  findings to policy-configurable gate failures.
+  findings into the existing governance finding/gate contract, with documented severities consumed by
+  policy v1's `validation.required_stages` and `validation.fail_on`. Dedicated per-finding policy switches,
+  if later needed, belong to `0.7.0`.
 
 ### 6.3 Optional authoring aids
+
+**Target: `0.7.0`; omitted from `0.6.1` because it adds a public tool.**
 
 - A `write_project_policy_template` tool may generate a commented starter policy file; users review and
   commit it like source code. Policy writing stays file-oriented; no large `set_project_policy` mutation
@@ -266,8 +278,8 @@ Complete the module policy whose declaration-level checks (duplicate module IRI/
 - Direct tool path arguments obey the same project-root and capability policy as policy-referenced assets,
   with the documented no-policy compatibility mode.
 - A module file whose ontology IRI differs from its policy declaration is a policy validation error.
-- With the corresponding policy enabled, an import cycle or owned-namespace violation fails
-  `run_project_qc`; without it, behavior is unchanged.
+- When governance is required and the existing `validation.fail_on` threshold reaches their severity, an
+  import cycle or owned-namespace violation fails `run_project_qc`; without a policy, behavior is unchanged.
 - Policy paths and validation assets keep working on macOS, Linux, and Windows path conventions.
 
 ## 7. M2R — Change-set completion
@@ -277,11 +289,16 @@ shipped with `0.6.0`; what remains of M2 is the verification migration and rebas
 
 ### 7.1 `apply_changes verify=` migration
 
+**Target: `0.6.1` contract correction.** The migration must preserve the released request schema and use the
+existing finding/gate result contract; it adds no new `verify` value.
+
 - Internally migrate `apply_changes verify=report|rollback` onto the change-set services when behavior can
   be preserved, extending detection beyond inconsistency/unsatisfiability to the policy-required gates.
 - Deprecate live apply-then-undo verification only after change sets cover the same reasoner cases.
 
 ### 7.2 `rebase_change_set`
+
+**Target: `0.7.0`; this is a new public tool.**
 
 - Offer a read-only `rebase_change_set` only after deterministic re-resolution is implemented.
 - If a referenced display name now resolves to another IRI, rebase must fail for human review.
@@ -299,22 +316,32 @@ shipped with `0.6.0`; what remains of M2 is the verification migration and rebas
 
 Extend the shipped closure-completeness enforcement so gates verify lock **content**:
 
-- `lock_mode=ignore|verify|required` on project/release gates and document-loading operations: `verify`
-  compares every required import's resolved document and SHA-256 against `imports.lock.json` (the same
-  comparison `verify_import_lock` performs today); `required` additionally errors when the lock is absent.
-- `run_project_qc`, `preview_change_set`, and the future release gate consume the same verification, so a
-  tampered locked import can never yield `gate=pass`.
-- The CLI performs identical verification headlessly.
+- **`0.6.1` contract correction:** when the released policy-v1 contract already requires a lock
+  (`imports.mode: locked`), `run_project_qc` and `preview_change_set` compare every required import's resolved
+  document and SHA-256 against `imports.lock.json` through the existing `verify_import_lock` comparison. A
+  tampered locked import can no longer yield `gate=pass`. This adds no request argument.
+- **`0.7.0` public control:** add `lock_mode=ignore|verify|required` to project/release gates and
+  document-loading operations. `verify` performs the same comparison on explicit request; `required`
+  additionally errors when the lock is absent.
+- The future release gate consumes the same verification in `0.7.0`.
+- The `0.7.0` CLI performs identical verification headlessly.
 
 ### 8.2 Network loading modes
 
-- `network=deny|allow` on document-loading operations with the policy default (`network.default` is
-  already `deny` in effective policy but is not yet consulted by loading paths).
-- Release mode prefers local locked imports; every result lists the resolved imports actually used.
+- **`0.6.1` contract correction:** policy-aware loading paths consume the released
+  `network.default` value and `imports.network` override, which are accepted by policy v1 but currently
+  ignored. No-policy local-admin compatibility behavior remains unchanged.
+- **`0.7.0` public control:** add the explicit `network=deny|allow` request argument to document-loading
+  operations, subject to policy and capability checks.
+- `0.7.0` release mode prefers local locked imports; every result lists the resolved imports actually used.
 
 ### 8.3 Format safeguards
 
 Verified round-trip comparison shipped; the remaining safeguards:
+
+**Target: `0.7.0` for new default behavior, compatibility reports, and result distinctions.** A `0.6.1`
+change in this area is limited to a defect where an already-requested strict verified/atomic/backup save
+violates its released exactness contract.
 
 - Warn or fail when the chosen format cannot represent the ontology without loss, by default rather than
   only when `verify_round_trip` is requested.
@@ -336,6 +363,9 @@ Verified round-trip comparison shipped; the remaining safeguards:
   paths for the new gate-time paths.
 
 ## 9. M4R — Semantic diff completion and release workflow
+
+**Target: `0.7.0`.** Inferred/impact modes, release tools, manifests, and report formats are new public
+functionality and are excluded from `0.6.1`.
 
 ### 9.1 Inferred semantic diff
 
@@ -427,6 +457,8 @@ Produce the same underlying result in:
 - Large reports are written to files with bounded MCP summaries and stable pagination.
 
 ## 10. M5R — Headless runner and CI
+
+**Target: `0.7.0`.** New CLI commands and the stdio MCP surface are excluded from `0.6.1`.
 
 ### 10.1 Remaining refactoring
 
@@ -620,6 +652,11 @@ occurrences, and replacement completeness.
 - Deprecated terms without an allowed terminal state/replacement policy are found by project QC.
 
 ## 12. M7R — Audit, approvals, and authorization
+
+**Delivery split:** `0.6.1` includes only the filesystem capability categories required to make §6.1's
+released path policy effective, using the existing principal/scope transport and backward-compatible
+local-admin profile. General per-tool capability enforcement, audit, approvals, and revocation work remain
+post-`0.7.0`.
 
 ### 12.1 Audit log
 
@@ -966,48 +1003,57 @@ protocol supplies prepare/commit/abort semantics accepted by both servers.
 ## 15. Delivery sequence and tentative releases
 
 `0.6.0` pulled forward prototypes originally scheduled later (change sets, import locks, verified saves,
-the asserted semantic-diff prototype, the CLI split, broker principals), so the remaining grouping is
-re-balanced. Exact version numbers may change.
+the asserted semantic-diff prototype, the CLI split, broker principals), so M1R–M5R are split into one
+contract-closure patch and one feature release. Exact version numbers may still change, but the boundary
+between the two is intentional: `0.6.1` adds no public surface; `0.7.0` owns all new public surface.
 
-### Tentative `0.7.x`: safe changes everywhere, and impact
+### Tentative `0.6.1`: released-contract closure
 
-- M2R: `verify=` migration onto change-set services and `rebase_change_set`.
-- M1R: direct-path filesystem/capability policy and module/namespace policy gates.
-- M4R first half: inferred semantic diff and `analyze_change_impact`.
-- Change-set-aware audit records (first M7R slice).
+- M1R: apply the released filesystem/capability policy to existing direct path arguments; enforce module
+  and namespace declarations already expressible in policy v1.
+- M7R narrow dependency: enforce only the existing-principal filesystem capabilities required by M1R,
+  retaining the documented local-admin compatibility profile.
+- M2R: migrate the existing `apply_changes verify=report|rollback` implementation onto change-set services
+  without adding a tool, argument, or `verify` value.
+- M3R: verify lock content automatically when the released effective policy already requires a lock;
+  consume the released `network.default` value and `imports.network` override in policy-aware loading; fix
+  any violation of an explicitly requested strict verified/atomic/backup save contract.
+- Add regression, adversarial, compatibility, and documentation coverage for those corrections.
 
-Exit condition: `apply_changes verify=` verdicts match the change-set gates for the same change, a
-concurrent rename fails a rebase closed, and the semantic/inferred impact of a proposed change is
-reportable.
+Public-surface condition: the release remains at 78 MCP tools and 11 guided prompts; the CLI still exposes
+only the shipped `validate-policy` and asserted `diff` commands. It adds no request argument, policy field,
+or new workflow. An existing call may now fail where `0.6.0` incorrectly bypassed a documented
+security/correctness gate; that is the patch's intended behavior change.
 
-### Tentative `0.8.x`: release and automation
+Exit condition: every policy-v1 filesystem, module, locked-import, and network restriction relevant to an
+existing policy-gated operation is actually enforced, and `apply_changes verify=` reaches the same verdict
+as the existing change-set gate for the same change without changing the public request contract.
 
-- M3R: gate-time lock verification, network loading modes, format safeguards.
-- M4R second half: `run_release_gate`, `prepare_release`, manifests, report formats.
+### Tentative `0.7.0`: ontology DevOps workflow completion
+
+- M1R/M2R public additions: optional `write_project_policy_template`, any new policy controls, and
+  `rebase_change_set`.
+- M3R public additions: explicit `lock_mode=ignore|verify|required` and `network=deny|allow` request
+  controls, default format safeguards, the OBO compatibility report, and round-trip result distinctions.
+- M4R: inferred semantic diff, `analyze_change_impact`, `run_release_gate`, `prepare_release`, deterministic
+  manifests, and JSON/Markdown/JUnit/SARIF report formats.
 - M5R: full headless QC/release/imports-lock/stdio CLI commands, headless mutation safety, CI workflows,
-  plugin/CLI conformance fixtures.
+  and plugin/CLI conformance fixtures.
 
-Exit condition: a clean checkout can validate and build a verifiable ontology release without Protégé.
+Exit condition: a concurrent rename fails a rebase closed, the semantic/inferred impact of a proposed
+change is reportable, and a clean checkout can validate and build a verifiable ontology release without
+Protégé.
 
-### Tentative `0.9.x`: governed collaboration
+### Post-`0.7.0`: unassigned future releases
 
 - M6 synonym/reuse, mappings, and lifecycle.
-- M7R capabilities enforcement, approvals, full audit, revocation stream termination, assistant principal.
+- M7R remaining capability enforcement, approvals, full audit, revocation stream termination, and
+  assistant principal.
 - M8 rule validation, job model, performance gates, and live integration automation.
+- M9 adapter contracts and external-platform delivery only after the release evidence boundary is stable.
 
-Exit condition: project roles and lifecycle rules are enforced consistently in interactive and automated
-workflows, with a traceable release history.
-
-### Tentative post-`0.9.x`: external platform delivery
-
-- M9 first half: adapter contracts, verified exchange fixtures, and a vendor-neutral RDF repository
-  publication path.
-- Validated GraphDB Enterprise and Stardog target profiles, subject to licensed test environments.
-- File/API capability profiles for TopBraid EDG, metaphactory, PoolParty, and Progress Semaphore; native
-  workflow adapters only where official API access and repeatable tests permit support.
-
-Exit condition: a release that passed Protégé MCP's gate can be planned, published to staging, read back,
-semantically verified, and audited without exposing credentials or claiming unsupported remote atomicity.
+No `0.8.0` or `0.9.0` commitment is made here. Those version numbers should be assigned only when the
+post-`0.7.0` scope is selected.
 
 ## 16. Testing strategy
 
@@ -1168,35 +1214,46 @@ Resolve these with short architecture decision records before implementation:
 
 The next implementation cycle should create small, independently reviewable issues in this order:
 
-1. Apply the project filesystem/capability policy to legacy direct path arguments with the documented
+1. **[`0.6.1`]** Apply the project filesystem/capability policy to legacy direct path arguments with the documented
    no-policy compatibility mode.
-2. Add gate-time import-lock content verification (`lock_mode=ignore|verify|required`) to
-   `run_project_qc`, `preview_change_set`, and document loading, extending the shipped closure-completeness
-   enforcement.
-3. Add `network=deny|allow` loading controls consuming the existing `network.default` policy value.
-4. Complete module policy: enforce `owned_namespaces` at runtime, cross-check declarations against module
-   file content, and make import cycles/conflicts policy-gateable.
-5. Migrate `apply_changes verify=` onto the change-set services, then add read-only `rebase_change_set`
-   with deterministic re-resolution.
-6. Write the inferred-diff entailment-set ADR, then implement `semantic_diff mode=inferred|both`.
-7. Implement `analyze_change_impact` over change sets and diffs.
-8. Implement `run_release_gate`, `prepare_release`, the release manifest, and the report formats.
-9. Add the remaining format safeguards: default lossy-format warnings, the OBO compatibility report, and
+2. **[`0.6.1`]** Under the existing `imports.mode: locked` policy, add automatic gate-time lock-content
+   verification to `run_project_qc` and `preview_change_set` without adding `lock_mode` or another request
+   argument.
+3. **[`0.6.1`]** Make policy-aware document loading consume the existing `network.default` value and
+   `imports.network` override without adding a per-request network control.
+4. **[`0.6.1`]** Complete the module-policy enforcement expressible by the released policy-v1 schema:
+   enforce `owned_namespaces`, cross-check declarations against module file content, and emit import
+   cycle/conflict governance findings governed by the existing required-stage and `fail_on` settings.
+5. **[`0.6.1`]** Migrate the existing `apply_changes verify=` values onto the change-set services while
+   preserving the released tool schema and result contract.
+6. **[`0.7.0`]** Add read-only `rebase_change_set` with deterministic re-resolution.
+7. **[`0.7.0`]** Add explicit `lock_mode=ignore|verify|required` and `network=deny|allow` request controls,
+   including capability/policy interactions and headless parity.
+8. **[`0.7.0`]** Write the inferred-diff entailment-set ADR, then implement
+   `semantic_diff mode=inferred|both`.
+9. **[`0.7.0`]** Implement `analyze_change_impact` over change sets and diffs.
+10. **[`0.7.0`]** Implement `run_release_gate`, `prepare_release`, the release manifest, and the report
+    formats.
+11. **[`0.7.0`]** Add the remaining format safeguards: default lossy-format warnings, the OBO compatibility report, and
    the round-trip class distinctions.
-10. Extend the CLI to full project QC, imports lock, release, and `serve --transport stdio`, with headless
-    mutation safety and plugin/CLI conformance fixtures.
-11. Ship the reusable CI workflow with the fork-safe annotation pipeline.
-12. Consume the propagated broker principal for per-tool capability enforcement, add the audit stream
-    (its change-set-aware audit-records portion is the first slice, targeted at `0.7.x`), the short-lived
-    assistant principal, and active termination of revoked SSE streams.
-13. After the release manifest contract stabilizes, write the M9 adapter-contract ADR and implement the
-    fake-target conformance kit (`TargetCapabilities`, plan, receipt, read-back verification, drift).
-14. Implement the vendor-neutral create/stage/read-back RDF repository adapter, then validate explicit
-    GraphDB Enterprise and Stardog profiles in licensed, isolated test environments.
-15. Run evidence/API/licensing spikes for TopBraid EDG, metaphactory, PoolParty, and Progress Semaphore;
-    publish file/API capability profiles before accepting any native workflow-adapter commitment.
+12. **[`0.7.0`]** Extend the CLI to full project QC, imports lock, release, and
+    `serve --transport stdio`, with headless mutation safety and plugin/CLI conformance fixtures.
+13. **[`0.7.0`]** Ship the reusable CI workflow with the fork-safe annotation pipeline.
+14. **[`0.7.0`, optional]** Add `write_project_policy_template` only if it fits without delaying the
+    release exit condition.
+15. **[post-`0.7.0`]** Consume the propagated broker principal for the remaining per-tool capability
+    enforcement, add the audit stream, the short-lived assistant principal, and active termination of
+    revoked SSE streams.
+16. **[post-`0.7.0`]** After the release manifest contract stabilizes, write the M9 adapter-contract ADR and
+    implement the fake-target conformance kit (`TargetCapabilities`, plan, receipt, read-back verification,
+    drift).
+17. **[post-`0.7.0`]** Implement the vendor-neutral create/stage/read-back RDF repository adapter, then
+    validate explicit GraphDB Enterprise and Stardog profiles in licensed, isolated test environments.
+18. **[post-`0.7.0`]** Run evidence/API/licensing spikes for TopBraid EDG, metaphactory, PoolParty, and
+    Progress Semaphore; publish file/API capability profiles before accepting any native workflow-adapter
+    commitment.
 
-Issues 1–5 harden what `0.6.0` shipped; issues 6–7 deliver the impact half of M4R; issues 8–11 build the
-release/headless workflow on top of it; issue 12 opens the governed-collaboration track; issues 13–15 begin
-M9 only after the release evidence boundary is stable. The order is thematic, not chronological — it
-deliberately does not track the tentative release boundaries in §15.
+Issues 1–5 are the complete `0.6.1` patch scope and must not introduce a tool, CLI command, request
+argument, or policy-schema field. Issues 6–14 are the `0.7.0` public feature/workflow scope. Issues 15–18
+remain unversioned until after `0.7.0`; the implementation order within each release still follows the
+dependencies in §5.
