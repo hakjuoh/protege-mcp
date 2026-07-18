@@ -33,6 +33,7 @@ public final class ToolCatalog {
             ImportLockTools::register,
             CatalogTools::register,
             DiffTools::register,
+            ImpactTools::register,
             ReasonerTools::register,
             SparqlTools::register,
             SparqlAuthoringTools::register,

@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **79 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **80 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -26,12 +26,13 @@ locked-import verification, module namespace/import governance, and isolated cha
 
 ## New tools in 0.7.0
 
-Version 0.7.0 adds **1 tool** so far to the 78-tool v0.6.x surface. Existing tool arguments and default
+Version 0.7.0 adds **2 tools** so far to the 78-tool v0.6.x surface. Existing tool arguments and default
 interactive behavior remain compatible.
 
 | Task | New tools | What they add |
 | --- | --- | --- |
 | Transactional editing | [`rebase_change_set`](editing.html#rebase_change_set) | Deterministically re-resolve a cached preview at the current revision; a changed resolution fails closed for human review. |
+| Change review | [`analyze_change_impact`](context-validation.html#analyze_change_impact) | Syntactic impact analysis of a cached change set or asserted diff: affected entities and modules, referencing axioms, downstream terms, foreign re-axiomatization, deprecated terms in use, and validation assets naming changed IRIs. |
 
 ## New tools in 0.6.0
 
@@ -91,7 +92,7 @@ The top-level [Prompts](../prompts/) guide packages these flows for one-click us
 
 ### [Context & validation](context-validation.html)
 `get_ontology_context` · `get_entity_context` · `get_model_revision` · `validate_ontology` ·
-`validate_governance` · `diff_ontologies` · `semantic_diff`
+`validate_governance` · `diff_ontologies` · `semantic_diff` · `analyze_change_impact`
 
 ### [Safe authoring & QC](quality.html)
 `get_project_policy` · `validate_project_policy` · `run_project_qc` · `verify_ontology` · `run_qc_suite` · `shacl_validate` · `add_competency_question` · `list_competency_questions` ·

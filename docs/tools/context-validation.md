@@ -298,3 +298,61 @@ touched.
 ```json
 { "right_document": "/workspace/releases/next.ttl", "mode": "both", "reasoner": "HermiT", "policy_path": ".protege-mcp/project.yaml", "limit": 100 }
 ```
+
+## `analyze_change_impact`
+
+Read-only **syntactic** impact analysis of a change over the current workspace. Analyzes exactly one
+input form: a cached change-set preview (`change_set_id` from `preview_change_set`, or `create_terms` /
+`create_properties` with `preview=true` — its stored normalized delta, with the preview's
+`base_revision` echoed), or an asserted diff pair (`left`, default the active ontology, against a loaded
+`right` ontology or a privately loaded `right_document`, the same machinery as `diff_ontologies`). Every
+category reports exact counts with bounded samples (`limit`), and the whole result is labelled
+`analysis: "syntactic"`: co-occurrence in an asserted axiom proves syntactic reachability, never logical
+impact — run `semantic_diff` `mode=inferred|both` for entailment-level evidence. Impact driven by an
+inferred (reasoner-computed) delta is deliberately deferred: this tool analyzes the **asserted
+projection** of a change only, and the result's `note` points to `semantic_diff mode=inferred|both`
+for proven logical impact.
+
+*Read-only.* A `right_document` is loaded privately (workspace import mappings plus any sibling
+`catalog-v001.xml`, like `diff_ontologies`) and never attached to the workspace. A change-set entry is
+claimed for the duration of the (read-only) analysis and remains cached afterwards; validation-asset
+text is read off the UI thread. `include_imports` widens both the pair diff scope and the workspace reference scan
+(referencing axioms, downstream sweep, deprecated candidates) to the active imports closure.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `change_set_id` | string | conditional | — | Cached preview to analyze (exactly one input form: this or `right`/`right_document`). Unknown or in-flight ids are refused with `error_code`. |
+| `left` | string | no | active | Loaded ontology IRI/version (pair form only). |
+| `right` | string | conditional | — | Loaded ontology IRI/version to diff against; exactly one of this and `right_document`. |
+| `right_document` | string | conditional | — | Document loaded privately for comparison; exactly one of this and `right`. |
+| `include_imports` | boolean | no | false | Widen the pair diff and the workspace reference scan to imports closures. |
+| `policy_path` | string | no | — | Project policy driving the `modules` attribution (`modules[].owned_namespaces`) and the `validation_references` asset search; authorized like other `policy_path` tools. An unresolvable or invalid policy errors both categories fail-closed. |
+| `limit` | integer | no | 50 | Maximum samples per category; exact counts are always reported. |
+| `network` | string | no | — | Request-level network control for loading `right_document`, composed most-restrictive-wins with the project policy: `deny` refuses every remote fetch with an explicit error; `allow` abstains and never overrides a policy deny, an invalid policy, a missing `network:access` capability, or a restricted no-policy state. |
+
+**Returns**
+
+- `analysis`: the literal `"syntactic"` — this tool computes syntactic/asserted analysis only.
+- `note`: string pointing to `semantic_diff mode=inferred|both` for proven logical impact.
+- `change_set_id`, `base_revision`: echoed for the change-set input form (the entry's complete stored revision envelope); the refusal shape for an unknown/in-flight id is `{change_set_id, analyzed: false, error_code}` with `unknown_change_set` or `change_set_in_progress`.
+- `left`, `right`: side labels for the pair input form (the ontology IRI/version, or the authorized `right_document` source).
+- `right_document_unresolved_imports`: import IRIs the right document's loader could not resolve (pair form with `right_document` only; empty when everything resolved).
+- `caveat`: string warning that the right side's imports closure is truncated and the analysis may be incomplete in either direction; present only when `include_imports=true` and `right_document_unresolved_imports` is non-empty.
+- `include_imports`: boolean, echoing the effective scope.
+- `delta`: `{added_axioms, removed_axioms}` — the analyzed change's exact axiom counts.
+- `directly_affected`: `{count, items, truncated?, modules}` — every IRI in the delta axioms' signatures (including annotation subjects and IRI annotation values, which OWLAPI keeps out of axiom signatures), each item `{iri, added, removed}` with exact per-IRI axiom counts, sorted most-affected first. `modules` attributes the affected IRIs to owning modules via the policy's `modules[].owned_namespaces` most-specific matcher: `{available: true, count, items: [{module, terms: {count, items, truncated?}}], truncated?, unowned: {count, items, truncated?}}` with a loaded valid policy declaring owned namespaces, `{available: false, reason}` without one, and `{error}` (fail-closed, never silently absent) when a supplied policy failed to resolve, load, or validate. When several modules co-own a namespace, `module` is their owning module IRIs comma-joined into one label — the same convention as `semantic_diff`'s `module_ownership` owners.
+- `referencing_axioms`: `{count, items, truncated?}` — axioms in the current workspace (active ontology; closure when `include_imports`) that reference a directly-affected entity, including annotation assertions on an affected IRI, but are **not** themselves part of the delta; rendered axiom rows.
+- `downstream_terms`: `{analysis: "syntactic", depth_cap, size_cap, count, items, truncated?, search_truncated?, search_note?}` — a bounded breadth-first co-occurrence sweep from the affected entities over the workspace: each item `{iri, depth}`. The sweep stops at 3 hops or 1,000 discovered terms; `search_truncated: true` (decided by one probe expansion, never guessed) discloses that reachable terms beyond the caps are neither listed nor counted.
+- `foreign_reaxiomatization`: `{count, items, truncated?}` — delta axioms whose **subject** entity is declared in an imported closure member rather than the active ontology (the import-layering notion of `validate_governance`); each item `{operation, subject, axiom_type, rendering}`.
+- `deprecated_terms_in_use`: `{count, items, truncated?}` — entities carrying `owl:deprecated true` anywhere in the closure that are referenced by the delta or by the referencing axioms.
+- `validation_references`: textual occurrences of affected IRIs in validation assets. With a loaded valid policy: `{available: true, match: "textual", count, items, truncated?, files_scanned, files_skipped?, scan_truncated?, scan_note?, searched_iris, workspace_cq_error?}` — plain substring matching (`match: "textual"`, no parsing) of up to 500 affected IRIs against the policy-resolved `invariants`/`shacl`/`cqs` asset files (up to 100 files, 1 MiB each; oversized or unreadable files are skipped with a reason) and the in-workspace CQ stores; each item `{source, ref, iris}` where `source` is `invariants`, `shacl`, `cqs`, or `workspace_cq` (workspace rows additionally carry `convention`). `files_scanned` counts only files whose text was actually read and searched — a skipped file is accounted in `files_skipped` instead, never in both; `files_skipped` is `{count, items, truncated?}` with the first 10 skip reasons sampled. Without `policy_path`: `{available: false, reason}`; an unresolvable/invalid policy: `{error}`.
+- `public_api_terms`: `{available: false, reason: "policy v1 does not yet declare public API terms"}` — policy v1 declares no public-API term set yet.
+- `external_mappings`: `{available: false, reason: "mapping management ships with the M6 milestone"}` — the SSSOM mapping store does not exist yet.
+
+**Example**
+
+```json
+{ "change_set_id": "0b1c2d3e-…", "policy_path": ".protege-mcp/project.yaml", "limit": 100 }
+```
