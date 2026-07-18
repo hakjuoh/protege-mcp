@@ -7,7 +7,7 @@
 > **Adopted: Architecture Approach A — in-Protégé MCP server.** External LLM clients (Claude Code/Desktop,
 > Codex CLI, VS Code MCP, other IDE extensions) read and edit the user's **live, open ontology** directly;
 > edits appear in the GUI immediately and join the user's **undo** stack. Architecture Approach A is **built and
-> shipping**: 80 structured tools + 11 guided prompts (§5) behind one fixed MCP endpoint that a shared broker
+> shipping**: 82 structured tools + 11 guided prompts (§5) behind one fixed MCP endpoint that a shared broker
 > keeps stable across every Protégé window and instance (§4.1 item 11).
 >
 > **Architecture Approach B — in-Protégé chat assistant — is also built.** A chat panel (and a
@@ -297,9 +297,9 @@ plus its handler, and `ToolRegistry` wraps every handler in the shared exception
 
 ---
 
-## 5. MCP Tool Catalog (80 tools + 11 prompts)
+## 5. MCP Tool Catalog (82 tools + 11 prompts)
 
-Eighty tools — 7 read, 2 context, 1 revision (`get_model_revision`), 24
+Eighty-two tools — 7 read, 2 context, 1 revision (`get_model_revision`), 24
 edit/curation/history/persistence (incl. `preview_changes`, `apply_changes`, the staged change-set quartet
 `preview_change_set` / `commit_change_set` / `discard_change_set` / `rebase_change_set`, `set_label`, `create_term`,
 `create_terms`, `create_property`, `create_properties`, `deprecate_entity`, `move_class`), 6
@@ -307,11 +307,11 @@ ontology-header (incl. `set_prefix`), 9 document/import (incl. `set_active_ontol
 `inspect_imports`, `write_catalog`, `write_import_lock`, `verify_import_lock`, `validate_catalog`),
 1 module (`extract_module`), 3 rule (`list_rules`/`add_rule`/`remove_rule`), 9 reasoner (incl.
 `explain_inconsistency`), 3 SPARQL (`sparql_query`/`sparql_schema`/`sparql_validate`), 6 validation/diff
-(incl. `diff_ontologies`, `semantic_diff`, `analyze_change_impact`, `validate_governance`, `shacl_validate`), and 9
+(incl. `diff_ontologies`, `semantic_diff`, `analyze_change_impact`, `validate_governance`, `shacl_validate`), and 11
 safe/testable-authoring/project-policy tools
 (`add_competency_question` / `list_competency_questions` / `remove_competency_question` /
 `run_competency_questions`, `verify_ontology`, `run_qc_suite`, `get_project_policy`,
-`validate_project_policy`, `run_project_qc`) — each defined by a `name`, a `description`, and a
+`validate_project_policy`, `run_project_qc`, `run_release_gate`, `prepare_release`) — each defined by a `name`, a `description`, and a
 JSON-schema `inputSchema` (a `Map<String,Object>`). Entities are referenced by IRI or display name.
 **Every tool returns a structured JSON object** (set as MCP `structuredContent` and mirrored as a
 serialized JSON text block via the `Tools.json()/ok()/error()` helpers), so clients can compose results

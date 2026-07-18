@@ -222,9 +222,11 @@ mutated, resolving the lockfile against the loaded document (beside-document def
 policy-declared lockfile when the loaded document is the project's resolved root artifact); a mismatch,
 or `required` with no lockfile, refuses the load with a structured error and mutates nothing.
 
-Reserved (schema-accepted, not yet enforced): the `release.format`,
-`release.require_version_iri`, and `release.require_clean_round_trip` fields validate and carry defaults but
-are not yet consulted by a release-bundle workflow.
+The `release.format` (default `turtle`), `release.require_version_iri` (default true),
+`release.require_clean_round_trip` (default true), and `release.output_dir` fields are consumed by the
+release-bundle workflow: `run_release_gate` reads them to verify the serialization format, version IRI,
+and round-trip fidelity, and `prepare_release` writes the bundle into `release.output_dir` (see the
+[Release tools](tools/quality.html#run_release_gate)).
 
 ## Common result contracts
 

@@ -3679,6 +3679,70 @@
       },
       "additionalProperties" : false
     }
+  }, {
+    "name" : "run_release_gate",
+    "description" : "Read-only release gate over the active ontology (PLAN §9.3): runs the strict project-policy QC gate, then the release-only checks and reports what prepare_release WOULD produce, writing nothing. On top of QC it verifies import provenance (under network=deny — the default — every closure member must be backed by an authorized local file, else an imports.remote_backed error; network=allow keeps them as a recorded network_caveat), the version IRI (release.require_version_iri), a verified serialization round trip in release.format (release.require_clean_round_trip), fingerprint stability (a session_only fingerprint blocks a stable manifest), and an optional ASSERTED baseline_manifest comparison. The overall gate is error > fail > pass. Returns gate, findings, resolved_imports, round_trip, baseline, a manifest_preview (or manifest_available:false with a reason) and a bounded reports_preview; timestamps read PREVIEW because prepare_release stamps the real created_at.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "policy_path" : {
+          "type" : "string",
+          "description" : "Optional explicit local project policy; otherwise discover it."
+        },
+        "network" : {
+          "type" : "string",
+          "description" : "Provenance posture for remote-backed closure members: deny (default — a non-local member is an imports.remote_backed error) or allow (kept as a recorded network_caveat). allow never overrides a policy network deny.",
+          "enum" : [ "deny", "allow" ]
+        },
+        "baseline_manifest" : {
+          "type" : "string",
+          "description" : "Optional path to a prior release manifest.json to compare against (asserted-axiom diff only; inferred baseline diff is deferred). Read with project containment."
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum samples/findings per stage and in the report excerpt (default 50)."
+        }
+      },
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "prepare_release",
+    "description" : "Produce the release bundle after run_release_gate passes (PLAN §9.3). Dry-run by default: it re-runs the full release gate and, only when the gate passes, computes the verified ontology serialization, the manifest.json, the four reports (reports/qc.json, reports/qc.md, reports/qc.xml, reports/qc.sarif), the RO-Crate metadata, and reports/diff.json when a baseline is given. A gate that does not pass is refused with structured findings and NO writes. dry_run=true (the default) returns the manifest, reports and crate content inline (bounded) and writes nothing. dry_run=false honors Protégé read-only mode and the confirm-writes gate, then writes every artifact atomically into the release output directory (policy release.output_dir, or output_dir) via the containment-enforcing artifact store, each with its sha256 recorded in the manifest. No network access is ever performed.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "policy_path" : {
+          "type" : "string",
+          "description" : "Optional explicit local project policy; otherwise discover it."
+        },
+        "network" : {
+          "type" : "string",
+          "description" : "Provenance posture for remote-backed closure members: deny (default) or allow (recorded as a caveat). allow never overrides a policy network deny.",
+          "enum" : [ "deny", "allow" ]
+        },
+        "baseline_manifest" : {
+          "type" : "string",
+          "description" : "Optional path to a prior release manifest.json to compare against (asserted diff only); written as reports/diff.json when supplied."
+        },
+        "dry_run" : {
+          "type" : "boolean",
+          "description" : "When true (default) compute and return every artifact inline but write nothing. Pass false to commit the artifacts to the output directory."
+        },
+        "created_at" : {
+          "type" : "string",
+          "description" : "ISO-8601 UTC timestamp stamped into the manifest and crate for reproducibility. When omitted and dry_run=false the system clock is read once; a dry run uses a PREVIEW placeholder instead."
+        },
+        "output_dir" : {
+          "type" : "string",
+          "description" : "Release output directory (default the policy release.output_dir asset). Resolved with project containment; artifacts can never escape it."
+        },
+        "limit" : {
+          "type" : "integer",
+          "description" : "Maximum samples/findings per stage and in the report excerpt (default 50)."
+        }
+      },
+      "additionalProperties" : false
+    }
   } ],
   "prompts" : [ {
     "name" : "audit_ontology",

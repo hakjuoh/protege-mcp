@@ -179,6 +179,30 @@ class ProjectPolicyLoaderTest {
     }
 
     @Test
+    void releaseFieldsAreNotDefaultedSoTheDigestOfAReleaseFreePolicyIsUnchanged(@TempDir Path temp)
+            throws Exception {
+        // The release-bundle workflow (run_release_gate/prepare_release) consumes release.* with its
+        // OWN defaults, adding no policy defaults — so a policy that omits the release block gets no
+        // injected `release` key and its digest is unaffected. A policy that DOES set release.* is
+        // digest-stable across loads (the fields were already schema-accepted before the workflow).
+        String stages = "validation:\n  required_stages: [structural]\n";
+        Path releaseFree = temp.resolve("release-free.yaml");
+        write(releaseFree, minimal("example") + stages);
+        ProjectPolicy noRelease = ProjectPolicyLoader.load(releaseFree, null);
+        assertTrue(noRelease.valid(), () -> noRelease.issues().toString());
+        assertFalse(noRelease.effective().containsKey("release"),
+                "no release defaults may be injected into the effective policy");
+
+        Path withRelease = temp.resolve("with-release.yaml");
+        write(withRelease, minimal("example") + stages
+                + "release:\n  output_dir: out\n  format: turtle\n");
+        ProjectPolicy a = ProjectPolicyLoader.load(withRelease, null);
+        ProjectPolicy b = ProjectPolicyLoader.load(withRelease, null);
+        assertTrue(a.valid(), () -> a.issues().toString());
+        assertEquals(a.digest(), b.digest());
+    }
+
+    @Test
     void explicitMissingPathAndMalformedOrDuplicateYamlFailClosed(@TempDir Path temp) throws Exception {
         ProjectPolicy missing = ProjectPolicyLoader.load(temp.resolve("missing.yaml"), null);
         assertTrue(missing.loaded());

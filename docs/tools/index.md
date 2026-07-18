@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **80 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **82 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -26,13 +26,14 @@ locked-import verification, module namespace/import governance, and isolated cha
 
 ## New tools in 0.7.0
 
-Version 0.7.0 adds **2 tools** so far to the 78-tool v0.6.x surface. Existing tool arguments and default
+Version 0.7.0 adds **4 tools** so far to the 78-tool v0.6.x surface. Existing tool arguments and default
 interactive behavior remain compatible.
 
 | Task | New tools | What they add |
 | --- | --- | --- |
 | Transactional editing | [`rebase_change_set`](editing.html#rebase_change_set) | Deterministically re-resolve a cached preview at the current revision; a changed resolution fails closed for human review. |
 | Change review | [`analyze_change_impact`](context-validation.html#analyze_change_impact) | Syntactic impact analysis of a cached change set or asserted diff: affected entities and modules, referencing axioms, downstream terms, foreign re-axiomatization, deprecated terms in use, and validation assets naming changed IRIs. |
+| Release | [`run_release_gate`](quality.html#run_release_gate), [`prepare_release`](quality.html#prepare_release) | Run the strict QC gate plus the release-only checks (import provenance, version IRI, verified serialization round trip, fingerprint stability, optional baseline diff) read-only, then produce the manifest, reports, and RO-Crate bundle — dry-run by default, written atomically into the policy output directory on confirmation. |
 
 ## New tools in 0.6.0
 
@@ -95,9 +96,10 @@ The top-level [Prompts](../prompts/) guide packages these flows for one-click us
 `validate_governance` · `diff_ontologies` · `semantic_diff` · `analyze_change_impact`
 
 ### [Safe authoring & QC](quality.html)
-`get_project_policy` · `validate_project_policy` · `run_project_qc` · `verify_ontology` · `run_qc_suite` · `shacl_validate` · `add_competency_question` · `list_competency_questions` ·
-`remove_competency_question` · `run_competency_questions` *(plus `apply_changes verify=` and
-`search_entities` grounding — see their category pages)*
+`get_project_policy` · `validate_project_policy` · `run_project_qc` · `run_release_gate` ·
+`prepare_release` · `verify_ontology` · `run_qc_suite` · `shacl_validate` · `add_competency_question` ·
+`list_competency_questions` · `remove_competency_question` · `run_competency_questions` *(plus
+`apply_changes verify=` and `search_entities` grounding — see their category pages)*
 
 ### [Editing — entities & axioms](editing.html)
 `preview_changes` · `apply_changes` · `preview_change_set` · `commit_change_set` ·

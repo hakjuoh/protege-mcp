@@ -198,6 +198,87 @@ errored required stage is `gate=error` and takes precedence over a separate fail
 - `surface`: `run_project_qc` (or `run_qc_suite` when invoked through its `policy_path` compatibility entry).
 - `errors`: structured policy/configuration errors when validation cannot start.
 
+## `run_release_gate`
+
+Read-only release gate. It runs the full `run_project_qc` gate and then the release-only checks, and
+reports exactly what `prepare_release` *would* produce — writing nothing. On top of QC it verifies:
+**import provenance** — under `network=deny` (the default) every closure member must be backed by an
+authorized local file, otherwise an `imports.remote_backed` error is raised (`network=allow` keeps the
+members but records a `network_caveat` instead, and never overrides a policy network deny); the **version
+IRI** when `release.require_version_iri` is set; a **verified serialization round trip** in
+`release.format` (the same round-trip machinery as `save_ontology verify_round_trip=true`) when
+`release.require_clean_round_trip` is set; **fingerprint stability** (a `session_only` fingerprint blocks
+a reproducible manifest); and an optional **baseline** comparison (asserted-axiom diff only — inferred
+baseline diff is deferred). The gate is `error > fail > pass`. Timestamps read `PREVIEW`, never the wall
+clock; `prepare_release` stamps the real `created_at`. *Read-only.*
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `policy_path` | string | no | discovered | Explicit local policy path. |
+| `network` | string | no | `deny` | Provenance posture: `deny` (a non-local closure member is an `imports.remote_backed` error) or `allow` (kept as a recorded `network_caveat`). |
+| `baseline_manifest` | string | no | none | Path to a prior release `manifest.json` to compare against (asserted diff only). Read with project containment. |
+| `limit` | integer | no | 50 | Samples/findings per stage and in the report excerpt (0–10000). |
+
+**Returns**
+
+- `gate`: `pass`, `fail`, or `error` (`error > fail > pass`).
+- `semantic_fingerprint`: fingerprint of the exact shared ontology snapshot.
+- `required_stages`, `stages`, `findings`: the aggregated core gate — the QC stages plus a synthetic
+  required `release` stage carrying the release-specific findings (`imports.remote_backed`,
+  `release.version_iri_missing`, `release.round_trip_failed`, `release.fingerprint_unstable`).
+- `resolved_imports`: always present — every closure member as `{ontology_iri, version_iri, document,
+  source_type, backed_by}`, where `backed_by` is `local_file` for a `file:` document and otherwise the
+  source type (`remote`, `memory`, …).
+- `network_caveat`: present only when remote-backed members were downgraded under `network=allow`.
+- `version_iri`: the active ontology's version IRI (or `null`).
+- `round_trip`: `{clean, format}` (plus `skipped`/`reason`/`error` when the round trip did not run or
+  was not exact).
+- `baseline`: `{compared, status, …}` — `not_compared` when no baseline was given; otherwise the
+  per-artifact digest checks and the asserted diff's `compatibility` classification.
+- `manifest_preview`: the would-be `manifest.json` map (`ReleaseManifest.build` inputs rendered), or
+  `{manifest_available: false, reason}` when the fingerprint is unstable or the serialization failed.
+- `reports_preview`: `{markdown (bounded excerpt), formats: [json, markdown, junit, sarif]}`.
+
+## `prepare_release`
+
+Produce the release bundle once `run_release_gate` passes. It re-runs the full release gate and, only on
+`gate=pass`, computes the verified ontology serialization, the `manifest.json`, the four reports
+(`reports/qc.json`, `reports/qc.md`, `reports/qc.xml`, `reports/qc.sarif`), the RO-Crate
+`ro-crate-metadata.json`, and `reports/diff.json` when a baseline is given. A gate that does not pass is
+refused with structured findings and **no writes**. **Dry run by default:** `dry_run=true` returns the
+manifest, reports, and crate content inline (bounded) and writes nothing. `dry_run=false` honors
+Protégé's **read-only** mode and the **confirm-writes** gate, then writes every artifact atomically into
+the output directory via the containment-enforcing artifact store, each with its `sha256` recorded in the
+manifest. Output is deterministic except for the declared `created_at`. **No network access is ever
+performed.**
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `policy_path` | string | no | discovered | Explicit local policy path. |
+| `network` | string | no | `deny` | Provenance posture (see `run_release_gate`). |
+| `baseline_manifest` | string | no | none | Prior release `manifest.json` to diff against; written as `reports/diff.json`. |
+| `dry_run` | boolean | no | `true` | When `true`, compute and return every artifact inline but write nothing. |
+| `created_at` | string | no | — | ISO-8601 UTC timestamp stamped into the manifest and crate. When omitted and `dry_run=false`, the system clock is read once; a dry run uses a `PREVIEW` placeholder. |
+| `output_dir` | string | no | policy `release.output_dir` | Release output directory, resolved with project containment — artifacts can never escape it. |
+| `limit` | integer | no | 50 | Samples/findings per stage and in the report excerpt (0–10000). |
+
+**Returns**
+
+- `prepared`: `true` on a committed write, `false` on a dry run or a refused gate.
+- `dry_run`: echoes the requested mode.
+- `gate`: `pass`, `fail`, or `error`; a non-`pass` gate is refused with no writes.
+- `output_dir`: the resolved release output directory (committed writes only).
+- `created_at`: the timestamp stamped into the manifest and crate (committed writes only).
+- `artifacts`: each artifact as `{path, sha256, bytes}` — the would-be set on a dry run, the written set
+  on a commit, empty on a refusal.
+- `manifest`, `reports`, `ro_crate`: the manifest map, bounded report content, and RO-Crate content
+  returned inline on a dry run.
+- `findings`, `stages`: the aggregated release gate findings and stages, surfaced on a refusal.
+
 ## `run_qc_suite`
 
 One aggregate quality-control gate that composes every stage over **one isolated shared snapshot** and

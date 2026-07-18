@@ -43,7 +43,8 @@ public final class ToolCatalog {
             VerifyOntologyTools::register,
             ShaclTools::register,
             ProjectPolicyTools::register,
-            QcSuiteTools::register);
+            QcSuiteTools::register,
+            ReleaseTools::register);
 
     public static List<SyncToolSpecification> buildAll(ToolContext ctx) {
         ToolRegistry registry = new ToolRegistry();
