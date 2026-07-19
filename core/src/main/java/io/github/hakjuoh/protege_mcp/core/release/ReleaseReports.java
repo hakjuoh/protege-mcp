@@ -113,27 +113,33 @@ public final class ReleaseReports {
                         "    <skipped message=\"" + attr(stage.message()) + "\"/>\n"));
                 tests++;
                 skipped++;
-            } else if (stage.status() == StageStatus.ERROR) {
-                cases.add(testcase(stage.stage(), "error",
-                        "    <error message=\"" + attr(stage.message()) + "\">"
-                                + text(stage.message()) + "</error>\n"));
-                tests++;
-                errors++;
-            } else if (stage.findings().isEmpty()) {
-                cases.add(testcase(stage.stage(), "pass", null));
-                tests++;
             } else {
-                for (Finding f : stage.findings()) {
-                    if (f.severity().reaches(failOn)) {
-                        cases.add(testcase(f.id(), f.severity().json(),
-                                "    <failure message=\"" + attr(f.message()) + "\" type=\""
-                                        + attr(f.id()) + "\">" + text(findingBody(f))
-                                        + "</failure>\n"));
-                        failures++;
-                    } else {
-                        cases.add(testcase(f.id(), f.severity().json(), null));
-                    }
+                boolean stageErrored = stage.status() == StageStatus.ERROR;
+                if (stageErrored) {
+                    cases.add(testcase(stage.stage(), "error",
+                            "    <error message=\"" + attr(stage.message()) + "\">"
+                                    + text(stage.message()) + "</error>\n"));
                     tests++;
+                    errors++;
+                }
+                if (stage.findings().isEmpty()) {
+                    if (!stageErrored) {
+                        cases.add(testcase(stage.stage(), "pass", null));
+                        tests++;
+                    }
+                } else {
+                    for (Finding f : stage.findings()) {
+                        if (f.severity().reaches(failOn)) {
+                            cases.add(testcase(f.id(), f.severity().json(),
+                                    "    <failure message=\"" + attr(f.message()) + "\" type=\""
+                                            + attr(f.id()) + "\">" + text(findingBody(f))
+                                            + "</failure>\n"));
+                            failures++;
+                        } else {
+                            cases.add(testcase(f.id(), f.severity().json(), null));
+                        }
+                        tests++;
+                    }
                 }
             }
             suites.append("  <testsuite name=\"").append(attr(stage.stage()))
@@ -211,13 +217,7 @@ public final class ReleaseReports {
             result.put("level", sarifLevel(f.severity()));
             result.put("message", Map.of("text", f.message()));
             String pathUri = f.path();
-            String uri = pathUri != null ? pathUri
-                    : (fallbackUri == null || fallbackUri.isBlank() ? "ontology" : fallbackUri);
-            // A finding path must never be an absolute local filesystem path: SARIF URIs are
-            // repo-root-relative and would otherwise leak the user's directory layout.
-            if (uri.startsWith("/") || uri.matches("^[A-Za-z]:[\\\\/].*")) {
-                uri = "ontology";
-            }
+            String uri = safeRepoRelativeUri(pathUri != null ? pathUri : fallbackUri);
             Map<String, Object> region = new LinkedHashMap<>();
             region.put("startLine", 1);
             Map<String, Object> physical = new LinkedHashMap<>();
@@ -241,6 +241,25 @@ public final class ReleaseReports {
         sarif.put("version", "2.1.0");
         sarif.put("runs", List.of(run));
         return sarif;
+    }
+
+    /** Keep SARIF artifact locations inside the repository and free of local-file URI schemes. */
+    private static String safeRepoRelativeUri(String candidate) {
+        if (candidate == null || candidate.isBlank()) {
+            return "ontology";
+        }
+        String value = candidate.trim();
+        if (value.startsWith("/") || value.startsWith("\\")
+                || value.matches("^[A-Za-z][A-Za-z0-9+.-]*:.*")) {
+            return "ontology";
+        }
+        for (String segment : value.replace('\\', '/').split("/", -1)) {
+            if ("..".equals(segment)) {
+                return "ontology";
+            }
+        }
+        return value.contains("\n") || value.contains("\r") || value.indexOf('\0') >= 0
+                ? "ontology" : value;
     }
 
     /** Render {@link #sarif} to canonical JSON text. */

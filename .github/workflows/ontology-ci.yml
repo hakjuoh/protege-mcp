@@ -1,7 +1,7 @@
 # Reusable ontology-CI gate for CONSUMER projects (not this repo's own build — that is ci.yml).
 #
 # What it gates (be honest about the boundary):
-#   * POLICY VALIDATION — `validate --project <policy> --no-network`: the project policy is
+#   * POLICY VALIDATION — `validate --project <policy> --no-network --no-external`: the project policy is
 #     well-formed, its references resolve, and its local assets exist.
 #   * ASSERTED SEMANTIC DIFF — `diff --left <baseline> --right <ontology> --no-network`: the
 #     asserted-only semantic change between the base-branch ontology and the PR's ontology
@@ -17,8 +17,8 @@
 # read-only token and no secrets. It grants only `contents: read`, holds no PR-write or
 # security-events scope, and writes its verdict ONLY to an uploaded artifact. The TRUSTED half
 # (ontology-annotate.yml, run from the consumer's default branch via `workflow_run`) reads that
-# artifact as data and posts the annotation. The gate flags here are fixed (`--no-network`, no
-# external paths, no credentials), so a PR that edits its own policy cannot relax how it is judged.
+# artifact as data and posts the annotation. The gate flags here are fixed (`--no-network`,
+# `--no-external`, no credentials), so a PR policy cannot relax the parser posture.
 #
 # Requires protege-mcp-cli 0.7.0+ (the first release that ships `validate --no-network` and
 # `diff --check`). Tags in hakjuoh/protege-mcp are occasionally re-cut (moved), so `cli_version`
@@ -48,14 +48,6 @@ on:
         description: 'protege-mcp-cli release to download (0.7.0+). Pin to a release you reviewed.'
         type: string
         default: '0.7.0'
-      java_version:
-        description: 'Temurin JDK version used to run the CLI.'
-        type: string
-        default: '17'
-      runner:
-        description: 'Runner label for the validation job.'
-        type: string
-        default: 'ubuntu-latest'
       artifact_name:
         description: 'Name of the results artifact the trusted annotator consumes.'
         type: string
@@ -68,14 +60,19 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ${{ inputs.runner }}
+    # Fixed hosted runner: workflow_call inputs come from the PR-side caller workflow and therefore
+    # must never be allowed to route untrusted work onto a consumer's self-hosted runner.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      # PR head is the candidate under review. actions/checkout defaults to the pull_request merge
-      # ref, so this is the untrusted proposed code — treated as data only.
+      # Pin the exact PR-head SHA recorded in the artifact. Treat the checkout as untrusted data only.
       - name: Check out the candidate (PR head)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: __candidate__
 
       # The BASE branch establishes the diff baseline, so the PR cannot rewrite what it is compared
       # against. base.sha is an immutable commit id (safe to pass as a checkout ref input).
@@ -89,8 +86,50 @@ jobs:
       - name: Set up Temurin JDK
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
-          java-version: ${{ inputs.java_version }}
+          java-version: '17'
           distribution: temurin
+
+      # workflow_call values are selected by the PR-side caller workflow, so paths are untrusted even
+      # though this reusable workflow is SHA-pinned. Resolve every input below its checkout before a
+      # parser sees it; this also rejects a repository symlink that points at runner files.
+      - name: Confine untrusted workflow inputs to their checkouts
+        env:
+          PROJECT: ${{ inputs.project }}
+          ONTOLOGY: ${{ inputs.ontology }}
+          CANDIDATE: ${{ github.workspace }}/__candidate__
+          BASELINE: ${{ github.workspace }}/__baseline__
+        run: |
+          confine_file() {
+            root="$1"
+            relative="$2"
+            label="$3"
+            case "$relative" in
+              ''|/*|\\\\*|[A-Za-z]:*)
+                echo "::error::${label} must be a non-empty checkout-relative path."
+                exit 2
+                ;;
+            esac
+            root_real="$(realpath -e -- "$root")"
+            resolved="$(realpath -e -- "$root/$relative")" || {
+              echo "::error::${label} does not resolve to an existing file inside its checkout."
+              exit 2
+            }
+            case "$resolved" in
+              "$root_real"/*) ;;
+              *) echo "::error::${label} escapes its checkout."; exit 2 ;;
+            esac
+            if [ ! -f "$resolved" ]; then
+              echo "::error::${label} is not a regular file."
+              exit 2
+            fi
+          }
+          confine_file "$CANDIDATE" "$PROJECT" project
+          if [ -n "$ONTOLOGY" ]; then
+            confine_file "$CANDIDATE" "$ONTOLOGY" ontology
+            if [ -e "$BASELINE/$ONTOLOGY" ]; then
+              confine_file "$BASELINE" "$ONTOLOGY" baseline-ontology
+            fi
+          fi
 
       # Download the published CLI and VERIFY it before running anything. The release publishes a
       # bare-basename `.sha256` sidecar, so `sha256sum -c` verifies the jar in the working directory.
@@ -100,22 +139,27 @@ jobs:
         env:
           CLI_VERSION: ${{ inputs.cli_version }}
         run: |
+          if ! printf '%s' "$CLI_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::cli_version must be a numeric SemVer release (for example 0.7.0)."
+            exit 2
+          fi
           base="https://github.com/hakjuoh/protege-mcp/releases/download/v${CLI_VERSION}"
           jar="protege-mcp-cli-${CLI_VERSION}-all.jar"
           curl --fail --location --retry 3 --retry-all-errors --max-time 180 -o "$jar" "${base}/${jar}"
           curl --fail --location --retry 3 --retry-all-errors --max-time 60 -o "${jar}.sha256" "${base}/${jar}.sha256"
           sha256sum -c "${jar}.sha256"
           java -jar "$jar" --version
-          echo "jar=${GITHUB_WORKSPACE}/${jar}" >> "$GITHUB_OUTPUT"
+          mv "$jar" "${jar}.sha256" "$RUNNER_TEMP/"
+          echo "jar=${RUNNER_TEMP}/${jar}" >> "$GITHUB_OUTPUT"
 
-      # POLICY GATE. --no-network is fixed here regardless of the policy contents, so a PR that sets
-      # network:allow or allow_external_paths:true in its own policy cannot loosen the gate judging
-      # it. --format json is written to the artifact for the trusted annotator to read as data.
+      # POLICY GATE. --no-network/--no-external are fixed regardless of policy contents, so a PR
+      # cannot turn its policy parser into a network/outside-checkout reader. --format json is written
+      # to the artifact for the trusted annotator to read as data.
       - name: Validate project policy
         id: policy
         env:
           JAR: ${{ steps.cli.outputs.jar }}
-          PROJECT: ${{ inputs.project }}
+          PROJECT: ${{ github.workspace }}/__candidate__/${{ inputs.project }}
           RESULTS: ${{ runner.temp }}/results
         run: |
           # Results live in a FRESH directory OUTSIDE the fork checkout ($RUNNER_TEMP), so a PR that
@@ -123,7 +167,7 @@ jobs:
           rm -rf "$RESULTS"
           mkdir -p "$RESULTS"
           set +e
-          java -jar "$JAR" validate --project "$PROJECT" --format json --no-network \
+          java -jar "$JAR" validate --project "$PROJECT" --format json --no-network --no-external \
             > "$RESULTS/policy-validate.json" 2> "$RESULTS/policy-validate.err"
           code=$?
           set -e
@@ -141,8 +185,8 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && inputs.ontology != '' }}
         env:
           JAR: ${{ steps.cli.outputs.jar }}
-          LEFT: __baseline__/${{ inputs.ontology }}
-          RIGHT: ${{ inputs.ontology }}
+          LEFT: ${{ github.workspace }}/__baseline__/${{ inputs.ontology }}
+          RIGHT: ${{ github.workspace }}/__candidate__/${{ inputs.ontology }}
           CHECK: ${{ inputs.diff_check }}
           RESULTS: ${{ runner.temp }}/results
         run: |
@@ -162,9 +206,8 @@ jobs:
           echo "exit=$code" >> "$GITHUB_OUTPUT"
           echo "Diff exit: $code"
 
-      # Provenance + integrity manifest so the trusted annotator can verify producer/run/digest/size
-      # before it trusts anything. Values written here are structurally constrained (ids, a hex sha,
-      # an integer PR number, workflow author-controlled inputs) — never free-form event text.
+      # Provenance + integrity manifest. The trusted annotator independently authenticates the run
+      # and unchanged caller workflow through GitHub's API before checking these values and bytes.
       - name: Assemble result metadata
         env:
           RUN_ID: ${{ github.run_id }}
@@ -172,6 +215,9 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           CLI_VERSION: ${{ inputs.cli_version }}
+          PROJECT: ${{ inputs.project }}
+          ONTOLOGY: ${{ inputs.ontology }}
+          DIFF_CHECK: ${{ inputs.diff_check }}
           WORKFLOW: ${{ github.workflow }}
           RESULTS: ${{ runner.temp }}/results
         run: |
@@ -184,9 +230,13 @@ jobs:
             --arg workflow "$WORKFLOW" \
             --arg head_sha "$HEAD_SHA" \
             --arg cli_version "$CLI_VERSION" \
-            '{producer_run_id:$run_id, producer_run_attempt:$run_attempt, producer_workflow:$workflow, head_sha:$head_sha, cli_version:$cli_version, scope:"policy_validation+asserted_diff"}' \
+            --arg project "$PROJECT" \
+            --arg ontology "$ONTOLOGY" \
+            --argjson diff_check "$DIFF_CHECK" \
+            '{producer_run_id:$run_id, producer_run_attempt:$run_attempt, producer_workflow:$workflow, head_sha:$head_sha, cli_version:$cli_version, project:$project, ontology:$ontology, diff_check:$diff_check, scope:"policy_validation+asserted_diff"}' \
             > meta.json
-          # Bare-basename checksums so the annotator verifies with `sha256sum -c` after download.
+          # Bare-basename checksums; the annotator parses this strict list and hashes each allowed
+          # file itself, never passing an artifact-supplied path to sha256sum.
           # Write via a temp file outside this directory so find never enumerates the file being
           # written (avoids a read/write-same-file pipeline).
           find . -maxdepth 1 -type f ! -name manifest.sha256 -printf '%P\0' \

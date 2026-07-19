@@ -6,10 +6,10 @@ nav_order: 7
 # Project policy contracts
 {: .no_toc }
 
-Version 0.6.1 enforces the executable project policy at direct filesystem/network boundaries, verifies
-locked import content automatically, applies module ownership/import-graph governance, and routes
-`apply_changes verify=` through isolated change-set preflight. The tool/prompt surface remains 78/11.
-{: .note }
+Version 0.7.0 adds deterministic preview rebasing, impact and release gates, policy scaffolding, and an
+explicit invalid-policy save bootstrap while retaining the 0.6.1 filesystem, network, import-lock,
+module-governance, and isolated-preflight boundaries. The public surface is 83 tools and 11 prompts.
+{: .fs-6 .fw-300 }
 
 For a user-focused setup guide, including a complete crate example and an explanation of the two
 fingerprints, see [RO-Crate and RDFC interoperability](interoperability/).
@@ -111,7 +111,22 @@ policy without running ontology checks. `run_project_qc` executes every `validat
 `reasoning.required: true` also forces `reasoner` into the effective required-stage set even if the authored
 list omitted it. The `interoperability` stage is always required in policy v1, even when an authored stage
 list omits it.
-It requires Protégé's selected reasoner to match the named policy reasoner, and distinguishes:
+
+`reasoning.reasoner` is a NAME reference resolved against the display names of the reasoners installed
+in Protégé (factory ids are accepted by `set_reasoner` and `semantic_diff`, but the policy validator
+matches display names only). The **recommended** convention — the one the shipped example policies use —
+is the version-less display name (`HermiT`, `ELK`): it matches when its whitespace tokens appear as a
+contiguous whole-token, case-insensitive run inside an installed display name, so the policy stays valid
+across reasoner-plugin upgrades that only change the version suffix. A full display name (e.g.
+`HermiT 1.4.3.456`) matches exactly (case-insensitive) and pins that exact version; partial versions
+(`HermiT 1.4`) never match. The reference must resolve to exactly ONE installed reasoner: zero matches is
+the validation error `reasoner_unavailable`, two or more is `reasoner_ambiguous`. Use a full display name
+that identifies one install; because policy references are name-only, plugins exposing the same display
+name cannot be disambiguated by id and all but one must be disabled. `run_project_qc` applies the same resolution rule when comparing
+the required reasoner against the one selected at the snapshot boundary, as do `set_reasoner` and
+`semantic_diff`'s `reasoner` argument.
+
+`run_project_qc` requires Protégé's selected reasoner to match the named policy reasoner, and distinguishes:
 
 - `pass`: every required stage ran and stayed below `validation.fail_on`;
 - `fail`: a required stage completed and found a policy violation;
@@ -303,6 +318,10 @@ result field. New optional fields remain possible through an explicitly reviewed
 The 0.6.1 surface remains 78 tools + 11 prompts. The 0.6.0 additions within the milestone were
 `get_model_revision`, the three change-set tools, verified save options, `semantic_diff`, and the three
 import-lock/catalog tools; existing required arguments and interactive defaults remain backward-compatible.
+
+Version 0.7.0 adds five tools for deterministic rebasing, change-impact analysis, policy scaffolding,
+release gating, and release preparation, bringing the current surface to 83 tools + 11 prompts. The
+0.5.0 snapshots continue to enforce backward compatibility for the original contracts.
 
 Maintainers can generate a new historical baseline with:
 

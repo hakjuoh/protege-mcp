@@ -389,6 +389,57 @@ class QcSuiteToolsTest {
                 secondShacl.summary.get("identity_digest"));
     }
 
+    // ------------------------------------------------------------------ required-reasoner matching
+
+    @Test
+    void reasonerMatchesResolvesExactAndVersionlessReferencesAgainstTheCapturedSpec() {
+        IsolatedReasonerSpec spec = IsolatedReasonerSpec.capture(
+                reasonerInfo("HermiT 1.4.3.456", "org.semanticweb.HermiT"));
+
+        assertTrue(QcSuiteTools.reasonerMatches("HermiT", spec, null),
+                "the version-less convention resolves against the versioned display name");
+        assertTrue(QcSuiteTools.reasonerMatches("hermit 1.4.3.456", spec, null),
+                "the full display name matches exactly, case-insensitively");
+        assertTrue(QcSuiteTools.reasonerMatches("org.semanticweb.HermiT", spec, null),
+                "the factory id matches exactly");
+        assertFalse(QcSuiteTools.reasonerMatches("HermiT 9.9", spec, null),
+                "a versioned reference must agree token-for-token");
+        assertFalse(QcSuiteTools.reasonerMatches("ELK", spec, null));
+    }
+
+    @Test
+    void reasonerMatchesAlsoAcceptsTheLiveSelectionName() {
+        IsolatedReasonerSpec spec = IsolatedReasonerSpec.capture(
+                reasonerInfo("HermiT 1.4.3.456", "org.semanticweb.HermiT"));
+
+        assertFalse(QcSuiteTools.reasonerMatches("Protégé Null Reasoner", spec, null));
+        assertTrue(QcSuiteTools.reasonerMatches("Protégé Null Reasoner", spec,
+                        "Protégé Null Reasoner"),
+                "the selected-reasoner display name is an accepted match target");
+    }
+
+    /** IsolatedReasonerSpecTest's ProtegeOWLReasonerInfo proxy, parameterized by name/id. */
+    private static org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo reasonerInfo(
+            String name, String id) {
+        var factory = new org.semanticweb.HermiT.ReasonerFactory();
+        var configuration = new org.semanticweb.owlapi.reasoner.SimpleConfiguration();
+        return (org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo)
+                java.lang.reflect.Proxy.newProxyInstance(QcSuiteToolsTest.class.getClassLoader(),
+                new Class<?>[] {org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getReasonerId" -> id;
+                    case "getReasonerName" -> name;
+                    case "getReasonerFactory" -> factory;
+                    case "getRecommendedBuffering" ->
+                            org.semanticweb.owlapi.reasoner.BufferingMode.NON_BUFFERING;
+                    case "getConfiguration" -> configuration;
+                    case "toString" -> name + " test info";
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == args[0];
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+    }
+
     private static CompetencyQuestion failingNonEmptyCq(String id, String query) {
         CompetencyQuestion cq = new CompetencyQuestion();
         cq.id = id;

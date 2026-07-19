@@ -1007,8 +1007,8 @@ class WriteToolsTest {
     private CallToolResult callSaveOntology(OWLModelManager mm, String path, String onLossy)
             throws Throwable {
         return (CallToolResult) invoke(
-                priv("saveOntology", OWLModelManager.class, String.class, String.class),
-                mm, path, onLossy);
+                priv("saveOntology", OWLModelManager.class, String.class, String.class, Map.class),
+                mm, path, onLossy, null);
     }
 
     /** A single-label class in an OBO-friendly ontology (round-trips through the OBO frame model). */

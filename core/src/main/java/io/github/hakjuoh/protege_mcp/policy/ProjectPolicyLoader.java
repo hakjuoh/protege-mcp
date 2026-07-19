@@ -67,6 +67,19 @@ public final class ProjectPolicyLoader {
      */
     public static ProjectPolicy load(Path explicitPolicy, Path ontologyDocument,
             String activeOntologyIri, Collection<String> installedReasoners) {
+        return load(explicitPolicy, ontologyDocument, activeOntologyIri, installedReasoners, false);
+    }
+
+    /**
+     * Load a policy with an optional caller-enforced external-path denial. This is used by untrusted
+     * CI/headless surfaces: a candidate policy must not grant itself access outside its checkout by
+     * setting {@code filesystem.allow_external_paths: true}. The authored policy is left unchanged
+     * (and therefore keeps the same digest), but the constrained validation fails closed before any
+     * external asset is opened.
+     */
+    public static ProjectPolicy load(Path explicitPolicy, Path ontologyDocument,
+            String activeOntologyIri, Collection<String> installedReasoners,
+            boolean forbidExternalPaths) {
         Discovery discovery = discover(explicitPolicy, ontologyDocument);
         if (discovery.path == null) {
             if (discovery.issue == null) {
@@ -74,7 +87,7 @@ public final class ProjectPolicyLoader {
             }
             return invalidDiscovery(discovery);
         }
-        return read(discovery, activeOntologyIri, installedReasoners);
+        return read(discovery, activeOntologyIri, installedReasoners, forbidExternalPaths);
     }
 
     public static ProjectPolicy load(Path explicitPolicy, Path ontologyDocument) {
@@ -82,7 +95,7 @@ public final class ProjectPolicyLoader {
     }
 
     private static ProjectPolicy read(Discovery discovery, String activeOntologyIri,
-            Collection<String> installedReasoners) {
+            Collection<String> installedReasoners, boolean forbidExternalPaths) {
         List<PolicyIssue> issues = new ArrayList<>();
         Path path;
         try {
@@ -132,7 +145,7 @@ public final class ProjectPolicyLoader {
         Path projectRoot = resolveProjectRoot(path.getParent(), string(effective, "project_root"), issues);
         Map<String, List<Path>> assets = new LinkedHashMap<>();
         semanticValidation(effective, projectRoot, activeOntologyIri, installedReasoners,
-                !authoredRoCrateFormat, assets, issues);
+                !authoredRoCrateFormat, forbidExternalPaths, assets, issues);
         return result(discovery.kind, path, projectRoot, digest(effective), effective, assets, issues);
     }
 
@@ -216,12 +229,19 @@ public final class ProjectPolicyLoader {
 
     private static void semanticValidation(Map<String, Object> policy, Path projectRoot,
             String activeOntologyIri, Collection<String> installedReasoners,
-            boolean inferRoCrateVersion, Map<String, List<Path>> assets,
+            boolean inferRoCrateVersion, boolean forbidExternalPaths,
+            Map<String, List<Path>> assets,
             List<PolicyIssue> issues) {
         if (projectRoot == null) {
             return;
         }
-        boolean allowExternal = bool(object(policy, "filesystem"), "allow_external_paths", false);
+        boolean authoredAllowExternal = bool(object(policy, "filesystem"),
+                "allow_external_paths", false);
+        if (forbidExternalPaths && authoredAllowExternal) {
+            issues.add(error("external_paths_forbidden", "filesystem.allow_external_paths",
+                    "The caller forbids external paths; filesystem.allow_external_paths must be false."));
+        }
+        boolean allowExternal = authoredAllowExternal && !forbidExternalPaths;
 
         String rootIri = string(policy, "root_ontology");
         if (activeOntologyIri != null && !activeOntologyIri.equals(rootIri)) {
@@ -398,9 +418,14 @@ public final class ProjectPolicyLoader {
             // check above must still run so headless and plugin validation agree on validity.
             return;
         }
-        boolean found = installed.stream().filter(v -> v != null)
-                .anyMatch(v -> v.equalsIgnoreCase(selected));
-        if (!found) {
+        ReasonerNames.Resolution resolution = ReasonerNames.resolveNames(selected, installed);
+        if (resolution.ambiguous()) {
+            issues.add(error("reasoner_ambiguous", "reasoning.reasoner", "Reasoner reference '"
+                    + selected + "' matches more than one installed reasoner ("
+                    + String.join(", ", resolution.candidateNames())
+                    + "). Use a full display name that identifies one installed reasoner; if plugins"
+                    + " expose the same display name, disable all but one."));
+        } else if (!resolution.unique()) {
             issues.add(error("reasoner_unavailable", "reasoning.reasoner", "Required reasoner '"
                     + selected + "' is not installed. Installed reasoners: "
                     + (installed.isEmpty() ? "none" : String.join(", ", installed)) + "."));

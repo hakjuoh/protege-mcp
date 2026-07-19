@@ -105,16 +105,18 @@ public final class ImpactTools {
 
         // Load the comparison document OFF the EDT (network/parse), like diff_ontologies.
         List<String> unresolved = new ArrayList<>();
-        Set<OWLAxiom> rightDocAxioms = null;
+        OWLOntology rightDocOntology = null;
         if (rightDocument != null) {
-            DirectAccessPolicy.Rules docRules = DirectAccessPolicy.resolve(ctx, ex)
-                    .withRequestNetwork(network);
+            // The explicit/discovered policy resolved above governs the WHOLE request. Re-resolving
+            // here without policy_path could authorize the document under a different, weaker
+            // discovered policy while policy-driven impact categories reported the explicit one.
+            DirectAccessPolicy.Rules docRules = rules.withRequestNetwork(network);
             rightDocument = docRules.authorizeSource(rightDocument).value();
             List<OntologyDocumentTools.ImportMapping> mappings = ctx.access()
                     .compute(OntologyDocumentTools::workspaceImportMappings);
             OWLOntology loaded = DiffTools.loadDocument(rightDocument, mappings, unresolved,
                     docRules.importNetworkRule());
-            rightDocAxioms = collect(loaded, includeImports);
+            rightDocOntology = loaded;
         }
 
         ChangeSetStore.Entry entry = null;
@@ -136,10 +138,10 @@ public final class ImpactTools {
             final ChangeSetStore.Entry finalEntry = entry;
             final String finalLeftRef = leftRef;
             final String finalRightRef = rightRef;
-            final Set<OWLAxiom> finalRightDocAxioms = rightDocAxioms;
+            final OWLOntology finalRightDocOntology = rightDocOntology;
             final String finalRightDocument = rightDocument;
             Workspace ws = ctx.access().compute(mm -> analyzeWorkspace(mm, finalEntry, finalLeftRef,
-                    finalRightRef, finalRightDocAxioms, finalRightDocument, includeImports, limit,
+                    finalRightRef, finalRightDocOntology, finalRightDocument, includeImports, limit,
                     gatherWorkspaceCqs));
 
             Map<String, Object> result = new LinkedHashMap<>();
@@ -201,9 +203,11 @@ public final class ImpactTools {
     record WorkspaceCq(String id, String convention, String text) { }
 
     private static Workspace analyzeWorkspace(OWLModelManager mm, ChangeSetStore.Entry entry,
-            String leftRef, String rightRef, Set<OWLAxiom> rightDocAxioms, String rightDocLabel,
+            String leftRef, String rightRef, OWLOntology rightDocOntology, String rightDocLabel,
             boolean includeImports, int limit, boolean gatherWorkspaceCqs) {
         OWLOntology active = mm.getActiveOntology();
+        OWLOntology leftOntology = active;
+        OWLOntology rightOntology = active;
         Set<OWLAxiom> added;
         Set<OWLAxiom> removed;
         String leftLabel = null;
@@ -224,8 +228,10 @@ public final class ImpactTools {
             }
             Set<OWLAxiom> leftAxioms = collect(left, includeImports);
             Set<OWLAxiom> rightAxioms;
-            if (rightDocAxioms != null) {
-                rightAxioms = rightDocAxioms;
+            leftOntology = left;
+            if (rightDocOntology != null) {
+                rightOntology = rightDocOntology;
+                rightAxioms = collect(rightDocOntology, includeImports);
                 rightLabel = rightDocLabel;
             } else {
                 OWLOntology right = OntologyDocumentTools.findLoadedOntology(mm, rightRef);
@@ -233,6 +239,7 @@ public final class ImpactTools {
                     throw new ToolArgException("No loaded ontology matches right='" + rightRef
                             + "' (see list_ontologies).");
                 }
+                rightOntology = right;
                 rightAxioms = collect(right, includeImports);
                 rightLabel = OntologyDocumentTools.ontologyLabel(right.getOntologyID());
             }
@@ -241,9 +248,15 @@ public final class ImpactTools {
             removed = diff.onlyLeft;
             added = diff.onlyRight;
         }
-        Set<OWLOntology> scope = includeImports ? active.getImportsClosure()
-                : java.util.Collections.singleton(active);
-        Set<OWLOntology> closure = active.getImportsClosure();
+        // A diff may name two loaded ontologies neither of which is active (or a detached right
+        // document). References/downstream/deprecation must therefore be evaluated over the compared
+        // sides, not over an unrelated active workspace. Use the union so both pre-change and
+        // post-change syntactic reachability remain visible. A change-set still naturally uses active.
+        Set<OWLOntology> scope = new LinkedHashSet<>();
+        scope.addAll(includeImports ? leftOntology.getImportsClosure() : Set.of(leftOntology));
+        scope.addAll(includeImports ? rightOntology.getImportsClosure() : Set.of(rightOntology));
+        Set<OWLOntology> closure = new LinkedHashSet<>(leftOntology.getImportsClosure());
+        closure.addAll(rightOntology.getImportsClosure());
 
         // 1. directly_affected: every IRI in the delta axioms' signatures (including annotation
         // subjects and IRI annotation values, which OWLAPI keeps out of getSignature), with exact
@@ -315,10 +328,14 @@ public final class ImpactTools {
         // 4. foreign_reaxiomatization: delta axioms whose subject entity is upstream-owned
         // (declared in an imported closure member, not in the active ontology) — the same
         // import-layering notion validate_governance's ownership check enforces.
-        Set<OWLEntity> foreign = GovernanceTools.foreignDeclaredEntities(active, closure);
+        Set<OWLEntity> foreignEntities = new LinkedHashSet<>(
+                GovernanceTools.foreignDeclaredEntities(leftOntology,
+                        leftOntology.getImportsClosure()));
+        foreignEntities.addAll(GovernanceTools.foreignDeclaredEntities(rightOntology,
+                rightOntology.getImportsClosure()));
         List<Map<String, Object>> foreignRows = new ArrayList<>();
-        collectForeignRows(mm, added, "add", foreign, foreignRows);
-        collectForeignRows(mm, removed, "remove", foreign, foreignRows);
+        collectForeignRows(mm, added, "add", foreignEntities, foreignRows);
+        collectForeignRows(mm, removed, "remove", foreignEntities, foreignRows);
         foreignRows.sort(Comparator
                 .comparing((Map<String, Object> row) -> String.valueOf(row.get("subject")))
                 .thenComparing(row -> String.valueOf(row.get("rendering")))

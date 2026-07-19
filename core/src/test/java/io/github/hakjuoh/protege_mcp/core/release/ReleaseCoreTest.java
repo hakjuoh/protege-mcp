@@ -60,6 +60,21 @@ class ReleaseCoreTest {
     }
 
     @Test
+    void junitDoesNotDropFindingsFromAnErroredStage() {
+        Finding finding = new Finding("release.snapshot_changed", "release",
+                FindingSeverity.ERROR, "snapshot changed", null, null, null, null, null, Map.of());
+        StageResult stage = new StageResult("release", StageStatus.ERROR, "release failed",
+                List.of(finding), Map.of());
+        GateResult gate = GateResult.aggregate(1, FP, List.of("release"), List.of(stage),
+                FindingSeverity.ERROR);
+
+        String xml = ReleaseReports.junit(gate, "2026-07-18T00:00:00Z");
+
+        assertTrue(xml.contains("<error message=\"release failed\""), xml);
+        assertTrue(xml.contains("type=\"release.snapshot_changed\""), xml);
+    }
+
+    @Test
     void sarifIsMinimallyValidAndFingerprintsByRuleAndFocus() throws Exception {
         GateResult gate = failingGate();
         String json = ReleaseReports.sarifJson(gate, "policy.yaml");
@@ -96,7 +111,8 @@ class ReleaseCoreTest {
     @Test
     void crateDeclaresTheChecksumTermConformsToAndProvenance() throws Exception {
         Map<String, Object> crate = ReleaseCrate.build("proj", "desc",
-                "https://example.org/ont/1.0.0", "2026-07-18T00:00:00Z", "ontology.ttl",
+                "https://example.org/ont/1.0.0", "2026-07-18T00:00:00Z",
+                Map.of("@id", "https://spdx.org/licenses/BSD-2-Clause.html"), "ontology.ttl",
                 List.of(new ReleaseCrate.CrateFile("ontology.ttl", "text/turtle", FP, 12),
                         new ReleaseCrate.CrateFile("manifest.json", "application/json", FP, 34)));
         JsonNode root = ContractJson.mapper().readTree(ReleaseCrate.toJson(crate));
@@ -106,6 +122,7 @@ class ReleaseCoreTest {
         boolean conformsToProfile = false;
         boolean hasCreateAction = false;
         boolean fileHasSha = false;
+        boolean licensePreserved = false;
         for (JsonNode node : root.get("@graph")) {
             if ("ro-crate-metadata.json".equals(node.path("@id").asText())) {
                 for (JsonNode c : node.get("conformsTo")) {
@@ -118,13 +135,18 @@ class ReleaseCoreTest {
                 hasCreateAction = true;
                 assertEquals("2026-07-18T00:00:00Z", node.get("endTime").asText());
             }
+            if ("./".equals(node.path("@id").asText())) {
+                licensePreserved = "https://spdx.org/licenses/BSD-2-Clause.html"
+                        .equals(node.path("license").path("@id").asText());
+            }
             if ("ontology.ttl".equals(node.path("@id").asText())) {
                 assertEquals("12", node.get("contentSize").asText());
                 assertEquals("a".repeat(64), node.get("sha256").asText());
                 fileHasSha = true;
             }
         }
-        assertTrue(conformsToProfile && hasCreateAction && fileHasSha, ReleaseCrate.toJson(crate));
+        assertTrue(conformsToProfile && hasCreateAction && fileHasSha && licensePreserved,
+                ReleaseCrate.toJson(crate));
     }
 
     @Test
@@ -179,6 +201,15 @@ class ReleaseCoreTest {
                 ReleaseReports.sarifJson(gate, "ontology.ttl"));
         assertEquals("ontology.ttl", rel.get("runs").get(0).get("results").get(0).get("locations")
                 .get(0).get("physicalLocation").get("artifactLocation").get("uri").asText());
+
+        for (String unsafe : List.of("../secret.ttl", "file:///tmp/secret.ttl",
+                "\\\\server\\share\\secret.ttl")) {
+            JsonNode sanitized = ContractJson.mapper().readTree(
+                    ReleaseReports.sarifJson(gate, unsafe));
+            assertEquals("ontology", sanitized.get("runs").get(0).get("results").get(0)
+                    .get("locations").get(0).get("physicalLocation").get("artifactLocation")
+                    .get("uri").asText(), unsafe);
+        }
     }
 
     // ------------------------------------------------------------------ fixtures

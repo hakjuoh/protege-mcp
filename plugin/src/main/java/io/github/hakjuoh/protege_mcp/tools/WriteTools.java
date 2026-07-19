@@ -43,6 +43,7 @@ import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 import org.semanticweb.owlapi.model.RemoveAxiom;
 
 import io.github.hakjuoh.protege_mcp.core.owl.FormatCompatibility;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -164,10 +165,8 @@ public final class WriteTools {
                     if (ApplyVerify.MODE_NONE.equals(verify)) {
                         return write(ctx, summary, mm -> applyBatch(mm, operations, strict));
                     }
-                    int timeout = Tools.optInt(a, "timeout_ms", 60_000);
-                    if (timeout <= 0) {
-                        timeout = 60_000;
-                    }
+                    Integer requestedTimeout = ChangeSetTools.requestedTimeout(a);
+                    int timeout = requestedTimeout == null ? 60_000 : requestedTimeout;
                     DirectAccessPolicy.requireCapability(ex, DirectAccessPolicy.PROJECT_READ);
                     return ChangeSetApplyVerify.apply(ctx, verify, timeout, summary, operations, strict);
                 });
@@ -260,6 +259,7 @@ public final class WriteTools {
                     boolean verifyRoundTrip = Tools.optBool(a, "verify_round_trip", false);
                     boolean atomic = Tools.optBool(a, "atomic", false);
                     boolean backup = Tools.optBool(a, "backup", false);
+                    boolean policyBootstrap = Tools.optBool(a, "policy_bootstrap", false);
                     String onLossy = normalizeOnLossy(Tools.optString(a, "on_lossy"));
                     if (onLossy == null) {
                         return Tools.error("'on_lossy' must be 'warn' (default) or 'fail'.");
@@ -269,10 +269,62 @@ public final class WriteTools {
                                 + "document and cannot be combined with 'path' (a save-as targets "
                                 + "only the active ontology).");
                     }
-                    DirectAccessPolicy.Rules accessRules = DirectAccessPolicy.resolve(ctx, ex);
+                    if (policyBootstrap && configuredPath == null) {
+                        return Tools.error("'policy_bootstrap' requires an explicit 'path': it "
+                                + "exists to create a policy-referenced artifact (e.g. the "
+                                + "root_artifact) inside the invalid policy's project root.");
+                    }
+                    DirectAccessPolicy.Rules accessRules;
+                    ProjectPolicy invalidDiscovered = null;
+                    try {
+                        accessRules = DirectAccessPolicy.resolve(ctx, ex);
+                    } catch (ToolArgException refusal) {
+                        // Older DirectAccessPolicy revisions reject a loaded-but-invalid discovered
+                        // policy at resolve() time. Only the explicit bootstrap request shape may
+                        // continue, and only after the invalid-policy cause is independently
+                        // re-verified — any other refusal is never downgraded.
+                        if (!policyBootstrap) throw refusal;
+                        accessRules = null;
+                        invalidDiscovered = DirectAccessPolicy.verifiedInvalidDiscovery(ctx, ex, refusal);
+                    }
                     final String path;
+                    Map<String, Object> bootstrapNote = null;
                     if (configuredPath != null) {
-                        path = accessRules.writePath(configuredPath).toString();
+                        ProjectPolicy discovered = accessRules != null
+                                ? accessRules.policy() : invalidDiscovered;
+                        boolean invalidState = discovered != null && discovered.loaded()
+                                && !discovered.valid();
+                        if (policyBootstrap && invalidState) {
+                            path = DirectAccessPolicy.bootstrapExplicitPath(discovered, ex,
+                                    configuredPath, true, "save").toString();
+                            bootstrapNote = bootstrapNote(discovered);
+                        } else {
+                            try {
+                                path = accessRules.writePath(configuredPath).toString();
+                            } catch (ToolArgException refusal) {
+                                // Hint only on the invalid-policy refusal itself — never on a
+                                // capability or containment refusal, which the bootstrap would not
+                                // lift either.
+                                if (!policyBootstrap && invalidState && refusal.getMessage() != null
+                                        && refusal.getMessage().startsWith(
+                                                "The effective project policy is invalid")) {
+                                    throw new ToolArgException(refusal.getMessage() + " To create a "
+                                            + "policy-referenced artifact (e.g. the root_artifact) at "
+                                            + "an explicit path inside the project root while the "
+                                            + "policy is still invalid, pass policy_bootstrap=true.");
+                                }
+                                throw refusal;
+                            }
+                            if (policyBootstrap) {
+                                bootstrapNote = new LinkedHashMap<>();
+                                bootstrapNote.put("used", false);
+                                bootstrapNote.put("reason", discovered != null && discovered.loaded()
+                                        ? "the effective project policy is valid; normal "
+                                                + "authorization applied"
+                                        : "no project policy is loaded; normal authorization "
+                                                + "applied");
+                            }
+                        }
                     } else {
                         // Argument-less saves and all=true write back to the documents already open
                         // in Protégé — derived targets, not caller-selected paths. Authorize each one
@@ -295,10 +347,13 @@ public final class WriteTools {
                             ? "save the active ontology to " + path
                             : "save the active ontology to disk";
                     if (verifyRoundTrip || atomic || backup) {
-                        return verifiedSave(ctx, summary, path, atomic, backup, onLossy);
+                        return verifiedSave(ctx, summary, path, atomic, backup, onLossy,
+                                bootstrapNote);
                     }
                     final String lossyMode = onLossy;
-                    return write(ctx, summary, mm -> saveOntology(mm, path, lossyMode), SAVE_TIMEOUT_MS);
+                    final Map<String, Object> bootstrapInfo = bootstrapNote;
+                    return write(ctx, summary,
+                            mm -> saveOntology(mm, path, lossyMode, bootstrapInfo), SAVE_TIMEOUT_MS);
                 });
     }
 
@@ -737,10 +792,32 @@ public final class WriteTools {
      */
     /** Backwards-compatible entry point: a plain save with the default {@code on_lossy=warn}. */
     private static CallToolResult saveOntology(OWLModelManager mm, String path) {
-        return saveOntology(mm, path, ON_LOSSY_WARN);
+        return saveOntology(mm, path, ON_LOSSY_WARN, null);
     }
 
-    private static CallToolResult saveOntology(OWLModelManager mm, String path, String onLossy) {
+    /**
+     * The user-visible record of an explicit-path save authorized by the invalid-policy bootstrap
+     * (save_ontology {@code policy_bootstrap=true}): which policy was invalid, why the write was
+     * still contained, and what to do next.
+     */
+    private static Map<String, Object> bootstrapNote(ProjectPolicy discovered) {
+        Map<String, Object> note = new LinkedHashMap<>();
+        note.put("used", true);
+        note.put("policy_path", discovered.path() == null ? null : discovered.path().toString());
+        note.put("policy_errors", discovered.issues().stream()
+                .filter(issue -> "error".equals(issue.severity()))
+                .map(issue -> issue.code()).distinct().toList());
+        note.put("contained_root", discovered.projectRoot() == null
+                ? null : discovered.projectRoot().toString());
+        note.put("note", "The discovered project policy is invalid; this save was authorized by "
+                + "the explicit-path bootstrap (capability-checked, confined to the canonical "
+                + "project_root, no policy-granted widening). Re-run validate_project_policy once "
+                + "the referenced assets exist.");
+        return note;
+    }
+
+    private static CallToolResult saveOntology(OWLModelManager mm, String path, String onLossy,
+            Map<String, Object> policyBootstrap) {
         OWLOntology ont = mm.getActiveOntology();
         OWLOntologyManager om = mm.getOWLOntologyManager();
         OWLDocumentFormat current = om.getOntologyFormat(ont);
@@ -805,20 +882,22 @@ public final class WriteTools {
             Tools.Json ok = Tools.json()
                     .put("saved", true)
                     .put("path", file.toString())
-                    .put("format", format.getClass().getSimpleName());
+                    .put("format", format.getClass().getSimpleName())
+                    .putIfNotNull("policy_bootstrap", policyBootstrap);
             attachLossy(ok, obo, lossy);
             return ok.result();
         }
         saveOrThrow(mm, ont);
         Tools.Json ok = Tools.json()
                 .put("saved", true)
-                .put("path", file.toString());
+                .put("path", file.toString())
+                .putIfNotNull("policy_bootstrap", policyBootstrap);
         attachLossy(ok, obo, lossy);
         return ok.result();
     }
 
     private static CallToolResult verifiedSave(ToolContext ctx, String summary, String path,
-            boolean atomic, boolean backup, String onLossy) {
+            boolean atomic, boolean backup, String onLossy, Map<String, Object> policyBootstrap) {
         CallToolResult denied = checkWriteAllowed(ctx, summary);
         if (denied != null) {
             return denied;
@@ -898,7 +977,8 @@ public final class WriteTools {
                             .put("atomic", install.atomic())
                             .putIfNotNull("backup_path", install.backupPath() == null
                                     ? null : install.backupPath().toString())
-                            .put("revision", RevisionTools.revisionJson(revision));
+                            .put("revision", RevisionTools.revisionJson(revision))
+                            .putIfNotNull("policy_bootstrap", policyBootstrap);
                     attachLossy(result, obo, lossy);
                     return result.result();
                 }, SAVE_TIMEOUT_MS);

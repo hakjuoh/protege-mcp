@@ -51,6 +51,50 @@ class InferredDiffOrchestratorTest {
     }
 
     @Test
+    void captureResolvesAVersionlessReferenceAgainstTheVersionedDisplayName() throws Exception {
+        OWLOntology ontology = ontology("versionless");
+        OWLModelManager mm = hermitModelManager(ontology, "HermiT 1.4.3.456");
+        InferredDiffOrchestrator.Captured captured =
+                InferredDiffOrchestrator.capture(mm, ontology, ontology, false, "HermiT");
+        assertNotNull(captured, "the version-less convention selects the single versioned install");
+    }
+
+    @Test
+    void captureRefusesAnAmbiguousReasonerReferenceNamingEveryCandidate() throws Exception {
+        OWLOntology ontology = ontology("ambiguous");
+        OWLModelManager mm = hermitModelManager(ontology, "HermiT 1.4", "HermiT 2.0");
+        ToolArgException error = assertThrows(ToolArgException.class,
+                () -> InferredDiffOrchestrator.capture(mm, ontology, ontology, false, "HermiT"));
+        assertTrue(error.getMessage().contains("HermiT 1.4"), error.getMessage());
+        assertTrue(error.getMessage().contains("HermiT 2.0"), error.getMessage());
+    }
+
+    @Test
+    void exactFactoryIdCapturesItsOwnFactoryWhenDisplayNamesCollide() throws Exception {
+        // Two installed factories share one display name: an exact id reference must capture ITS
+        // factory, not whichever factory a display-name-keyed lookup kept.
+        OWLOntology ontology = ontology("collide");
+        OWLModelManager mm = hermitModelManager(ontology,
+                hermitInfo("Pellet", "com.example.pellet.a"),
+                hermitInfo("Pellet", "com.example.pellet.b"));
+
+        assertEquals("com.example.pellet.a", InferredDiffOrchestrator
+                .capture(mm, ontology, ontology, false, "com.example.pellet.a")
+                .spec().reasonerId());
+        assertEquals("com.example.pellet.b", InferredDiffOrchestrator
+                .capture(mm, ontology, ontology, false, "com.example.pellet.b")
+                .spec().reasonerId());
+
+        ToolArgException ambiguous = assertThrows(ToolArgException.class,
+                () -> InferredDiffOrchestrator.capture(mm, ontology, ontology, false, "Pellet"));
+        assertTrue(ambiguous.getMessage().contains("matches more than one"), ambiguous.getMessage());
+        assertTrue(ambiguous.getMessage().contains("Pellet [com.example.pellet.a]"),
+                ambiguous.getMessage());
+        assertTrue(ambiguous.getMessage().contains("Pellet [com.example.pellet.b]"),
+                ambiguous.getMessage());
+    }
+
+    @Test
     void inferredEvaluationReportsGainedEntailmentsAndParityMetadata() throws Exception {
         OWLOntology left = ontology("shared");
         OWLOntology right = ontology("shared");
@@ -384,31 +428,37 @@ class InferredDiffOrchestratorTest {
 
     /** FakeModelManager plus a real HermiT-backed reasoner selection (IsolatedReasonerQcTest style). */
     private static OWLModelManager hermitModelManager(OWLOntology ontology) {
-        OWLReasonerConfiguration configuration = new SimpleConfiguration();
-        var factory = new org.semanticweb.HermiT.ReasonerFactory();
-        ProtegeOWLReasonerInfo info = (ProtegeOWLReasonerInfo) Proxy.newProxyInstance(
-                InferredDiffOrchestratorTest.class.getClassLoader(),
-                new Class<?>[] {ProtegeOWLReasonerInfo.class}, (proxy, method, args) ->
-                switch (method.getName()) {
-                    case "getReasonerId" -> "org.semanticweb.HermiT";
-                    case "getReasonerName" -> "HermiT";
-                    case "getReasonerFactory" -> factory;
-                    case "getRecommendedBuffering" -> BufferingMode.NON_BUFFERING;
-                    case "getConfiguration" -> configuration;
-                    case "toString" -> "HermiT test info";
-                    case "hashCode" -> System.identityHashCode(proxy);
-                    case "equals" -> proxy == args[0];
-                    default -> throw new UnsupportedOperationException(method.getName());
-                });
+        return hermitModelManager(ontology, "HermiT");
+    }
+
+    /**
+     * Like {@link #hermitModelManager(OWLOntology)}, but each display name becomes one installed
+     * HermiT-backed factory (inventory order preserved); the first one is the current selection.
+     */
+    private static OWLModelManager hermitModelManager(OWLOntology ontology, String... displayNames) {
+        ProtegeOWLReasonerInfo[] infos = new ProtegeOWLReasonerInfo[displayNames.length];
+        for (int i = 0; i < displayNames.length; i++) {
+            infos[i] = hermitInfo(displayNames[i],
+                    "org.semanticweb.HermiT." + displayNames[i].replace(' ', '.'));
+        }
+        return hermitModelManager(ontology, infos);
+    }
+
+    /** The same seam over explicit plugin descriptors (for colliding display names). */
+    private static OWLModelManager hermitModelManager(OWLOntology ontology,
+            ProtegeOWLReasonerInfo... installedInfos) {
+        Set<ProtegeOWLReasonerInfo> installed =
+                new java.util.LinkedHashSet<>(java.util.List.of(installedInfos));
+        ProtegeOWLReasonerInfo current = installed.iterator().next();
         OWLReasonerManager reasoners = (OWLReasonerManager) Proxy.newProxyInstance(
                 InferredDiffOrchestratorTest.class.getClassLoader(),
                 new Class<?>[] {OWLReasonerManager.class}, (proxy, method, args) ->
                 switch (method.getName()) {
                     case "getReasonerStatus" -> ReasonerStatus.REASONER_NOT_INITIALIZED;
-                    case "getCurrentReasonerFactory" -> info;
-                    case "getCurrentReasonerFactoryId" -> "org.semanticweb.HermiT";
-                    case "getCurrentReasonerName" -> "HermiT";
-                    case "getInstalledReasonerFactories" -> Set.of(info);
+                    case "getCurrentReasonerFactory" -> current;
+                    case "getCurrentReasonerFactoryId" -> current.getReasonerId();
+                    case "getCurrentReasonerName" -> current.getReasonerName();
+                    case "getInstalledReasonerFactories" -> installed;
                     case "toString" -> "HermitTestReasonerManager";
                     case "hashCode" -> System.identityHashCode(proxy);
                     case "equals" -> proxy == args[0];
@@ -426,6 +476,25 @@ class InferredDiffOrchestratorTest {
                     } catch (InvocationTargetException e) {
                         throw e.getCause();
                     }
+                });
+    }
+
+    private static ProtegeOWLReasonerInfo hermitInfo(String reasonerName, String reasonerId) {
+        OWLReasonerConfiguration configuration = new SimpleConfiguration();
+        var factory = new org.semanticweb.HermiT.ReasonerFactory();
+        return (ProtegeOWLReasonerInfo) Proxy.newProxyInstance(
+                InferredDiffOrchestratorTest.class.getClassLoader(),
+                new Class<?>[] {ProtegeOWLReasonerInfo.class}, (proxy, method, args) ->
+                switch (method.getName()) {
+                    case "getReasonerId" -> reasonerId;
+                    case "getReasonerName" -> reasonerName;
+                    case "getReasonerFactory" -> factory;
+                    case "getRecommendedBuffering" -> BufferingMode.NON_BUFFERING;
+                    case "getConfiguration" -> configuration;
+                    case "toString" -> reasonerName + " test info";
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == args[0];
+                    default -> throw new UnsupportedOperationException(method.getName());
                 });
     }
 }

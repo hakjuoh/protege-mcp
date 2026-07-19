@@ -35,6 +35,8 @@ import io.github.hakjuoh.protege_mcp.server.McpAccessException;
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
 import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
+import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
+import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -556,6 +558,81 @@ class ChangeSetToolsTest {
         assertEquals(1_000, ChangeSetTools.preflightConfig(governed,
                 Map.<String, Object>of("timeout_ms", 1_000),
                 ChangeSetTools.ReasonerSelection.NONE).timeout);
+
+        assertThrows(ToolArgException.class, () -> ChangeSetTools.preflightConfig(noPolicy,
+                Map.<String, Object>of("timeout_ms", 1.5),
+                ChangeSetTools.ReasonerSelection.NONE));
+        assertThrows(ToolArgException.class, () -> ChangeSetTools.preflightConfig(noPolicy,
+                Map.<String, Object>of("timeout_ms", 4_294_967_297L),
+                ChangeSetTools.ReasonerSelection.NONE));
+        assertThrows(ToolArgException.class, () -> ChangeSetTools.preflightConfig(noPolicy,
+                Map.<String, Object>of("timeout_ms", ChangeSetTools.MAX_PREFLIGHT_TIMEOUT_MS + 1),
+                ChangeSetTools.ReasonerSelection.NONE));
+    }
+
+    @Test
+    void verifiedApplyEntryPointsRejectOutOfRangeTimeoutBeforeAnyWork(@TempDir Path temp)
+            throws Exception {
+        // apply_changes and create_terms/create_properties pre-coerced timeout_ms through
+        // Number.intValue(), so 2^32+1 wrapped to a 1 ms preflight budget and 1.5 truncated to 1
+        // instead of the documented 1-3600000 rejection the shared exact parser enforces.
+        Path docDir = Files.createDirectories(temp.resolve("sub"));
+        OWLOntology ontology = ontology(docDir);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+        int axiomsBefore = ontology.getAxiomCount();
+        Map<String, Object> op = new LinkedHashMap<>();
+        op.put("op", "add");
+        op.put("axiom_type", "subclass_of");
+        op.put("sub", ONTOLOGY_IRI + "#Foo");
+        op.put("super", ONTOLOGY_IRI + "#Animal");
+
+        for (Object bad : List.of(1.5d, 4_294_967_297L, 0,
+                ChangeSetTools.MAX_PREFLIGHT_TIMEOUT_MS + 1L)) {
+            Map<String, Object> applyArgs = new LinkedHashMap<>();
+            applyArgs.put("operations", List.of(op));
+            applyArgs.put("verify", "report");
+            applyArgs.put("timeout_ms", bad);
+            CallToolResult apply = callRegistered(ctx, "apply_changes", applyArgs,
+                    WriteTools::register);
+            assertEquals(Boolean.TRUE, apply.isError(), () -> bad + ": " + apply.content());
+            assertTrue(String.valueOf(apply.content()).contains("timeout_ms must be"),
+                    () -> bad + ": " + apply.content());
+
+            Map<String, Object> termArgs = new LinkedHashMap<>();
+            termArgs.put("terms", List.of(Map.of("name", "TimeoutProbe")));
+            termArgs.put("verify", "report");
+            termArgs.put("timeout_ms", bad);
+            CallToolResult terms = callRegistered(ctx, "create_terms", termArgs,
+                    CurationTools::register);
+            assertEquals(Boolean.TRUE, terms.isError(), () -> bad + ": " + terms.content());
+            assertTrue(String.valueOf(terms.content()).contains("timeout_ms must be"),
+                    () -> bad + ": " + terms.content());
+
+            Map<String, Object> propArgs = new LinkedHashMap<>();
+            propArgs.put("properties", List.of(Map.of("name", "TimeoutProbeProp")));
+            propArgs.put("verify", "report");
+            propArgs.put("timeout_ms", bad);
+            CallToolResult props = callRegistered(ctx, "create_properties", propArgs,
+                    CurationTools::register);
+            assertEquals(Boolean.TRUE, props.isError(), () -> bad + ": " + props.content());
+            assertTrue(String.valueOf(props.content()).contains("timeout_ms must be"),
+                    () -> bad + ": " + props.content());
+        }
+        assertEquals(axiomsBefore, ontology.getAxiomCount(),
+                "a rejected timeout_ms must reach neither the preflight nor the live ontology");
+    }
+
+    private static CallToolResult callRegistered(ToolContext ctx, String name,
+            Map<String, Object> args,
+            java.util.function.BiConsumer<ToolRegistry, ToolContext> register) {
+        ToolRegistry registry = new ToolRegistry();
+        register.accept(registry, ctx);
+        for (SyncToolSpecification spec : registry.build()) {
+            if (spec.tool().name().equals(name)) {
+                return spec.callHandler().apply(null, new CallToolRequest(name, args));
+            }
+        }
+        throw new AssertionError("no tool named " + name);
     }
 
     @Test

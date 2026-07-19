@@ -4,7 +4,7 @@
 #
 # It triggers on `workflow_run` (the "Ontology CI" validation run completing). GitHub always runs a
 # workflow_run workflow from your repository's DEFAULT branch, so a fork PR can never modify this
-# trusted code — this is the ONLY workflow that holds pull-requests: write. It downloads the
+# trusted code — this is the ONLY workflow that holds pull-requests/checks write. It downloads the
 # untrusted run's artifact as data, verifies it (integrity + an exact filename allowlist), posts the
 # PR comment, and turns red if the gate failed. It never executes anything the artifact contains.
 
@@ -24,6 +24,7 @@ jobs:
     permissions:
       contents: read
       actions: read          # download the artifact from the triggering run
+      checks: write          # publish the fixed trusted gate on the PR-head SHA
       pull-requests: write   # post/update the PR comment
     # Pin by full commit SHA in production: v-tags in hakjuoh/protege-mcp are occasionally re-cut.
     uses: hakjuoh/protege-mcp/.github/workflows/ontology-annotate.yml@v0.7.0
@@ -31,4 +32,12 @@ jobs:
       run_id: ${{ github.event.workflow_run.id }}
       producer_event: ${{ github.event.workflow_run.event }}
       producer_conclusion: ${{ github.event.workflow_run.conclusion }}
+      producer_head_sha: ${{ github.event.workflow_run.head_sha }}
       expected_workflow: Ontology CI
+      # The exact path you copied the PR (validation) workflow to — general-owl.yml / obo.yml both
+      # instruct .github/workflows/ontology-ci.yml.
+      expected_workflow_path: .github/workflows/ontology-ci.yml
+      expected_project: .protege-mcp/project.yaml
+      expected_ontology: ontology.ttl
+      expected_diff_check: false
+      expected_cli_version: '0.7.0'

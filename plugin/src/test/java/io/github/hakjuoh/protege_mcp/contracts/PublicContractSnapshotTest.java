@@ -84,7 +84,13 @@ class PublicContractSnapshotTest {
     private static final Path PROMPT_DOC = Path.of("docs", "prompts.md");
     /** Explicit review point for a future release that intentionally changes tool guidance. */
     private static final Set<String> INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V050 = Set.of(
-            "apply_changes", "load_ontology", "run_qc_suite", "save_ontology");
+            "apply_changes",
+            // list_reasoners now guarantees one row per factory even when display names collide,
+            // preserving the ids needed to disambiguate selection.
+            "list_reasoners", "load_ontology", "run_qc_suite", "save_ontology",
+            // set_reasoner now documents the shared unique-or-fail reference resolution (a
+            // version-less name must match exactly ONE installed reasoner); same accepted inputs.
+            "set_reasoner");
     /** Explicit review point for titles, output schemas, annotations, metadata, or icons. */
     private static final Set<String> INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050 = Set.of();
     /**
@@ -93,7 +99,13 @@ class PublicContractSnapshotTest {
      * the governance stage the runtime always accepted).
      */
     private static final Set<String> INTENTIONAL_ARGUMENT_DESCRIPTION_CHANGES_SINCE_V050 = Set.of(
-            "apply_changes.timeout_ms", "apply_changes.verify", "run_qc_suite.stages");
+            "apply_changes.timeout_ms", "apply_changes.verify", "run_qc_suite.stages",
+            // The verified-apply timeout_ms is now exact-bounded (1-3600000, rejected not coerced);
+            // the wire schema shape is unchanged, only the documented meaning was tightened.
+            "create_terms.timeout_ms", "create_properties.timeout_ms",
+            // The reasoner reference now documents the unique-or-fail resolution rule (a full
+            // display name pins an exact version); still a plain string, same accepted values.
+            "set_reasoner.reasoner");
     /** Explicit review point for a future release that intentionally rewrites workflow guidance. */
     private static final Set<String> INTENTIONAL_PROMPT_TEXT_CHANGES_SINCE_V050 = Set.of(
             "audit_ontology", "add_subclass_safely", "model_domain", "refactor_entity_safely",

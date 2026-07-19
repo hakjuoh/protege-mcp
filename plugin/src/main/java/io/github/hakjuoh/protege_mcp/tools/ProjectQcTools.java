@@ -19,6 +19,7 @@ import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprints;
 import io.github.hakjuoh.protege_mcp.policy.PolicyIssue;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.github.hakjuoh.protege_mcp.policy.ReasonerNames;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /** Strict policy-backed QC orchestration, shared by run_project_qc and run_qc_suite(policy_path). */
@@ -111,7 +112,8 @@ final class ProjectQcTools {
         String configuredReasoner = string(reasoning, "reasoner");
         if (stages.contains("reasoner") && configuredReasoner != null
                 && (live.selectedReasoner() == null
-                        || !configuredReasoner.equalsIgnoreCase(live.selectedReasoner()))) {
+                        || !ReasonerNames.resolveNames(configuredReasoner,
+                                List.of(live.selectedReasoner())).unique())) {
             throw new ToolArgException("Policy requires reasoner '" + configuredReasoner
                     + "' but Protégé currently has '" + (live.selectedReasoner() == null
                             ? "none" : live.selectedReasoner())

@@ -58,6 +58,23 @@ public final class HeadlessAccess {
         }
     }
 
+    /**
+     * Like {@link #over}, but {@code beforeDispatch} runs immediately before the body of every
+     * dispatch from {@code firstHookedDispatch} (1-based) onward — the seam a test needs to mutate
+     * an on-disk input BETWEEN a multi-hop tool's model hops (e.g. to pin the release gate's
+     * snapshot-drift detection). {@code dispatchCounter} receives the running dispatch count so the
+     * test can pin the expected hop structure.
+     */
+    public static OntologyAccess overHookedDispatches(OWLModelManager mm, Runnable beforeDispatch,
+            int firstHookedDispatch, AtomicInteger dispatchCounter) {
+        try {
+            return new OntologyAccess(kitOver(mm), 30_000L,
+                    new HookedGateway(beforeDispatch, firstHookedDispatch, dispatchCounter));
+        } catch (Exception e) {
+            throw new IllegalStateException("could not build a headless OntologyAccess", e);
+        }
+    }
+
     private static OWLEditorKit kitOver(OWLModelManager mm) throws Exception {
         OWLEditorKit kit = (OWLEditorKit) allocate(OWLEditorKit.class);
         setField(kit, OWLEditorKit.class, "modelManager", mm);
@@ -98,6 +115,32 @@ public final class HeadlessAccess {
             }, "headless-stalled-dispatch");
             worker.setDaemon(true);
             worker.start();
+        }
+    }
+
+    /** Gateway that runs every dispatch body inline, invoking the hook from the Nth dispatch on. */
+    private static final class HookedGateway implements OntologyAccess.EdtGateway {
+        private final Runnable beforeDispatch;
+        private final int firstHooked;
+        private final AtomicInteger dispatches;
+
+        HookedGateway(Runnable beforeDispatch, int firstHooked, AtomicInteger dispatches) {
+            this.beforeDispatch = beforeDispatch;
+            this.firstHooked = firstHooked;
+            this.dispatches = dispatches;
+        }
+
+        @Override
+        public boolean isDispatchThread() {
+            return false;
+        }
+
+        @Override
+        public void invokeLater(Runnable task) {
+            if (dispatches.incrementAndGet() >= firstHooked) {
+                beforeDispatch.run();
+            }
+            task.run();
         }
     }
 

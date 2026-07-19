@@ -44,7 +44,7 @@ import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
  */
 public final class Main {
 
-    public static final String VERSION = "0.6.1";
+    public static final String VERSION = "0.7.0";
 
     /** Windows drive-letter absolute path (e.g. {@code C:\a}); Path.of on POSIX does not flag it. */
     private static final Pattern WINDOWS_ABSOLUTE = Pattern.compile("^[A-Za-z]:[\\\\/].*");
@@ -68,7 +68,10 @@ public final class Main {
 
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(SerializationFeature.INDENT_OUTPUT)
-            .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
+            .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+            // writeValue(out, ...) must not close System.out: the trailing out.println() that
+            // terminates the JSON document with a newline runs after it.
+            .disable(com.fasterxml.jackson.core.JsonGenerator.Feature.AUTO_CLOSE_TARGET);
 
     private Main() {
     }
@@ -91,6 +94,14 @@ public final class Main {
                 case "version":
                     if (args.length == 1) {
                         out.println("protege-mcp-cli " + VERSION);
+                        return 0;
+                    }
+                    break;
+                case "--help":
+                case "-h":
+                case "help":
+                    if (args.length == 1) {
+                        out.println(usage());
                         return 0;
                     }
                     break;
@@ -139,20 +150,26 @@ public final class Main {
      * bundled reasoner, so forcing that shape would fabricate a gate result.
      */
     private static int validate(String[] args, PrintStream out) throws Exception {
-        Options opts = parse(args, Set.of("--project", "--format"), Set.of("--no-network"));
+        Options opts = parse(args, Set.of("--project", "--format"),
+                Set.of("--no-network", "--no-external"));
         String format = opts.values.getOrDefault("--format", "json");
-        ProjectPolicy policy = ProjectPolicyLoader.load(Path.of(required(opts, "--project")), null);
+        boolean noExternal = opts.flags.contains("--no-external");
+        ProjectPolicy policy = ProjectPolicyLoader.load(Path.of(required(opts, "--project")), null,
+                null, null, noExternal);
         Map<String, Object> result = policyResult(policy);
         result.put("scope", "policy_validation");
         result.put("note", QC_DEFERRED_NOTE);
         recordNoNetwork(opts, result);
+        if (noExternal) {
+            result.put("no_external_paths", true);
+        }
         switch (format) {
             case "json":
                 JSON.writeValue(out, result);
                 out.println();
                 break;
             case "markdown":
-                out.println(policyMarkdown(policy, opts.flags.contains("--no-network")));
+                out.println(policyMarkdown(policy, opts.flags.contains("--no-network"), noExternal));
                 break;
             case "junit":
             case "sarif":
@@ -167,10 +184,22 @@ public final class Main {
         return exitFor(policy);
     }
 
-    /** The shared policy-validation JSON body (unchanged shape from the 0.6.1 validate-policy output). */
+    /**
+     * The shared policy-validation JSON body (0.6.1 shape). One honesty refinement:
+     * {@code policy_loaded} reports whether the policy actually reached evaluation (a digest
+     * exists), so a missing or unparseable file — which the loader deliberately models as a
+     * loaded-invalid result so plugin callers cannot silently fall back — no longer prints the
+     * contradictory {@code policy_loaded:true} next to {@code policy_not_found}/{@code yaml_invalid}.
+     * This aligns with the exit-code contract, where those states are {@code 2} (never evaluated).
+     */
+    /** Whether the policy actually reached evaluation (see {@link #policyResult}). */
+    private static boolean reportedLoaded(ProjectPolicy policy) {
+        return policy.loaded() && policy.digest() != null;
+    }
+
     private static Map<String, Object> policyResult(ProjectPolicy policy) {
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("policy_loaded", policy.loaded());
+        result.put("policy_loaded", reportedLoaded(policy));
         result.put("valid", policy.valid());
         result.put("policy_path", policy.path() == null ? null : policy.path().toString());
         result.put("project_root", policy.projectRoot() == null ? null : policy.projectRoot().toString());
@@ -182,11 +211,11 @@ public final class Main {
         return result;
     }
 
-    private static String policyMarkdown(ProjectPolicy policy, boolean noNetwork) {
+    private static String policyMarkdown(ProjectPolicy policy, boolean noNetwork, boolean noExternal) {
         StringBuilder md = new StringBuilder();
         md.append("# Policy validation: ").append(policy.valid() ? "valid" : "invalid").append("\n\n");
         md.append("- Scope: `policy_validation`\n");
-        md.append("- Policy loaded: ").append(policy.loaded()).append("\n");
+        md.append("- Policy loaded: ").append(reportedLoaded(policy)).append("\n");
         md.append("- Policy path: ").append(policy.path() == null ? "_none_" : "`" + policy.path() + "`")
                 .append("\n");
         md.append("- Project root: ")
@@ -196,6 +225,9 @@ public final class Main {
                 .append(policy.digest() == null ? "_none_" : "`" + policy.digest() + "`").append("\n");
         if (noNetwork) {
             md.append("- Network: `deny` (--no-network is a redundant affirmation; ADR 0005)\n");
+        }
+        if (noExternal) {
+            md.append("- External paths: `deny` (--no-external caller constraint)\n");
         }
         md.append("\n> ").append(QC_DEFERRED_NOTE).append("\n\n");
         appendIssueList(md, policy, "error", "Errors");
@@ -249,8 +281,8 @@ public final class Main {
         // omitted closure stays visible.
         List<String> leftUnresolved = new ArrayList<>();
         List<String> rightUnresolved = new ArrayList<>();
-        OWLOntology leftOntology = loadDocument(left.document(), leftUnresolved);
-        OWLOntology rightOntology = loadDocument(right.document(), rightUnresolved);
+        OWLOntology leftOntology = loadDocument(left, leftUnresolved);
+        OWLOntology rightOntology = loadDocument(right, rightUnresolved);
         Map<String, Object> result = SemanticDiffService.diff(leftOntology, rightOntology, false, 100,
                 rightUnresolved);
         result.put("left_unresolved_imports", List.copyOf(leftUnresolved));
@@ -272,8 +304,13 @@ public final class Main {
         return 0;
     }
 
-    /** A diff operand: the ontology document to load, plus optional resolved-from-manifest metadata. */
-    private record ResolvedOperand(Path document, Map<String, Object> manifest) {
+    /**
+     * A diff operand: the ontology document to load, plus optional resolved-from-manifest metadata.
+     * For a manifest operand, {@code verifiedBytes} carries the exact byte array the sha256/length
+     * verification consumed, and the load parses those bytes — re-reading the path would let a
+     * concurrent writer swap the content between verification and diff.
+     */
+    private record ResolvedOperand(Path document, Map<String, Object> manifest, byte[] verifiedBytes) {
     }
 
     /**
@@ -286,11 +323,11 @@ public final class Main {
      */
     private static ResolvedOperand resolveOperand(Path path) throws IOException {
         if (!isJsonName(path)) {
-            return new ResolvedOperand(path, null);
+            return new ResolvedOperand(path, null, null);
         }
         Map<String, Object> manifest = readManifestOrNull(path);
         if (manifest == null) {
-            return new ResolvedOperand(path, null);
+            return new ResolvedOperand(path, null, null);
         }
         return resolveManifest(path, manifest);
     }
@@ -309,13 +346,25 @@ public final class Main {
      */
     static final long MAX_MANIFEST_BYTES = 1_048_576L;
 
+    /** The manifest-verified primary artifact is diffed from ONE in-memory array (JVM array bound). */
+    static final long MAX_VERIFIED_ARTIFACT_BYTES = Integer.MAX_VALUE - 8L;
+
     private static Map<String, Object> readManifestOrNull(Path path) {
         Map<String, Object> parsed;
         try {
-            if (!Files.isRegularFile(path) || Files.size(path) > MAX_MANIFEST_BYTES) {
+            if (!Files.isRegularFile(path)) {
                 return null;
             }
-            parsed = ContractJson.mapper().readValue(Files.readAllBytes(path),
+            // ONE bounded read: a size-then-read pair would let a concurrently growing .json bypass
+            // the manifest-probe cap between the two calls.
+            byte[] data;
+            try (var in = Files.newInputStream(path)) {
+                data = in.readNBytes((int) MAX_MANIFEST_BYTES + 1);
+            }
+            if (data.length > MAX_MANIFEST_BYTES) {
+                return null;
+            }
+            parsed = ContractJson.mapper().readValue(data,
                     new TypeReference<LinkedHashMap<String, Object>>() { });
         } catch (IOException | RuntimeException notAManifest) {
             // A .json that is not parseable JSON is left to the OWLAPI document loader (e.g. RDF/JSON),
@@ -327,6 +376,11 @@ public final class Main {
 
     private static ResolvedOperand resolveManifest(Path manifestPath, Map<String, Object> manifest)
             throws IOException {
+        if (!(manifest.get("manifest_version") instanceof Integer version) || version != 1) {
+            throw new IllegalStateException(
+                    "release manifest_version must be the supported integer value 1: "
+                            + manifestPath);
+        }
         Path manifestDir = manifestPath.toAbsolutePath().normalize().getParent();
         if (manifestDir == null) {
             throw new IllegalStateException("release manifest has no parent directory: " + manifestPath);
@@ -341,8 +395,28 @@ public final class Main {
         }
         String artifactPath = str(primary.get("path"));
         String recordedSha = str(primary.get("sha256"));
+        Object recordedBytes = primary.get("bytes");
+        long recorded = recordedBytes instanceof Integer || recordedBytes instanceof Long
+                ? ((Number) recordedBytes).longValue() : -1L;
+        if (recorded < 0 || recorded > MAX_VERIFIED_ARTIFACT_BYTES) {
+            throw new IllegalStateException("release manifest byte-length mismatch for '"
+                    + artifactPath + "': the recorded length (" + recordedBytes
+                    + ") is missing, not an integer, or exceeds the in-memory verification bound.");
+        }
         Path resolved = authorizeArtifact(manifestDir, artifactPath);
-        String actualSha = ArtifactStore.sha256(resolved);
+        // ONE bounded read backs the sha256, the byte-length check, AND the diff parse below —
+        // hashing the path and re-reading it later would attest a hash for content the diff never
+        // saw; one extra byte proves a longer file without buffering it.
+        byte[] verifiedBytes;
+        try (var in = Files.newInputStream(resolved)) {
+            verifiedBytes = in.readNBytes((int) recorded + 1);
+        }
+        if (verifiedBytes.length != recorded) {
+            throw new IllegalStateException("release manifest byte-length mismatch for '"
+                    + artifactPath + "': the manifest records " + recorded
+                    + " bytes but the file does not match.");
+        }
+        String actualSha = ArtifactStore.sha256(verifiedBytes);
         if (recordedSha == null || !actualSha.equalsIgnoreCase(recordedSha)) {
             throw new IllegalStateException("release manifest sha256 mismatch for '" + artifactPath
                     + "': the manifest records " + recordedSha + " but the file hashes to " + actualSha
@@ -352,7 +426,8 @@ public final class Main {
         metadata.put("version_iri", manifest.get("version_iri"));
         metadata.put("artifact_path", artifactPath);
         metadata.put("sha256_verified", true);
-        return new ResolvedOperand(resolved, metadata);
+        metadata.put("bytes_verified", true);
+        return new ResolvedOperand(resolved, metadata, verifiedBytes);
     }
 
     /**
@@ -406,7 +481,9 @@ public final class Main {
         return real;
     }
 
-    private static OWLOntology loadDocument(Path path, List<String> unresolvedOut) throws Exception {
+    private static OWLOntology loadDocument(ResolvedOperand operand, List<String> unresolvedOut)
+            throws Exception {
+        Path path = operand.document();
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         // Map every import IRI to ONE private empty placeholder document, so an untrusted checkout
         // cannot make this asserted-only CLI contact localhost, cloud metadata, the public network,
@@ -428,8 +505,15 @@ public final class Main {
             OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                     .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                     .setFollowRedirects(false);
-            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(
-                    new FileDocumentSource(path.toFile()), config);
+            // A manifest-verified operand parses the EXACT bytes its sha256 covered; a plain
+            // document operand streams from the file as before.
+            org.semanticweb.owlapi.io.OWLOntologyDocumentSource source =
+                    operand.verifiedBytes() != null
+                            ? new org.semanticweb.owlapi.io.StreamDocumentSource(
+                                    new java.io.ByteArrayInputStream(operand.verifiedBytes()),
+                                    IRI.create(path.toUri()))
+                            : new FileDocumentSource(path.toFile());
+            OWLOntology ontology = manager.loadOntologyFromOntologyDocument(source, config);
             // Every declared import was deliberately satisfied WITHOUT fetching its axioms; report
             // them all, sorted, so the omitted closure stays visible in the output.
             ontology.getImportsDeclarations().stream()
@@ -475,8 +559,9 @@ public final class Main {
         return String.join("\n",
                 "Usage:",
                 "  protege-mcp-cli --version",
+                "  protege-mcp-cli --help",
                 "  protege-mcp-cli validate-policy --project FILE",
-                "  protege-mcp-cli validate --project FILE [--format json|markdown] [--no-network]",
+                "  protege-mcp-cli validate --project FILE [--format json|markdown] [--no-network] [--no-external]",
                 "  protege-mcp-cli diff --left LEFT --right RIGHT [--check] [--no-network]",
                 "      LEFT/RIGHT is an ontology document or a release manifest.json (resolved to its",
                 "      primary ontology artifact after sha256 + containment verification).",

@@ -16,7 +16,7 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Installation](https://hakjuoh.github.io/protege-mcp/installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](https://hakjuoh.github.io/protege-mcp/connect/) | The server model (ports, OAuth vs. token) + Claude Code, Codex CLI, VS Code, Claude Desktop recipes. |
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
-| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 83 tools by category, including a summary of the 12 tools added in v0.6.0. |
+| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 83 tools by category, including the five tools added in v0.7.0. |
 | [Prompts](https://hakjuoh.github.io/protege-mcp/prompts/) | The 11 guided workflows available to MCP clients. |
 | [Project policy & QC](https://hakjuoh.github.io/protege-mcp/project-policy.html) | Policy v1 discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [RO-Crate & RDFC](https://hakjuoh.github.io/protege-mcp/interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
@@ -97,8 +97,8 @@ mvn clean package
 
 The reactor produces `plugin/target/protege-mcp-<version>.jar` (the self-contained OSGi plugin) and
 `cli/target/protege-mcp-cli-<version>-all.jar` (an executable headless Java 17 CLI). The CLI supports
-`--version`, `validate-policy --project FILE`, and asserted `diff --left FILE --right FILE` without a
-Protégé installation. See the
+`--version`, `validate-policy --project FILE`, scoped `validate`, and asserted/manifest-backed
+`diff --left FILE --right FILE [--check]` without a Protégé installation. See the
 [Contributing guide](https://hakjuoh.github.io/protege-mcp/contributing.html) for project layout and how
 to add a tool.
 

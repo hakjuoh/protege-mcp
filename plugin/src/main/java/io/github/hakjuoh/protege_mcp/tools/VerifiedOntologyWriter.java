@@ -1,7 +1,9 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
-import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.channels.FileChannel;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -9,7 +11,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -260,14 +261,67 @@ final class VerifiedOntologyWriter {
     /** True when re-serializing {@code reloaded} reproduces the artifact byte-for-byte. */
     private static boolean reserializeMatches(OWLOntology reloaded, OWLDocumentFormat format,
             Path artifact) {
-        try {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
+        // Compare as the storer emits bytes. The previous ByteArrayOutputStream + readAllBytes
+        // implementation retained two full copies of a release-sized ontology and allowed a large
+        // verified save to exhaust the Protégé heap merely to classify the round trip.
+        try (ComparingOutputStream out = new ComparingOutputStream(
+                new BufferedInputStream(Files.newInputStream(artifact)))) {
             reloaded.getOWLOntologyManager().saveOntology(reloaded, format,
                     new StreamDocumentTarget(out));
-            return Arrays.equals(out.toByteArray(), Files.readAllBytes(artifact));
+            return out.matchesExactly();
         } catch (OWLOntologyStorageException | IOException | RuntimeException e) {
             // Cannot prove byte stability → fall back to the weaker axiom-identical class.
             return false;
+        }
+    }
+
+    /** Fixed-memory byte comparator used as the reserialization target. */
+    private static final class ComparingOutputStream extends OutputStream {
+        private final InputStream expected;
+        private final byte[] expectedBuffer = new byte[8192];
+        private boolean mismatch;
+
+        ComparingOutputStream(InputStream expected) {
+            this.expected = expected;
+        }
+
+        @Override
+        public void write(int value) throws IOException {
+            if (!mismatch && expected.read() != (value & 0xff)) {
+                mismatch = true;
+            }
+        }
+
+        @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            if (mismatch) {
+                return;
+            }
+            int compared = 0;
+            while (compared < length) {
+                int wanted = Math.min(expectedBuffer.length, length - compared);
+                int got = expected.readNBytes(expectedBuffer, 0, wanted);
+                if (got != wanted) {
+                    mismatch = true;
+                    return;
+                }
+                for (int i = 0; i < wanted; i++) {
+                    if (bytes[offset + compared + i] != expectedBuffer[i]) {
+                        mismatch = true;
+                        return;
+                    }
+                }
+                compared += wanted;
+            }
+        }
+
+        boolean matchesExactly() throws IOException {
+            return !mismatch && expected.read() == -1;
+        }
+
+        @Override
+        public void close() throws IOException {
+            expected.close();
         }
     }
 

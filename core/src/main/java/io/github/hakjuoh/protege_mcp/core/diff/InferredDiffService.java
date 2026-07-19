@@ -158,6 +158,13 @@ public final class InferredDiffService {
             }
         } catch (RuntimeException e) {
             errors.put("satisfiability", "getUnsatisfiableClasses: " + message(e));
+            // Bottom-node exclusion is part of the hierarchy/equivalence/disjointness grammar. If
+            // the reasoner cannot identify unsatisfiable classes, those categories cannot safely
+            // distinguish real entailments from the explosion around owl:Nothing. Fail the dependent
+            // categories closed instead of publishing plausible-looking partial results.
+            errors.put("subsumption", "skipped: satisfiability unavailable");
+            errors.put("equivalence", "skipped: satisfiability unavailable");
+            errors.put("disjointness", "skipped: satisfiability unavailable");
         }
 
         // The taxonomy is captured over the side's FULL named signature and only restricted to Σ
@@ -421,7 +428,10 @@ public final class InferredDiffService {
         if (candidates.truncated()) {
             disjointness.put("candidates_truncated", true);
         }
-        if (leftDisjointness == null || rightDisjointness == null) {
+        String disjointnessError = firstError(left, right, "disjointness");
+        if (disjointnessError != null) {
+            disjointness.put("error", disjointnessError);
+        } else if (leftDisjointness == null || rightDisjointness == null) {
             disjointness.put("error", "disjointness: per-side verdicts unavailable ("
                     + (leftDisjointness == null ? "left" : "right") + " side)");
         } else {

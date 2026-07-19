@@ -130,10 +130,8 @@ public final class CurationTools {
                         return WriteTools.write(ctx, summary, mm -> asResult(
                                 createTermsBatch(mm, termSpecs, strict, defaultNamespace, defaultDefProp)));
                     }
-                    int timeout = Tools.optInt(a, "timeout_ms", 60_000);
-                    if (timeout <= 0) {
-                        timeout = 60_000;
-                    }
+                    Integer requestedTimeout = ChangeSetTools.requestedTimeout(a);
+                    int timeout = requestedTimeout == null ? 60_000 : requestedTimeout;
                     return ApplyVerify.verifiedApply(ctx, verify, timeout, summary, "create_terms",
                             mm -> createTermsBatch(mm, termSpecs, strict, defaultNamespace, defaultDefProp));
                 });
@@ -197,10 +195,8 @@ public final class CurationTools {
                         return WriteTools.write(ctx, summary, mm -> asResult(
                                 createPropertiesBatch(mm, specs, strict, defNs, defDef, defType)));
                     }
-                    int timeout = Tools.optInt(a, "timeout_ms", 60_000);
-                    if (timeout <= 0) {
-                        timeout = 60_000;
-                    }
+                    Integer requestedTimeout = ChangeSetTools.requestedTimeout(a);
+                    int timeout = requestedTimeout == null ? 60_000 : requestedTimeout;
                     return ApplyVerify.verifiedApply(ctx, verify, timeout, summary, "create_properties",
                             mm -> createPropertiesBatch(mm, specs, strict, defNs, defDef, defType));
                 });

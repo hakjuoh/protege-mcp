@@ -623,6 +623,55 @@ final class DirectAccessPolicy {
         }
     }
 
+    /**
+     * Re-derive the loaded-but-invalid discovered policy behind a resolve()-time refusal, or
+     * rethrow. Shared by the explicit-path bootstrap surfaces (the import-lock tools and
+     * save_ontology policy_bootstrap): a capability or policy-resolution refusal is never
+     * downgraded into a bootstrap.
+     */
+    static ProjectPolicy verifiedInvalidDiscovery(ToolContext ctx, McpSyncServerExchange exchange,
+            ToolArgException refusal) {
+        requireCapability(exchange, PROJECT_READ);
+        RevisionTools.PolicyState state = RevisionTools.resolvePolicy(ctx, null);
+        if (state.error() != null || !state.policy().loaded() || state.policy().valid()) {
+            throw refusal;
+        }
+        return state.policy();
+    }
+
+    /**
+     * Containment-only authorization for an explicit-path bootstrap while the discovered policy is
+     * loaded but invalid, so a policy-referenced artifact (the declared lockfile, the root
+     * artifact) can be created at all. Capability and canonical project_root containment are still
+     * enforced; policy-granted widening ({@code filesystem.allow_external_paths}) is deliberately
+     * NOT honored — an invalid policy cannot be trusted to widen access, only to name its root.
+     * {@code pathNoun} names the requesting surface in error messages (e.g. "lock", "save").
+     */
+    static Path bootstrapExplicitPath(ProjectPolicy policy, McpSyncServerExchange exchange,
+            String configured, boolean write, String pathNoun) {
+        requireCapability(exchange, write ? PROJECT_WRITE : PROJECT_READ);
+        Path root = policy.projectRoot();
+        if (root == null) {
+            throw new ToolArgException("The discovered project policy is invalid and names no "
+                    + "canonical project_root, so an explicit " + pathNoun + " path cannot be "
+                    + "contained. Fix the policy first (see validate_project_policy).");
+        }
+        final Path raw;
+        try {
+            raw = Path.of(configured);
+        } catch (InvalidPathException e) {
+            throw new ToolArgException("Invalid filesystem path '" + configured + "': "
+                    + e.getMessage());
+        }
+        Path canonical = canonicalCandidate(
+                (raw.isAbsolute() ? raw : root.resolve(raw)).normalize());
+        if (!canonical.startsWith(root)) {
+            throw new ToolArgException("Path is outside project_root and the invalid project policy "
+                    + "cannot authorize external paths: " + canonical);
+        }
+        return canonical;
+    }
+
     private static boolean looksLikeWindowsPath(String value) {
         return value.length() >= 2 && Character.isLetter(value.charAt(0)) && value.charAt(1) == ':';
     }

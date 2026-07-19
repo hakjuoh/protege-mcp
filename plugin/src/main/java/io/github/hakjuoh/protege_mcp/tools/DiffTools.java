@@ -389,6 +389,29 @@ public final class DiffTools {
     static OWLOntology loadDocument(String source, List<OntologyDocumentTools.ImportMapping> mappings,
             Collection<String> unresolvedOut, DirectAccessPolicy.NetworkRule networkRule) {
         String normalized = OntologyDocumentTools.normalizeSource(source);
+        return loadDocument(OntologyDocumentTools.documentSource(normalized), normalized, mappings,
+                unresolvedOut, networkRule);
+    }
+
+    /**
+     * Load a comparison document from ALREADY-READ bytes. TOCTOU discipline: when the caller has
+     * verified a digest over exactly these bytes, the parse must consume them — never a re-read of
+     * the path, which a concurrent writer could swap between verification and load. The path still
+     * anchors the sibling-catalog lookup and relative import resolution.
+     */
+    static OWLOntology loadDocument(byte[] documentBytes, java.nio.file.Path documentPath,
+            List<OntologyDocumentTools.ImportMapping> mappings, Collection<String> unresolvedOut,
+            DirectAccessPolicy.NetworkRule networkRule) {
+        return loadDocument(new org.semanticweb.owlapi.io.StreamDocumentSource(
+                        new java.io.ByteArrayInputStream(documentBytes),
+                        org.semanticweb.owlapi.model.IRI.create(documentPath.toUri())),
+                documentPath.toString(), mappings, unresolvedOut, networkRule);
+    }
+
+    private static OWLOntology loadDocument(
+            org.semanticweb.owlapi.io.OWLOntologyDocumentSource documentSource, String normalized,
+            List<OntologyDocumentTools.ImportMapping> mappings, Collection<String> unresolvedOut,
+            DirectAccessPolicy.NetworkRule networkRule) {
         OWLOntologyManager manager = OwlManagers.create();
         manager.addMissingImportListener(
                 event -> unresolvedOut.add(event.getImportedOntologyURI().toString()));
@@ -401,8 +424,7 @@ public final class DiffTools {
                         OntologyDocumentTools.UnsupportedImportFallback.install(manager)) {
             OntologyDocumentTools.addWorkspaceImportMappers(manager, mappings, blocker);
             OntologyDocumentTools.addFolderCatalogMapper(manager, normalized, blocker);
-            OWLOntology loaded = manager.loadOntologyFromOntologyDocument(
-                    OntologyDocumentTools.documentSource(normalized), config);
+            OWLOntology loaded = manager.loadOntologyFromOntologyDocument(documentSource, config);
             // Same closing steps as load_ontology/merge: restore fallback-satisfied IRIs (an
             // unsupported scheme such as a URN) to the caller's unresolved list, then apply the
             // policy verdict — so all three document loaders report the same structured diagnostic

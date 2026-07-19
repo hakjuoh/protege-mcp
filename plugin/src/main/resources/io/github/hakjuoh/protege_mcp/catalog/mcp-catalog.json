@@ -772,7 +772,7 @@
         },
         "timeout_ms" : {
           "type" : "integer",
-          "description" : "Time budget in ms for the isolated preflight gate. Default 60000."
+          "description" : "Time budget in ms for the isolated preflight gate (1-3600000; default 60000). With a policy it can only tighten the policy's reasoning.timeout_ms; it never extends it. With verify=report|rollback the value is exact-validated (fractional or out-of-range values are rejected, never coerced); with verify=none no preflight runs and the argument is ignored."
         }
       },
       "required" : [ "operations" ],
@@ -850,6 +850,10 @@
           "type" : "string",
           "enum" : [ "warn", "fail" ],
           "description" : "How to handle a target format that cannot represent the ontology without loss (default warn): 'warn' still saves and adds lossy_format_warning/obo_compatibility to the result; 'fail' refuses before writing with error_code=lossy_format_refused and leaves the target unchanged. Applies to a single-ontology save (ignored with all=true)."
+        },
+        "policy_bootstrap" : {
+          "type" : "boolean",
+          "description" : "Explicitly requested invalid-policy bootstrap for THIS save (default false). When the DISCOVERED project policy is loaded but still invalid (e.g. its declared root_artifact does not exist yet), a normal explicit-path save is refused fail-closed; with policy_bootstrap=true the save is instead authorized by the same containment-only rule as the documented import-lock bootstrap — capability-checked and confined to the invalid policy's canonical project_root, with filesystem.allow_external_paths deliberately NOT honored — so the policy-referenced artifact (e.g. the root_artifact) can be created at all. Requires an explicit 'path'. The result records what happened under 'policy_bootstrap' (used=true with the invalid policy's path and error codes, or used=false when the policy was valid/absent and normal authorization applied)."
         }
       },
       "additionalProperties" : false
@@ -1176,12 +1180,20 @@
             "description" : "QC stage."
           }
         },
+        "timeout_ms" : {
+          "type" : "integer",
+          "minimum" : 1,
+          "maximum" : 3600000,
+          "description" : "Time budget in ms for the isolated preflight gate (default: the policy's reasoning.timeout_ms, 120000 without one). With a policy this can only tighten its reasoning.timeout_ms ceiling; retained for rebase_change_set replays."
+        },
         "include_impact" : {
           "type" : "string",
           "description" : "asserted (default) or none. Inferred impact is provided by semantic_diff rather than this bounded preview slice."
         },
         "ttl_seconds" : {
           "type" : "integer",
+          "minimum" : 1,
+          "maximum" : 3600,
           "description" : "Preview lifetime in seconds (default 900, max 3600)."
         },
         "lock_mode" : {
@@ -1473,7 +1485,7 @@
         },
         "timeout_ms" : {
           "type" : "integer",
-          "description" : "Max wait in ms for EACH classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000."
+          "description" : "Max wait in ms for EACH classification the verify pass runs (1 on a warm reasoner, 2 on a cold one); 1-3600000, default 60000. With verify=report|rollback or preview=true the value is exact-validated (fractional or out-of-range values are rejected, never coerced); with preview=true it is the isolated preflight budget instead, whose omitted default is the policy's reasoning.timeout_ms (120000 without one); ignored with verify=none and no preview."
         },
         "preview" : {
           "type" : "boolean",
@@ -1746,7 +1758,7 @@
         },
         "timeout_ms" : {
           "type" : "integer",
-          "description" : "Max wait in ms for EACH classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). Default 60000."
+          "description" : "Max wait in ms for EACH classification the verify pass runs (1 on a warm reasoner, 2 on a cold one); 1-3600000, default 60000. With verify=report|rollback or preview=true the value is exact-validated (fractional or out-of-range values are rejected, never coerced); with preview=true it is the isolated preflight budget instead, whose omitted default is the policy's reasoning.timeout_ms (120000 without one); ignored with verify=none and no preview."
         },
         "preview" : {
           "type" : "boolean",
@@ -2710,7 +2722,7 @@
         },
         "reasoner" : {
           "type" : "string",
-          "description" : "Installed Protégé reasoner name or id used to classify both sides in mode=inferred|both (default: the current Protégé selection; see list_reasoners)."
+          "description" : "Installed Protégé reasoner name or id used to classify both sides in mode=inferred|both (default: the current Protégé selection; see list_reasoners). A version-less name must resolve to exactly one installed reasoner, like set_reasoner."
         },
         "timeout_ms" : {
           "type" : "integer",
@@ -2734,7 +2746,7 @@
     }
   }, {
     "name" : "analyze_change_impact",
-    "description" : "Read-only SYNTACTIC impact analysis of a change over the current workspace. Analyzes exactly one input form: change_set_id (a cached preview from preview_change_set or create_terms/create_properties preview=true — its stored normalized delta, with the preview's base_revision echoed) OR an asserted diff pair (left, default active, against a loaded right ontology or a privately loaded right_document, like diff_ontologies). Reports, each with exact counts and bounded samples (limit): directly_affected (every IRI in the delta axioms' signatures — including annotation subjects/IRI values — with per-IRI added/removed axiom counts, plus owning-module attribution via the policy's modules[].owned_namespaces when policy_path is given, else available:false), referencing_axioms (workspace axioms that mention an affected IRI but are NOT part of the delta), downstream_terms (a bounded breadth-first co-occurrence sweep from the affected entities, analysis=syntactic, with disclosed depth/size caps and search_truncated), foreign_reaxiomatization (delta axioms whose SUBJECT entity is declared in an imported closure member rather than the active ontology — the import-layering notion of validate_governance), deprecated_terms_in_use (owl:deprecated=true terms referenced by the delta or its referencing axioms), validation_references (plain-substring, match=textual occurrences of affected IRIs in the policy-resolved invariants/SHACL/CQ assets and the in-workspace CQ stores; available:false without policy_path), public_api_terms (available:false — policy v1 does not yet declare public API terms), and external_mappings (available:false — mapping management ships with the M6 milestone). The whole result is analysis=syntactic: it proves NO logical impact, and impact driven by an inferred (reasoner-computed) delta is deliberately deferred — only the asserted projection of a change is analyzed; run semantic_diff mode=inferred|both for entailment-level evidence. include_imports widens both the pair diff scope and the workspace reference scan; the analyzed change-set entry is claimed for the duration of the (read-only) analysis and remains cached afterwards.",
+    "description" : "Read-only SYNTACTIC impact analysis of a change. Analyzes exactly one input form: change_set_id (a cached preview from preview_change_set or create_terms/create_properties preview=true — its stored normalized delta, with the preview's base_revision echoed; reference scans run over the current workspace) OR an asserted diff pair (left, default active, against a loaded right ontology or a privately loaded right_document, like diff_ontologies; reference scans run over the compared ontologies' union, independent of whatever is active). Reports, each with exact counts and bounded samples (limit): directly_affected (every IRI in the delta axioms' signatures — including annotation subjects/IRI values — with per-IRI added/removed axiom counts, plus owning-module attribution via the policy's modules[].owned_namespaces when policy_path is given, else available:false), referencing_axioms (in-scope axioms that mention an affected IRI but are NOT part of the delta), downstream_terms (a bounded breadth-first co-occurrence sweep from the affected entities, analysis=syntactic, with disclosed depth/size caps and search_truncated), foreign_reaxiomatization (delta axioms whose SUBJECT entity is declared in an imported closure member rather than an analyzed root ontology — the import-layering notion of validate_governance; both compared sides' closures contribute in the pair form), deprecated_terms_in_use (owl:deprecated=true terms referenced by the delta or its referencing axioms), validation_references (plain-substring, match=textual occurrences of affected IRIs in the policy-resolved invariants/SHACL/CQ assets and the in-workspace CQ stores; available:false without policy_path), public_api_terms (available:false — policy v1 does not yet declare public API terms), and external_mappings (available:false — mapping management ships with the M6 milestone). The whole result is analysis=syntactic: it proves NO logical impact, and impact driven by an inferred (reasoner-computed) delta is deliberately deferred — only the asserted projection of a change is analyzed; run semantic_diff mode=inferred|both for entailment-level evidence. include_imports widens both the pair diff scope and the reference scan; the analyzed change-set entry is claimed for the duration of the (read-only) analysis and remains cached afterwards.",
     "input_schema" : {
       "type" : "object",
       "properties" : {
@@ -3149,20 +3161,20 @@
     }
   }, {
     "name" : "list_reasoners",
-    "description" : "List the reasoner plugins installed in Protégé and mark the one currently selected. Use set_reasoner to change it, then run_reasoner to classify.",
+    "description" : "List every reasoner factory installed in Protégé and mark the one currently selected. Factories with the same display name remain separate so their ids can disambiguate set_reasoner; then call run_reasoner to classify.",
     "input_schema" : {
       "type" : "object",
       "additionalProperties" : false
     }
   }, {
     "name" : "set_reasoner",
-    "description" : "Select the reasoner Protégé will use, by id or name (see list_reasoners). This does not classify — call run_reasoner afterwards.",
+    "description" : "Select the reasoner Protégé will use, by id or name (see list_reasoners). A version-less name (e.g. 'HermiT') resolves against the installed reasoners and is used only when it matches exactly ONE — zero or several matches fail, with ambiguous candidates listed as name [factory id]; a full display name (e.g. 'HermiT 1.4.3.456') or factory id must match exactly. Policy reasoning.reasoner uses the same name-resolution rule but is name-only; semantic_diff also accepts ids. This does not classify — call run_reasoner afterwards.",
     "input_schema" : {
       "type" : "object",
       "properties" : {
         "reasoner" : {
           "type" : "string",
-          "description" : "Reasoner id or name (see list_reasoners)."
+          "description" : "Reasoner id or name (see list_reasoners). A version-less name must resolve to exactly one installed reasoner; a full display name pins an exact version."
         }
       },
       "required" : [ "reasoner" ],
@@ -3725,6 +3737,11 @@
           "description" : "Provenance posture for remote-backed closure members: deny (default — a non-local member is an imports.remote_backed error) or allow (kept as a recorded network_caveat). allow never overrides a policy network deny.",
           "enum" : [ "deny", "allow" ]
         },
+        "lock_mode" : {
+          "type" : "string",
+          "description" : "Import-lock verification: ignore (default), verify when a lock exists, or required (missing lock is an error). A locked policy always verifies.",
+          "enum" : [ "ignore", "verify", "required" ]
+        },
         "baseline_manifest" : {
           "type" : "string",
           "description" : "Optional path to a prior release manifest.json to compare against (asserted-axiom diff only; inferred baseline diff is deferred). Read with project containment."
@@ -3750,6 +3767,11 @@
           "type" : "string",
           "description" : "Provenance posture for remote-backed closure members: deny (default) or allow (recorded as a caveat). allow never overrides a policy network deny.",
           "enum" : [ "deny", "allow" ]
+        },
+        "lock_mode" : {
+          "type" : "string",
+          "description" : "Import-lock verification: ignore (default), verify when a lock exists, or required (missing lock is an error). A locked policy always verifies.",
+          "enum" : [ "ignore", "verify", "required" ]
         },
         "baseline_manifest" : {
           "type" : "string",

@@ -120,6 +120,8 @@ final class FakeModelManager {
                     return ontology;
                 case "getActiveOntologies":
                     return ontology.getImportsClosure();
+                case "getOntologies":
+                    return ontology.getOWLOntologyManager().getOntologies();
                 case "getOWLOntologyManager":
                     return ontology.getOWLOntologyManager();
                 case "getOWLEntityFinder":

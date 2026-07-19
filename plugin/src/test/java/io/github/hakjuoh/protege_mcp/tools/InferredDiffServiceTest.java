@@ -284,6 +284,36 @@ class InferredDiffServiceTest {
     }
 
     @Test
+    void missingSatisfiabilityVerdictFailsBottomDependentCategoriesClosed() throws Exception {
+        Fixture left = new Fixture();
+        left.declare("A");
+        left.declare("B");
+        left.disjoint("A", "B");
+        Fixture right = new Fixture();
+        right.declare("A");
+        right.declare("B");
+        right.disjoint("A", "B");
+        Sigma sigma = sigma("A", "B");
+        Evaluation leftEval = evaluate(left, sigma);
+        OWLReasoner throwing = throwingOnGetUnsatisfiableClasses(right.reasoner());
+        Evaluation rightEval;
+        try {
+            rightEval = InferredDiffService.evaluate(right.ontology, throwing, sigma, NO_BUDGET);
+        } finally {
+            right.dispose();
+        }
+        Candidates candidates = InferredDiffService.disjointnessCandidates(leftEval, rightEval, 10);
+
+        Map<String, Object> result = InferredDiffService.compare(leftEval, rightEval,
+                Map.of(), Map.of(), candidates, 25);
+
+        assertTrue(((Map<?, ?>) result.get("satisfiability")).containsKey("error"));
+        assertTrue(((Map<?, ?>) result.get("subsumption")).containsKey("error"));
+        assertTrue(((Map<?, ?>) result.get("equivalence")).containsKey("error"));
+        assertTrue(((Map<?, ?>) result.get("disjointness")).containsKey("error"));
+    }
+
+    @Test
     void resultsAreDeterministicAcrossRuns() throws Exception {
         Map<String, Object> first = richComparison();
         Map<String, Object> second = richComparison();
@@ -470,6 +500,17 @@ class InferredDiffServiceTest {
                 new Class<?>[] { OWLReasoner.class }, (proxy, method, args) -> {
                     if ("getTypes".equals(method.getName())) {
                         throw new UnsupportedOperationException("getTypes is not supported");
+                    }
+                    return invoke(delegate, method, args);
+                });
+    }
+
+    private static OWLReasoner throwingOnGetUnsatisfiableClasses(OWLReasoner delegate) {
+        return (OWLReasoner) Proxy.newProxyInstance(InferredDiffServiceTest.class.getClassLoader(),
+                new Class<?>[] { OWLReasoner.class }, (proxy, method, args) -> {
+                    if ("getUnsatisfiableClasses".equals(method.getName())) {
+                        throw new UnsupportedOperationException(
+                                "getUnsatisfiableClasses is not supported");
                     }
                     return invoke(delegate, method, args);
                 });

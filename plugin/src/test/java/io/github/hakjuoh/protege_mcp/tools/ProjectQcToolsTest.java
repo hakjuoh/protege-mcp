@@ -372,6 +372,41 @@ class ProjectQcToolsTest {
     }
 
     @Test
+    void versionlessPolicyReasonerPassesThePreGateAgainstAVersionedSelection(@TempDir Path temp)
+            throws Exception {
+        // The pre-gate uses the shared unique-or-fail resolution, not literal name equality: a
+        // policy naming 'HermiT' runs against the selected install 'HermiT 1.4.3.456'.
+        Path policy = writePolicy(temp, "[structural]",
+                "reasoning:\n  reasoner: HermiT\n  required: true\n", "warning");
+        ToolContext context = reasonerSelectionContext(temp);
+
+        Map<String, Object> result = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+
+        assertFalse(String.valueOf(result.get("findings")).contains("Select the policy reasoner"),
+                () -> result.toString());
+        org.junit.jupiter.api.Assertions.assertNotEquals("error", result.get("gate"),
+                () -> result.toString());
+    }
+
+    @Test
+    void aSelectionOtherThanThePolicyReasonerStillTripsThePreGate(@TempDir Path temp)
+            throws Exception {
+        // ELK is installed (so the policy validates) but HermiT 1.4.3.456 is selected.
+        Path policy = writePolicy(temp, "[structural]",
+                "reasoning:\n  reasoner: ELK\n  required: true\n", "warning");
+        ToolContext context = reasonerSelectionContext(temp);
+
+        Map<String, Object> result = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+
+        assertEquals("error", result.get("gate"), () -> result.toString());
+        String findings = String.valueOf(result.get("findings"));
+        assertTrue(findings.contains("qc_configuration_invalid"), findings);
+        assertTrue(findings.contains("Select the policy reasoner"), findings);
+    }
+
+    @Test
     void registersPolicyToolsWithOptionalPaths() {
         ToolRegistry registry = new ToolRegistry();
         ProjectPolicyTools.register(registry, new ToolContext(null, null));
@@ -425,6 +460,76 @@ class ProjectQcToolsTest {
         }
         OWLModelManager fake = FakeModelManager.over(ontology);
         return new ToolContext(HeadlessAccess.over(fake), null);
+    }
+
+    /**
+     * The empty-ontology context plus a live reasoner selection seam: installed inventory
+     * ['ELK 0.6.0', 'HermiT 1.4.3.456'] (so both version-less policy names validate) with
+     * 'HermiT 1.4.3.456' selected and backed by a real HermiT factory.
+     */
+    private static ToolContext reasonerSelectionContext(Path temp) throws Exception {
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology ontology = manager.createOntology(IRI.create(ONTOLOGY_IRI));
+        manager.setOntologyFormat(ontology, new TurtleDocumentFormat());
+        manager.setOntologyDocumentIRI(ontology, IRI.create(temp.resolve("ontology.ttl").toUri()));
+        org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo elk =
+                reasonerInfo("ELK 0.6.0", "org.semanticweb.elk");
+        org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo hermit =
+                reasonerInfo("HermiT 1.4.3.456", "org.semanticweb.HermiT");
+        java.util.Set<org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo> installed =
+                new java.util.LinkedHashSet<>(List.of(elk, hermit));
+        var reasoners = (org.protege.editor.owl.model.inference.OWLReasonerManager)
+                java.lang.reflect.Proxy.newProxyInstance(ProjectQcToolsTest.class.getClassLoader(),
+                new Class<?>[] {org.protege.editor.owl.model.inference.OWLReasonerManager.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getReasonerStatus" ->
+                            org.protege.editor.owl.model.inference.ReasonerStatus
+                                    .REASONER_NOT_INITIALIZED;
+                    case "getCurrentReasonerFactory" -> hermit;
+                    case "getCurrentReasonerFactoryId" -> "org.semanticweb.HermiT";
+                    case "getCurrentReasonerName" -> "HermiT 1.4.3.456";
+                    case "getInstalledReasonerFactories" -> installed;
+                    case "toString" -> "QcPreGateReasonerManager";
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == args[0];
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+        OWLModelManager base = FakeModelManager.over(ontology);
+        OWLModelManager mm = (OWLModelManager) java.lang.reflect.Proxy.newProxyInstance(
+                ProjectQcToolsTest.class.getClassLoader(), new Class<?>[] {OWLModelManager.class},
+                (proxy, method, args) -> {
+                    if ("getOWLReasonerManager".equals(method.getName())) {
+                        return reasoners;
+                    }
+                    try {
+                        return method.invoke(base, args);
+                    } catch (java.lang.reflect.InvocationTargetException e) {
+                        throw e.getCause();
+                    }
+                });
+        return new ToolContext(HeadlessAccess.over(mm), null);
+    }
+
+    /** A HermiT-backed reasoner plugin descriptor with the given display name and factory id. */
+    private static org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo reasonerInfo(
+            String name, String id) {
+        var factory = new org.semanticweb.HermiT.ReasonerFactory();
+        var configuration = new org.semanticweb.owlapi.reasoner.SimpleConfiguration();
+        return (org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo)
+                java.lang.reflect.Proxy.newProxyInstance(ProjectQcToolsTest.class.getClassLoader(),
+                new Class<?>[] {org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo.class},
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getReasonerId" -> id;
+                    case "getReasonerName" -> name;
+                    case "getReasonerFactory" -> factory;
+                    case "getRecommendedBuffering" ->
+                            org.semanticweb.owlapi.reasoner.BufferingMode.NON_BUFFERING;
+                    case "getConfiguration" -> configuration;
+                    case "toString" -> name + " test info";
+                    case "hashCode" -> System.identityHashCode(proxy);
+                    case "equals" -> proxy == args[0];
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
     }
 
     private static ToolContext contextWithInfoFinding(Path temp) throws Exception {

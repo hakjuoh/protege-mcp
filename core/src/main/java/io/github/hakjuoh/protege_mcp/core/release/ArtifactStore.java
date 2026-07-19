@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.core.release;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -81,6 +82,7 @@ public final class ArtifactStore {
     /** Write raw bytes atomically beneath the root; refuses any escaping path. */
     public Written writeBytes(String relativePath, byte[] content) {
         Path target = resolveContained(relativePath);
+        Path temp = null;
         try {
             Files.createDirectories(target.getParent());
             // Lexical containment is not enough: a symlinked child directory planted inside the
@@ -91,18 +93,27 @@ public final class ArtifactStore {
                 throw new IllegalArgumentException("artifact path '" + relativePath
                         + "' resolves through a symlink escaping the release output directory");
             }
-            Path temp = Files.createTempFile(target.getParent(), ".release-", ".tmp");
+            temp = Files.createTempFile(target.getParent(), ".release-", ".tmp");
             Files.write(temp, content);
             try {
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING,
                         StandardCopyOption.ATOMIC_MOVE);
-            } catch (IOException atomicUnsupported) {
+            } catch (AtomicMoveNotSupportedException atomicUnsupported) {
                 // Some filesystems reject ATOMIC_MOVE across the same directory only rarely; fall
                 // back to a plain replace, still via the temp file so no partial write is visible.
                 Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
             }
+            temp = null;
         } catch (IOException e) {
             throw new UncheckedIOException("could not write artifact " + relativePath, e);
+        } finally {
+            if (temp != null) {
+                try {
+                    Files.deleteIfExists(temp);
+                } catch (IOException ignored) {
+                    // Best effort: never mask the actual write failure with temp cleanup.
+                }
+            }
         }
         Written record = new Written(root.relativize(target).toString().replace('\\', '/'),
                 sha256(content), content.length);

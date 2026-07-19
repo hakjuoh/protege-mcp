@@ -12,9 +12,9 @@ All **83 tools** the MCP server exposes, grouped by task. Each category page doc
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
-Version 0.6.1 keeps the 78-tool surface unchanged while enforcing direct path/network policy, automatic
-locked-import verification, module namespace/import governance, and isolated change-set preflight for
-`apply_changes verify=report|rollback`.
+Version 0.7.0 expands the surface to 83 tools with deterministic preview rebasing, impact analysis,
+policy scaffolding, and release gating/preparation while retaining the 0.6.1 project-boundary and
+isolated-preflight guarantees.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -26,7 +26,7 @@ locked-import verification, module namespace/import governance, and isolated cha
 
 ## New tools in 0.7.0
 
-Version 0.7.0 adds **5 tools** so far to the 78-tool v0.6.x surface. Existing tool arguments and default
+Version 0.7.0 adds **5 tools** to the 78-tool v0.6.x surface. Existing tool arguments and default
 interactive behavior remain compatible.
 
 | Task | New tools | What they add |

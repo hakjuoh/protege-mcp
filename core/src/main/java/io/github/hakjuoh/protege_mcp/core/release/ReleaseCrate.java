@@ -37,11 +37,12 @@ public final class ReleaseCrate {
 
     /**
      * Build the crate metadata graph. {@code rootArtifactPath} is the primary ontology artifact
-     * (the crate's {@code mainEntity}); {@code createdAt} is the CreateAction end time. Deterministic
-     * except for that caller-supplied timestamp.
+     * (the crate's {@code mainEntity}); {@code createdAt} is the CreateAction end time and
+     * {@code license} is copied from reviewed project metadata. Deterministic except for the
+     * caller-supplied timestamp.
      */
     public static Map<String, Object> build(String projectId, String description, String versionIri,
-            String createdAt, String rootArtifactPath, List<CrateFile> files) {
+            String createdAt, Object license, String rootArtifactPath, List<CrateFile> files) {
         List<Map<String, Object>> graph = new ArrayList<>();
 
         // Metadata descriptor (conformsTo the base spec + the release profile).
@@ -60,7 +61,11 @@ public final class ReleaseCrate {
         root.put("description", description == null
                 ? "protege-mcp verified ontology release" : description);
         root.put("datePublished", createdAt);
-        root.put("license", idRef("https://spdx.org/licenses/CC-BY-4.0"));
+        if (license != null) {
+            // Preserve reviewed project metadata. Inventing a default license would create a
+            // syntactically valid crate containing a false legal assertion.
+            root.put("license", license);
+        }
         root.put("conformsTo", idRef(RELEASE_PROFILE));
         if (versionIri != null) {
             root.put("version", versionIri);

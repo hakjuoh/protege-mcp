@@ -169,7 +169,7 @@ module source tree (`core/src`, `plugin/src`, `cli/src`). `plugin.xml` registers
    package-private, unit-testable overloads.
 
 4. **`McpServerManager`** — builds and owns the MCP sync server and the Streamable-HTTP transport
-   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.6.1`, endpoint `/mcp`). It constructs the `ObjectMapper`,
+   (`SERVER_NAME=protege-mcp`, `SERVER_VERSION=0.7.0`, endpoint `/mcp`). It constructs the `ObjectMapper`,
    `JacksonMcpJsonMapper`, and `DefaultJsonSchemaValidator` **explicitly** (avoiding a `ServiceLoader` failure
    under OSGi), then:
    ```java
@@ -582,7 +582,7 @@ provides none of it).
 
 **As built**
 - `packaging=bundle` via `maven-bundle-plugin:5.1.9` (`extensions=true`); `groupId io.github.hakjuoh`,
-  `artifactId protege-mcp`, version **`0.6.1`**.
+  `artifactId protege-mcp`, version **`0.7.0`**.
 - `Bundle-SymbolicName io.github.hakjuoh.protege-mcp;singleton:=true`; `Bundle-Name "Protege MCP Server"`.
 - **Java 17 required:** `maven.compiler.release=17`, and the manifest carries
   `Require-Capability: osgi.ee=JavaSE 17`. The MCP SDK 2.0.0 public types are `record`s (needing
@@ -969,7 +969,7 @@ offers an update.
 | **5. Security / settings** | **Expanded beyond the original MVP:** embedded OAuth 2.1 AS + static bearer, persistence across restarts, preferences | ✅ done |
 | **6. Status UI / multi-window / docs** | `McpServerView` with the connected-clients table + per-client revocation; per-window controllers | ✅ done |
 | **7. Shared broker** | one fixed MCP endpoint across windows and instances (§4.1 item 11); singleton lock, staged jar copies, refcount self-exit, session-pinned proxy | ✅ done |
-| **M0/M1 policy slice** | 0.5.0 compatibility goldens; policy/contracts schemas; canonical fingerprints; policy discovery/validation; persisted QC assets; strict project QC; workspace revisions/change sets; lifecycle/language/waiver/module governance; automatic import-lock enforcement; universal direct path/network capability enforcement; verified saves; headless core/CLI. Inferred diff and release bundles remain in PLAN. | ◐ enforcement gaps closed in 0.6.1; milestones incomplete |
+| **M0/M1 policy + release slice** | 0.5.0 compatibility goldens; policy/contracts schemas; canonical fingerprints; policy discovery/validation; persisted QC assets; strict project QC; workspace revisions/change sets and deterministic rebase; lifecycle/language/waiver/module governance; automatic import-lock enforcement; universal direct path/network capability enforcement; verified saves; inferred semantic diff; impact analysis; release gates/bundles; headless core/CLI and fork-safe CI. | ✅ delivered through 0.7.0 |
 | **8. Hardening** | deadlock/perf/OSGi regression coverage across all tool paths | ⏳ ongoing |
 
 **Architecture Approach B — delivered.** The in-Protégé chat assistant (§9): a `ChatView` + dedicated
@@ -980,8 +980,9 @@ The fingerprint/finding/gate foundations are wired into policy discovery and str
 revision APIs, preflight change sets, import-lock tools, verified saves, and the headless core/CLI prototype
 ship in 0.6.0. Version 0.6.1 adds automatic locked-import content enforcement, universal direct
 path/network capabilities, module namespace/import-graph governance, and change-set-backed verified apply.
-Inferred semantic diff and complete release bundles remain in [`PLAN.md`](PLAN.md); see the
-[policy status page](docs/project-policy.md) for the precise boundary.
+Version 0.7.0 completes the planned deterministic rebase, inferred semantic diff, impact analysis,
+release gate/bundle, starter-policy, and reusable headless-CI slice; see the
+[policy status page](docs/project-policy.md) for the precise boundary and [`PLAN.md`](PLAN.md) for later tracks.
 
 **Next tracks:** the §9.9 items behind the `ChatProvider` SPI (a direct-API provider — kept only as a fallback,
 not a roadmap goal — and user-configured external MCP servers) and Architecture Approach C (§10). (The `fable`

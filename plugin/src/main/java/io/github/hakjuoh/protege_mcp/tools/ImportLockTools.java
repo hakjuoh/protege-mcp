@@ -337,45 +337,17 @@ public final class ImportLockTools {
     /** Re-derive the loaded-but-invalid discovered policy behind a resolve()-time refusal, or rethrow. */
     private static ProjectPolicy verifiedInvalidDiscovery(ToolContext ctx,
             McpSyncServerExchange exchange, ToolArgException refusal) {
-        DirectAccessPolicy.requireCapability(exchange, DirectAccessPolicy.PROJECT_READ);
-        RevisionTools.PolicyState state = RevisionTools.resolvePolicy(ctx, null);
-        if (state.error() != null || !state.policy().loaded() || state.policy().valid()) {
-            throw refusal;
-        }
-        return state.policy();
+        return DirectAccessPolicy.verifiedInvalidDiscovery(ctx, exchange, refusal);
     }
 
     /**
      * Containment-only authorization for the documented explicit-path bootstrap: an explicit lock
      * path stays usable while the discovered policy is loaded but invalid, so the declared lockfile
-     * can be created at all. Capability and canonical project_root containment are still enforced;
-     * policy-granted widening ({@code filesystem.allow_external_paths}) is deliberately NOT honored —
-     * an invalid policy cannot be trusted to widen access, only to name its root.
+     * can be created at all. See {@link DirectAccessPolicy#bootstrapExplicitPath}.
      */
     private static Path bootstrapExplicitPath(ProjectPolicy policy, McpSyncServerExchange exchange,
             String configured, boolean write) {
-        DirectAccessPolicy.requireCapability(exchange,
-                write ? DirectAccessPolicy.PROJECT_WRITE : DirectAccessPolicy.PROJECT_READ);
-        Path root = policy.projectRoot();
-        if (root == null) {
-            throw new ToolArgException("The discovered project policy is invalid and names no "
-                    + "canonical project_root, so an explicit lock path cannot be contained. Fix the "
-                    + "policy first (see validate_project_policy).");
-        }
-        final Path raw;
-        try {
-            raw = Path.of(configured);
-        } catch (InvalidPathException e) {
-            throw new ToolArgException("Invalid filesystem path '" + configured + "': "
-                    + e.getMessage());
-        }
-        Path canonical = DirectAccessPolicy.canonicalCandidate(
-                (raw.isAbsolute() ? raw : root.resolve(raw)).normalize());
-        if (!canonical.startsWith(root)) {
-            throw new ToolArgException("Path is outside project_root and the invalid project policy "
-                    + "cannot authorize external paths: " + canonical);
-        }
-        return canonical;
+        return DirectAccessPolicy.bootstrapExplicitPath(policy, exchange, configured, write, "lock");
     }
 
     /** {@code lockfile_source} label: the lockfile is pinned by the reviewed project policy. */

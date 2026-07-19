@@ -79,7 +79,7 @@ lock, and exact normalized delta are rechecked.
 | `operations` | array | yes | — | Axiom changes to apply; each item is an `add_axiom`/`remove_axiom` operand set (`axiom_type` + operands) plus optional `op` = `add`/`remove`. |
 | `strict` | boolean | no | `false` | If true, fail instead of minting a brand-new entity from an unrecognized absolute IRI / display name. |
 | `verify` | string | no | `none` | `none` \| `report` \| `rollback` — run the isolated change-set gate (see above). |
-| `timeout_ms` | integer | no | 60000 | Time budget in ms for the isolated preflight gate. With a policy it can only tighten the policy's `reasoning.timeout_ms`; it never extends it. |
+| `timeout_ms` | integer | no | 60000 | Time budget in ms for the isolated preflight gate (1–3600000; fractional or out-of-range values are rejected, never coerced). With a policy it can only tighten the policy's `reasoning.timeout_ms`; it never extends it. Ignored with `verify=none` (no preflight runs). |
 
 **Returns**
 
@@ -433,7 +433,7 @@ The batch form of `create_term`: creates many classes, each with its full curati
 | `definition_property` | string | no | `rdfs:comment` | Default definition annotation property, applied to any term that omits its own `definition_property`. |
 | `strict` | boolean | no | `false` | If true, fail instead of minting an unrecognised operand (aborts the whole batch). |
 | `verify` | string | no | `none` | `none` \| `report` \| `rollback` — reasoner-verify the batch (flag a newly unsatisfiable class or newly inconsistent ontology; `rollback` undoes the whole batch on a regression). Requires a reasoner selected in Protégé; `rollback` additionally refuses up front (applying nothing) when no pre-apply baseline classification can be established. |
-| `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). |
+| `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs (1 on a warm reasoner, 2 on a cold one); 1–3600000, fractional or out-of-range values are rejected on the verify/preview paths, ignored with `verify=none` and no preview. With `preview=true` it is the isolated preflight budget instead (omitted default: the policy's `reasoning.timeout_ms`, 120000 without one). |
 | `preview` | boolean | no | false | Build a policy-QC change set instead of editing live. Cannot be combined with `verify`. |
 | `policy_path` | string | no | discovered | Explicit project policy used when `preview=true`. |
 | `gates` | string array | no | reasoner (when selected), profile, governance, structural | No-policy preview stages, as in `preview_change_set` — e.g. to preview in an ontology whose pre-existing unsatisfiable classes would fail the default reasoner stage. Explicitly listed stages become **required**. |
@@ -534,7 +534,7 @@ Creates MANY object/data properties in ONE undoable transaction — the array fo
 | `property_type` | string | no | `object` | Default `property_type` (`object`\|`data`) for any item that omits its own. |
 | `strict` | boolean | no | `false` | If true, fail the whole batch instead of minting an unrecognised operand. |
 | `verify` | string | no | `none` | `none` \| `report` \| `rollback` — reasoner-verify the batch (flag a newly unsatisfiable class or newly inconsistent ontology; `rollback` undoes the whole batch on a regression). Requires a reasoner selected in Protégé; `rollback` additionally refuses up front (applying nothing) when no pre-apply baseline classification can be established. |
-| `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs (1 on a warm reasoner, 2 on a cold one). |
+| `timeout_ms` | integer | no | 60000 | Max wait in ms for each classification the verify pass runs (1 on a warm reasoner, 2 on a cold one); 1–3600000, fractional or out-of-range values are rejected on the verify/preview paths, ignored with `verify=none` and no preview. With `preview=true` it is the isolated preflight budget instead (omitted default: the policy's `reasoning.timeout_ms`, 120000 without one). |
 | `preview` | boolean | no | false | Build a policy-QC change set instead of editing live. Cannot be combined with `verify`. |
 | `policy_path` | string | no | discovered | Explicit project policy used when `preview=true`. |
 | `gates` | string array | no | reasoner (when selected), profile, governance, structural | No-policy preview stages, as in `preview_change_set` — e.g. to preview in an ontology whose pre-existing unsatisfiable classes would fail the default reasoner stage. Explicitly listed stages become **required**. |

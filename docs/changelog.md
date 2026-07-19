@@ -21,6 +21,45 @@ each section is also published as the body of its
 
 ---
 
+## [0.7.0] - 2026-07-18
+
+**Release preparation, deterministic change review, and entailment-aware comparison are now first-class workflows.**
+The public surface grows from **78 to 83 tools** and remains at **11 prompts**.
+
+### Added
+- `rebase_change_set` re-resolves an existing preview against the current workspace while preserving
+  its original gate contract and producing a new, independently committable preview.
+- `semantic_diff mode=inferred|both` classifies both sides with one captured reasoner configuration and
+  reports bounded entailment deltas; `analyze_change_impact` reports exact direct effects plus bounded
+  downstream dependency and module-ownership projections.
+- `run_release_gate` and `prepare_release` validate one isolated policy/QC snapshot, enforce import and
+  fingerprint stability, verify serialization, and produce deterministic manifests, RO-Crate metadata,
+  and JSON, Markdown, JUnit, and SARIF reports through atomic project-confined writes.
+- `write_project_policy_template` scaffolds reviewed general-OWL or OBO starter policies with actionable
+  validation hints. A reusable fork-safe GitHub Actions workflow and examples provide headless policy and
+  asserted-diff gates without executing pull-request-controlled artifacts.
+
+### Changed
+- Document load, project QC, and change-set preview accept explicit `network=deny|allow` and
+  `lock_mode=off|if_present|required` controls with most-restrictive-wins policy composition.
+- The headless CLI adds `validate`, manifest-backed `diff --check`, distinct 0/1/2/3 exit codes,
+  `--help`/`-h`/`help`, clean stderr, and newline-terminated JSON. Policy validation reports
+  `policy_loaded=false` when the policy never reached evaluation.
+- Reasoner references now share one unique-or-fail rule across policy validation, selection, semantic
+  diff, and project QC: full names (and ids on surfaces that accept them) match exactly while a
+  version-less whole-token name such as `HermiT` may resolve to exactly one installed version.
+- Serialization detects format loss before writing; verified saves reject unsupported anonymous-individual
+  round trips, while release evidence records incomplete baselines and import provenance explicitly.
+
+### Fixed
+- Invalid starter policies can create their declared root artifact only through the explicit
+  `save_ontology policy_bootstrap=true` path, capability-checked and confined to the canonical project
+  root without trusting policy-granted external-path widening.
+- Reasoner ambiguity no longer silently selects a factory, including when factories share a display name;
+  project-QC pre-gates and snapshot comparisons use the same reference semantics.
+- Release, diff, impact, and CI paths fail closed on reasoner errors, snapshot drift, unsafe report or
+  manifest paths, unverified bytes, network/lock violations, and untrusted workflow artifacts.
+
 ## [0.6.1] - 2026-07-17
 
 **Project-policy intent is now enforced at every remaining direct I/O and change-set boundary.**

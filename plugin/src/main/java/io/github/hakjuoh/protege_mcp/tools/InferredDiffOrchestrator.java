@@ -15,6 +15,7 @@ import java.util.concurrent.TimeoutException;
 
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.inference.OWLReasonerManager;
+import org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo;
 import org.semanticweb.owlapi.model.OWLClass;
 import org.semanticweb.owlapi.model.OWLEntity;
 import org.semanticweb.owlapi.model.OWLNamedIndividual;
@@ -22,6 +23,7 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 
 import io.github.hakjuoh.protege_mcp.core.diff.InferredDiffService;
+import io.github.hakjuoh.protege_mcp.policy.ReasonerNames;
 import io.github.hakjuoh.protege_mcp.core.diff.InferredDiffService.Candidates;
 import io.github.hakjuoh.protege_mcp.core.diff.InferredDiffService.Evaluation;
 import io.github.hakjuoh.protege_mcp.core.owl.OwlDocumentSignature;
@@ -104,14 +106,28 @@ final class InferredDiffOrchestrator {
             throw new ToolArgException("The reasoner subsystem is unavailable.");
         }
         if (reasonerName != null) {
+            // Candidates and infos stay index-parallel so the winning candidate maps back to ITS
+            // factory even when several factories share one display name.
+            List<ReasonerNames.Candidate> installed = new ArrayList<>();
+            List<ProtegeOWLReasonerInfo> infos = new ArrayList<>();
             for (var info : manager.getInstalledReasonerFactories()) {
-                if (reasonerName.equalsIgnoreCase(info.getReasonerName())
-                        || reasonerName.equals(info.getReasonerId())) {
-                    return IsolatedReasonerSpec.capture(info);
-                }
+                installed.add(new ReasonerNames.Candidate(
+                        info.getReasonerName(), info.getReasonerId()));
+                infos.add(info);
             }
-            throw new ToolArgException("No installed reasoner matches '" + reasonerName
-                    + "' (see list_reasoners).");
+            ReasonerNames.Resolution resolution = ReasonerNames.resolve(reasonerName, installed);
+            if (resolution.ambiguous()) {
+                throw new ToolArgException("Reasoner reference '" + reasonerName
+                        + "' matches more than one installed reasoner ("
+                        + String.join(", ", resolution.candidateLabels())
+                        + "). Use a full display name or factory id that identifies one installed"
+                        + " reasoner.");
+            }
+            if (!resolution.unique()) {
+                throw new ToolArgException("No installed reasoner matches '" + reasonerName
+                        + "' (see list_reasoners).");
+            }
+            return IsolatedReasonerSpec.capture(infos.get(installed.indexOf(resolution.match())));
         }
         IsolatedReasonerSpec spec = IsolatedReasonerSpec.capture(manager);
         if (spec == null) {
@@ -296,7 +312,8 @@ final class InferredDiffOrchestrator {
             Evaluation evaluation = InferredDiffService.evaluate(flattened, reasoner,
                     captured.sigma(), guard);
             Map<String, Boolean> verdicts = null;
-            if (evaluation.consistent() && !evaluation.categoryErrors().containsKey("consistency")) {
+            if (evaluation.consistent() && !evaluation.categoryErrors().containsKey("consistency")
+                    && !evaluation.categoryErrors().containsKey("disjointness")) {
                 try {
                     // Sub-budget (a quarter of what remains): an oversized candidate matrix on
                     // this side must starve only this side's DISJOINTNESS verdicts — never the

@@ -1,5 +1,7 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
+import io.github.hakjuoh.protege_mcp.policy.ProjectInteroperability;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -26,9 +28,6 @@ final class ProjectPolicyTemplate {
 
     /** Placeholder root ontology used only when the active ontology is anonymous. */
     private static final String PLACEHOLDER_IRI = "https://example.org/ontology";
-
-    private static final String PROFILE_IRI =
-            "https://hakjuoh.github.io/protege-mcp/profiles/project-v1/";
 
     private ProjectPolicyTemplate() {
     }
@@ -92,7 +91,9 @@ final class ProjectPolicyTemplate {
     static List<String> validationHint(Template t) {
         List<String> hint = new ArrayList<>();
         hint.add("Create the root artifact '" + t.rootArtifact() + "' by serializing your ontology to "
-                + "that project-relative path (e.g. save_ontology).");
+                + "that project-relative path (save_ontology with policy_bootstrap=true — the "
+                + "explicit-path save stays authorized inside the project root while this policy "
+                + "is still invalid).");
         hint.add("Create the RO-Crate metadata file '" + t.metadataPath() + "' — an ro-crate-1.1 crate "
                 + "whose root dataset references '" + t.rootArtifact() + "'.");
         if (t.rootOntologyPlaceholder()) {
@@ -100,7 +101,8 @@ final class ProjectPolicyTemplate {
                     + t.rootOntology() + "' because the active ontology is anonymous.");
         }
         hint.add("Confirm reasoning.reasoner names a reasoner installed in Protégé (currently '"
-                + t.reasoner() + "').");
+                + t.reasoner() + "'; a version-less name is resolved against the installed "
+                + "reasoners and must match exactly one).");
         hint.add("Uncomment and edit any optional blocks you need (prefixes, modules, annotations, "
                 + "iri_policy, lifecycle, validation invariants/shacl/competency_questions, the imports "
                 + "lockfile, release) and create the files they reference.");
@@ -135,8 +137,9 @@ final class ProjectPolicyTemplate {
                 # The ontology IRI this project governs. It MUST equal your ontology's IRI.
                 root_ontology: %ROOT_ONTOLOGY%
 
-                # The project base directory, relative to this policy file. '.' is the directory that
-                # contains .protege-mcp/, so your ontology and sources sit beside that directory.
+                # The project base directory, relative to the discovery anchor. For the conventional
+                # .protege-mcp/project.yaml location, '.' is the directory containing .protege-mcp/,
+                # so your ontology and sources sit beside that directory rather than inside it.
                 project_root: .
 
                 # Standard interoperability contract (required). root_artifact and the RO-Crate metadata
@@ -172,7 +175,8 @@ final class ProjectPolicyTemplate {
                   network: deny
                   # lockfile: imports.lock.json
 
-                # The reasoner used for reproducible QC. Set this to a reasoner installed in Protégé.
+                # The reasoner used for reproducible QC. A version-less name (the convention) must
+                # resolve to exactly ONE installed reasoner; a full display name pins that version.
                 reasoning:
                   reasoner: %REASONER%
                   owl_profile: %OWL_PROFILE%
@@ -182,7 +186,7 @@ final class ProjectPolicyTemplate {
                 """)
                 .replace("%PROJECT_ID%", projectId)
                 .replace("%ROOT_ONTOLOGY%", rootOntology)
-                .replace("%PROFILE_IRI%", PROFILE_IRI)
+                .replace("%PROFILE_IRI%", ProjectInteroperability.PROFILE_IRI)
                 .replace("%ROOT_ARTIFACT%", rootArtifact)
                 .replace("%REASONER%", reasoner)
                 .replace("%OWL_PROFILE%", owlProfile);
@@ -264,8 +268,7 @@ final class ProjectPolicyTemplate {
                 #   replaced_by_properties: [dcterms:isReplacedBy]
                 #   require_replacement: true
 
-                # Release bundle settings (release.format / require_* are reserved for a future release
-                # workflow; output_dir names a directory the tools may create).
+                # Release bundle settings used by run_release_gate / prepare_release.
                 # release:
                 #   format: turtle
                 #   output_dir: dist
@@ -317,8 +320,7 @@ final class ProjectPolicyTemplate {
                 #   replaced_by_properties: ['IAO:0100001']
                 #   require_replacement: true
 
-                # Release bundle settings (release.format / require_* are reserved for a future release
-                # workflow; output_dir names a directory the tools may create).
+                # Release bundle settings used by run_release_gate / prepare_release.
                 # release:
                 #   format: obo
                 #   output_dir: releases

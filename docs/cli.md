@@ -10,13 +10,15 @@ Version {{ site.version }} ships a separately tested Java 17 artifact,
 `protege-mcp-cli-<version>-all.jar`. It embeds OWLAPI, contains no Protégé editor classes, and does not
 need a local Maven repository after download. The existing `protege-mcp-<version>.jar` remains the
 Protégé OSGi plugin and is not a standalone launcher.
+{: .fs-6 .fw-300 }
 
 ## Commands
 
 ```bash
 java -jar protege-mcp-cli-{{ site.version }}-all.jar --version
+java -jar protege-mcp-cli-{{ site.version }}-all.jar --help
 java -jar protege-mcp-cli-{{ site.version }}-all.jar validate-policy --project .protege-mcp/project.yaml
-java -jar protege-mcp-cli-{{ site.version }}-all.jar validate --project .protege-mcp/project.yaml [--format json|markdown] [--no-network]
+java -jar protege-mcp-cli-{{ site.version }}-all.jar validate --project .protege-mcp/project.yaml [--format json|markdown] [--no-network] [--no-external]
 java -jar protege-mcp-cli-{{ site.version }}-all.jar diff --left previous.ttl --right current.ttl [--check] [--no-network]
 ```
 
@@ -75,9 +77,17 @@ validation reads only local files. `--no-network` is accepted on `validate` and 
 affirmation of `network=deny` (never an error) and is recorded in the output, matching
 [ADR 0005](adr/0005-import-network-policy-defaults.html) decision 6.
 
+### `--no-external`
+
+`validate --no-external` applies an untrusted-CI filesystem constraint: external policy assets are
+disabled before resolution, and a policy that enables `filesystem.allow_external_paths` receives an
+`external_paths_forbidden` validation error. The authored policy/digest is not rewritten. The reusable
+PR workflow always supplies this flag.
+
 ## Exit codes
 
-- `0` — the command/gate passed.
+- `0` — the command/gate passed. `--help` (also `-h`/`help`) and `--version` print to **stdout** and
+  exit `0`.
 - `1` — a validation/release gate failed: a clean, loaded, but non-passing result. `validate-policy`
   and `validate` return `1` for a policy that loaded and was fully evaluated (a canonical
   `policy_digest` was computed) but whose verdict is invalid, and `diff --check` returns `1` when the
@@ -90,7 +100,12 @@ affirmation of `network=deny` (never an error) and is recorded in the output, ma
 **Behavior change:** in `0.6.1` an invalid-but-loaded policy exited `2`. From this release
 `validate-policy`/`validate` map that gate-style failure to exit `1`; a policy that could not be loaded
 or parsed still exits `2`. Scripts that treated any non-zero code as failure are unaffected; scripts
-that branched specifically on `2` for a failed policy should now branch on `1`.
+that branched specifically on `2` for a failed policy should now branch on `1`. Also from this release:
+`--help` prints usage to stdout and exits `0` (previously usage went to stderr with exit `2`);
+`policy_loaded` in the `validate-policy`/`validate` JSON is `true` only for a policy that actually
+reached evaluation (a canonical `policy_digest` was computed) and `false` for the never-evaluated
+exit-`2` states (`policy_not_found`, `yaml_invalid`); stderr is now free of the earlier
+`No SLF4J providers` warning on every command; and every JSON document ends with a trailing newline.
 
 Release assets include SHA-256 sidecars, the project license, and third-party notices.
 

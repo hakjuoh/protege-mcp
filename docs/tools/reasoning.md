@@ -19,7 +19,7 @@ Select and run the reasoner Protégé has installed, then read what it inferred 
 
 ## `list_reasoners`
 
-Lists the reasoner plugins installed in Protégé and marks the one currently selected. Reach for it first to discover the ids/names you can pass to `set_reasoner`, before classifying with `run_reasoner`.
+Lists every reasoner factory installed in Protégé and marks the one currently selected. Factories remain separate even when they share a display name, so their ids can still be discovered and used to disambiguate `set_reasoner` before classifying with `run_reasoner`.
 
 *Read-only.*
 
@@ -39,7 +39,7 @@ If no reasoner plugins are installed, the tool returns an error object `{error}`
 
 ## `set_reasoner`
 
-Selects the reasoner Protégé will use, matching the given id or name (case-insensitive) against the installed reasoners from `list_reasoners`. This only selects; it does not classify — call `run_reasoner` afterwards.
+Selects the reasoner Protégé will use, resolving the given reference against the installed reasoners from `list_reasoners`. A full display name (e.g. `HermiT 1.4.3.456`) or factory id matches exactly (case-insensitive) and pins that version; a version-less name — the recommended convention, e.g. `HermiT` — matches when its whitespace tokens appear as a contiguous whole-token, case-insensitive run inside an installed display name, and is accepted only when exactly ONE installed reasoner matches. Partial versions (`HermiT 1.4`) never match. The same resolution rule governs the project policy's `reasoning.reasoner` (including `run_project_qc`'s required-reasoner comparison) and `semantic_diff`'s `reasoner` argument. This only selects; it does not classify — call `run_reasoner` afterwards.
 
 *Mutating (undoable)* — routed through the write path, so it honours the read-only / confirm-each-write preference gates.
 
@@ -47,14 +47,14 @@ Selects the reasoner Protégé will use, matching the given id or name (case-ins
 
 | Name | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `reasoner` | string | yes | — | Reasoner id or name (see `list_reasoners`). |
+| `reasoner` | string | yes | — | Reasoner reference (see `list_reasoners`): a factory id or full display name matches exactly (case-insensitive) and pins the version; a version-less name resolves as a whole-token run and must match exactly one installed reasoner. |
 
 **Returns**
 
 - `selected`: object `{name, id}` — the reasoner that was selected.
 - `message`: string — a reminder to call `run_reasoner` to classify.
 
-If no installed reasoner matches `reasoner`, the tool returns an error object `{error}` listing the available reasoners.
+If no installed reasoner matches `reasoner`, the tool returns an error object `{error}` listing the available reasoners; a reference that matches more than one installed reasoner is likewise an error naming every candidate as `name [factory id]`. Use a full display name when that distinguishes the installs, or the factory id when display names collide.
 
 **Example**
 

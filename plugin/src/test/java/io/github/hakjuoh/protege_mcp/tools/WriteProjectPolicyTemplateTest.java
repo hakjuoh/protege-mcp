@@ -128,6 +128,10 @@ class WriteProjectPolicyTemplateTest {
         Object hint = result.get("validation_hint");
         assertTrue(hint instanceof List, () -> String.valueOf(hint));
         assertFalse(((List<?>) hint).isEmpty(), "validation_hint must list what to complete");
+        assertTrue(((List<?>) hint).stream().anyMatch(
+                        line -> String.valueOf(line).contains("policy_bootstrap=true")),
+                () -> "the hint must name the explicit-path bootstrap that can create the root "
+                        + "artifact while the policy is still invalid: " + hint);
         assertFalse(result.containsKey("valid"), "a scaffold must not claim valid=true");
     }
 

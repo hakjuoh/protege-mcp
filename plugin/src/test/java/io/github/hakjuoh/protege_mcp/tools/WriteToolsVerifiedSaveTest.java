@@ -142,14 +142,14 @@ class WriteToolsVerifiedSaveTest {
         return ontology;
     }
 
-    /** Invoke the private {@code verifiedSave(ToolContext, String, String, boolean, boolean, String)}. */
+    /** Invoke the private {@code verifiedSave(ToolContext, String, String, boolean, boolean, String, Map)}. */
     private static CallToolResult verifiedSave(ToolContext ctx, String path) throws Throwable {
         Method m = WriteTools.class.getDeclaredMethod("verifiedSave", ToolContext.class, String.class,
-                String.class, boolean.class, boolean.class, String.class);
+                String.class, boolean.class, boolean.class, String.class, Map.class);
         m.setAccessible(true);
         try {
             return (CallToolResult) m.invoke(null, ctx, "save the active ontology to " + path, path,
-                    false, false, "warn");
+                    false, false, "warn", null);
         } catch (InvocationTargetException e) {
             throw e.getCause();
         }

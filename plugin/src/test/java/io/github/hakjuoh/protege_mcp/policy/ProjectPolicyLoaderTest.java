@@ -31,6 +31,29 @@ class ProjectPolicyLoaderTest {
     }
 
     @Test
+    void callerConstraintRejectsExternalPathsBeforeResolvingThem(@TempDir Path temp) throws Exception {
+        Path outside = Files.createTempFile("policy-external-", ".rq");
+        try {
+            Path policyPath = temp.resolve("project.yaml");
+            write(policyPath, minimal("external-constraint")
+                    + "filesystem:\n  allow_external_paths: true\n"
+                    + "validation:\n"
+                    + "  required_stages: [invariants]\n"
+                    + "  invariants:\n    paths: ['"
+                    + outside.toString().replace("'", "''") + "']\n");
+
+            ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null, null, null, true);
+
+            assertFalse(policy.valid());
+            assertCode(policy, "external_paths_forbidden");
+            assertTrue(policy.assets().getOrDefault("invariants", List.of()).isEmpty(),
+                    "caller-denied external assets must not enter the resolved asset set");
+        } finally {
+            Files.deleteIfExists(outside);
+        }
+    }
+
+    @Test
     void discoversNearestPolicyAndAppliesDeterministicDefaults(@TempDir Path temp) throws Exception {
         Path root = temp.resolve("project");
         Path policyPath = root.resolve(".protege-mcp/project.yaml");
@@ -268,6 +291,55 @@ class ProjectPolicyLoaderTest {
         assertEquals(List.of("reasoner", "interoperability", "structural"),
                 object(available.effective(), "validation").get("required_stages"),
                 "reasoning.required must force the reasoner stage into the effective contract");
+    }
+
+    @Test
+    void versionlessReasonerReferenceResolvesAgainstVersionedDisplayNames(@TempDir Path temp)
+            throws Exception {
+        Path policyPath = temp.resolve("policy.yaml");
+        write(policyPath, minimal("example")
+                + "reasoning:\n  reasoner: HermiT\n  required: true\n"
+                + "validation:\n  required_stages: [structural]\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null,
+                "https://example.org/ontology", List.of("HermiT 1.4.3.456", "ELK 0.6.0"));
+
+        assertTrue(policy.valid(), () -> policy.issues().toString());
+        assertTrue(policy.issues().stream().noneMatch(i -> "reasoner_unavailable".equals(i.code())
+                        || "reasoner_ambiguous".equals(i.code())),
+                () -> policy.issues().toString());
+    }
+
+    @Test
+    void aReasonerReferenceMatchingSeveralInstalledVersionsIsAmbiguousNotPicked(@TempDir Path temp)
+            throws Exception {
+        Path policyPath = temp.resolve("policy.yaml");
+        write(policyPath, minimal("example")
+                + "reasoning:\n  reasoner: HermiT\n  required: true\n"
+                + "validation:\n  required_stages: [structural]\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null,
+                "https://example.org/ontology", List.of("HermiT 1.4", "HermiT 2.0"));
+
+        assertFalse(policy.valid());
+        assertCode(policy, "reasoner_ambiguous");
+        assertTrue(policy.issues().stream().noneMatch(i -> "reasoner_unavailable".equals(i.code())),
+                () -> policy.issues().toString());
+    }
+
+    @Test
+    void aVersionedReferenceWithoutAnExactInstalledMatchIsUnavailable(@TempDir Path temp)
+            throws Exception {
+        Path policyPath = temp.resolve("policy.yaml");
+        write(policyPath, minimal("example")
+                + "reasoning:\n  reasoner: HermiT 9.9.9\n  required: true\n"
+                + "validation:\n  required_stages: [structural]\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null,
+                "https://example.org/ontology", List.of("HermiT 1.4.3.456"));
+
+        assertFalse(policy.valid());
+        assertCode(policy, "reasoner_unavailable");
     }
 
     @Test

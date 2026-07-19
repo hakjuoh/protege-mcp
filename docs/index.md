@@ -86,7 +86,7 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | [Installation](installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](connect/) | The server model (ports, OAuth vs. bearer token) and per-environment recipes for Claude Code, Codex CLI, VS Code, and Claude Desktop. |
 | [Ontology Assistant](ontology-assistant.html) | The in-Protégé chat: what it is, how it works, attachments, privacy, and settings. |
-| [Tools](tools/) | All 83 tools by category, including a summary of the 12 tools added in v0.6.0. |
+| [Tools](tools/) | All 83 tools by category, including the five tools added in v0.7.0. |
 | [Prompts](prompts/) | The 11 guided workflows available to MCP clients. |
 | [Headless CLI](cli.html) | Run policy validation and asserted semantic diff without Protégé. |
 | [Ontology CI](ci.html) | Gate your own ontology repository's PRs with the reusable, fork-safe policy-validation + asserted-diff workflow. |

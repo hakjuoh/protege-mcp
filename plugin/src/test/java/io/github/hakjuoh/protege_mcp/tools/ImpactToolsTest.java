@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -165,6 +166,32 @@ class ImpactToolsTest {
     }
 
     // ------------------------------------------------------------------ pair input form
+
+    @Test
+    void loadedPairImpactUsesComparedOntologiesRatherThanUnrelatedActiveOntology(@TempDir Path temp)
+            throws Exception {
+        OWLOntology active = ontology(temp);
+        OWLOntologyManager manager = active.getOWLOntologyManager();
+        OWLDataFactory df = manager.getOWLDataFactory();
+        OWLOntology left = manager.createOntology(IRI.create(ONTOLOGY_IRI + "/left"));
+        OWLOntology right = manager.createOntology(IRI.create(ONTOLOGY_IRI + "/right"));
+        OWLClass changed = df.getOWLClass(IRI.create(ONTOLOGY_IRI + "#Changed"));
+        OWLClass removedParent = df.getOWLClass(IRI.create(ONTOLOGY_IRI + "#RemovedParent"));
+        OWLClass dependent = df.getOWLClass(IRI.create(ONTOLOGY_IRI + "#Dependent"));
+        manager.addAxiom(left, df.getOWLSubClassOfAxiom(changed, removedParent));
+        manager.addAxiom(left, df.getOWLSubClassOfAxiom(dependent, changed));
+        manager.addAxiom(right, df.getOWLSubClassOfAxiom(dependent, changed));
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(active));
+
+        Map<String, Object> result = structured(ImpactTools.analyze(ctx, null, Map.of(
+                "left", ONTOLOGY_IRI + "/left", "right", ONTOLOGY_IRI + "/right")));
+
+        Map<String, Object> referencing = section(result, "referencing_axioms");
+        assertTrue(renderings(referencing).stream().anyMatch(row -> row.contains("#Dependent")
+                        && row.contains("#Changed")),
+                "shared references on the compared pair must not be read from the unrelated active "
+                        + "ontology: " + referencing);
+    }
 
     @Test
     void pairPathComputesTheAssertedDeltaAndExcludesItFromReferencingAxioms(@TempDir Path temp)
@@ -469,6 +496,27 @@ class ImpactToolsTest {
                 result.get("right_document_unresolved_imports"));
         assertTrue(String.valueOf(result.get("caveat")).contains("truncated"),
                 "a truncated right closure must carry the top-level caveat: " + result);
+    }
+
+    @Test
+    void explicitPolicyAlsoConfinesTheRightDocument(@TempDir Path temp) throws Exception {
+        OWLOntology ontology = ontology(temp);
+        ToolContext ctx = context(FakeModelManager.withNoReasonerSelected(ontology));
+        Path project = Files.createDirectories(temp.resolve("confined-project"));
+        Path policy = project.resolve("policy.yaml");
+        ProjectPolicyFixtures.writePolicy(policy,
+                ProjectPolicyFixtures.minimalPolicy("impact-confined", ONTOLOGY_IRI)
+                        + "reasoning:\n  required: false\n"
+                        + "validation:\n  required_stages: [structural]\n");
+        Path outside = temp.resolve("outside.ttl");
+        Files.writeString(outside, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/outside> a owl:Ontology .\n");
+
+        ToolArgException error = assertThrows(ToolArgException.class, () -> ImpactTools.analyze(
+                ctx, null, Map.of("policy_path", policy.toString(),
+                        "right_document", outside.toString())));
+
+        assertTrue(error.getMessage().contains("project_root"), error::getMessage);
     }
 
     @Test

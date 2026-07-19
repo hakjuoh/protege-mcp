@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>78 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, SPARQL, SHACL, and project QC - every model
+    <li><b>83 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, SPARQL, SHACL, project QC, impact analysis, and release preparation - every model
         edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
         the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>One <b>shared MCP endpoint</b> for every Prot&#233;g&#233; window and instance - a small broker
@@ -51,6 +51,19 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.7.0</h4>
+<ul>
+    <li>Change-set previews can be deterministically rebased, semantic diffs can compare inferred
+        entailments with an explicitly resolved reasoner, and impact analysis reports bounded direct
+        and downstream effects.</li>
+    <li>Release gates and preparation produce verified ontology artifacts, deterministic manifests,
+        RO-Crate metadata, and JSON/Markdown/JUnit/SARIF reports; serialization, import-lock, network,
+        and project-boundary failures remain fail-closed.</li>
+    <li>The headless CLI adds policy validation and manifest-backed diff gates, reusable fork-safe CI
+        workflows are included, and the starter-policy/bootstrap flow now works with version-less
+        reasoner names. The public surface is 83 tools and 11 prompts.</li>
+</ul>
 
 <h4>v0.6.1</h4>
 <ul>

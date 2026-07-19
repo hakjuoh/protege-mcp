@@ -41,7 +41,7 @@ public final class ReleaseTools {
             Map<String, Object> a = Tools.args(req);
             ReleaseGate.Args args = args(a);
             boolean dryRun = Tools.optBool(a, "dry_run", true);
-            String createdAtArg = Tools.optString(a, "created_at");
+            String createdAtArg = validateCreatedAt(Tools.optString(a, "created_at"));
             String outputDirArg = Tools.optString(a, "output_dir");
 
             ReleaseGate.Outcome outcome = ReleaseGate.evaluate(ctx, ex, args);
@@ -81,6 +81,8 @@ public final class ReleaseTools {
                     .put("prepared", true)
                     .put("dry_run", false)
                     .put("gate", outcome.status.json())
+                    .put("network", outcome.network)
+                    .put("lock_mode", outcome.lockMode)
                     .put("output_dir", outputDir.toString())
                     .put("created_at", createdAt)
                     .put("version_iri", outcome.versionIri)
@@ -98,6 +100,8 @@ public final class ReleaseTools {
                 .put("required_stages", outcome.gate.requiredStages())
                 .put("stages", stageMaps(outcome))
                 .put("findings", findingMaps(outcome.gate.findings()))
+                .put("network", outcome.network)
+                .put("lock_mode", outcome.lockMode)
                 .put("resolved_imports", outcome.resolvedImports)
                 .putIfNotNull("network_caveat", outcome.networkCaveat)
                 .put("version_iri", outcome.versionIri)
@@ -124,6 +128,9 @@ public final class ReleaseTools {
     }
 
     private static String manifestUnavailableReason(ReleaseGate.Outcome outcome) {
+        if (!outcome.releaseInputsAligned) {
+            return "the ontology, policy, or validation assets changed while the gate was running";
+        }
         if (!outcome.releaseStable) {
             return "the release fingerprint is not stable, so a reproducible manifest cannot be built";
         }
@@ -144,6 +151,8 @@ public final class ReleaseTools {
                 .put("required_stages", outcome.gate.requiredStages())
                 .put("stages", stageMaps(outcome))
                 .put("findings", findingMaps(outcome.gate.findings()))
+                .put("network", outcome.network)
+                .put("lock_mode", outcome.lockMode)
                 .put("resolved_imports", outcome.resolvedImports)
                 .putIfNotNull("network_caveat", outcome.networkCaveat)
                 .put("version_iri", outcome.versionIri)
@@ -179,6 +188,8 @@ public final class ReleaseTools {
                 .put("gate", outcome.status.json())
                 .put("created_at", createdAt)
                 .put("version_iri", outcome.versionIri)
+                .put("network", outcome.network)
+                .put("lock_mode", outcome.lockMode)
                 .put("artifacts", artifactList)
                 .put("manifest", ReleaseGate.manifestPreview(outcome, createdAt))
                 .put("reports", reports)
@@ -268,7 +279,25 @@ public final class ReleaseTools {
         if (limit < 0 || limit > 10_000) {
             throw new ToolArgException("limit must be between 0 and 10000.");
         }
+        String lockMode = Tools.optString(a, "lock_mode");
+        lockMode = LockMode.parse(lockMode).value(); // strict + canonical runtime value.
         return new ReleaseGate.Args(Tools.optString(a, "policy_path"), Tools.optString(a, "network"),
-                Tools.optString(a, "baseline_manifest"), limit);
+                lockMode, Tools.optString(a, "baseline_manifest"), limit);
+    }
+
+    /** Validate an explicitly declared reproducibility timestamp before running the expensive gate. */
+    private static String validateCreatedAt(String value) {
+        if (value == null) {
+            return null;
+        }
+        if (!value.endsWith("Z")) {
+            throw new ToolArgException("created_at must be an ISO-8601 UTC instant ending in Z.");
+        }
+        try {
+            Instant.parse(value);
+            return value;
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new ToolArgException("created_at must be an ISO-8601 UTC instant: " + value);
+        }
     }
 }

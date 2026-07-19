@@ -5,12 +5,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -173,6 +176,95 @@ class ReleaseToolsTest {
     }
 
     @Test
+    void omittedReleaseNetworkStillDeniesWhenInteractivePolicyAllows(@TempDir Path temp)
+            throws Exception {
+        Path policy = temp.resolve("policy.yaml");
+        ProjectPolicyFixtures.writePolicy(policy,
+                ProjectPolicyFixtures.minimalPolicy("test", ONTOLOGY_IRI)
+                        + "release:\n  output_dir: out\n  format: turtle\n"
+                        + "network:\n  default: allow\n"
+                        + "validation:\n  required_stages: [structural]\n  fail_on: error\n");
+        ToolContext ctx = ctx(temp, VERSION_IRI, "http://example.org/remote/b.ttl", null);
+
+        Map<String, Object> result = structured(callGate(ctx,
+                Map.of("policy_path", policy.toString())));
+
+        assertEquals("error", result.get("gate"), () -> result.toString());
+        assertTrue(String.valueOf(result.get("findings")).contains("imports.remote_backed"),
+                "release-level network=deny must be materialized when the argument is omitted");
+        assertFalse(result.containsKey("network_caveat"));
+    }
+
+    @Test
+    void blankReleaseNetworkCannotBypassTheDefaultDeny(@TempDir Path temp) throws Exception {
+        Path policy = temp.resolve("policy.yaml");
+        ProjectPolicyFixtures.writePolicy(policy,
+                ProjectPolicyFixtures.minimalPolicy("test", ONTOLOGY_IRI)
+                        + "release:\n  output_dir: out\n  format: turtle\n"
+                        + "network:\n  default: allow\n"
+                        + "validation:\n  required_stages: [structural]\n  fail_on: error\n");
+        ToolContext ctx = ctx(temp, VERSION_IRI, "http://example.org/remote/b.ttl", null);
+
+        Map<String, Object> result = structured(callGate(ctx,
+                Map.of("policy_path", policy.toString(), "network", "   ")));
+
+        assertEquals("deny", result.get("network"));
+        assertEquals("error", result.get("gate"), () -> result.toString());
+        assertTrue(String.valueOf(result.get("findings")).contains("imports.remote_backed"));
+    }
+
+    @Test
+    void gateFailsClosedWhenAPolicyAssetChangesWhileTheGateRuns(@TempDir Path temp) throws Exception {
+        // Pins the releaseInputsAligned snapshot envelope end-to-end: the project RO-Crate (a
+        // preflight-digested policy asset) rewritten between the gate's initial digest and its
+        // post-capture recheck must surface release.snapshot_changed, skip the round trip, and
+        // refuse a stable release — trailing whitespace keeps the crate byte-different but
+        // JSON/profile-identical, so ONLY the snapshot envelope can notice the drift.
+        Path policy = writeReleasePolicy(temp, "turtle", "[structural]", "");
+        Path crate = temp.resolve("ro-crate-metadata.json");
+        assertTrue(Files.isRegularFile(crate), "the policy fixture materializes the project crate");
+        AtomicInteger dispatches = new AtomicInteger();
+        // Append-only growth on EVERY model hop: wherever the gate's before-digest lands in the hop
+        // sequence, the QC and capture hops that follow it grow the file again, so the after-digest
+        // is guaranteed to differ — no fragile hop-index pinning.
+        Runnable appendWhitespace = () -> {
+            try {
+                Files.writeString(crate, Files.readString(crate) + "\n");
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        };
+        ToolContext ctx = new ToolContext(HeadlessAccess.overHookedDispatches(
+                FakeModelManager.over(activeOntology(temp, VERSION_IRI, null)),
+                appendWhitespace, 1, dispatches), null);
+
+        Map<String, Object> result = structured(callGate(ctx,
+                Map.of("policy_path", policy.toString())));
+
+        assertTrue(dispatches.get() > 2, "the gate must have taken model hops after its preflight");
+        assertEquals("error", result.get("gate"), () -> result.toString());
+        assertTrue(String.valueOf(result.get("findings")).contains("release.snapshot_changed"),
+                () -> result.toString());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> roundTrip = (Map<String, Object>) result.get("round_trip");
+        assertEquals(Boolean.TRUE, roundTrip.get("skipped"), () -> roundTrip.toString());
+    }
+
+    @Test
+    void releaseRequiredLockModeFailsWhenUnlockedProjectHasNoLock(@TempDir Path temp)
+            throws Exception {
+        Path policy = writeReleasePolicy(temp, "turtle", "[structural]", "");
+        ToolContext ctx = ctx(temp, VERSION_IRI, null, null);
+
+        Map<String, Object> result = structured(callGate(ctx, Map.of(
+                "policy_path", policy.toString(), "lock_mode", "required")));
+
+        assertEquals("error", result.get("gate"), () -> result.toString());
+        assertTrue(String.valueOf(result.get("findings")).contains("imports.lock_missing"),
+                () -> result.toString());
+    }
+
+    @Test
     void roundTripFailureIsAReleaseGateError(@TempDir Path temp) throws Exception {
         // OBO cannot faithfully round-trip a generic https-IRI ontology, so the verified serialization
         // is not exact and require_clean_round_trip (default true) turns that into a gate error.
@@ -290,6 +382,161 @@ class ReleaseToolsTest {
             Files.deleteIfExists(secret);
             Files.deleteIfExists(escapeSibling);
         }
+    }
+
+    @Test
+    void baselineChecksumMismatchFailsClosedWithoutDiffing(@TempDir Path temp) throws Exception {
+        Path policy = writeReleasePolicy(temp, "turtle", "[structural]", "");
+        Path baselineDir = temp.resolve("baseline");
+        Files.createDirectories(baselineDir);
+        Path ontology = baselineDir.resolve("ontology.ttl");
+        Files.writeString(ontology, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/project> a owl:Ontology .\n");
+        Path manifest = baselineDir.resolve("manifest.json");
+        Files.writeString(manifest, "{\"manifest_version\":1,\"artifacts\":[{"
+                + "\"path\":\"ontology.ttl\",\"sha256\":\"sha256:" + "0".repeat(64)
+                + "\",\"bytes\":" + Files.size(ontology) + "}]}");
+        ToolContext ctx = ctx(temp, VERSION_IRI, null, null);
+
+        Map<String, Object> result = structured(callGate(ctx, Map.of(
+                "policy_path", policy.toString(), "baseline_manifest", manifest.toString())));
+
+        assertEquals("error", result.get("gate"), () -> result.toString());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> baseline = (Map<String, Object>) result.get("baseline");
+        assertEquals("artifact_verification_failed", baseline.get("status"));
+        assertEquals(false, baseline.get("compared"));
+        assertTrue(String.valueOf(result.get("findings")).contains("release.baseline_invalid"));
+    }
+
+    @Test
+    void baselineManifestVersionMustBeTheExactIntegerContractVersion(@TempDir Path temp)
+            throws Exception {
+        Path policy = writeReleasePolicy(temp, "turtle", "[structural]", "");
+        Path manifest = temp.resolve("manifest.json");
+        Files.writeString(manifest, "{\"manifest_version\":1.0,\"artifacts\":[]}");
+        ToolContext ctx = ctx(temp, VERSION_IRI, null, null);
+
+        Map<String, Object> result = structured(callGate(ctx, Map.of(
+                "policy_path", policy.toString(), "baseline_manifest", manifest.toString())));
+
+        assertEquals("error", result.get("gate"), () -> result.toString());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> baseline = (Map<String, Object>) result.get("baseline");
+        assertEquals("manifest_version_unsupported", baseline.get("status"));
+    }
+
+    @Test
+    void baselineManifestArtifactCountIsBoundedBeforeAnyArtifactHashing(@TempDir Path temp)
+            throws Exception {
+        Path policy = writeReleasePolicy(temp, "turtle", "[structural]", "");
+        StringBuilder json = new StringBuilder("{\"manifest_version\":1,\"artifacts\":[");
+        for (int i = 0; i <= ReleaseGate.MAX_BASELINE_ARTIFACTS; i++) {
+            if (i > 0) {
+                json.append(',');
+            }
+            json.append("{\"path\":\"missing-").append(i)
+                    .append(".ttl\",\"sha256\":\"sha256:")
+                    .append("0".repeat(64)).append("\",\"bytes\":0}");
+        }
+        json.append("]}");
+        Path manifest = temp.resolve("manifest.json");
+        Files.writeString(manifest, json);
+        ToolContext ctx = ctx(temp, VERSION_IRI, null, null);
+
+        Map<String, Object> result = structured(callGate(ctx, Map.of(
+                "policy_path", policy.toString(), "baseline_manifest", manifest.toString())));
+
+        assertEquals("error", result.get("gate"), () -> result.toString());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> baseline = (Map<String, Object>) result.get("baseline");
+        assertEquals("too_many_artifacts", baseline.get("status"));
+    }
+
+    @Test
+    void baselineDiffDirectionIsPriorReleaseToCurrentRelease(@TempDir Path temp) throws Exception {
+        Path policy = writeReleasePolicy(temp, "turtle", "[structural]", "");
+        Path baselineDir = temp.resolve("baseline");
+        Files.createDirectories(baselineDir);
+        Path ontology = baselineDir.resolve("ontology.ttl");
+        Files.writeString(ontology, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/project> a owl:Ontology .\n"
+                + "<https://example.org/project#Old> a owl:Class .\n");
+        Path manifest = baselineDir.resolve("manifest.json");
+        Files.writeString(manifest, "{\"manifest_version\":1,"
+                + "\"version_iri\":\"https://example.org/project/0.9.0\","
+                + "\"artifacts\":[{\"path\":\"ontology.ttl\",\"sha256\":\""
+                + ArtifactStore.sha256(ontology) + "\",\"bytes\":" + Files.size(ontology) + "}]}");
+        ToolContext ctx = ctx(temp, VERSION_IRI, null, null);
+
+        Map<String, Object> result = structured(callPrepare(ctx, Map.of(
+                "policy_path", policy.toString(), "baseline_manifest", manifest.toString(),
+                "dry_run", true)));
+
+        assertEquals("pass", result.get("gate"), () -> result.toString());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reports = (Map<String, Object>) result.get("reports");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> bounded = (Map<String, Object>) reports.get("reports/diff.json");
+        JsonNode diff = new ObjectMapper().readTree(String.valueOf(bounded.get("content")));
+        assertTrue(diff.at("/entities/added/class").toString().contains("#Thing"), diff::toString);
+        assertTrue(diff.at("/entities/removed/class").toString().contains("#Old"), diff::toString);
+    }
+
+    @Test
+    void baselineUnresolvedImportsAreDisclosedInSummaryAndDiffReport(@TempDir Path temp)
+            throws Exception {
+        // A remote baseline import fails the network-denied load closed (separately covered by the
+        // status=error path); a LOCAL import whose document is missing stays SILENT-unresolved —
+        // that incompleteness must surface on the baseline summary AND in reports/diff.json under a
+        // baseline-side (left) key, never vanish and never masquerade as a candidate-side gap.
+        Path policy = writeReleasePolicy(temp, "turtle", "[structural]", "");
+        Path baselineDir = temp.resolve("baseline");
+        Files.createDirectories(baselineDir);
+        Path ontology = baselineDir.resolve("ontology.ttl");
+        String missingImport = baselineDir.resolve("never-resolves.ttl").toUri().toString();
+        Files.writeString(ontology, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/project> a owl:Ontology ;\n"
+                + "  owl:imports <" + missingImport + "> .\n");
+        Path manifest = baselineDir.resolve("manifest.json");
+        Files.writeString(manifest, "{\"manifest_version\":1,"
+                + "\"version_iri\":\"https://example.org/project/0.9.0\","
+                + "\"artifacts\":[{\"path\":\"ontology.ttl\",\"sha256\":\""
+                + ArtifactStore.sha256(ontology) + "\",\"bytes\":" + Files.size(ontology) + "}]}");
+        ToolContext ctx = ctx(temp, VERSION_IRI, null, null);
+
+        Map<String, Object> gateResult = structured(callGate(ctx, Map.of(
+                "policy_path", policy.toString(), "baseline_manifest", manifest.toString())));
+        assertEquals("pass", gateResult.get("gate"), () -> gateResult.toString());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> baseline = (Map<String, Object>) gateResult.get("baseline");
+        assertEquals("compared", baseline.get("status"), () -> baseline.toString());
+        assertEquals(List.of(missingImport), baseline.get("unresolved_imports"),
+                () -> baseline.toString());
+
+        Map<String, Object> prepared = structured(callPrepare(ctx, Map.of(
+                "policy_path", policy.toString(), "baseline_manifest", manifest.toString(),
+                "dry_run", true)));
+        assertEquals("pass", prepared.get("gate"), () -> prepared.toString());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> reports = (Map<String, Object>) prepared.get("reports");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> bounded = (Map<String, Object>) reports.get("reports/diff.json");
+        JsonNode diff = new ObjectMapper().readTree(String.valueOf(bounded.get("content")));
+        assertTrue(diff.at("/left_document_unresolved_imports").toString().contains(missingImport),
+                diff::toString);
+    }
+
+    @Test
+    void prepareReleaseRejectsANonUtcCreatedAt(@TempDir Path temp) throws Exception {
+        Path policy = writeReleasePolicy(temp, "turtle", "[structural]", "");
+        ToolContext ctx = ctx(temp, VERSION_IRI, null, null);
+
+        CallToolResult result = callPrepare(ctx, Map.of("policy_path", policy.toString(),
+                "created_at", "2026-07-18T12:00:00-04:00"));
+
+        assertEquals(Boolean.TRUE, result.isError());
+        assertTrue(String.valueOf(structured(result).get("error")).contains("ending in Z"));
     }
 
     @Test
@@ -561,6 +808,13 @@ class ReleaseToolsTest {
 
     private ToolContext ctx(Path temp, String versionIri, String importDocumentIri,
             McpServerController controller) throws Exception {
+        return new ToolContext(HeadlessAccess.over(
+                FakeModelManager.over(activeOntology(temp, versionIri, importDocumentIri))),
+                controller);
+    }
+
+    private static OWLOntology activeOntology(Path temp, String versionIri, String importDocumentIri)
+            throws Exception {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         OWLOntologyID id = versionIri == null
                 ? new OWLOntologyID(IRI.create(ONTOLOGY_IRI))
@@ -580,7 +834,7 @@ class ReleaseToolsTest {
             manager.applyChange(new AddImport(active,
                     df.getOWLImportsDeclaration(IRI.create(importIri))));
         }
-        return new ToolContext(HeadlessAccess.over(FakeModelManager.over(active)), controller);
+        return active;
     }
 
     private static CallToolResult callGate(ToolContext ctx, Map<String, Object> args) {

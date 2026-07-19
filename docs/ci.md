@@ -23,7 +23,7 @@ project — without a local Protégé.
 
 The reusable workflow runs the headless CLI, so it gates exactly what the CLI can do headlessly:
 
-- **Policy validation** — `validate --project <policy> --no-network`: your project policy is
+- **Policy validation** — `validate --project <policy> --no-network --no-external`: your project policy is
   well-formed, its semantic references resolve, and its local assets exist.
 - **Asserted semantic diff** — `diff --left <baseline> --right <ontology> --no-network`: the
   asserted-only semantic change between the base branch's ontology and the PR's ontology.
@@ -83,21 +83,30 @@ jobs:
     permissions:
       contents: read
       actions: read
+      checks: write
       pull-requests: write
     uses: hakjuoh/protege-mcp/.github/workflows/ontology-annotate.yml@v0.7.0
     with:
       run_id: ${{ github.event.workflow_run.id }}
       producer_event: ${{ github.event.workflow_run.event }}
       producer_conclusion: ${{ github.event.workflow_run.conclusion }}
+      producer_head_sha: ${{ github.event.workflow_run.head_sha }}
       expected_workflow: Ontology CI
+      expected_workflow_path: .github/workflows/ontology-ci.yml
+      expected_project: .protege-mcp/project.yaml
+      expected_ontology: ontology.ttl
+      expected_diff_check: false
+      expected_cli_version: '0.7.0'
 ```
 
-Make the **annotate** job's status a required check in your branch protection. It runs from your
-default branch (a fork PR cannot alter it), verifies the artifact, posts the comment, **and turns red
-when the gate failed** — so requiring it actually blocks a policy-invalid or diff-failed PR from
-merging. (The untrusted validation job also fails on a bad gate and a fork cannot alter the
-base-pinned reusable workflow, so requiring that check instead is equally sound; whichever you
-require, it goes red on failure.)
+Require the fixed check name **`Protégé MCP ontology gate`** in branch protection. A `workflow_run`
+job's own status belongs to the default-branch SHA, so the trusted annotator explicitly publishes this
+check-run on the authenticated PR head (and publishes failure even when provenance/artifact verification
+aborts). Set `expected_workflow_path` to the exact path of the first workflow above. The annotator also
+verifies that the PR-side caller did not change, and that its project/ontology paths, diff mode, CLI
+version, and producer head SHA match the default-branch wrapper. The pull request itself is **resolved
+from the authenticated head SHA**, never from `workflow_run.pull_requests` — GitHub leaves that array
+empty for fork PRs, and fork PRs are this pipeline's primary scenario.
 
 ## Downloading and verifying the CLI
 
@@ -129,38 +138,48 @@ This pipeline follows the two-workflow split from [PLAN §10.4](https://github.c
    never to the PR.
 2. **Trusted annotation** (`ontology-annotate.yml`, triggered by your `workflow_run` companion).
    GitHub always runs a `workflow_run` workflow from your repository's **default branch**, so a fork
-   PR cannot modify it. It is the **only** place `pull-requests: write` lives. It downloads the
-   untrusted run's artifact **as data**, verifies **producer, run-id, digest, and size** — plus an
-   exact **filename allowlist** — before trusting a byte, then posts the comment and propagates the
-   verdict to its own conclusion. It **never executes any string or path taken from the artifact**: it
-   parses the JSON as data and reads a verified integer PR number.
+   PR cannot modify it. It is the **only** place `pull-requests: write` / `checks: write` lives. It downloads the
+   untrusted run's artifact **as data**. Before download it queries GitHub for the run/PR and requires
+   the caller workflow blob to be identical at the PR's base and head; a fork therefore cannot replace
+   the pinned reusable call with a look-alike artifact producer. It then verifies **run-id, head SHA,
+   PR number, digest, size, result shape, and configured inputs** plus an exact **filename allowlist**.
+   It **never executes any string or path taken from the artifact**. Finally it publishes the fixed-name
+   `Protégé MCP ontology gate` check on the verified PR-head SHA; `checks: write` exists only here.
 
 Two details make the artifact channel safe against a hostile fork:
 
 - The untrusted job writes every result into a **fresh directory outside the fork checkout**
   (`$RUNNER_TEMP/results`), so a PR that commits tracked files under `results/` can never mix into the
   artifact.
-- The trusted job enforces an **exact filename allowlist** on the downloaded artifact and rejects any
-  unexpected file. (`sha256sum -c` only checks files *listed* in the manifest, so an unlisted extra —
-  e.g. a planted `results.sarif` — would otherwise slip past.) There is deliberately **no SARIF /
+- The trusted job enforces an **exact filename allowlist** and a strict checksum manifest that covers
+  every regular, non-symlink artifact file exactly once. It hashes only allowlisted basenames itself;
+  an artifact can neither make `sha256sum -c` read a runner path nor hide an unlisted extra. There is
+  deliberately **no SARIF /
   code-scanning upload** here: the headless CLI emits no SARIF, so uploading an artifact-supplied one
   would poison base-repo code scanning with untrusted fork input.
 
 Never trigger the validation on `pull_request_target` to check out fork code; that is the exact
 foot-gun this split avoids.
 
-### The base branch judges the PR
+### The base-reviewed workflow judges the PR
 
 The gate that judges a PR is fixed by the **base branch**, not by the PR:
 
 - Consumers pin the reusable workflow by ref (`uses: ...@<sha>`), and the gate flags inside it are
-  **fixed** — `--no-network`, no external-path inputs, no credentials. A PR that flips
-  `network.default` or `allow_external_paths` in its own policy cannot loosen how it is judged: the
-  CLI still runs with `--no-network`, and the policy field change is merely reported.
+  **fixed** — `--no-network`, `--no-external`, no external-path inputs, no credentials. A PR that flips
+  `network.default` or `allow_external_paths` in its own policy cannot loosen the parser posture: the
+  CLI denies network and rejects the external-path grant.
+- Candidate-supplied workflow paths are canonicalized below isolated `__candidate__` / `__baseline__`
+  checkouts before use; absolute paths, missing files, and symlink escapes are rejected. Policy validation
+  also passes `--no-external`, so `filesystem.allow_external_paths: true` cannot authorize a runner file.
 - The **asserted-diff baseline is the base branch's ontology** (`github.event.pull_request.base.sha`),
   checked out separately, so the PR cannot rewrite what it is compared against.
 - Protect the policy file with `CODEOWNERS` and require the trusted annotate check, so a PR cannot
   both weaken the policy and self-approve the change.
+
+This 0.7.0 workflow validates the **proposed** policy and runs an asserted document diff; it does not
+claim to evaluate the candidate ontology through all stages of the base policy. That stronger
+base-policy QC gate needs the deferred bundled-reasoner/headless workspace adapter described above.
 
 ## PR defaults
 
@@ -170,7 +189,7 @@ are deliberately locked down:
 - `--no-network` — the CLI performs no network access; imports are never dereferenced (see
   [ADR 0005](adr/0005-import-network-policy-defaults.html)).
 - **Fixed project root** — policy-relative paths resolve below the canonical project root.
-- **No external paths** — the workflow passes no external-path inputs.
+- **No external paths** — the workflow passes `validate --no-external` and rejects policy grants.
 - **No provider credentials** — the untrusted job has a read-only token and no secrets.
 
 The asserted diff is **report-only by default** (`diff` without `--check`, always exit 0): a PR is

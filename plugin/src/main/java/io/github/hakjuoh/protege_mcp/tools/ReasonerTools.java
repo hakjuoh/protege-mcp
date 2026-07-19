@@ -3,14 +3,15 @@ package io.github.hakjuoh.protege_mcp.tools;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
@@ -22,6 +23,7 @@ import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.inference.OWLReasonerManager;
 import org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo;
 import org.protege.editor.owl.model.inference.ReasonerStatus;
+import io.github.hakjuoh.protege_mcp.policy.ReasonerNames;
 import io.github.hakjuoh.protege_mcp.server.EmbeddedClassificationWaiter;
 import org.semanticweb.owlapi.model.AxiomType;
 import org.semanticweb.owlapi.model.OWLAxiom;
@@ -268,20 +270,27 @@ public final class ReasonerTools {
                 (ex, req) -> ctx.access().compute(mm -> {
                     OWLReasonerManager rm = mm.getOWLReasonerManager();
                     String currentId = rm.getCurrentReasonerFactoryId();
-                    TreeMap<String, Map<String, Object>> byName = new TreeMap<>();
-                    for (ProtegeOWLReasonerInfo info : rm.getInstalledReasonerFactories()) {
+                    List<ProtegeOWLReasonerInfo> infos =
+                            new ArrayList<>(rm.getInstalledReasonerFactories());
+                    infos.sort(Comparator
+                            .comparing(ProtegeOWLReasonerInfo::getReasonerName,
+                                    Comparator.nullsFirst(String.CASE_INSENSITIVE_ORDER))
+                            .thenComparing(ProtegeOWLReasonerInfo::getReasonerId,
+                                    Comparator.nullsFirst(String.CASE_INSENSITIVE_ORDER)));
+                    List<Map<String, Object>> reasoners = new ArrayList<>();
+                    for (ProtegeOWLReasonerInfo info : infos) {
                         Map<String, Object> entry = new LinkedHashMap<>();
                         entry.put("name", info.getReasonerName());
                         entry.put("id", info.getReasonerId());
-                        entry.put("current", info.getReasonerId().equals(currentId));
-                        byName.put(info.getReasonerName(), entry);
+                        entry.put("current", Objects.equals(info.getReasonerId(), currentId));
+                        reasoners.add(entry);
                     }
-                    if (byName.isEmpty()) {
+                    if (reasoners.isEmpty()) {
                         return Tools.error("No reasoner plugins are installed in Protégé.");
                     }
                     return Tools.json()
-                            .put("count", byName.size())
-                            .put("reasoners", new ArrayList<>(byName.values()))
+                            .put("count", reasoners.size())
+                            .put("reasoners", reasoners)
                             .putIfNotNull("current_id", currentId)
                             .result();
                 }));
@@ -292,19 +301,32 @@ public final class ReasonerTools {
                     String ref = Tools.reqString(a, "reasoner");
                     return WriteTools.write(ctx, "set reasoner to " + ref, mm -> {
                         OWLReasonerManager rm = mm.getOWLReasonerManager();
-                        ProtegeOWLReasonerInfo match = null;
                         TreeSet<String> available = new TreeSet<>();
+                        // Candidates and infos stay index-parallel: the winning candidate maps back
+                        // to ITS factory even when several factories share one display name (the
+                        // name alone is not a key — only an exact id reference resolves then).
+                        List<ReasonerNames.Candidate> installed = new ArrayList<>();
+                        List<ProtegeOWLReasonerInfo> infos = new ArrayList<>();
                         for (ProtegeOWLReasonerInfo info : rm.getInstalledReasonerFactories()) {
                             available.add(info.getReasonerName() + " [" + info.getReasonerId() + "]");
-                            if (info.getReasonerId().equalsIgnoreCase(ref)
-                                    || info.getReasonerName().equalsIgnoreCase(ref)) {
-                                match = info;
-                            }
+                            installed.add(new ReasonerNames.Candidate(
+                                    info.getReasonerName(), info.getReasonerId()));
+                            infos.add(info);
                         }
-                        if (match == null) {
+                        ReasonerNames.Resolution resolution = ReasonerNames.resolve(ref, installed);
+                        if (resolution.ambiguous()) {
+                            return Tools.error("Reasoner reference '" + ref
+                                    + "' matches more than one installed reasoner ("
+                                    + String.join(", ", resolution.candidateLabels())
+                                    + "). Use a full display name or factory id that identifies one"
+                                    + " installed reasoner.");
+                        }
+                        if (!resolution.unique()) {
                             return Tools.error("No reasoner matches '" + ref + "'. Available: "
                                     + String.join(", ", available) + ".");
                         }
+                        ProtegeOWLReasonerInfo match =
+                                infos.get(installed.indexOf(resolution.match()));
                         rm.setCurrentReasonerFactoryId(match.getReasonerId());
                         Map<String, Object> selected = new LinkedHashMap<>();
                         selected.put("name", match.getReasonerName());

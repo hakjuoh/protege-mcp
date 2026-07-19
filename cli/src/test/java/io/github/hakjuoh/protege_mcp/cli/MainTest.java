@@ -29,10 +29,42 @@ class MainTest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         assertEquals(0, Main.run(new String[] {"--version"}, new PrintStream(out), new PrintStream(err)));
-        assertEquals("protege-mcp-cli 0.6.1", out.toString().trim());
+        assertEquals("protege-mcp-cli 0.7.0", out.toString().trim());
 
         assertEquals(2, Main.run(new String[] {"unknown"}, new PrintStream(out), new PrintStream(err)));
         assertTrue(err.toString().contains("Usage:"));
+    }
+
+    @Test
+    void helpPrintsUsageOnStdoutAndExitsZero() {
+        for (String alias : new String[] {"--help", "-h", "help"}) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            ByteArrayOutputStream err = new ByteArrayOutputStream();
+            assertEquals(0, Main.run(new String[] {alias}, new PrintStream(out), new PrintStream(err)),
+                    () -> alias + " is an explicit help request and must exit 0");
+            assertTrue(out.toString().contains("Usage:"),
+                    () -> alias + " prints the usage text on STDOUT");
+            assertEquals("", err.toString(), () -> alias + " must leave stderr empty");
+        }
+
+        // With an extra argument it is no longer an exact help request: it falls through to the
+        // usage-on-stderr configuration error, like any other malformed invocation.
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(2, Main.run(new String[] {"--help", "extra"},
+                new PrintStream(out), new PrintStream(err)));
+        assertTrue(err.toString().contains("Usage:"), "usage goes to stderr for the malformed form");
+    }
+
+    @Test
+    void markdownPolicyLoadedMatchesTheJsonHonestyRefinement() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        Path missing = temp.resolve("missing-md.yaml");
+        assertEquals(2, Main.run(new String[] {"validate", "--project", missing.toString(),
+                "--format", "markdown"}, new PrintStream(out), new PrintStream(err)));
+        assertTrue(out.toString(StandardCharsets.UTF_8).contains("Policy loaded: false"),
+                "a never-evaluated policy must not read as loaded in the markdown report either");
     }
 
     @Test
@@ -64,6 +96,33 @@ class MainTest {
         assertEquals(0, Main.run(new String[] {"diff", "--left", left.toString(), "--right", right.toString()},
                 new PrintStream(diffOut), new PrintStream(new ByteArrayOutputStream())));
         assertTrue(diffOut.toString().contains("\"entities\""));
+    }
+
+    @Test
+    void validatePolicyJsonDocumentEndsWithATrailingNewline() throws Exception {
+        // The shared mapper disables AUTO_CLOSE_TARGET, so JSON.writeValue must not close the output
+        // stream: the out.println() that terminates the JSON document with a newline runs after it
+        // and must actually land in the stream.
+        Path policy = temp.resolve("project.yaml");
+        Files.writeString(policy, """
+                version: 1
+                project_id: cli-newline
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [profile, governance, structural]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(policy, "cli-newline");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        assertEquals(0, Main.run(new String[] {"validate-policy", "--project", policy.toString()},
+                new PrintStream(out), new PrintStream(new ByteArrayOutputStream())));
+        String json = out.toString(StandardCharsets.UTF_8);
+        assertTrue(json.endsWith("}\n"),
+                "the JSON document must terminate with its closing brace and a trailing newline");
     }
 
     @Test
@@ -312,16 +371,60 @@ class MainTest {
         assertEquals(1, Main.run(new String[] {"validate-policy", "--project", invalid.toString()},
                 new PrintStream(invalidOut), new PrintStream(new ByteArrayOutputStream())));
         assertTrue(invalidOut.toString().contains("\"valid\" : false"));
+        assertTrue(invalidOut.toString().contains("\"policy_loaded\" : true"),
+                "a fully evaluated policy (digest present) still reports policy_loaded true");
 
-        // A policy that never parses cleanly has no digest and is a configuration error, exit 2.
+        // A policy that never parses cleanly has no digest and is a configuration error, exit 2 —
+        // and policy_loaded honestly reports false, since the policy never reached evaluation.
         Path missing = temp.resolve("does-not-exist.yaml");
+        ByteArrayOutputStream missingOut = new ByteArrayOutputStream();
         assertEquals(2, Main.run(new String[] {"validate-policy", "--project", missing.toString()},
-                new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream())));
+                new PrintStream(missingOut), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(missingOut.toString().contains("\"policy_loaded\" : false"), missingOut::toString);
 
         Path unparseable = temp.resolve("broken.yaml");
         Files.writeString(unparseable, "this: is: not: valid: yaml: {[}\n", StandardCharsets.UTF_8);
+        ByteArrayOutputStream unparseableOut = new ByteArrayOutputStream();
         assertEquals(2, Main.run(new String[] {"validate-policy", "--project", unparseable.toString()},
-                new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream())));
+                new PrintStream(unparseableOut), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(unparseableOut.toString().contains("\"policy_loaded\" : false"),
+                unparseableOut::toString);
+    }
+
+    @Test
+    void validateCanForbidCandidatePolicyExternalPaths() throws Exception {
+        Path outside = Files.createTempFile("cli-external-", ".rq");
+        try {
+            Path policy = temp.resolve("external.yaml");
+            Files.writeString(policy, """
+                    version: 1
+                    project_id: cli-external
+                    root_ontology: https://example.org/root
+                    filesystem:
+                      allow_external_paths: true
+                    interoperability:
+                      profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                      root_artifact: ontology.ttl
+                      metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                      canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                    validation:
+                      required_stages: [invariants]
+                      invariants:
+                        paths: ['%s']
+                    """.formatted(outside.toString().replace("'", "''")), StandardCharsets.UTF_8);
+            materializeRoCrate(policy, "cli-external");
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+            assertEquals(1, Main.run(new String[] {"validate", "--project", policy.toString(),
+                    "--no-external"}, new PrintStream(out),
+                    new PrintStream(new ByteArrayOutputStream())));
+
+            String json = out.toString(StandardCharsets.UTF_8);
+            assertTrue(json.contains("external_paths_forbidden"), json);
+            assertTrue(json.contains("\"no_external_paths\" : true"), json);
+        } finally {
+            Files.deleteIfExists(outside);
+        }
     }
 
     @Test
@@ -391,15 +494,17 @@ class MainTest {
         Files.writeString(ontology, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
                 + "<https://example.org/o> a owl:Ontology .\n", StandardCharsets.UTF_8);
         Path manifest = temp.resolve("manifest.json");
+        // The recorded byte length is CORRECT so this pins the sha256 check specifically; the
+        // bounded read verifies the length first.
         Files.writeString(manifest, """
                 {
                   "manifest_version": 1,
                   "version_iri": "https://example.org/o/1.0.0",
                   "artifacts": [
-                    {"path": "ontology.ttl", "sha256": "sha256:%s", "bytes": 1}
+                    {"path": "ontology.ttl", "sha256": "sha256:%s", "bytes": %d}
                   ]
                 }
-                """.formatted("0".repeat(64)), StandardCharsets.UTF_8);
+                """.formatted("0".repeat(64), Files.size(ontology)), StandardCharsets.UTF_8);
         Path right = temp.resolve("right.ttl");
         Files.writeString(right, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
                 + "<https://example.org/o> a owl:Ontology .\n", StandardCharsets.UTF_8);
@@ -411,6 +516,44 @@ class MainTest {
                         new PrintStream(out), new PrintStream(err)));
         assertTrue(err.toString().contains("sha256 mismatch"), err.toString());
         assertFalse(out.toString().contains("\"entities\""), "a tampered artifact must not be diffed");
+    }
+
+    @Test
+    void manifestDiffRejectsUnsupportedOrNonIntegerManifestVersion() throws Exception {
+        Path ontology = temp.resolve("ontology.ttl");
+        Files.writeString(ontology, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/o> a owl:Ontology .\n", StandardCharsets.UTF_8);
+        Path manifest = temp.resolve("manifest.json");
+        Files.writeString(manifest, """
+                {"manifest_version": 1.5, "artifacts": [
+                  {"path":"ontology.ttl", "sha256":"%s", "bytes":%d}
+                ]}
+                """.formatted(ArtifactStore.sha256(ontology), Files.size(ontology)));
+
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(3, Main.run(new String[] {"diff", "--left", manifest.toString(),
+                "--right", ontology.toString()}, new PrintStream(new ByteArrayOutputStream()),
+                new PrintStream(err)));
+        assertTrue(err.toString().contains("manifest_version"), err::toString);
+    }
+
+    @Test
+    void manifestDiffRejectsByteLengthMismatchEvenWhenShaMatches() throws Exception {
+        Path ontology = temp.resolve("ontology.ttl");
+        Files.writeString(ontology, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<https://example.org/o> a owl:Ontology .\n", StandardCharsets.UTF_8);
+        Path manifest = temp.resolve("manifest.json");
+        Files.writeString(manifest, """
+                {"manifest_version": 1, "artifacts": [
+                  {"path":"ontology.ttl", "sha256":"%s", "bytes":1}
+                ]}
+                """.formatted(ArtifactStore.sha256(ontology)));
+
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(3, Main.run(new String[] {"diff", "--left", manifest.toString(),
+                "--right", ontology.toString()}, new PrintStream(new ByteArrayOutputStream()),
+                new PrintStream(err)));
+        assertTrue(err.toString().contains("byte-length mismatch"), err::toString);
     }
 
     @Test
@@ -514,11 +657,27 @@ class MainTest {
                     new String[] {"validate", "--project", invalid.toString(), "--format", format},
                     new PrintStream(out), new PrintStream(new ByteArrayOutputStream())),
                     () -> "a loaded-but-invalid policy is a gate failure (exit 1) in " + format);
+            if ("json".equals(format)) {
+                assertTrue(out.toString().contains("\"policy_loaded\" : true"),
+                        "a fully evaluated policy (digest present) still reports policy_loaded true");
+            }
         }
 
+        // Unloadable policies (missing or unparseable) never reach evaluation: exit 2 with an honest
+        // "policy_loaded" : false, exactly like the validate-policy twin.
         Path missing = temp.resolve("nope.yaml");
+        ByteArrayOutputStream missingOut = new ByteArrayOutputStream();
         assertEquals(2, Main.run(new String[] {"validate", "--project", missing.toString()},
-                new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream())));
+                new PrintStream(missingOut), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(missingOut.toString().contains("\"policy_loaded\" : false"), missingOut::toString);
+
+        Path unparseable = temp.resolve("broken-validate.yaml");
+        Files.writeString(unparseable, "this: is: not: valid: yaml: {[}\n", StandardCharsets.UTF_8);
+        ByteArrayOutputStream unparseableOut = new ByteArrayOutputStream();
+        assertEquals(2, Main.run(new String[] {"validate", "--project", unparseable.toString()},
+                new PrintStream(unparseableOut), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(unparseableOut.toString().contains("\"policy_loaded\" : false"),
+                unparseableOut::toString);
     }
 
     @Test

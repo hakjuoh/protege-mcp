@@ -24,6 +24,7 @@ import org.semanticweb.owlapi.profiles.Profiles;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprints;
+import io.github.hakjuoh.protege_mcp.policy.ReasonerNames;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint;
 import io.github.hakjuoh.protege_mcp.contracts.RdfDatasetFingerprint;
 import io.github.hakjuoh.protege_mcp.contracts.RdfDatasetFingerprints;
@@ -467,11 +468,14 @@ public final class QcSuiteTools {
         return new ReasoningOutcome(stage, snapshot);
     }
 
-    private static boolean reasonerMatches(String required, IsolatedReasonerSpec spec,
+    static boolean reasonerMatches(String required, IsolatedReasonerSpec spec,
             String selectedName) {
-        return required.equalsIgnoreCase(spec.reasonerName())
-                || (spec.reasonerId() != null && required.equalsIgnoreCase(spec.reasonerId()))
-                || (selectedName != null && required.equalsIgnoreCase(selectedName));
+        List<ReasonerNames.Candidate> selection = new ArrayList<>();
+        selection.add(new ReasonerNames.Candidate(spec.reasonerName(), spec.reasonerId()));
+        if (selectedName != null) {
+            selection.add(new ReasonerNames.Candidate(selectedName, null));
+        }
+        return !ReasonerNames.resolve(required, selection).candidates().isEmpty();
     }
 
     private record ReasoningOutcome(QcStageResult stage, IsolatedValidationSnapshot snapshot) { }

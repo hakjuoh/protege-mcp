@@ -116,6 +116,15 @@ without an extension keeps the ontology's current format. After a save-as, the o
 that file, so later argument-less saves go to the same place. Pass `all=true` to instead save EVERY
 ontology with unsaved changes to its own existing document (`list_ontologies` shows which are dirty).
 
+A discovered project policy that is loaded but **invalid** normally refuses every explicit-path write
+until it validates — a fail-closed state that would otherwise make it impossible to create the very
+`root_artifact` the policy declares. Passing `policy_bootstrap=true` (with an explicit `path`) authorizes
+exactly that save the same way as the documented `write_import_lock` lockfile bootstrap: the write stays
+capability-checked, is confined to the invalid policy's canonical `project_root`, and
+`filesystem.allow_external_paths` is deliberately NOT honored while the policy is invalid. Without the
+flag, the fail-closed refusal names `policy_bootstrap=true` as the way to create a policy-referenced
+artifact at an explicit path inside the project root.
+
 *Persistence (writes a file; not an undoable model change).*
 
 **Arguments**
@@ -128,6 +137,7 @@ ontology with unsaved changes to its own existing document (`list_ontologies` sh
 | `atomic` | boolean | no | `false` | Require atomic replacement; implies `verify_round_trip`. |
 | `backup` | boolean | no | `false` | Preserve an existing target as `<path>.bak`; implies `verify_round_trip`. |
 | `on_lossy` | string (`warn` \| `fail`) | no | `warn` | How to handle a target format that cannot represent the ontology without loss. `warn` still saves and adds `lossy_format_warning` (and, for OBO, `obo_compatibility`) to the result; `fail` refuses before writing with `error_code=lossy_format_refused` and leaves the target unchanged. Applies to a single-ontology save (ignored with `all=true`). |
+| `policy_bootstrap` | boolean | no | `false` | Requires an explicit `path`. While the DISCOVERED project policy is loaded but invalid (e.g. its declared `root_artifact` does not exist yet), authorizes this explicit-path save like the documented import-lock bootstrap: capability-checked and confined to the invalid policy's canonical `project_root`, with `filesystem.allow_external_paths` deliberately not honored. With a valid or absent policy, normal authorization applies unchanged (the result then reports `policy_bootstrap.used=false` with a `reason`). |
 
 **Returns**
 
@@ -136,6 +146,7 @@ ontology with unsaved changes to its own existing document (`list_ontologies` sh
 - `format`: string — the serialization format used (the format class's simple name); present only on a save-as.
 - `lossy_format_warning`: object — present when the chosen format cannot represent the ontology without loss; carries `format`, `reasons`, and a `recommendation`. Only genuinely lossy targets are flagged (an OBO term carrying more than one single-valued frame tag — name/comment/definition, which the OBO writer rejects). Turtle, RDF/XML, Functional, OWL/XML, and Manchester are treated as lossless (each round-trips OWL 2 DL content in this OWLAPI build; OBO preserves general axioms, SWRL, keys, and datatype definitions via its `owl-axioms:` escape hatch).
 - `obo_compatibility`: object — present on an OBO save; reports `compatible`, bounded `issues` (each `kind`/`focus_iri`/`detail`), and exact `counts`.
+- `policy_bootstrap`: object — optional; present only when the `policy_bootstrap` flag was passed. On a bootstrap-authorized save: `used: true` plus `policy_path`, `policy_errors` (the invalid policy's distinct error codes), `contained_root`, and a `note` explaining the containment and pointing to `validate_project_policy` once the referenced assets exist. When the bootstrap was requested but not needed: `used: false` with a `reason` (the effective policy was valid, or none was loaded).
 
 With verified save (`verify_round_trip`, `atomic`, or `backup`):
 
@@ -171,8 +182,8 @@ With `all=true`:
 - `message`: string — e.g. `"2 of 3 modified ontologies saved."`, or that nothing had unsaved changes.
 
 Returns an error object if the ontology has never been saved and no `path` was given, if the target
-directory cannot be created, if the `path` extension is unrecognized, or if `all` is combined with
-`path`.
+directory cannot be created, if the `path` extension is unrecognized, if `all` is combined with
+`path`, or if `policy_bootstrap=true` is passed without an explicit `path`.
 
 **Example**
 

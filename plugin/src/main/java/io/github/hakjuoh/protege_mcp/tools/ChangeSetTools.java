@@ -74,6 +74,7 @@ public final class ChangeSetTools {
     static final String KIND_OPERATIONS = "operations";
     static final String KIND_CREATE_TERMS = "create_terms";
     static final String KIND_CREATE_PROPERTIES = "create_properties";
+    static final int MAX_PREFLIGHT_TIMEOUT_MS = 3_600_000;
 
     /** Shared preview/QC/cache pipeline for low-level and high-level curation planners. */
     static CallToolResult previewPrepared(ToolContext ctx, Map<String, Object> arguments,
@@ -99,6 +100,7 @@ public final class ChangeSetTools {
         final LockMode lockMode;
         try {
             lockMode = LockMode.parse(Tools.optString(arguments, "lock_mode"));
+            requestedTimeout(arguments);
         } catch (ToolArgException invalid) {
             return Tools.error(invalid.getMessage());
         }
@@ -462,8 +464,7 @@ public final class ChangeSetTools {
             Map<String, Object> arguments, ReasonerSelection selection) {
         // apply_changes' documented timeout_ms is the preflight budget. It can only TIGHTEN a
         // policy's reasoning.timeout_ms — the policy stays the reproducible ceiling.
-        Integer requestedTimeout = arguments.get("timeout_ms") instanceof Number number
-                ? Math.max(1, number.intValue()) : null;
+        Integer requestedTimeout = requestedTimeout(arguments);
         if (state.policy().loaded() && state.policy().valid()) {
             QcRunConfig config = ProjectQcTools.config(state.policy(), state.live(),
                     arguments);
@@ -498,6 +499,35 @@ public final class ChangeSetTools {
             legacy.put("timeout_ms", requestedTimeout);
         }
         return QcRunConfig.legacy(legacy);
+    }
+
+    /**
+     * Exact, bounded parsing: never let fractional/overflowing values wrap into another budget.
+     * Package-visible so the verified-apply entry points ({@code apply_changes},
+     * {@code create_terms}, {@code create_properties}) validate the RAW argument with the same
+     * contract instead of pre-coercing it through {@code Number.intValue()} wrapping.
+     */
+    static Integer requestedTimeout(Map<String, Object> arguments) {
+        Object raw = arguments.get("timeout_ms");
+        if (raw == null) {
+            return null;
+        }
+        if (!(raw instanceof Number)) {
+            throw new ToolArgException("timeout_ms must be an integer between 1 and "
+                    + MAX_PREFLIGHT_TIMEOUT_MS + ".");
+        }
+        final int timeout;
+        try {
+            timeout = new java.math.BigDecimal(String.valueOf(raw).trim()).intValueExact();
+        } catch (NumberFormatException | ArithmeticException e) {
+            throw new ToolArgException("timeout_ms must be an integer between 1 and "
+                    + MAX_PREFLIGHT_TIMEOUT_MS + ".");
+        }
+        if (timeout < 1 || timeout > MAX_PREFLIGHT_TIMEOUT_MS) {
+            throw new ToolArgException("timeout_ms must be between 1 and "
+                    + MAX_PREFLIGHT_TIMEOUT_MS + ".");
+        }
+        return timeout;
     }
 
     /** The reasoner-selection state the preview's captured hop observed. */

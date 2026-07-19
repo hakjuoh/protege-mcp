@@ -2,10 +2,13 @@
 #
 # A consumer calls this from a `workflow_run`-triggered wrapper. GitHub always runs a workflow_run
 # workflow from the repository's DEFAULT branch, so a fork PR can never modify this trusted code, and
-# it is the only place PR-write scope lives. It downloads the untrusted validation run's artifact AS
-# DATA, verifies producer / run-id / digest / size AND an exact filename allowlist before trusting a
-# single byte, then posts a PR comment and propagates the gate verdict to this check's conclusion. It
-# NEVER executes any string or path taken from the artifact.
+# it is the only place PR/check-write scope lives. It downloads the untrusted validation run's artifact AS
+# DATA. It authenticates the producer run through GitHub's API, resolves the pull request FROM the
+# authenticated head (workflow_run.pull_requests is empty for fork PRs, so it is never required),
+# requires the caller workflow file to be byte-identical at the PR base and head, binds the artifact to
+# the resolved PR set and head SHA, then verifies digest / size AND an exact filename allowlist before
+# trusting a byte. It posts a PR comment and propagates the gate verdict to this check's conclusion.
+# It NEVER executes an artifact string/path.
 #
 # Honesty boundary: the comment reports the POLICY-VALIDATION verdict and the ASSERTED-DIFF result
 # only. It does not (and must not) claim a reasoner/profile/governance/invariants/CQ/SHACL QC pass.
@@ -31,10 +34,34 @@ on:
         description: 'Conclusion of the validation run (success/failure/...).'
         type: string
         default: ''
-      expected_workflow:
-        description: 'Optional producer workflow name to require in the artifact metadata.'
+      producer_head_sha:
+        description: 'Head SHA of the triggering validation run (github.event.workflow_run.head_sha).'
         type: string
-        default: ''
+        required: true
+      expected_workflow:
+        description: 'Trusted producer workflow name configured by the default-branch wrapper.'
+        type: string
+        required: true
+      expected_workflow_path:
+        description: 'Trusted caller workflow path, which must be unchanged between base and PR head.'
+        type: string
+        required: true
+      expected_project:
+        description: 'Trusted project path configured by the default-branch wrapper.'
+        type: string
+        required: true
+      expected_ontology:
+        description: 'Trusted ontology path configured by the default-branch wrapper.'
+        type: string
+        required: true
+      expected_diff_check:
+        description: 'Trusted asserted-diff gate mode configured by the default-branch wrapper.'
+        type: boolean
+        required: true
+      expected_cli_version:
+        description: 'Trusted CLI release configured by the default-branch wrapper.'
+        type: string
+        required: true
       artifact_name:
         description: 'Name of the results artifact to download.'
         type: string
@@ -50,6 +77,7 @@ on:
 permissions:
   contents: read
   actions: read
+  checks: write
   pull-requests: write
 
 jobs:
@@ -60,8 +88,94 @@ jobs:
     permissions:
       contents: read
       actions: read
+      checks: write
       pull-requests: write
     steps:
+      # The artifact is self-signed by its producer, so checksums alone cannot prove that the
+      # base-reviewed reusable workflow produced it. First authenticate the RUN through GitHub's API
+      # and require the caller workflow blob to be byte-identical at the PR base and producer head.
+      # This prevents a PR from replacing its caller with a look-alike job that uploads a forged pass.
+      - name: Verify producer run and trusted caller workflow
+        id: provenance
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+          EXPECTED_EVENT: ${{ inputs.producer_event }}
+          EXPECTED_CONCLUSION: ${{ inputs.producer_conclusion }}
+          EXPECTED_HEAD_SHA: ${{ inputs.producer_head_sha }}
+          EXPECTED_WORKFLOW: ${{ inputs.expected_workflow }}
+          EXPECTED_WORKFLOW_PATH: ${{ inputs.expected_workflow_path }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const runId = Number(process.env.RUN_ID);
+            if (!Number.isSafeInteger(runId)) {
+              core.setFailed('run_id must be an integer');
+              return;
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: runId });
+            const checks = [
+              [String(run.id), String(runId), 'run id'],
+              [run.event || '', process.env.EXPECTED_EVENT, 'producer event'],
+              [run.conclusion || '', process.env.EXPECTED_CONCLUSION, 'producer conclusion'],
+              [run.head_sha || '', process.env.EXPECTED_HEAD_SHA, 'producer head SHA'],
+              [run.name || '', process.env.EXPECTED_WORKFLOW, 'producer workflow name'],
+              [run.path || '', process.env.EXPECTED_WORKFLOW_PATH, 'producer workflow path'],
+            ];
+            for (const [actual, expected, label] of checks) {
+              if (actual !== expected) {
+                core.setFailed(`${label} mismatch: ${actual} != ${expected}`);
+                return;
+              }
+            }
+            // Resolve the PR from the AUTHENTICATED head instead of workflow_run.pull_requests:
+            // GitHub leaves that array (and its API mirror) EMPTY for fork PRs, so requiring it
+            // would permanently block the fork PRs this pipeline exists for. Every candidate must
+            // be an OPEN PR into this repo whose CURRENT head commit is the authenticated run head
+            // and whose head repository is the run's head repository — a stale or substituted head
+            // resolves to nothing and fails closed. OPEN only: a closed/merged PR frozen at the
+            // same head would otherwise veto the live PR through its historical base (and there is
+            // nothing left to gate on a closed PR anyway).
+            if (!run.head_repository || !run.head_repository.owner || !run.head_branch) {
+              core.setFailed('producer run has no resolvable head repository/branch');
+              return;
+            }
+            const headLabel = `${run.head_repository.owner.login}:${run.head_branch}`;
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: 'open', head: headLabel, per_page: 100,
+            });
+            const candidates = prs.filter(pr => pr.head && pr.head.sha === run.head_sha
+              && pr.head.repo && pr.head.repo.full_name === run.head_repository.full_name
+              && pr.base && pr.base.sha);
+            if (candidates.length === 0) {
+              core.setFailed('no open pull request into this repository has the authenticated producer head');
+              return;
+            }
+            // The caller workflow must be byte-identical between the producer head and EVERY
+            // candidate PR's base — the head blob is fixed, so each base must match it exactly.
+            const path = process.env.EXPECTED_WORKFLOW_PATH;
+            const headRepo = candidates[0].head.repo;
+            const head = await github.rest.repos.getContent({
+              owner: headRepo.owner.login, repo: headRepo.name, path, ref: run.head_sha,
+            });
+            if (Array.isArray(head.data) || !head.data.sha) {
+              core.setFailed('trusted caller workflow path did not resolve to a file');
+              return;
+            }
+            for (const pr of candidates) {
+              const base = await github.rest.repos.getContent({ owner, repo, path, ref: pr.base.sha });
+              if (Array.isArray(base.data) || !base.data.sha) {
+                core.setFailed('trusted caller workflow path did not resolve to a file');
+                return;
+              }
+              if (base.data.sha !== head.data.sha) {
+                core.setFailed('the producer caller workflow was modified by the pull request');
+                return;
+              }
+            }
+            core.setOutput('pr_candidates', candidates.map(pr => String(pr.number)).join(' '));
+            core.setOutput('conclusion', run.conclusion || '');
+
       # Download by run-id from the SAME repository (fork PRs run in the base repo's Actions), so the
       # artifact is our own run's output, not fork-controlled infrastructure.
       - name: Download the validation artifact
@@ -72,14 +186,20 @@ jobs:
           github-token: ${{ github.token }}
           path: incoming
 
-      # Verify BEFORE trusting: total size cap, checksum manifest, an integer PR number, and that the
-      # metadata's producer run-id matches the run that triggered us. Any failure aborts.
+      # Verify BEFORE trusting: total size cap, strict checksum manifest, schema/shape, exact PR/head,
+      # and trusted caller inputs. Any failure aborts.
       - name: Verify artifact integrity and provenance
         id: verify
         env:
           MAX_BYTES: ${{ inputs.max_artifact_bytes }}
           EXPECTED_RUN_ID: ${{ inputs.run_id }}
           EXPECTED_WORKFLOW: ${{ inputs.expected_workflow }}
+          EXPECTED_HEAD_SHA: ${{ inputs.producer_head_sha }}
+          EXPECTED_PROJECT: ${{ inputs.expected_project }}
+          EXPECTED_ONTOLOGY: ${{ inputs.expected_ontology }}
+          EXPECTED_DIFF_CHECK: ${{ inputs.expected_diff_check }}
+          EXPECTED_CLI_VERSION: ${{ inputs.expected_cli_version }}
+          PR_CANDIDATES: ${{ steps.provenance.outputs.pr_candidates }}
         run: |
           cd incoming
           # ALLOWLIST FIRST, fail-closed: the artifact may contain ONLY these exact basenames. A fork
@@ -93,17 +213,70 @@ jobs:
               meta.json|pr-number.txt|manifest.sha256) : ;;
               *) echo "::error::Unexpected file in artifact: ${f}"; exit 1 ;;
             esac
+            if [ ! -f "$f" ] || [ -L "$f" ]; then
+              echo "::error::Artifact entry must be a regular, non-symlink file: ${f}"
+              exit 1
+            fi
           done < <(find . -mindepth 1 -printf '%P\0')
           total="$(du -sb . | cut -f1)"
           if [ "$total" -gt "$MAX_BYTES" ]; then
             echo "::error::Artifact is ${total} bytes, over the ${MAX_BYTES}-byte cap."
             exit 1
           fi
-          test -f manifest.sha256
-          sha256sum -c manifest.sha256
+          for required in policy-validate.json policy-validate.err policy-validate.exit \
+              meta.json pr-number.txt manifest.sha256; do
+            test -f "$required" && test ! -L "$required" || {
+              echo "::error::Required artifact file is missing or unsafe: $required"; exit 1;
+            }
+          done
+          jq -e 'type == "object"' policy-validate.json >/dev/null
+          pol_exit="$(cat policy-validate.exit)"
+          case "$pol_exit" in 0|1|2) ;; *) echo "::error::Invalid policy exit code."; exit 1 ;; esac
+
+          # Never hand an artifact-supplied path to sha256sum. Parse a strict two-column manifest,
+          # allow only already-confined basenames, hash each file ourselves, reject duplicates, and
+          # require the manifest to cover every artifact file except itself exactly once.
+          listed="$(mktemp "$RUNNER_TEMP/ontology-ci-listed.XXXXXX")"
+          expected="$(mktemp "$RUNNER_TEMP/ontology-ci-expected.XXXXXX")"
+          while read -r digest filename extra; do
+            if ! printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$' || [ -z "$filename" ] || [ -n "${extra:-}" ]; then
+              echo "::error::Malformed manifest.sha256 entry."; exit 1
+            fi
+            case "$filename" in
+              policy-validate.json|policy-validate.err|policy-validate.exit) ;;
+              diff.json|diff.err|diff.exit|diff.status) ;;
+              meta.json|pr-number.txt) ;;
+              *) echo "::error::Unsafe checksum filename: $filename"; exit 1 ;;
+            esac
+            test -f "$filename" && test ! -L "$filename" || {
+              echo "::error::Checksum target is missing or unsafe: $filename"; exit 1;
+            }
+            actual="$(sha256sum -- "$filename" | cut -d ' ' -f1)"
+            test "$actual" = "$digest" || { echo "::error::Checksum mismatch: $filename"; exit 1; }
+            printf '%s\n' "$filename" >> "$listed"
+          done < manifest.sha256
+          find . -maxdepth 1 -type f ! -name manifest.sha256 -printf '%P\n' | sort > "$expected"
+          sort "$listed" -o "$listed"
+          if [ "$(uniq -d "$listed" | wc -l)" -ne 0 ] || ! cmp -s "$listed" "$expected"; then
+            echo "::error::manifest.sha256 must list every artifact file exactly once."
+            exit 1
+          fi
           pr="$(cat pr-number.txt)"
           if ! printf '%s' "$pr" | grep -Eq '^[0-9]+$'; then
             echo "::error::pr-number.txt is not an integer."
+            exit 1
+          fi
+          # The artifact selects WHICH pull request to annotate, but only from the set the
+          # provenance step authenticated against the producer head SHA — it cannot point the
+          # comment at an unrelated PR.
+          pr_ok=0
+          for candidate in $PR_CANDIDATES; do
+            if [ "$pr" = "$candidate" ]; then
+              pr_ok=1
+            fi
+          done
+          if [ "$pr_ok" != "1" ]; then
+            echo "::error::Artifact PR number is not a pull request authenticated for the producer head."
             exit 1
           fi
           meta_run_id="$(jq -r '.producer_run_id // empty' meta.json)"
@@ -111,12 +284,39 @@ jobs:
             echo "::error::meta.json run id ($meta_run_id) does not match the triggering run ($EXPECTED_RUN_ID)."
             exit 1
           fi
-          if [ -n "$EXPECTED_WORKFLOW" ]; then
-            meta_wf="$(jq -r '.producer_workflow // empty' meta.json)"
-            if [ "$meta_wf" != "$EXPECTED_WORKFLOW" ]; then
-              echo "::error::meta.json producer workflow ($meta_wf) does not match expected ($EXPECTED_WORKFLOW)."
-              exit 1
+          meta_wf="$(jq -r '.producer_workflow // empty' meta.json)"
+          if [ "$meta_wf" != "$EXPECTED_WORKFLOW" ]; then
+            echo "::error::meta.json producer workflow ($meta_wf) does not match expected ($EXPECTED_WORKFLOW)."
+            exit 1
+          fi
+          meta_head="$(jq -r '.head_sha // empty' meta.json)"
+          test "$meta_head" = "$EXPECTED_HEAD_SHA" || { echo "::error::Producer head SHA mismatch."; exit 1; }
+          meta_project="$(jq -r '.project // empty' meta.json)"
+          test "$meta_project" = "$EXPECTED_PROJECT" || { echo "::error::Trusted project-path mismatch."; exit 1; }
+          meta_ontology="$(jq -r '.ontology // empty' meta.json)"
+          test "$meta_ontology" = "$EXPECTED_ONTOLOGY" || { echo "::error::Trusted ontology-path mismatch."; exit 1; }
+          meta_diff_check="$(jq -r 'if .diff_check == true then "true" elif .diff_check == false then "false" else empty end' meta.json)"
+          test "$meta_diff_check" = "$EXPECTED_DIFF_CHECK" || { echo "::error::Trusted diff-check mode mismatch."; exit 1; }
+          meta_cli="$(jq -r '.cli_version // empty' meta.json)"
+          test "$meta_cli" = "$EXPECTED_CLI_VERSION" || { echo "::error::Trusted CLI-version mismatch."; exit 1; }
+          if [ -z "$EXPECTED_ONTOLOGY" ]; then
+            if compgen -G 'diff.*' >/dev/null; then
+              echo "::error::Diff files are forbidden when ontology is disabled."; exit 1
             fi
+          elif [ -f diff.status ]; then
+            test "$(cat diff.status)" = "baseline-absent" || {
+              echo "::error::Invalid diff.status."; exit 1;
+            }
+            if [ -e diff.json ] || [ -e diff.err ] || [ -e diff.exit ]; then
+              echo "::error::A skipped diff cannot also contain diff results."; exit 1
+            fi
+          else
+            for required in diff.json diff.err diff.exit; do test -f "$required" || {
+              echo "::error::Incomplete diff result set."; exit 1; }; done
+            jq -e 'type == "object"' diff.json >/dev/null
+            case "$(cat diff.exit)" in 0|1|2|3) ;;
+              *) echo "::error::Invalid diff exit code."; exit 1 ;;
+            esac
           fi
           echo "pr=$pr" >> "$GITHUB_OUTPUT"
 
@@ -184,6 +384,7 @@ jobs:
           } > ../comment.md
 
       - name: Post or update the PR comment
+        id: comment
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         env:
           PR: ${{ steps.verify.outputs.pr }}
@@ -208,14 +409,18 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
             }
 
-      # Propagate the verified gate verdict to THIS check's conclusion, so a consumer that makes the
-      # trusted annotate job their required merge gate actually blocks a failing PR. The comment is
-      # posted above first; this step then turns the check red on a failing gate. The exit files were
-      # already integrity-verified (allowlist + sha256sum -c), so they are trusted data read as ints.
+      # Keep the annotation workflow itself honest too. The PR-head check-run is published below.
       - name: Propagate the gate verdict to this check
+        id: propagate
+        env:
+          PRODUCER_CONCLUSION: ${{ steps.provenance.outputs.conclusion }}
         run: |
           cd incoming
           fail=0
+          if [ "$PRODUCER_CONCLUSION" != "success" ]; then
+            echo "::error::Producer workflow concluded ${PRODUCER_CONCLUSION:-unknown}."
+            fail=1
+          fi
           pol_exit="$(cat policy-validate.exit 2>/dev/null || echo 2)"
           if [ "$pol_exit" != "0" ]; then
             echo "::error::Policy gate failed (exit ${pol_exit})."
@@ -230,3 +435,41 @@ jobs:
             fi
           fi
           exit "$fail"
+
+      # A workflow_run job's own check belongs to the default-branch SHA, not the PR head. Publish a
+      # fixed-name trusted check-run on the authenticated PR head so branch protection can require it.
+      # `always()` ensures provenance/artifact failures produce a red PR check instead of no check.
+      - name: Publish trusted PR-head gate check
+        if: ${{ always() }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          HEAD_SHA: ${{ inputs.producer_head_sha }}
+          PROVENANCE_OUTCOME: ${{ steps.provenance.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          COMMENT_OUTCOME: ${{ steps.comment.outcome }}
+          PROPAGATE_OUTCOME: ${{ steps.propagate.outcome }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const outcomes = [
+              process.env.PROVENANCE_OUTCOME,
+              process.env.VERIFY_OUTCOME,
+              process.env.COMMENT_OUTCOME,
+              process.env.PROPAGATE_OUTCOME,
+            ];
+            const passed = outcomes.every(value => value === 'success');
+            await github.rest.checks.create({
+              owner,
+              repo,
+              name: 'Protégé MCP ontology gate',
+              head_sha: process.env.HEAD_SHA,
+              status: 'completed',
+              conclusion: passed ? 'success' : 'failure',
+              details_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+              output: {
+                title: passed ? 'Ontology gate passed' : 'Ontology gate failed',
+                summary: passed
+                  ? 'Trusted producer/caller provenance and ontology-CI artifacts verified.'
+                  : `Trusted gate failed. Step outcomes: ${outcomes.join(', ')}.`,
+              },
+            });

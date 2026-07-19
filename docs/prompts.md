@@ -8,6 +8,7 @@ permalink: /prompts/
 {: .no_toc }
 
 MCP *prompts* are reusable, guided ontology workflows you pick in your MCP client (Claude Code, Codex, VS Code, Claude Desktop). Each one expands to a single user message that tells the model which Protégé MCP tools to call and in what safe order — orient with context first, preview destructive edits, confirm before writing, and verify with the reasoner. Prompts are pure templates: they carry no model access and cause no side effects; all real work happens through the tools they instruct.
+{: .fs-6 .fw-300 }
 
 ## Table of contents
 {: .no_toc .text-delta }

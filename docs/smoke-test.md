@@ -39,6 +39,14 @@ counterpart — run it against the built `v{{ site.version }}` jar before publis
 | 12 | `undo_change` ×N / `redo_change` | each macro reverts as a single step |
 | 13 | `deprecate_entity` the new term, `replaced_by` another | `owl:deprecated true` + replaced-by pointer in the GUI |
 
+Step 11's `identical=true` holds only for ontologies without anonymous individuals: with blank nodes the
+reloaded document mints fresh NodeIDs, and the diff reports exactly that added/removed pair
+(`save_ontology verify_round_trip=true` refuses such ontologies for the same reason).
+
+A policy placed at a module's own directory confines every explicit path AND catalog-mapped sibling
+import to that root — for a multi-module layout with sibling catalogs, put `.protege-mcp/project.yaml`
+at the repository root so the project root spans all modules.
+
 ### 0.4.0 — safe, testable authoring (needs a reasoner selected + a saved ontology)
 
 | # | Tool call | Expect |
@@ -114,6 +122,24 @@ counterpart — run it against the built `v{{ site.version }}` jar before publis
 | 57 | Configure a module with the wrong ontology IRI, then a subject-position axiom **defining** a term under another module's `owned_namespaces` (a bare foreign declaration must NOT trip it); also test an explicit co-owner | the wrong file IRI is a policy error; the foreign definition fails governance while the bare declaration passes; a declared co-owner passes |
 | 58 | Load imports with a cycle and with an ontology/version/document identity conflict | governance reports `import_cycle` as warning and `import_identity_conflict` as error |
 | 59 | Disable the no-policy local-admin path compatibility preference and retry a caller-selected path without a policy | the path is refused and `get_project_policy.path_mode` reports `policy_required` |
+
+### 0.7.0 — release pipeline, deterministic previews, unified reasoner references
+
+| # | Step | Expect |
+| --- | --- | --- |
+| 60 | Connect a fresh MCP client and inspect initialize/list responses | server version is `0.7.0`; exactly 83 tools and 11 prompts are advertised; the OSGi bundle, `--version`, and docs report the same version |
+| 61 | `preview_change_set` any operation on an ontology carrying a standing structural warning, with no policy loaded; try to commit; then repeat the preview with explicit `gates=["reasoner"]` | the default gate (reasoner when selected + profile + governance + structural, `fail_on=warn`) returns `committable=false` with the warning in `preflight`; `commit_change_set` of that id refuses with `error_code=change_set_not_committable`; the `gates=["reasoner"]` preview returns `committable=true` |
+| 62 | Commit a preview with a stale `expected_revision` (make a live edit between preview and commit), then `rebase_change_set` and commit the rebased preview | the stale commit returns `error_code=revision_conflict` with both `base_revision` and `current_revision` envelopes; the rebase creates a NEW preview at the current revision replaying the ORIGINAL gate contract, with `resolution_verified=true`; committing it succeeds with exactly one Undo entry and `single_broadcast=true` |
+| 63 | `semantic_diff` `mode=both` against a previously saved document after an annotation edit and a subsumption-changing edit | the asserted delta is categorized (`annotation_changes` with lifecycle/replacement categories); the `inferred` subsumption category names the exact changed edge; the `reasoner` block records the classifying reasoner; blank-node churn is honestly caveated via `anonymous_individual_churn`, never reported as certain real change |
+| 64 | `analyze_change_impact` once with a diff pair (`left`/`right_document`) and once with a `change_set_id` from `preview_change_set` | both forms return exact counts with bounded samples; the downstream sweep discloses its depth/size caps via `search_truncated` when hit; a category that could not be computed carries a reason instead of being silently absent |
+| 65 | `write_project_policy_template` on a fresh project, then `validate_project_policy` | a schema-valid starter policy is written; its version-less `reasoning.reasoner` name (e.g. `HermiT`) resolves uniquely against the installed reasoner, so the policy validates once the referenced assets exist without editing the reasoner line; `validation_hint` lists the remaining steps (create the `root_artifact` via `save_ontology policy_bootstrap=true`, the RO-Crate metadata file, …) |
+| 66 | `save_ontology` `path=<root_artifact>` while the starter policy is still invalid, then retry with `policy_bootstrap=true` | the plain save is refused fail-closed with a hint naming `policy_bootstrap=true`; the retry saves inside the project root and the result carries `policy_bootstrap.used=true` with `policy_errors` and `contained_root` |
+| 67 | `run_project_qc` on a policy-valid project; separately, on an ontology using reserved RDF/RDFS/OWL vocabulary as an annotation property | all required stages run against ONE isolated snapshot (`validation_snapshot.same_snapshot=true`); the interoperability stage errors fail-closed naming the reserved property IRI, never a vacuous pass |
+| 68 | `run_release_gate` with a remote-backed import under the default `network=deny`; also on an ontology containing an anonymous individual | the release stage raises `imports.remote_backed`; the anonymous individual degrades the fingerprint to `session_only` and raises `release.fingerprint_unstable`; `manifest_preview` reports `manifest_available=false` with a `reason` |
+| 69 | `prepare_release` while the gate fails, then `dry_run=false` on a clean project | the failing call returns `prepared=false` and writes NOTHING; the clean call atomically writes `manifest.json`, `reports/qc.{json,md,xml,sarif}`, and the RO-Crate into the output directory, and each on-disk artifact's sha256 equals its manifest entry |
+| 70 | `save_ontology` `verify_round_trip=true` on an ontology carrying an anonymous individual, then on a clean ontology | the blank-node save is refused with the documented anonymous-individual message before any temporary or target artifact is written (no partial write); the clean save verifies with `round_trip.round_trip_class=byte_for_byte` |
+| 71 | `write_import_lock` on a closure with a remote-backed or outside-lock-directory import, then on a fully local closure; tamper with one locked file (or add an extra entry) and `verify_import_lock`; finally `load_ontology` `lock_mode=required` with no lockfile | the first write returns `written=false` with per-import reasons in `errors`; the local closure writes a deterministic lock; verification of the tampered/extra entry reports `valid=false` naming it in `mismatched_entries`/`extra_entries`; the lockfile-less required load is refused naming `write_import_lock` |
+| 72 | Headless CLI: `--help`; `validate-policy --project <policy>` on the valid project; `diff --left <release>/manifest.json --right <artifact> --check` | `--help` prints usage to stdout and exits `0`; validate-policy exits `0` with the SAME `policy_digest` as `get_project_policy`; the manifest operand is sha256-verified before diffing and the identical diff exits `0`; stderr stays free of SLF4J noise on every command |
 
 Any unexpected error, UI freeze, or missing committed edit is a release blocker — capture the JSON error
 and the Protégé log. Steps 16–18 must never undo an unrelated edit: verified rollback now performs all
