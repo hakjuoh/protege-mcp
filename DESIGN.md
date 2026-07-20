@@ -1,6 +1,6 @@
 # Protégé MCP — Current Design
 
-> Architecture snapshot for release 0.7.1. User-facing installation and operation are documented at
+> Architecture snapshot for release 0.7.2. User-facing installation and operation are documented at
 > <https://hakjuoh.github.io/protege-mcp/>. Historical feature delivery is recorded in
 > [`CHANGELOG.md`](CHANGELOG.md); unimplemented work is tracked in [`PLAN.md`](PLAN.md).
 
@@ -13,8 +13,8 @@ in-Protégé Ontology Assistant and a headless CLI for reproducible project vali
 The design has three execution surfaces:
 
 - The **live plugin** serves 85 MCP tools and 11 prompts over authenticated Streamable HTTP. Reads and writes
-  operate on the active `OWLModelManager`; committed edits are visible immediately and join Protégé's Undo
-  stack.
+  operate on the active `OWLModelManager`; ontology changes are visible immediately and join Protégé's Undo
+  stack, except for the explicit document-format prefix-map operations described in section 7.3.
 - The **Ontology Assistant** drives an installed `claude` or `codex` CLI back through the live plugin's MCP
   endpoint. Protégé stores no provider API key.
 - The **headless CLI** loads a policy-defined project from disk, runs the shared QC/release services, and can
@@ -30,11 +30,11 @@ The Java 17 Maven reactor has three modules:
 
 | Module | Artifact | Responsibility |
 | --- | --- | --- |
-| `core` | `protege-mcp-core-0.7.1.jar` | Protégé-free contracts, policy, authorization metadata, audit primitives, OWL/QC/diff/release services, and headless workspace abstractions |
-| `plugin` | `protege-mcp-0.7.1.jar` | OSGi bundle: Protégé lifecycle/UI adapters, live tools/prompts, HTTP/OAuth server, shared broker, and Ontology Assistant |
-| `cli` | `protege-mcp-cli-0.7.1-all.jar` | Executable shaded CLI with OWLAPI, HermiT, headless workspace, release commands, and bounded stdio MCP server |
+| `core` | `protege-mcp-core-0.7.2.jar` | Protégé-free contracts, policy, authorization metadata, audit primitives, OWL/QC/diff/release services, and headless workspace abstractions |
+| `plugin` | `protege-mcp-0.7.2.jar` | OSGi bundle: Protégé lifecycle/UI adapters, live tools/prompts, HTTP/OAuth server, shared broker, and Ontology Assistant |
+| `cli` | `protege-mcp-cli-0.7.2-all.jar` | Executable shaded CLI with OWLAPI, HermiT, headless workspace, release commands, and bounded stdio MCP server |
 
-The current bundle version **`0.7.1`** and MCP server identity `SERVER_VERSION=0.7.1` are checked by
+The current bundle version **`0.7.2`** and MCP server identity `SERVER_VERSION=0.7.2` are checked by
 `scripts/check-version-consistency.sh` together with the POMs, plugin descriptor, CLI, and documentation.
 
 The dependency direction is:
@@ -271,6 +271,12 @@ server-side state.
 Direct write tools and `apply_changes` remain supported for compatibility and high-level operations without a
 change-set equivalent. They still enforce grounding, read-only, confirmation, authorization, audit, and their
 documented validation or rollback behavior.
+
+`set_prefix` and `remove_prefix` are deliberate document-format exceptions to the Undo-backed mutation path.
+They update the active ontology's `PrefixDocumentFormat` on the EDT, explicitly invalidate the SPARQL snapshot
+cache, and do not produce an `OWLOntologyChange` or Undo entry. Because OWLAPI 4.x has no remove-by-prefix-name
+operation, `remove_prefix` rebuilds the map without the requested binding while preserving other aliases and
+the standard prefixes. Both operations remain subject to the ordinary write gates.
 
 ## 8. Shared ontology-engineering core
 

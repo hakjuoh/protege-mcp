@@ -6,10 +6,9 @@ nav_order: 7
 # Project policy contracts
 {: .no_toc }
 
-Version 0.7.1 retains the deterministic preview/release workflow from 0.7.0 and adds complete headless
-QC, import-lock, release, audit-export, and bounded stdio execution with cross-surface conformance. The
-filesystem, network, module-governance, and isolated-preflight boundaries remain shared. The public
-surface is 85 tools and 11 prompts.
+Version 0.7.2 retains the complete headless QC, import-lock, release, audit-export, and bounded stdio
+execution introduced in 0.7.1, with cross-surface conformance and the same filesystem, network,
+module-governance, and isolated-preflight boundaries. The public surface is 85 tools and 11 prompts.
 {: .fs-6 .fw-300 }
 
 For a user-focused setup guide, including a complete crate example and an explanation of the two

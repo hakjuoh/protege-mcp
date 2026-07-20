@@ -57,7 +57,7 @@ import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
  */
 public final class Main {
 
-    public static final String VERSION = "0.7.1";
+    public static final String VERSION = "0.7.2";
 
     /** Windows drive-letter absolute path (e.g. {@code C:\a}); Path.of on POSIX does not flag it. */
     private static final Pattern WINDOWS_ABSOLUTE = Pattern.compile("^[A-Za-z]:[\\\\/].*");

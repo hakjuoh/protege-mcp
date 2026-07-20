@@ -47,7 +47,7 @@ modules:
       - http://purl.obolibrary.org/obo/EXAMPLE_
 
 reasoning:
-  # The standalone 0.7.1 runner bundles HermiT; owl_profile still enforces the OBO-oriented EL subset.
+  # The standalone 0.7.2 runner bundles HermiT; owl_profile still enforces the OBO-oriented EL subset.
   reasoner: HermiT
   owl_profile: EL
   required: true

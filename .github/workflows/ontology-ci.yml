@@ -46,7 +46,7 @@ on:
       cli_version:
         description: 'protege-mcp-cli release to download (0.7.1+). Pin to a release you reviewed.'
         type: string
-        default: '0.7.1'
+        default: '0.7.2'
       release_check:
         description: 'Run and enforce the trusted dry-run release gate and preserve its checksums.'
         type: boolean

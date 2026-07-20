@@ -16,10 +16,11 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Installation](https://hakjuoh.github.io/protege-mcp/installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](https://hakjuoh.github.io/protege-mcp/connect/) | The server model (ports, OAuth vs. token) + Claude Code, Codex CLI, VS Code, Claude Desktop recipes. |
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
-| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 85 tools by category, including the owner-only audit export added for v0.7.1. |
+| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 85 tools by category, including `remove_prefix` added for v0.7.2. |
 | [Prompts](https://hakjuoh.github.io/protege-mcp/prompts/) | The 11 guided workflows available to MCP clients. |
 | [Project policy & QC](https://hakjuoh.github.io/protege-mcp/project-policy.html) | Policy v1 discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [RO-Crate & RDFC](https://hakjuoh.github.io/protege-mcp/interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
+| [Commercial platforms](https://hakjuoh.github.io/protege-mcp/commercial-platforms.html) | The supported exchange boundary, product-specific caveats, and requirements for future connectors. |
 | [Contributing](https://hakjuoh.github.io/protege-mcp/contributing.html) | Build from source, run the tests, and add a tool. |
 | [Performance tests](https://hakjuoh.github.io/protege-mcp/performance.html) | Versioned representative fixtures, regression budgets, and the opt-in benchmark command. |
 | [Live integration test](https://hakjuoh.github.io/protege-mcp/smoke-test.html) | Automated real-Protégé release gate and the platform packaging checklist. |

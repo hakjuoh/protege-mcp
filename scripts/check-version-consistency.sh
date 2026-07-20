@@ -116,6 +116,7 @@ expect_line plugin/src/main/java/io/github/hakjuoh/protege_mcp/server/McpServerM
 expect_line cli/src/main/java/io/github/hakjuoh/protege_mcp/cli/Main.java \
   "    public static final String VERSION = \"${version}\";"
 expect_line docs/_config.yml "version: ${version}"
+expect_line TESTING.md "Tested source version: **\`${version}\`**."
 
 for file in docs/adr/headless-reasoner-and-workspace-boundary.md \
             docs/headless-relinking.md THIRD_PARTY_NOTICES.md .github/workflows/release.yml; do

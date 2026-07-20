@@ -1,5 +1,7 @@
 # Testing & method-level coverage
 
+Tested source version: **`0.7.2`**.
+
 This document describes the headless unit-test suite added to make the codebase safe to refactor
 aggressively. Every pure/decision-making seam that can run without a live Protégé/OSGi/GUI runtime is
 now pinned by method-level tests.
@@ -18,7 +20,7 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
 
-At the time of writing: **3,446 JUnit tests** (3,112 plugin, 56 standalone-CLI,
+At the time of writing: **3,459 JUnit tests** (3,125 plugin, 56 standalone-CLI,
 and 278 core tests), with zero failures/errors and one intentionally skipped opt-in performance test,
 across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
 pure helpers of `ui`, the headless CLI, and the extractable `ro_crate` interoperability package. Coverage is
@@ -80,6 +82,58 @@ boundary rather than indicating an unnoticed partial load.
 The direct aligned Jackson dependencies intentionally precede Protégé's provided jars in `pom.xml`.
 Protégé's OSGi jar contains an old private `JsonFactory`; OSGi isolates it at runtime, but Surefire is a
 flat classpath. This order prevents a split-version test JVM when the real JSON Schema validator runs.
+
+## Regression-fix evidence and release convergence
+
+Repeated review of the 0.7.1 materialization and audit-retention fixes exposed a process failure: a
+passing regression test sometimes exercised only the intended branch and did not distinguish the
+pre-fix behavior. The following rules are therefore part of release readiness, not optional review
+style:
+
+1. A fix receives the same static, contract, and adversarial review as the code that introduced the
+   defect.
+2. Every regression test must be shown to fail against the pre-fix code or an equivalent targeted
+   mutant, then pass with the fix. A test that stays green across the defect is not evidence.
+3. When replacing library behavior, first inventory the observable contract (including ordering,
+   duplicate handling, exception isolation, bounds, and annotations) and map each item to a test.
+4. Tagging requires two clean, methodologically different passes: static/contract review and executable
+   failure-or-mutation evidence. A timeout or an unexecuted live check is recorded as missing evidence,
+   never treated as a pass.
+
+The invariant suites added after that postmortem use differential reference behavior and destructive-
+operation decision tables. Representative historical defects are periodically reintroduced in a
+throwaway worktree to confirm that the suites turn red.
+
+### 0.6.0 evaluation follow-up matrix
+
+The later 0.6.0 evaluation backlog is closed by executable evidence rather than a review-only claim:
+
+| Boundary | Evidence |
+| --- | --- |
+| Persisted invariant/CQ/SHACL assets and pass/fail/error aggregation | `ProjectQcToolsTest` plus the asset-backed live smoke flow in `docs/smoke-test.md` |
+| Broker-to-backend principal trust | `BrokerWiredTest` and `BackendPrincipalTrustWiredTest` over real HTTP |
+| Committed change-set to one-step Undo coupling | `ChangeSetCommitUndoCouplingTest` over Protégé's real `HistoryManager` |
+| Governance waiver focus/rule scope and inclusive expiry | `PolicyGovernanceServiceTest` and adapter-level `PolicyGovernanceTest` |
+| Legacy `run_qc_suite` request controls and fail-closed stages | `QcSuiteToolsTest`, including a field-for-field control matrix |
+| All 11 MCP prompt handlers | `PromptsTest` renders every registered handler with null, empty, and prompt-specific arguments |
+| Reactor-layout release workflow | The successful `v0.7.1` Release workflow plus the local no-publish CLI/bundle preview below |
+| Import cycles and version conflicts | `ImportToolsTest` uses synthetic resolved cycles and two loaded versions |
+| Import-lock tamper and workspace drift | `ImportLockToolsTest`, `ImportLockLoadedContentAttestationTest`, and `ProjectQcLockModeTest` |
+
+The two tests added to complete this matrix were mutation-checked: removing required-stage scheduling or
+the lock hash comparison makes its focused test fail.
+
+After `mvn clean verify`, reproduce the release-layout check locally without writing or publishing a
+release:
+
+```bash
+CLI_JAR=$(find cli/target -maxdepth 1 -name 'protege-mcp-cli-*-all.jar' -print -quit)
+java -jar "$CLI_JAR" release --project conformance/fixtures/v1/project.yaml \
+  --dry-run --no-network --no-external
+```
+
+A pass reports `dry_run=true`, `created_at=PREVIEW`, `gate=pass`, and virtual release artifacts while
+leaving the configured output directory absent.
 
 ## God-class decomposition (Phase 3, 2026-07-01)
 

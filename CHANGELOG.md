@@ -5,7 +5,12 @@ All notable changes to **Protégé MCP** are documented here. The format is base
 [Semantic Versioning](https://semver.org/). Each release's section is published verbatim as the body of
 its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the release workflow.
 
-## [Unreleased]
+## [0.7.2] - 2026-07-20
+
+**Prefix maintenance and executable release evidence complete the 0.7.2 hardening pass.** This patch
+grows the public surface from 84 to **85 tools**, keeps **11 prompts**, and closes the remaining 0.6.0
+evaluation checklist. The clean release-candidate reactor contains **3,459 JUnit tests** (3,125 plugin,
+278 core, 56 CLI): zero failures/errors and one intentionally skipped opt-in performance test.
 
 ### Added
 - `remove_prefix` deletes a single prefix binding from the active ontology's prefix map, so a mistyped
@@ -21,6 +26,16 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
   its `undo_log_warning` instead of silently under-reverting.
 - Added an end-to-end HTTP test proving the backend rejects a co-resident process's forged principal
   envelope without the per-start broker secret and trusts it only behind that secret.
+- Closed the remaining 0.6.0 evaluation checklist with explicit `run_qc_suite` request-control and
+  `verify_import_lock` tamper/drift matrices; existing executable tests already pin waiver scope/expiry,
+  all 11 prompt handlers, and import cycle/version-conflict reporting.
+
+### Documentation
+- Published and updated the commercial-platform interoperability guide for the complete 0.7.2
+  headless QC/release boundary, and made `TESTING.md`'s tested source version part of the release
+  consistency gate.
+- Recorded the regression postmortem rules: fixes need pre-fix-red or mutation evidence, replacement
+  behavior needs an explicit contract matrix, and tagging requires two independent clean methods.
 
 ## [0.7.1] - 2026-07-20
 

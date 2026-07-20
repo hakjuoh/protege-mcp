@@ -14,7 +14,7 @@
 # for any failed gate, configuration error, or execution error.
 set -euo pipefail
 
-CLI_VERSION="${CLI_VERSION:-0.7.1}"
+CLI_VERSION="${CLI_VERSION:-0.7.2}"
 PROJECT="${PROJECT:-.protege-mcp/project.yaml}"
 TRUSTED_PROJECT="${TRUSTED_PROJECT:-$PROJECT}"
 ONTOLOGY="${ONTOLOGY:-}"      # candidate ontology (optional; enables the diff when BASELINE is set too)

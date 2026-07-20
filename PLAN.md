@@ -1,4 +1,4 @@
-# Protégé MCP Roadmap after 0.7.1
+# Protégé MCP Roadmap after 0.7.2
 
 > Status: only work that is not implemented is tracked here. Delivered behavior belongs in
 > [`CHANGELOG.md`](CHANGELOG.md), the user manual, and [`DESIGN.md`](DESIGN.md).

@@ -58,7 +58,9 @@ until the next asset actually exists.
    `update.properties` on the last published release.
 2. Commit the release finalization: change the changelog heading from `Unreleased` to the `YYYY-MM-DD`
    release date in both copies. On that commit, run `bash scripts/check-version-consistency.sh` and
-   `mvn clean verify`.
+   `mvn clean verify`. Apply the regression-evidence and two-method convergence rules in
+   [`TESTING.md`](https://github.com/hakjuoh/protege-mcp/blob/main/TESTING.md); a review timeout or an
+   unexecuted applicable live check is missing evidence, not a pass.
 3. Tag that verified finalization commit as `vX.Y.Z` and push the tag. Do **not** advance the public
    descriptor yet.
 4. Wait for the Release workflow to publish and verify `protege-mcp-X.Y.Z.jar`.
@@ -106,6 +108,7 @@ mirrors with it; the changes may be part of the feature work or a release-finali
 | --- | --- |
 | `McpServerManager.SERVER_VERSION` | The version reported to MCP clients. |
 | [`DESIGN.md`](https://github.com/hakjuoh/protege-mcp/blob/main/DESIGN.md) | The as-built server and bundle versions. |
+| [`TESTING.md`](https://github.com/hakjuoh/protege-mcp/blob/main/TESTING.md) | The tested source version and release-evidence rules. |
 | [`docs/_config.yml`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/_config.yml) | `version:`, exposed to the documentation as `site.version`. |
 | [`docs/readme.html`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/readme.html) | The first version-history heading. This file is fetched raw by Protégé, so it cannot use Liquid. |
 | `CHANGELOG.md` + [Changelog](changelog.html) | The newest section in both mirrored changelogs, including its complete body. |

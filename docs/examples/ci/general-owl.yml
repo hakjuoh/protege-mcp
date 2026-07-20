@@ -19,12 +19,12 @@ jobs:
     permissions:
       contents: read
     # Pin by full commit SHA in production: v-tags in hakjuoh/protege-mcp are occasionally re-cut
-    # (moved), so `@v0.7.1` is NOT an immutable reference. `@v0.7.1` is shown here for readability.
-    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.7.1
+    # (moved), so `@v0.7.2` is NOT an immutable reference. `@v0.7.2` is shown here for readability.
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.7.2
     with:
       project: .protege-mcp/project.yaml
       ontology: ontology.ttl
-      cli_version: '0.7.1'
+      cli_version: '0.7.2'
       release_check: true
       # Report-only diff (exit 0 on differences); the PR is expected to change the ontology.
       diff_check: false

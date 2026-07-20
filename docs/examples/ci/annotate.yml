@@ -27,7 +27,7 @@ jobs:
       checks: write          # publish the fixed trusted gate on the PR-head SHA
       pull-requests: write   # post/update the PR comment
     # Pin by full commit SHA in production: v-tags in hakjuoh/protege-mcp are occasionally re-cut.
-    uses: hakjuoh/protege-mcp/.github/workflows/ontology-annotate.yml@v0.7.1
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-annotate.yml@v0.7.2
     with:
       run_id: ${{ github.event.workflow_run.id }}
       producer_event: ${{ github.event.workflow_run.event }}
@@ -40,5 +40,5 @@ jobs:
       expected_project: .protege-mcp/project.yaml
       expected_ontology: ontology.ttl
       expected_diff_check: false
-      expected_cli_version: '0.7.1'
+      expected_cli_version: '0.7.2'
       expected_release_check: true

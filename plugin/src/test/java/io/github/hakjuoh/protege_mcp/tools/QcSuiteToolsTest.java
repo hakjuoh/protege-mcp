@@ -45,6 +45,46 @@ class QcSuiteToolsTest {
     }
 
     @Test
+    void legacyRequestControlsMapFieldForFieldWithoutSilentFallback() {
+        Map<String, Object> arguments = new java.util.LinkedHashMap<>();
+        arguments.put("stages", List.of("STRUCTURAL", "invariants", "shacl"));
+        arguments.put("required_stages", List.of("cqs"));
+        arguments.put("fail_on", "WARN");
+        arguments.put("owl_profile", "EL");
+        arguments.put("limit", 7);
+        arguments.put("timeout_ms", -1);
+        arguments.put("invariants", List.of(Map.of(
+                "id", "no-legacy", "severity", "warning",
+                "sparql", "ASK { ?s ?p ?o }", "include_inferred", true)));
+        arguments.put("shacl_shapes", "@prefix sh: <http://www.w3.org/ns/shacl#> .");
+        arguments.put("shacl_shapes_path", "shapes/project.ttl");
+        arguments.put("iri_pattern", "^https://example\\.org/");
+        arguments.put("required_namespaces", List.of("https://example.org/"));
+        arguments.put("required_annotations", List.of("label", "definition"));
+        arguments.put("check_ownership", false);
+
+        QcRunConfig config = QcRunConfig.legacy(arguments);
+
+        assertEquals(Set.of("structural", "invariants", "shacl", "cqs"), config.stages);
+        assertEquals(Set.of("cqs"), config.requiredStages);
+        assertEquals("warn", config.failOn);
+        assertEquals("EL", config.profileName);
+        assertEquals(7, config.limit);
+        assertEquals(120_000, config.timeout, "non-positive timeout uses the documented default");
+        assertEquals(1, config.invariants.size());
+        assertEquals("no-legacy", config.invariants.get(0).id);
+        assertEquals("warn", config.invariants.get(0).severity);
+        assertTrue(config.invariants.get(0).includeInferred);
+        assertEquals("@prefix sh: <http://www.w3.org/ns/shacl#> .", config.shaclShapes);
+        assertEquals("shapes/project.ttl", config.shaclShapesPath);
+        assertTrue(config.iriPattern.matcher("https://example.org/Term").find());
+        assertEquals(List.of("https://example.org/"), config.requiredNamespaces);
+        assertEquals(List.of("label", "definition"), config.requiredAnnotations);
+        assertFalse(config.checkOwnership);
+        assertFalse(config.projectMode);
+    }
+
+    @Test
     void explicitRequiredStagesStayNarrowWhenStrictMissingIsAlsoSet() {
         QcRunConfig explicit = QcRunConfig.legacy(Map.of(
                 "stages", List.of("structural", "cqs"),

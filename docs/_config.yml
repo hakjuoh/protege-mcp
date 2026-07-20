@@ -14,7 +14,7 @@ remote_theme: just-the-docs/just-the-docs@v0.12.0
 
 # Current release version, mirrored from pom.xml. The version-consistency gate
 # keeps this value and the other distribution metadata in sync.
-version: 0.7.1
+version: 0.7.2
 
 # Project site lives at https://hakjuoh.github.io/protege-mcp/
 url: https://hakjuoh.github.io
@@ -92,13 +92,12 @@ plugins:
   - jekyll-remote-theme
   - jekyll-seo-tag
 
-# Keep internal management documents, recon logs, and the plugin-registry readme out of
+# Keep internal architecture records and build inputs out of
 # the GitHub Pages artifact, including direct URLs and search.
 exclude:
   - Gemfile
   - Gemfile.lock
   - vendor
-  - commercial-platforms.md
   - adr/ontology-fingerprint-canonicalization.md
   - adr/isolated-reasoner-configuration-parity.md
   - adr/project-v1-standard-interoperability.md

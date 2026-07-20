@@ -86,12 +86,13 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | [Installation](installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](connect/) | The server model (ports, OAuth vs. bearer token) and per-environment recipes for Claude Code, Codex CLI, VS Code, and Claude Desktop. |
 | [Ontology Assistant](ontology-assistant.html) | The in-Protégé chat: what it is, how it works, attachments, privacy, and settings. |
-| [Tools](tools/) | All 85 tools by category, including the owner-only audit export added for v0.7.1. |
+| [Tools](tools/) | All 85 tools by category, including `remove_prefix` added for v0.7.2. |
 | [Prompts](prompts/) | The 11 guided workflows available to MCP clients. |
 | [Headless CLI](cli.html) | Run policy validation, full project QC, releases, and asserted semantic diff without Protégé. |
 | [Ontology CI](ci.html) | Gate your own ontology repository's PRs with the reusable, fork-safe workflow: full project QC with JSON/JUnit/SARIF evidence, a dry-run release preview, and the asserted diff. |
 | [Project policy & QC](project-policy.html) | Policy discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [RO-Crate & RDFC](interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
+| [Commercial platforms](commercial-platforms.html) | The supported exchange boundary, product-specific caveats, and requirements for future connectors. |
 | [Contributing](contributing.html) | Build from source, run the tests, project layout, and how to add a tool. |
 | [Performance tests](performance.html) | Versioned representative fixtures, regression budgets, and the opt-in benchmark command. |
 | [Live integration test](smoke-test.html) | Automated real-Protégé release gate and the platform packaging checklist. |

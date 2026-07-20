@@ -187,6 +187,15 @@ at the repository root so the project root spans all modules.
 | 81 | Run inferred QC/SPARQL over an adversarially large signature/property cross-product | expensive inference categories are omitted independently before enumeration and named in the result note; ordinary large class hierarchies still materialize within the documented estimates |
 | 82 | Inspect the scheduled/release workflow artifacts from `scripts/live-integration/run.sh` | JSON records bundle activation, Java 17+, Protégé 5.6.6, token rejection/acceptance, two-window session pinning, one-step Undo, HermiT justification, and application/broker PID exit |
 
+### 0.7.2 — evidence-backed prefix and QC hardening
+
+| # | Step | Expect |
+| --- | --- | --- |
+| 83 | Connect a fresh MCP client, inspect initialize/list responses, and run the CLI with `--version` | server, bundle, CLI, and docs report `0.7.2`; exactly 85 tools and 11 prompts are advertised |
+| 84 | Run asset-backed `run_project_qc` on a valid project, then violate one invariant, malform its query file, and reference a missing required asset | the pristine project runs all eight stages and passes; the violation fails; malformed and missing assets error before any stage and never become a vacuous pass |
+| 85 | Bind two prefix names to one namespace, call `remove_prefix` for one name, and query using the survivor | only the requested name disappears; the same-namespace sibling and standard `rdf`/`rdfs`/`owl`/`xsd` prefixes remain usable |
+| 86 | Commit one multi-operation change set and call `undo_change` once | every committed operation is reverted together; an anomalous multi-entry history surfaces `undo_log_warning` |
+
 Any unexpected error, UI freeze, or missing committed edit is a release blocker — capture the JSON error
 and the Protégé log. Steps 16–18 must never undo an unrelated edit: verified rollback now performs all
 checks on an isolated snapshot and either prevents the delta or commits it once after final revalidation.

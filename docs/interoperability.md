@@ -211,4 +211,5 @@ keys rejected. Canonicalization is bounded by the policy timeout (120 seconds by
 
 Protégé MCP validates this exchange boundary but does not ship a vendor-specific repository connector.
 Move the ontology file, RO-Crate metadata, policy, and verified import artifacts through the file/API
-workflow supported by the receiving system.
+workflow supported by the receiving system. See [Commercial platform interoperability](../commercial-platforms.html)
+for the current product profiles, non-goals, and connector requirements.

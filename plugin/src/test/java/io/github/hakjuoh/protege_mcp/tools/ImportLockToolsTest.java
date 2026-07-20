@@ -126,6 +126,54 @@ class ImportLockToolsTest {
     }
 
     @Test
+    void verifyReportsTamperedMissingAndExtraEntries(@TempDir Path project) throws Exception {
+        Path importedPath = project.resolve("imported.ttl");
+        String importedIri = "https://example.org/imported";
+        String original = "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                + "<" + importedIri + "> a owl:Ontology .\n";
+        Files.writeString(importedPath, original);
+
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        manager.loadOntologyFromOntologyDocument(importedPath.toFile());
+        OWLOntology active = manager.createOntology(IRI.create("https://example.org/active"));
+        manager.setOntologyDocumentIRI(active, IRI.create(project.resolve("active.ttl").toUri()));
+        manager.applyChange(new org.semanticweb.owlapi.model.AddImport(active,
+                manager.getOWLDataFactory().getOWLImportsDeclaration(IRI.create(importedIri))));
+        ToolContext ctx = new ToolContext(HeadlessAccess.over(FakeModelManager.over(active)), null);
+        Path lock = project.resolve("imports.lock.json");
+        String sha = RevisionTools.sha256File(importedPath).substring("sha256:".length());
+        String actual = lockEntryJson(importedIri, "imported.ttl", sha, true);
+
+        Files.writeString(lock, "{\"version\":1,\"imports\":[" + actual + "]}\n");
+        assertEquals(true, structured(ImportLockTools.verify(ctx,
+                Map.of("path", lock.toString()))).get("valid"));
+
+        Files.writeString(importedPath, original + "# tampered\n");
+        Map<String, Object> tampered = structured(ImportLockTools.verify(ctx,
+                Map.of("path", lock.toString())));
+        assertEquals(false, tampered.get("valid"));
+        assertEquals(List.of(importedIri), tampered.get("mismatched_entries"));
+
+        Files.writeString(importedPath, original);
+        String extraIri = "https://example.org/extra";
+        String extra = lockEntryJson(extraIri, "extra.ttl", "0".repeat(64), false);
+        Files.writeString(lock, "{\"version\":1,\"imports\":[" + extra + "]}\n");
+        Map<String, Object> drifted = structured(ImportLockTools.verify(ctx,
+                Map.of("path", lock.toString())));
+        assertEquals(false, drifted.get("valid"));
+        assertEquals(List.of(importedIri), drifted.get("missing_entries"));
+        assertEquals(List.of(extraIri), drifted.get("extra_entries"));
+        assertEquals(List.of(), drifted.get("mismatched_entries"));
+    }
+
+    private static String lockEntryJson(String ontologyIri, String document, String sha,
+            boolean direct) {
+        return "{\"ontology_iri\":\"" + ontologyIri
+                + "\",\"version_iri\":null,\"document\":\"" + document
+                + "\",\"sha256\":\"" + sha + "\",\"direct\":" + direct + "}";
+    }
+
+    @Test
     void verifyRefusesAStalePassWhenImportsChangeDuringHashing() throws Exception {
         Path lock = temp.resolve("imports.lock.json");
         Files.writeString(lock, "{\"version\":1,\"imports\":[]}\n");

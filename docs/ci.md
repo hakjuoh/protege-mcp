@@ -72,11 +72,11 @@ jobs:
   ontology-ci:
     permissions:
       contents: read
-    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.7.1
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.7.2
     with:
       project: .protege-mcp/project.yaml
       ontology: ontology.ttl
-      cli_version: '0.7.1'
+      cli_version: '0.7.2'
       release_check: true
       diff_check: false
 ```
@@ -96,7 +96,7 @@ jobs:
       actions: read
       checks: write
       pull-requests: write
-    uses: hakjuoh/protege-mcp/.github/workflows/ontology-annotate.yml@v0.7.1
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-annotate.yml@v0.7.2
     with:
       run_id: ${{ github.event.workflow_run.id }}
       producer_event: ${{ github.event.workflow_run.event }}
@@ -107,7 +107,7 @@ jobs:
       expected_project: .protege-mcp/project.yaml
       expected_ontology: ontology.ttl
       expected_diff_check: false
-      expected_cli_version: '0.7.1'
+      expected_cli_version: '0.7.2'
       expected_release_check: true
 ```
 
@@ -165,7 +165,7 @@ supplies bounded PR-head check annotations without broadening token permissions.
 The reusable workflow and generic shell example verify the published executable before use:
 
 ```bash
-CLI_VERSION=0.7.1
+CLI_VERSION=0.7.2
 base="https://github.com/hakjuoh/protege-mcp/releases/download/v${CLI_VERSION}"
 jar="protege-mcp-cli-${CLI_VERSION}-all.jar"
 curl --fail --location --retry 3 --retry-all-errors -o "$jar" "${base}/${jar}"
@@ -186,7 +186,7 @@ untrusted merge requests, prepare a base-reviewed workspace first and point `TRU
 policy; do not let the candidate policy or validation assets judge themselves.
 
 ```bash
-CLI_VERSION=0.7.1 \
+CLI_VERSION=0.7.2 \
 PROJECT=.protege-mcp/project.yaml \
 TRUSTED_PROJECT=/tmp/trusted-project/.protege-mcp/project.yaml \
 ONTOLOGY=ontology.ttl \

@@ -41,7 +41,7 @@ not a drop-in dependency because HermiT's existing bytecode links the old `ratio
 
 ### Baseline reasoner
 
-The standalone distribution embeds HermiT `1.3.8.431` as its one baseline reasoner for `0.7.1`.
+The standalone distribution embeds HermiT `1.3.8.431` as its one baseline reasoner for `0.7.2`.
 
 - The CLI reports the exact implementation coordinate, version, factory class, configuration class,
   buffering mode, timeout, and advertised caveats in every reasoner-dependent gate result.

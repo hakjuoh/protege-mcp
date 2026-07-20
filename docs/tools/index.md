@@ -12,8 +12,8 @@ All **85 tools** the MCP server exposes, grouped by task. Each category page doc
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
-Version 0.7.1 adds explicit, redacted audit export to the 83-tool v0.7.0 surface while retaining its
-deterministic preview, impact, release, project-boundary, and isolated-preflight guarantees.
+Version 0.7.2 adds exact prefix removal to the 84-tool v0.7.1 surface while retaining its deterministic
+preview, impact, release, project-boundary, audit, and isolated-preflight guarantees.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -22,6 +22,12 @@ deterministic preview, impact, release, project-boundary, and isolated-preflight
 {:toc}
 
 ---
+
+## New tool in 0.7.2
+
+| Task | New tool | What it adds |
+| --- | --- | --- |
+| Ontology metadata | [`remove_prefix`](metadata-imports.html#remove_prefix) | Remove exactly one prefix name while preserving same-namespace siblings and standard prefixes; like `set_prefix`, the document-format edit is immediate and not undoable. |
 
 ## New tool in 0.7.1
 
