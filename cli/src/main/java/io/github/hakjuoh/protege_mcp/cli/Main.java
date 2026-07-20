@@ -1,11 +1,15 @@
 package io.github.hakjuoh.protege_mcp.cli;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -28,43 +32,40 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 import io.github.hakjuoh.protege_mcp.contracts.ContractJson;
+import io.github.hakjuoh.protege_mcp.contracts.GateStatus;
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.core.diff.SemanticDiffService;
+import io.github.hakjuoh.protege_mcp.core.headless.HeadlessReleaseResults;
+import io.github.hakjuoh.protege_mcp.core.headless.HeadlessToolService;
 import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
+import io.github.hakjuoh.protege_mcp.core.qc.HeadlessProjectQcService;
 import io.github.hakjuoh.protege_mcp.core.release.ArtifactStore;
+import io.github.hakjuoh.protege_mcp.core.release.HeadlessReleaseService;
+import io.github.hakjuoh.protege_mcp.core.release.ReleaseReports;
+import io.github.hakjuoh.protege_mcp.core.workspace.FilesystemProjectWorkspace;
+import io.github.hakjuoh.protege_mcp.core.workspace.ImportLockService;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 
 /**
  * Java 17 headless surface proving the core has no Protégé runtime dependency.
  *
- * <p>Exit codes (PLAN §10.2): {@code 0} a gate/command passed; {@code 1} a validation/release gate
+ * <p>Exit codes: {@code 0} a gate/command passed; {@code 1} a validation/release gate
  * FAILED (a clean, loaded, but non-passing result); {@code 2} a configuration/usage error; {@code 3}
  * an execution/infrastructure error. Adopting {@code 1} for an invalid-but-loaded policy is a
  * documented change from the {@code 0.6.1} mapping, which returned {@code 2}.
  */
 public final class Main {
 
-    public static final String VERSION = "0.7.0";
+    public static final String VERSION = "0.7.1";
 
     /** Windows drive-letter absolute path (e.g. {@code C:\a}); Path.of on POSIX does not flag it. */
     private static final Pattern WINDOWS_ABSOLUTE = Pattern.compile("^[A-Za-z]:[\\\\/].*");
 
-    /**
-     * Full project QC (the reasoner-, profile-, structural-, governance-, invariants-, cqs-, and
-     * shacl-stage gate) is not reachable from the headless CLI: those stages run against Protégé's
-     * OWLModelManager-bound QC executor and a reasoner the CLI does not bundle. This command validates
-     * only the project policy (syntax, semantic references, and local assets).
-     */
-    private static final String QC_DEFERRED_NOTE =
-            "Full project QC (reasoner/profile/structural/governance/invariants/cqs/shacl stages) "
-                    + "requires the in-Protégé run_project_qc tool or a future headless runner with a "
-                    + "bundled reasoner; this command validates only the project policy (syntax, semantic "
-                    + "references, and local assets).";
-
-    /** ADR 0005 decision 6: the headless CLI is already network=deny, so --no-network is redundant. */
+    /** The headless CLI is already network=deny, so --no-network is a redundant affirmation. */
     private static final String NO_NETWORK_NOTE =
             "accepted redundant affirmation: the headless CLI performs no network access, so --no-network "
-                    + "(network=deny) already holds (ADR 0005 decision 6).";
+                    + "(network=deny) already holds.";
 
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(SerializationFeature.INDENT_OUTPUT)
@@ -84,6 +85,10 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream err) {
+        return run(args, System.in, out, err);
+    }
+
+    static int run(String[] args, InputStream in, PrintStream out, PrintStream err) {
         try {
             if (args.length == 0) {
                 err.println(usage());
@@ -111,10 +116,12 @@ public final class Main {
                     return validate(args, out);
                 case "diff":
                     return diff(args, out);
-                case "release":
                 case "imports":
+                    return imports(args, out);
+                case "release":
+                    return release(args, out);
                 case "serve":
-                    return deferred(args[0], err);
+                    return serve(args, in, out);
                 default:
                     break;
             }
@@ -132,54 +139,82 @@ public final class Main {
     // ===================================================================== validate-policy / validate
 
     private static int validatePolicy(String[] args, PrintStream out) throws Exception {
-        Options opts = parse(args, Set.of("--project"), Set.of());
+        Options opts = parse(args, Set.of("--project"),
+                Set.of("--no-network", "--no-external"));
         // Headless policy syntax/asset validation has no installed Protégé reasoner registry.
         // Runtime reasoner availability is checked by the adapter that executes project QC.
-        ProjectPolicy policy = ProjectPolicyLoader.load(Path.of(required(opts, "--project")), null);
-        JSON.writeValue(out, policyResult(policy));
+        boolean noExternal = opts.flags.contains("--no-external");
+        ProjectPolicy policy = ProjectPolicyLoader.load(Path.of(required(opts, "--project")),
+                null, null, null, noExternal);
+        Map<String, Object> result = policyResult(policy);
+        recordNoNetwork(opts, result);
+        if (noExternal) result.put("no_external_paths", true);
+        JSON.writeValue(out, result);
         out.println();
         return exitFor(policy);
     }
 
-    /**
-     * Headless policy validation with report formats. Renders the same policy result as
-     * {@code validate-policy}, tagged with {@code scope: policy_validation} and a note that the full
-     * reasoner-dependent QC gate is not run here. {@code --format junit|sarif} is deliberately
-     * unsupported: those emitters project a QC {@link io.github.hakjuoh.protege_mcp.contracts.GateResult}
-     * whose mandatory semantic fingerprint a policy-only validation cannot honestly produce without a
-     * bundled reasoner, so forcing that shape would fabricate a gate result.
-     */
+    /** Validate policy first, then execute the complete offline project gate with bundled HermiT. */
     private static int validate(String[] args, PrintStream out) throws Exception {
         Options opts = parse(args, Set.of("--project", "--format"),
                 Set.of("--no-network", "--no-external"));
         String format = opts.values.getOrDefault("--format", "json");
+        if (!Set.of("json", "markdown", "junit", "sarif").contains(format)) {
+            throw new IllegalArgumentException("unknown --format '" + format
+                    + "'; expected json, markdown, junit, or sarif");
+        }
         boolean noExternal = opts.flags.contains("--no-external");
-        ProjectPolicy policy = ProjectPolicyLoader.load(Path.of(required(opts, "--project")), null,
-                null, null, noExternal);
+        Path policyPath = Path.of(required(opts, "--project"));
+        // Like `release` and `imports lock`, `validate` always confines assets to the project root:
+        // the headless workspace capture enforces it regardless of the flag, so pre-validating
+        // leniently would only trade a structured invalid-policy report (exit 1/2) for an
+        // execution error (exit 3) with no report at all.
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null, null, null, true);
+        if (!policy.valid()) return renderInvalidPolicy(policy, format, opts, noExternal, out);
+
+        HeadlessProjectQcService.Result qc = HeadlessProjectQcService.run(
+                new FilesystemProjectWorkspace(policyPath),
+                new org.semanticweb.HermiT.ReasonerFactory(), 25,
+                LocalDate.now(ZoneOffset.UTC));
+        Map<String, Object> result = new LinkedHashMap<>(qc.output());
+        result.put("scope", "project_qc");
+        recordNoNetwork(opts, result);
+        if (noExternal) result.put("no_external_paths", true);
+        switch (format) {
+            case "json" -> out.println(ReleaseReports.projectJson(result));
+            case "markdown" -> out.print(
+                    ReleaseReports.projectMarkdown(qc.report(), result, 100));
+            case "junit" -> out.print(ReleaseReports.projectJunit(qc.report(), null));
+            case "sarif" -> out.println(ReleaseReports.projectSarifJson(qc.report(),
+                    rootArtifact(policy)));
+            default -> throw new IllegalStateException("validated format was not handled");
+        }
+        return switch (qc.report().gate()) {
+            case PASS -> 0;
+            case FAIL -> 1;
+            case ERROR -> 3;
+        };
+    }
+
+    private static int renderInvalidPolicy(ProjectPolicy policy, String format, Options opts,
+            boolean noExternal, PrintStream out) throws Exception {
         Map<String, Object> result = policyResult(policy);
         result.put("scope", "policy_validation");
-        result.put("note", QC_DEFERRED_NOTE);
         recordNoNetwork(opts, result);
-        if (noExternal) {
-            result.put("no_external_paths", true);
-        }
+        if (noExternal) result.put("no_external_paths", true);
         switch (format) {
-            case "json":
+            case "json" -> {
                 JSON.writeValue(out, result);
                 out.println();
-                break;
-            case "markdown":
-                out.println(policyMarkdown(policy, opts.flags.contains("--no-network"), noExternal));
-                break;
-            case "junit":
-            case "sarif":
-                throw new IllegalArgumentException("--format '" + format + "' is not available for "
-                        + "policy-only validation: it projects a full QC gate result (with a semantic "
-                        + "fingerprint) that the headless CLI cannot produce without a bundled reasoner. "
-                        + "Use --format json or markdown, or run the in-Protégé run_project_qc gate.");
-            default:
-                throw new IllegalArgumentException("unknown --format '" + format
-                        + "'; expected json or markdown");
+            }
+            case "markdown" -> out.println(policyMarkdown(policy,
+                    opts.flags.contains("--no-network"), noExternal));
+            case "junit" -> out.print(policyJunit(policy));
+            case "sarif" -> {
+                JSON.writeValue(out, policySarif(policy));
+                out.println();
+            }
+            default -> throw new IllegalStateException("validated format was not handled");
         }
         return exitFor(policy);
     }
@@ -224,12 +259,12 @@ public final class Main {
         md.append("- Policy digest: ")
                 .append(policy.digest() == null ? "_none_" : "`" + policy.digest() + "`").append("\n");
         if (noNetwork) {
-            md.append("- Network: `deny` (--no-network is a redundant affirmation; ADR 0005)\n");
+            md.append("- Network: `deny` (--no-network is a redundant affirmation)\n");
         }
         if (noExternal) {
             md.append("- External paths: `deny` (--no-external caller constraint)\n");
         }
-        md.append("\n> ").append(QC_DEFERRED_NOTE).append("\n\n");
+        md.append('\n');
         appendIssueList(md, policy, "error", "Errors");
         appendIssueList(md, policy, "warning", "Warnings");
         return md.toString();
@@ -254,6 +289,67 @@ public final class Main {
         md.append('\n');
     }
 
+    private static String rootArtifact(ProjectPolicy policy) {
+        Object value = policy.effective().get("interoperability");
+        if (value instanceof Map<?, ?> interoperability) {
+            Object artifact = interoperability.get("root_artifact");
+            if (artifact instanceof String string && !string.isBlank()) return string;
+        }
+        return "ontology";
+    }
+
+    private static String policyJunit(ProjectPolicy policy) {
+        StringBuilder xml = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+        xml.append("<testsuites name=\"protege-mcp-policy\" tests=\"1\" failures=\"")
+                .append(policy.digest() == null ? 0 : 1).append("\" errors=\"")
+                .append(policy.digest() == null ? 1 : 0).append("\">\n")
+                .append("  <testsuite name=\"policy\" tests=\"1\" failures=\"")
+                .append(policy.digest() == null ? 0 : 1).append("\" errors=\"")
+                .append(policy.digest() == null ? 1 : 0).append("\" skipped=\"0\" time=\"0\">\n")
+                .append("  <testcase name=\"project-policy\" classname=\"policy\" time=\"0\">\n");
+        String body = policy.issues().stream().map(issue -> issue.code() + ": " + issue.message())
+                .reduce((left, right) -> left + "\n" + right).orElse("invalid project policy");
+        String element = policy.digest() == null ? "error" : "failure";
+        xml.append("    <").append(element).append(" message=\"invalid project policy\">")
+                .append(xmlText(body)).append("</").append(element).append(">\n")
+                .append("  </testcase>\n  </testsuite>\n</testsuites>\n");
+        return xml.toString();
+    }
+
+    private static Map<String, Object> policySarif(ProjectPolicy policy) {
+        List<Map<String, Object>> rules = new ArrayList<>();
+        List<Map<String, Object>> results = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (var issue : policy.issues()) {
+            String id = "policy." + issue.code();
+            if (seen.add(id)) rules.add(Map.of("id", id,
+                    "shortDescription", Map.of("text", issue.code())));
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("ruleId", id);
+            result.put("level", "error".equals(issue.severity()) ? "error" : "warning");
+            result.put("message", Map.of("text", issue.message()));
+            result.put("locations", List.of(Map.of("physicalLocation", Map.of(
+                    "artifactLocation", Map.of("uri", "project-policy"),
+                    "region", Map.of("startLine", 1)))));
+            results.add(result);
+        }
+        return Map.of("$schema", "https://json.schemastore.org/sarif-2.1.0.json",
+                "version", "2.1.0", "runs", List.of(Map.of(
+                        "tool", Map.of("driver", Map.of("name", "protege-mcp", "rules", rules)),
+                        "results", results)));
+    }
+
+    private static String xmlText(String value) {
+        StringBuilder safe = new StringBuilder(value.length());
+        value.codePoints().filter(codePoint -> codePoint == 0x9 || codePoint == 0xA
+                        || codePoint == 0xD || codePoint >= 0x20 && codePoint <= 0xD7FF
+                        || codePoint >= 0xE000 && codePoint <= 0xFFFD
+                        || codePoint >= 0x10000 && codePoint <= 0x10FFFF)
+                .forEach(safe::appendCodePoint);
+        return safe.toString().replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;");
+    }
+
     /**
      * A valid policy passes (exit 0). An invalid policy that was still fully evaluated — parsed,
      * schema-valid, semantic checks run, so a canonical {@code policy_digest} was computed — is a
@@ -266,6 +362,108 @@ public final class Main {
             return 0;
         }
         return policy.digest() != null ? 1 : 2;
+    }
+
+    // ===================================================================== imports lock
+
+    private static int imports(String[] args, PrintStream out) throws Exception {
+        if (args.length < 2 || !"lock".equals(args[1])) {
+            throw new IllegalArgumentException("imports requires the 'lock' subcommand");
+        }
+        String[] shifted = new String[args.length - 1];
+        shifted[0] = "imports lock";
+        if (args.length > 2) System.arraycopy(args, 2, shifted, 1, args.length - 2);
+        Options opts = parse(shifted, Set.of("--project", "--output"),
+                Set.of("--dry-run", "--no-network"));
+        Path policyPath = Path.of(required(opts, "--project"));
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null, null, null, true);
+        if (!FilesystemProjectWorkspace.isImportLockBootstrapEligible(policy)) {
+            throw new IllegalArgumentException("project policy is invalid for import-lock generation: "
+                    + policy.issues().stream().filter(issue -> "error".equals(issue.severity()))
+                            .map(io.github.hakjuoh.protege_mcp.policy.PolicyIssue::code)
+                            .distinct().reduce((left, right) -> left + ", " + right)
+                            .orElse("not loaded"));
+        }
+        Path output = opts.values.containsKey("--output")
+                ? Path.of(opts.values.get("--output")) : null;
+        ImportLockService.Result generated = ImportLockService.generate(
+                new FilesystemProjectWorkspace(policyPath), output,
+                opts.flags.contains("--dry-run"));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("written", generated.written());
+        result.put("dry_run", generated.dryRun());
+        result.put("path", generated.path());
+        result.put("sha256", generated.sha256());
+        result.put("entry_count", generated.entryCount());
+        result.put("bytes", generated.bytes());
+        result.put("backup_path", generated.backupPath());
+        result.put("candidate", JSON.readValue(generated.content(),
+                new TypeReference<LinkedHashMap<String, Object>>() { }));
+        recordNoNetwork(opts, result);
+        JSON.writeValue(out, result);
+        out.println();
+        return 0;
+    }
+
+    // ===================================================================== release
+
+    private static int release(String[] args, PrintStream out) throws Exception {
+        Options opts = parse(args,
+                Set.of("--project", "--output", "--baseline", "--created-at", "--limit"),
+                Set.of("--dry-run", "--no-network", "--no-external"));
+        Path policyPath = Path.of(required(opts, "--project"));
+        boolean dryRun = opts.flags.contains("--dry-run");
+        boolean noExternal = opts.flags.contains("--no-external");
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null, null, null, true);
+        if (!policy.valid()) {
+            Map<String, Object> invalid = policyResult(policy);
+            invalid.put("scope", "release");
+            invalid.put("prepared", false);
+            invalid.put("dry_run", dryRun);
+            invalid.put("artifacts", List.of());
+            recordNoNetwork(opts, invalid);
+            if (noExternal) invalid.put("no_external_paths", true);
+            JSON.writeValue(out, invalid);
+            out.println();
+            return exitFor(policy);
+        }
+
+        int limit = 100;
+        if (opts.values.containsKey("--limit")) {
+            try {
+                limit = Integer.parseInt(opts.values.get("--limit"));
+            } catch (NumberFormatException invalid) {
+                throw new IllegalArgumentException("--limit must be an integer");
+            }
+        }
+        Path output = opts.values.containsKey("--output")
+                ? Path.of(opts.values.get("--output")) : null;
+        Path baseline = opts.values.containsKey("--baseline")
+                ? Path.of(opts.values.get("--baseline")) : null;
+        HeadlessReleaseService.Result release = HeadlessReleaseService.execute(
+                new FilesystemProjectWorkspace(policyPath),
+                new org.semanticweb.HermiT.ReasonerFactory(),
+                new HeadlessReleaseService.Request(output, baseline, dryRun,
+                        opts.values.get("--created-at"), limit),
+                Clock.systemUTC());
+
+        Map<String, Object> result = HeadlessReleaseResults.project(release);
+        recordNoNetwork(opts, result);
+        if (noExternal) result.put("no_external_paths", true);
+        JSON.writeValue(out, result);
+        out.println();
+        if (release.gate().gate() == GateStatus.PASS && !release.artifactsAvailable()) {
+            return 3;
+        }
+        return switch (release.gate().gate()) {
+            case PASS -> 0;
+            case FAIL -> 1;
+            case ERROR -> 3;
+        };
+    }
+
+    static String boundedPreview(byte[] content) {
+        return HeadlessReleaseResults.boundedPreview(content);
     }
 
     // ===================================================================== diff
@@ -531,20 +729,33 @@ public final class Main {
         }
     }
 
-    // ===================================================================== deferred commands
+    // ===================================================================== stdio MCP
 
-    /**
-     * The roadmap commands that a headless CLI cannot honestly run yet: {@code release} and
-     * {@code imports lock} need atomic headless mutation plus a bundled license-reviewed reasoner for
-     * the gate stages, and {@code serve --transport stdio} needs a headless workspace adapter and the
-     * plugin's tool catalog moved to core. Rather than ship a command that looks half-done, print a
-     * clear not-available message and exit 2.
-     */
-    private static int deferred(String command, PrintStream err) {
-        err.println(command + ": not yet available in the headless CLI (planned; PLAN §10.2/§10.3).");
-        err.println("It requires a bundled license-reviewed baseline reasoner and a headless workspace "
-                + "adapter; run project QC and releases from the in-Protégé MCP tools for now.");
-        return 2;
+    private static int serve(String[] args, InputStream in, PrintStream out) throws Exception {
+        Options opts = parse(args, Set.of("--transport", "--project", "--capabilities"), Set.of());
+        String transport = required(opts, "--transport");
+        if (!"stdio".equals(transport)) {
+            throw new IllegalArgumentException("unsupported --transport '" + transport
+                    + "'; expected stdio");
+        }
+        Path policyPath = Path.of(required(opts, "--project"));
+        Set<String> capabilities = opts.values.containsKey("--capabilities")
+                ? parseCapabilities(opts.values.get("--capabilities"))
+                : HeadlessToolService.DEFAULT_CAPABILITIES;
+        HeadlessToolService service = new HeadlessToolService(policyPath,
+                new org.semanticweb.HermiT.ReasonerFactory(), Clock.systemUTC());
+        return HeadlessStdioServer.serve(in, out, service, capabilities);
+    }
+
+    private static Set<String> parseCapabilities(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("--capabilities must list at least one exact capability");
+        }
+        Set<String> parsed = new LinkedHashSet<>();
+        for (String token : value.trim().split("[,\\s]+")) {
+            parsed.add(Capability.fromValue(token).value());
+        }
+        return Set.copyOf(parsed);
     }
 
     // ===================================================================== shared helpers
@@ -560,18 +771,19 @@ public final class Main {
                 "Usage:",
                 "  protege-mcp-cli --version",
                 "  protege-mcp-cli --help",
-                "  protege-mcp-cli validate-policy --project FILE",
-                "  protege-mcp-cli validate --project FILE [--format json|markdown] [--no-network] [--no-external]",
+                "  protege-mcp-cli validate-policy --project FILE [--no-network] [--no-external]",
+                "  protege-mcp-cli validate --project FILE [--format json|markdown|junit|sarif] [--no-network] [--no-external]",
+                "  protege-mcp-cli imports lock --project FILE [--dry-run] [--output FILE] [--no-network]",
+                "  protege-mcp-cli release --project FILE [--dry-run] [--output DIR] [--baseline MANIFEST] [--created-at UTC] [--limit N] [--no-network] [--no-external]",
                 "  protege-mcp-cli diff --left LEFT --right RIGHT [--check] [--no-network]",
+                "  protege-mcp-cli serve --transport stdio --project FILE [--capabilities CAP,...]",
                 "      LEFT/RIGHT is an ontology document or a release manifest.json (resolved to its",
                 "      primary ontology artifact after sha256 + containment verification).",
+                "      stdio is always offline and project-confined; CAP values are exact public",
+                "      capabilities. The default enables the complete supported headless subset.",
                 "",
                 "Exit codes: 0 passed; 1 validation/gate failed; 2 configuration/usage error; "
-                        + "3 execution/infrastructure error.",
-                "",
-                "Planned, not yet available headlessly (require a bundled license-reviewed reasoner and a",
-                "headless workspace adapter): release [--dry-run], imports lock, validate full-QC stages,",
-                "serve --transport stdio. Run these from the in-Protégé MCP tools.");
+                        + "3 execution/infrastructure error.");
     }
 
     /** Parse {@code --key value} options and boolean flags after the command word (args[0]). */

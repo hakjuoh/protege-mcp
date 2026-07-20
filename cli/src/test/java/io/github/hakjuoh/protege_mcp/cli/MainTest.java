@@ -29,7 +29,7 @@ class MainTest {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         assertEquals(0, Main.run(new String[] {"--version"}, new PrintStream(out), new PrintStream(err)));
-        assertEquals("protege-mcp-cli 0.7.0", out.toString().trim());
+        assertEquals("protege-mcp-cli 0.7.1", out.toString().trim());
 
         assertEquals(2, Main.run(new String[] {"unknown"}, new PrintStream(out), new PrintStream(err)));
         assertTrue(err.toString().contains("Usage:"));
@@ -123,6 +123,36 @@ class MainTest {
         String json = out.toString(StandardCharsets.UTF_8);
         assertTrue(json.endsWith("}\n"),
                 "the JSON document must terminate with its closing brace and a trailing newline");
+    }
+
+    @Test
+    void validatePolicyAcceptsAndReportsFixedCiRestrictions() throws Exception {
+        Path policy = temp.resolve("restricted-policy.yaml");
+        Files.writeString(policy, """
+                version: 1
+                project_id: cli-policy-restrictions
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                filesystem:
+                  allow_external_paths: true
+                validation:
+                  required_stages: [profile]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(policy, "cli-policy-restrictions");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        assertEquals(1, Main.run(new String[] {"validate-policy", "--project",
+                policy.toString(), "--no-network", "--no-external"}, new PrintStream(out),
+                new PrintStream(new ByteArrayOutputStream())));
+
+        String result = out.toString(StandardCharsets.UTF_8);
+        assertTrue(result.contains("\"no_external_paths\" : true"), result);
+        assertTrue(result.contains("\"no_network\""), result);
+        assertTrue(result.contains("external_paths_forbidden"), result);
     }
 
     @Test
@@ -378,17 +408,26 @@ class MainTest {
         // and policy_loaded honestly reports false, since the policy never reached evaluation.
         Path missing = temp.resolve("does-not-exist.yaml");
         ByteArrayOutputStream missingOut = new ByteArrayOutputStream();
-        assertEquals(2, Main.run(new String[] {"validate-policy", "--project", missing.toString()},
+        assertEquals(2, Main.run(new String[] {"validate-policy", "--project", missing.toString(),
+                "--no-network", "--no-external"},
                 new PrintStream(missingOut), new PrintStream(new ByteArrayOutputStream())));
-        assertTrue(missingOut.toString().contains("\"policy_loaded\" : false"), missingOut::toString);
+        String missingJson = missingOut.toString(StandardCharsets.UTF_8);
+        assertTrue(missingJson.contains("\"policy_loaded\" : false"), missingJson);
+        assertTrue(missingJson.contains("\"no_external_paths\" : true"), missingJson);
+        assertTrue(missingJson.contains("\"no_network\""), missingJson);
+        assertTrue(missingJson.endsWith("}\n"), missingJson);
 
         Path unparseable = temp.resolve("broken.yaml");
         Files.writeString(unparseable, "this: is: not: valid: yaml: {[}\n", StandardCharsets.UTF_8);
         ByteArrayOutputStream unparseableOut = new ByteArrayOutputStream();
-        assertEquals(2, Main.run(new String[] {"validate-policy", "--project", unparseable.toString()},
+        assertEquals(2, Main.run(new String[] {"validate-policy", "--project", unparseable.toString(),
+                "--no-network", "--no-external"},
                 new PrintStream(unparseableOut), new PrintStream(new ByteArrayOutputStream())));
-        assertTrue(unparseableOut.toString().contains("\"policy_loaded\" : false"),
-                unparseableOut::toString);
+        String unparseableJson = unparseableOut.toString(StandardCharsets.UTF_8);
+        assertTrue(unparseableJson.contains("\"policy_loaded\" : false"), unparseableJson);
+        assertTrue(unparseableJson.contains("\"no_external_paths\" : true"), unparseableJson);
+        assertTrue(unparseableJson.contains("\"no_network\""), unparseableJson);
+        assertTrue(unparseableJson.endsWith("}\n"), unparseableJson);
     }
 
     @Test
@@ -422,6 +461,43 @@ class MainTest {
             String json = out.toString(StandardCharsets.UTF_8);
             assertTrue(json.contains("external_paths_forbidden"), json);
             assertTrue(json.contains("\"no_external_paths\" : true"), json);
+        } finally {
+            Files.deleteIfExists(outside);
+        }
+    }
+
+    @Test
+    void validateAlwaysConfinesExternalPathsAndStillEmitsAStructuredReport() throws Exception {
+        Path outside = Files.createTempFile("cli-external-", ".rq");
+        try {
+            Path policy = temp.resolve("external-default.yaml");
+            Files.writeString(policy, """
+                    version: 1
+                    project_id: cli-external-default
+                    root_ontology: https://example.org/root
+                    filesystem:
+                      allow_external_paths: true
+                    interoperability:
+                      profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                      root_artifact: ontology.ttl
+                      metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                      canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                    validation:
+                      required_stages: [invariants]
+                      invariants:
+                        paths: ['%s']
+                    """.formatted(outside.toString().replace("'", "''")), StandardCharsets.UTF_8);
+            materializeRoCrate(policy, "cli-external-default");
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+            int exit = Main.run(new String[] {"validate", "--project", policy.toString()},
+                    new PrintStream(out), new PrintStream(new ByteArrayOutputStream()));
+
+            String json = out.toString(StandardCharsets.UTF_8);
+            assertEquals(1, exit, "the workspace confines external paths regardless of the flag, "
+                    + "so validate must report that as a structured invalid-policy result, not "
+                    + "die during capture with exit 3 and no report: " + json);
+            assertTrue(json.contains("external_paths_forbidden"), json);
         } finally {
             Files.deleteIfExists(outside);
         }
@@ -681,7 +757,7 @@ class MainTest {
     }
 
     @Test
-    void validateReportsPolicyValidationScopeAndDeferredQcNote() throws Exception {
+    void validateRunsTheFullProjectQcGateWithBundledHermit() throws Exception {
         Path policy = temp.resolve("project.yaml");
         Files.writeString(policy, """
                 version: 1
@@ -692,30 +768,40 @@ class MainTest {
                   root_artifact: ontology.ttl
                   metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
                   canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                reasoning:
+                  reasoner: HermiT
+                  owl_profile: DL
                 validation:
-                  required_stages: [profile, governance, structural]
+                  required_stages: [interoperability, reasoner, profile]
+                  fail_on: error
                 """, StandardCharsets.UTF_8);
         materializeRoCrate(policy, "cli-validate");
 
         ByteArrayOutputStream jsonOut = new ByteArrayOutputStream();
+        ByteArrayOutputStream jsonErr = new ByteArrayOutputStream();
         assertEquals(0, Main.run(new String[] {"validate", "--project", policy.toString()},
-                new PrintStream(jsonOut), new PrintStream(new ByteArrayOutputStream())));
+                new PrintStream(jsonOut), new PrintStream(jsonErr)),
+                () -> jsonOut + "\n" + jsonErr);
         String json = jsonOut.toString();
-        assertTrue(json.contains("\"scope\" : \"policy_validation\""), json);
-        assertTrue(json.contains("Full project QC"), "the QC-deferred note is present");
-        assertTrue(json.contains("\"valid\" : true"), json);
+        assertTrue(json.contains("\"scope\" : \"project_qc\""), json);
+        assertTrue(json.contains("\"semantic_fingerprint\""), json);
+        assertTrue(json.contains("HermiT"), json);
+        assertTrue(json.contains("\"gate\" : \"pass\""), json);
+        assertFalse(json.contains(temp.toString()), "CI JSON must not leak its local project root");
+        assertTrue(json.contains("\"policy_path\" : \"project.yaml\""), json);
+        assertTrue(json.contains("\"project_root\" : \".\""), json);
 
         ByteArrayOutputStream mdOut = new ByteArrayOutputStream();
         assertEquals(0, Main.run(
                 new String[] {"validate", "--project", policy.toString(), "--format", "markdown"},
                 new PrintStream(mdOut), new PrintStream(new ByteArrayOutputStream())));
         String md = mdOut.toString();
-        assertTrue(md.contains("# Policy validation: valid"), md);
-        assertTrue(md.contains("Full project QC"), "the QC-deferred note is present in markdown");
+        assertTrue(md.contains("# Project QC: pass"), md);
+        assertTrue(md.contains("`reasoner`"), md);
     }
 
     @Test
-    void validateRejectsJunitAndSarifFormatsAsConfigurationErrors() throws Exception {
+    void validateEmitsJunitAndSarifAndRejectsUnknownFormats() throws Exception {
         Path policy = temp.resolve("project.yaml");
         Files.writeString(policy, """
                 version: 1
@@ -730,14 +816,77 @@ class MainTest {
                   required_stages: [profile, governance, structural]
                 """, StandardCharsets.UTF_8);
         materializeRoCrate(policy, "cli-fmt");
-        for (String format : new String[] {"junit", "sarif", "bogus"}) {
-            ByteArrayOutputStream err = new ByteArrayOutputStream();
-            assertEquals(2, Main.run(
-                    new String[] {"validate", "--project", policy.toString(), "--format", format},
-                    new PrintStream(new ByteArrayOutputStream()), new PrintStream(err)),
-                    () -> "format " + format + " must be a configuration error");
-            assertTrue(err.toString().contains("configuration error:"), err.toString());
-        }
+        ByteArrayOutputStream junit = new ByteArrayOutputStream();
+        assertEquals(0, Main.run(new String[] {"validate", "--project", policy.toString(),
+                "--format", "junit"}, new PrintStream(junit),
+                new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(junit.toString().contains("<testsuites name=\"protege-mcp-project-qc\""),
+                junit::toString);
+
+        ByteArrayOutputStream sarif = new ByteArrayOutputStream();
+        assertEquals(0, Main.run(new String[] {"validate", "--project", policy.toString(),
+                "--format", "sarif"}, new PrintStream(sarif),
+                new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(sarif.toString().contains("\"version\" : \"2.1.0\""), sarif::toString);
+
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(2, Main.run(new String[] {"validate", "--project", policy.toString(),
+                "--format", "bogus"}, new PrintStream(new ByteArrayOutputStream()),
+                new PrintStream(err)));
+        assertTrue(err.toString().contains("configuration error:"), err::toString);
+    }
+
+    @Test
+    void validateMapsProjectGateFailAndErrorToDocumentedExitCodes() throws Exception {
+        Path invariant = temp.resolve("always-violated.rq");
+        Files.writeString(invariant, "ASK { ?s a <http://www.w3.org/2002/07/owl#Ontology> }\n");
+        Path failing = temp.resolve("failing-project.yaml");
+        Files.writeString(failing, """
+                version: 1
+                project_id: cli-gate-fail
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [invariants]
+                  fail_on: error
+                  invariants: {paths: [always-violated.rq]}
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(failing, "cli-gate-fail");
+        ByteArrayOutputStream failedOut = new ByteArrayOutputStream();
+
+        assertEquals(1, Main.run(new String[] {"validate", "--project", failing.toString()},
+                new PrintStream(failedOut), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(failedOut.toString().contains("\"gate\" : \"fail\""), failedOut::toString);
+
+        Path errored = temp.resolve("errored-project.yaml");
+        Files.writeString(errored, """
+                version: 1
+                project_id: cli-gate-error
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                reasoning:
+                  reasoner: ELK
+                validation:
+                  required_stages: [reasoner]
+                  fail_on: error
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(errored, "cli-gate-error");
+        ByteArrayOutputStream erroredOut = new ByteArrayOutputStream();
+
+        assertEquals(3, Main.run(new String[] {"validate", "--project", errored.toString()},
+                new PrintStream(erroredOut), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(erroredOut.toString().contains("\"gate\" : \"error\""),
+                erroredOut::toString);
+        assertTrue(erroredOut.toString().contains("requires reasoner 'ELK'"),
+                erroredOut::toString);
     }
 
     @Test
@@ -774,14 +923,25 @@ class MainTest {
     }
 
     @Test
-    void deferredCommandsPrintANotAvailableMessageAndExitTwo() {
-        for (String command : new String[] {"release", "imports", "serve"}) {
-            ByteArrayOutputStream err = new ByteArrayOutputStream();
-            assertEquals(2, Main.run(new String[] {command, "--transport", "stdio"},
-                    new PrintStream(new ByteArrayOutputStream()), new PrintStream(err)));
-            assertTrue(err.toString().contains("not yet available in the headless CLI"),
-                    () -> command + " message: " + err);
-        }
+    void serveRequiresStdioProjectAndExactCapabilitiesWithoutPollutingStdout() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        assertEquals(2, Main.run(new String[] {"serve", "--transport", "http",
+                "--project", temp.resolve("project.yaml").toString()},
+                new java.io.ByteArrayInputStream(new byte[0]),
+                new PrintStream(out), new PrintStream(err)));
+        assertTrue(err.toString().contains("expected stdio"), err::toString);
+        assertEquals("", out.toString(), "protocol stdout must stay clean on usage failure");
+
+        out.reset();
+        err.reset();
+        assertEquals(2, Main.run(new String[] {"serve", "--transport", "stdio",
+                "--project", temp.resolve("project.yaml").toString(),
+                "--capabilities", "local:admin"},
+                new java.io.ByteArrayInputStream(new byte[0]),
+                new PrintStream(out), new PrintStream(err)));
+        assertTrue(err.toString().contains("unknown capability scope"), err::toString);
+        assertEquals("", out.toString());
     }
 
     private static void materializeRoCrate(Path policy, String projectId) throws Exception {
@@ -789,7 +949,8 @@ class MainTest {
         Path ontology = root.resolve("ontology.ttl");
         if (!Files.exists(ontology)) {
             Files.writeString(ontology,
-                    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n<> a owl:Ontology .\n");
+                    "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n"
+                            + "<https://example.org/root> a owl:Ontology .\n");
         }
         Files.writeString(root.resolve("ro-crate-metadata.json"), """
                 {

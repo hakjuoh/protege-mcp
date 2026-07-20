@@ -15,3 +15,7 @@ interoperability:
     timeout_ms: 120000
 reasoning:
   reasoner: HermiT
+  owl_profile: DL
+validation:
+  required_stages: [interoperability, reasoner, profile]
+  fail_on: error

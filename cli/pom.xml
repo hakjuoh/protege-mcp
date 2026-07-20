@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.github.hakjuoh</groupId>
         <artifactId>protege-mcp-parent</artifactId>
-        <version>0.7.0</version>
+        <version>0.7.1</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>protege-mcp-cli</artifactId>
@@ -42,6 +42,51 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
         <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp-core</artifactId>
+            <version>${mcp.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp-json-jackson2</artifactId>
+            <version>${mcp.version}</version>
+        </dependency>
+        <dependency>
+            <!-- The one license-reviewed headless baseline reasoner. The HermiT 1.3.8.4xx line targets
+                 OWLAPI 4; exclude its older OWLAPI aggregate so the executable contains only the
+                 reactor's pinned owlapi-osgidistribution 4.5.29. Its ordinary transitive datatype and
+                 Axiom dependencies are deliberately retained and flattened by shade. -->
+            <groupId>net.sourceforge.owlapi</groupId>
+            <artifactId>org.semanticweb.hermit</artifactId>
+            <version>${hermit.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>owlapi-distribution</artifactId>
+                </exclusion>
+                <!-- OWLAPI already supplies jcl-over-slf4j, which implements the Commons Logging API
+                     without a second org.apache.commons.logging class set in the shaded jar. -->
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+                <!-- OWLAPI already distributes javax.activation-api 1.2.0. Keep one implementation
+                     instead of shading Axiom's older Geronimo copy over the same classes. -->
+                <exclusion>
+                    <groupId>org.apache.geronimo.specs</groupId>
+                    <artifactId>geronimo-activation_1.1_spec</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <!-- HermiT calls only three generic automaton types while processing complex object
+                 properties. Local binary-compatibility classes retain that tiny API and delegate
+                 storage to this maintained Apache-2.0 implementation. -->
+            <groupId>net.automatalib</groupId>
+            <artifactId>automata-core</artifactId>
+            <version>${automatalib.version}</version>
+        </dependency>
+        <dependency>
             <!-- OWLAPI transitively shades slf4j-api 2.0.x with NO provider, so every CLI run
                  opened with three "SLF4J(W): No SLF4J providers were found" stderr lines. The NOP
                  provider silences them; its META-INF/services entry is merged into the shaded jar
@@ -61,6 +106,15 @@
 
     <build>
         <finalName>protege-mcp-cli-${project.version}</finalName>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <directory>${project.basedir}/../conformance/fixtures</directory>
+                <targetPath>conformance</targetPath>
+            </testResource>
+        </testResources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -81,6 +135,27 @@
                             <shadedClassifierName>all</shadedClassifierName>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <filters>
+                                <!-- HermiT is an OSGi bundle whose root contains inert nested copies of
+                                     datatype-automaton/Axiom/commons-logging jars. Maven resolves those
+                                     dependencies as ordinary artifacts and shade flattens their classes.
+                                     Its root rationals tree is an unmaintained JAutomata fork; local
+                                     binary-compatibility classes backed by AutomataLib replace it. -->
+                                <filter>
+                                    <artifact>net.sourceforge.owlapi:org.semanticweb.hermit</artifact>
+                                    <excludes>
+                                        <exclude>*.jar</exclude>
+                                        <exclude>rationals/**</exclude>
+                                    </excludes>
+                                </filter>
+                                <!-- owlapi-osgidistribution likewise carries inert lib/*.jar copies.
+                                     Its Maven transitive graph already supplies and flattens those
+                                     dependencies; keeping both forms bloats and obscures the executable. -->
+                                <filter>
+                                    <artifact>net.sourceforge.owlapi:owlapi-osgidistribution</artifact>
+                                    <excludes>
+                                        <exclude>lib/*.jar</exclude>
+                                    </excludes>
+                                </filter>
                                 <filter>
                                     <artifact>*:*</artifact>
                                     <excludes>
@@ -98,6 +173,32 @@
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.7.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-hermit-corresponding-source</id>
+                        <phase>prepare-package</phase>
+                        <goals><goal>copy</goal></goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>net.sourceforge.owlapi</groupId>
+                                    <artifactId>org.semanticweb.hermit</artifactId>
+                                    <version>${hermit.version}</version>
+                                    <classifier>sources</classifier>
+                                    <type>jar</type>
+                                    <outputDirectory>${project.build.directory}/compliance</outputDirectory>
+                                    <destFileName>org.semanticweb.hermit-${hermit.version}-sources.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                            <overWriteIfNewer>true</overWriteIfNewer>
                         </configuration>
                     </execution>
                 </executions>
@@ -158,6 +259,27 @@
                             </arguments>
                         </configuration>
                     </execution>
+                    <execution>
+                        <!-- Run from the shaded jar as the only application classpath. This catches
+                             missing flattened HermiT/Axiom/automaton classes that reactor-classpath
+                             unit tests would accidentally supply, and verifies all compliance inputs. -->
+                        <id>smoke-shaded-headless-reasoner</id>
+                        <phase>verify</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>${java.home}/bin/java</executable>
+                            <arguments>
+                                <argument>-cp</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}-all.jar</argument>
+                                <argument>io.github.hakjuoh.protege_mcp.cli.HeadlessDistributionProbe</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}-all.jar</argument>
+                                <argument>${project.build.directory}/compliance</argument>
+                                <argument>${maven.multiModuleProjectDirectory}/LICENSES</argument>
+                                <argument>${maven.multiModuleProjectDirectory}/docs/headless-relinking.md</argument>
+                                <argument>${hermit.version}</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
             <plugin>
@@ -170,7 +292,12 @@
                         <goals><goal>enforce</goal></goals>
                         <configuration>
                             <rules><bannedDependencies>
-                                <excludes><exclude>edu.stanford.protege:*</exclude></excludes>
+                                <excludes>
+                                    <exclude>edu.stanford.protege:*</exclude>
+                                    <exclude>net.sourceforge.owlapi:owlapi-distribution</exclude>
+                                    <exclude>commons-logging:commons-logging</exclude>
+                                    <exclude>org.apache.geronimo.specs:geronimo-activation_1.1_spec</exclude>
+                                </excludes>
                                 <searchTransitive>true</searchTransitive>
                             </bannedDependencies></rules>
                         </configuration>
