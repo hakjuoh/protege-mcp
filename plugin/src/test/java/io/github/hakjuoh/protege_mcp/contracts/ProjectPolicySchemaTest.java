@@ -60,14 +60,37 @@ class ProjectPolicySchemaTest {
     }
 
     @Test
-    void examplesMakeFilesystemAndNetworkDefaultsExplicit() throws IOException {
+    void examplesMakeFilesystemNetworkAndAuditDefaultsExplicit() throws IOException {
         for (String file : List.of("minimal.yaml", "general-owl.yaml", "obo.yaml")) {
             Map<String, Object> policy = readYaml(EXAMPLES.resolve(file));
             Map<String, Object> filesystem = object(policy, "filesystem");
             Map<String, Object> network = object(policy, "network");
+            Map<String, Object> audit = object(policy, "audit");
             assertTrue(Boolean.FALSE.equals(filesystem.get("allow_external_paths")), file);
             assertTrue("deny".equals(network.get("default")), file);
+            assertTrue(Integer.valueOf(90).equals(audit.get("retention_days")), file);
+            assertTrue(Integer.valueOf(10485760).equals(audit.get("max_file_bytes")), file);
+            assertTrue(Integer.valueOf(10).equals(audit.get("max_files")), file);
         }
+    }
+
+    @Test
+    void auditBoundsAreStrictAndUnknownSettingsFailClosed() throws IOException {
+        Map<String, Object> base = readYaml(EXAMPLES.resolve("minimal.yaml"));
+        for (Map.Entry<String, Object> invalid : Map.<String, Object>of(
+                "retention_days", 0,
+                "max_file_bytes", 1023,
+                "max_files", 101).entrySet()) {
+            Map<String, Object> policy = copy(base);
+            object(policy, "audit").put(invalid.getKey(), invalid.getValue());
+            assertInvalid(policy, "invalid audit " + invalid.getKey());
+        }
+        Map<String, Object> unknown = copy(base);
+        object(unknown, "audit").put("include_prompts", true);
+        assertInvalid(unknown, "unknown audit setting");
+        Map<String, Object> oneFile = copy(base);
+        object(oneFile, "audit").put("max_files", 1);
+        assertInvalid(oneFile, "audit max_files must retain a current and rotated stream");
     }
 
     @Test

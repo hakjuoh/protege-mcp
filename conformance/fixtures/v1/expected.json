@@ -1,0 +1,66 @@
+{
+  "qc": {
+    "gate": "pass",
+    "semantic_fingerprint": "sha256:f1a4ce446cc385f6d460a3242225586e4640b713974749cc1906189bff21de97",
+    "closure_fingerprint": "sha256:f4e205de88c5ddddd69080a5b18ddd38a25d36fa3028468a967f258808650abd",
+    "reasoner": "HermiT",
+    "stages": [
+      {"stage": "interoperability", "status": "pass"},
+      {"stage": "reasoner", "status": "pass"},
+      {"stage": "profile", "status": "pass"},
+      {"stage": "governance", "status": "pass"},
+      {"stage": "structural", "status": "pass"}
+    ],
+    "reasoner_factory": "org.semanticweb.HermiT.ReasonerFactory",
+    "findings": [
+      {
+        "id": "structural.finding",
+        "source": "structural",
+        "severity": "info",
+        "focus_iri": null
+      }
+    ]
+  },
+  "release": {
+    "gate": "pass",
+    "version_iri": "https://example.org/conformance/1.0.0",
+    "artifact_count": 7,
+    "artifact_paths": [
+      "manifest.json",
+      "ontology.ttl",
+      "reports/qc.json",
+      "reports/qc.md",
+      "reports/qc.sarif",
+      "reports/qc.xml",
+      "ro-crate-metadata.json"
+    ],
+    "artifacts": {
+      "ontology.ttl": "sha256:7bd77992762393ba9697683bfdc47c1ce8b08e81a8caceae5b95ad6ddc8314a3",
+      "reports/qc.md": "sha256:b2fb4174cf0cd1a5809dd08f64218c03c71797bde5a2cd8c4825cfbbb00348df",
+      "reports/qc.xml": "sha256:1e4e068103b3114233a74aa64b312b1f3dd2faf66c15211350c19d5e2a46b890",
+      "reports/qc.sarif": "sha256:2a21b69ab832232b1396e263266728a67027951bdf0a7b9f6352f33b169edc62"
+    },
+    "manifest_semantic_fingerprint": "sha256:f1a4ce446cc385f6d460a3242225586e4640b713974749cc1906189bff21de97",
+    "manifest_version_iri": "https://example.org/conformance/1.0.0"
+  },
+  "lock": {
+    "sha256": "sha256:6fca83e41c23361dff7d78303897ecee02d066375d99b6f1c55baee09a090322",
+    "entry_count": 1,
+    "content": {
+      "version": 1,
+      "imports": [
+        {
+          "ontology_iri": "https://example.org/conformance/module",
+          "version_iri": null,
+          "document": "module.ttl",
+          "sha256": "879acedad83451a002b65849bdbe077b66ba395be97e07c3c6316650faec3d55",
+          "direct": true
+        }
+      ]
+    }
+  },
+  "grounding": {
+    "curie": "https://example.org/conformance#Term",
+    "iri": "https://example.org/conformance#Term"
+  }
+}

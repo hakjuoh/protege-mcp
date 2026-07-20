@@ -90,7 +90,10 @@ class PublicContractSnapshotTest {
             "list_reasoners", "load_ontology", "run_qc_suite", "save_ontology",
             // set_reasoner now documents the shared unique-or-fail reference resolution (a
             // version-less name must match exactly ONE installed reasoner); same accepted inputs.
-            "set_reasoner");
+            "set_reasoner",
+            // search_entities keeps the same arguments while documenting additive synonym,
+            // explanation, collision, and review-only result fields.
+            "search_entities");
     /** Explicit review point for titles, output schemas, annotations, metadata, or icons. */
     private static final Set<String> INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050 = Set.of();
     /**
