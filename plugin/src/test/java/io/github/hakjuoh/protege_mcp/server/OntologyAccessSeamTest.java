@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -355,5 +357,113 @@ class OntologyAccessSeamTest {
                         + thrown.getMessage());
         assertTrue(Thread.interrupted(),
                 "the interrupt flag is re-asserted before throwing (and cleared here for isolation)");
+    }
+
+    @Test
+    void capturedRunnableAfterInterruptIsCancelledBeforeItCanMutate() throws Exception {
+        AtomicReference<Runnable> captured = new AtomicReference<>();
+        OntologyAccess.EdtGateway gateway = new OntologyAccess.EdtGateway() {
+            @Override
+            public boolean isDispatchThread() {
+                return false;
+            }
+
+            @Override
+            public void invokeLater(Runnable task) {
+                captured.set(task);
+                Thread.currentThread().interrupt();
+            }
+        };
+        OntologyAccess access = new OntologyAccess(bareKit(), 30_000L, gateway);
+        AtomicInteger mutations = new AtomicInteger();
+
+        McpAccessException thrown = assertThrows(McpAccessException.class,
+                () -> access.compute(mm -> mutations.incrementAndGet(), 30_000L));
+        assertTrue(thrown.getMessage().contains("Interrupted"), thrown::getMessage);
+        assertTrue(Thread.interrupted(), "clear the restored interrupt flag for test isolation");
+        assertNotNull(captured.get(), "the interrupted call enqueued one model-thread task");
+
+        captured.get().run();
+        assertEquals(0, mutations.get(),
+                "an interrupted caller must cancel queued work before it can mutate later");
+    }
+
+    @Test
+    void timeoutAfterBodyStartsDoesNotClaimItsEffectsWerePrevented() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        OntologyAccess.EdtGateway gateway = new OntologyAccess.EdtGateway() {
+            @Override
+            public boolean isDispatchThread() {
+                return false;
+            }
+
+            @Override
+            public void invokeLater(Runnable task) {
+                Thread worker = new Thread(task, "started-model-thread-body");
+                worker.setDaemon(true);
+                worker.start();
+                try {
+                    assertTrue(started.await(2, TimeUnit.SECONDS),
+                            "test body must start before invokeLater returns");
+                } catch (InterruptedException error) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(error);
+                }
+            }
+        };
+        OntologyAccess access = new OntologyAccess(bareKit(), 30_000L, gateway);
+        AtomicInteger mutations = new AtomicInteger();
+
+        try {
+            McpAccessException thrown = assertThrows(McpAccessException.class,
+                    () -> access.compute(mm -> {
+                        started.countDown();
+                        try {
+                            release.await();
+                        } catch (InterruptedException error) {
+                            Thread.currentThread().interrupt();
+                        }
+                        return mutations.incrementAndGet();
+                    }, 50L));
+            assertEquals(0, started.getCount(), "the model-thread body started before the timeout");
+            assertTrue(thrown.getMessage().contains("may still complete"), thrown::getMessage);
+            assertTrue(thrown.getMessage().contains("do not assume its effects were prevented"),
+                    thrown::getMessage);
+        } finally {
+            release.countDown();
+        }
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (mutations.get() == 0 && System.nanoTime() < deadline) Thread.onSpinWait();
+        assertEquals(1, mutations.get(),
+                "the already-started body may finish after the timeout, matching the warning");
+    }
+
+    @Test
+    void interruptedWaitPreservesFailureFromAnAlreadyFinishedBody() throws Exception {
+        IllegalStateException bodyFailure = new IllegalStateException("finished failure");
+        OntologyAccess.EdtGateway gateway = new OntologyAccess.EdtGateway() {
+            @Override
+            public boolean isDispatchThread() {
+                return false;
+            }
+
+            @Override
+            public void invokeLater(Runnable task) {
+                task.run();
+                Thread.currentThread().interrupt();
+            }
+        };
+        OntologyAccess access = new OntologyAccess(bareKit(), 30_000L, gateway);
+
+        McpAccessException thrown = assertThrows(McpAccessException.class,
+                () -> access.compute(mm -> {
+                    throw bodyFailure;
+                }, 30_000L));
+
+        assertTrue(thrown.getMessage().contains("may still complete"), thrown::getMessage);
+        assertSame(bodyFailure, thrown.getCause(),
+                "a failure published before the interrupted wait remains diagnostic context");
+        assertTrue(Thread.interrupted(), "clear the restored interrupt flag for test isolation");
     }
 }

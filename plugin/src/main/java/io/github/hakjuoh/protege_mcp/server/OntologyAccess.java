@@ -2,7 +2,7 @@ package io.github.hakjuoh.protege_mcp.server;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -23,6 +23,11 @@ import org.protege.editor.owl.model.OWLModelManager;
  * deadlock. A stuck EDT surfaces as an {@link McpAccessException} (→ MCP error) instead of hanging.
  */
 public final class OntologyAccess {
+
+    private static final int QUEUED = 0;
+    private static final int RUNNING = 1;
+    private static final int FINISHED = 2;
+    private static final int CANCELLED = 3;
 
     private final OWLEditorKit editorKit;
     private final long timeoutMillis;
@@ -67,12 +72,15 @@ public final class OntologyAccess {
         }
         AtomicReference<T> result = new AtomicReference<>();
         AtomicReference<RuntimeException> failure = new AtomicReference<>();
-        AtomicBoolean cancelled = new AtomicBoolean(false);
+        AtomicInteger state = new AtomicInteger(QUEUED);
         CountDownLatch latch = new CountDownLatch(1);
         edt.invokeLater(() -> {
-            // If the caller already gave up (timeout below), do NOT run the body — this prevents a
-            // queued task from mutating the model after the client was told the call failed.
-            if (cancelled.get()) {
+            // Claim the task atomically. If the caller already gave up (timeout/interruption below),
+            // do NOT run the body — this prevents a queued task from mutating the model after the
+            // client was told the call failed. A boolean check/set pair is insufficient here: timeout
+            // can race between the check and fn.apply(), leaving both sides believing they won.
+            if (!state.compareAndSet(QUEUED, RUNNING)) {
+                latch.countDown();
                 return;
             }
             try {
@@ -82,24 +90,36 @@ public final class OntologyAccess {
             } catch (Throwable t) {
                 failure.set(new McpAccessException(t));
             } finally {
+                state.set(FINISHED);
                 latch.countDown();
             }
         });
         try {
             if (!latch.await(boundMillis, TimeUnit.MILLISECONDS)) {
-                cancelled.set(true);
-                throw new McpAccessException(
-                        "Timed out after " + boundMillis + " ms waiting for the Protégé UI thread "
-                                + "(the application may be busy).");
+                boolean prevented = state.compareAndSet(QUEUED, CANCELLED);
+                throw abandoned("Timed out after " + boundMillis + " ms waiting for the Protégé UI "
+                        + "thread (the application may be busy).", prevented, failure.get());
             }
         } catch (InterruptedException e) {
+            boolean prevented = state.compareAndSet(QUEUED, CANCELLED);
             Thread.currentThread().interrupt();
-            throw new McpAccessException("Interrupted while waiting for the Protégé UI thread.");
+            throw abandoned("Interrupted while waiting for the Protégé UI thread.",
+                    prevented, failure.get());
         }
         if (failure.get() != null) {
             throw failure.get();
         }
         return result.get();
+    }
+
+    private static McpAccessException abandoned(String message, boolean prevented,
+            RuntimeException completedFailure) {
+        if (prevented) return new McpAccessException(message);
+        String warning = message + " The model-thread body had already started (or finished) and may "
+                + "still complete; do not assume its effects were prevented.";
+        return completedFailure == null
+                ? new McpAccessException(warning)
+                : new McpAccessException(warning, completedFailure);
     }
 
     /** Convenience for side-effecting work that has no return value. */
