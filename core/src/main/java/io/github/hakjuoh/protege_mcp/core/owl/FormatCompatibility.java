@@ -15,8 +15,9 @@ import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
 
 /**
- * Format serialization safeguards (PLAN §8.3): predict, before a target is replaced, whether the chosen
- * serialization format can represent the ontology without loss.
+ * Format serialization safeguards: predict, before a target is replaced, whether the chosen
+ * serialization format can represent the ontology without loss. The public behavior is documented under
+ * {@code save_ontology} in {@code docs/tools/history.md}.
  *
  * <p>The table is deliberately conservative and empirically grounded against the shipped OWLAPI 4.5.29
  * storers, NOT against the abstract capabilities of each syntax. Every construct that a genuine
@@ -56,7 +57,7 @@ public final class FormatCompatibility {
     private static final IRI RDFS_LABEL = IRI.create("http://www.w3.org/2000/01/rdf-schema#label");
     private static final IRI RDFS_COMMENT = IRI.create("http://www.w3.org/2000/01/rdf-schema#comment");
 
-    /** Deterministic ordering so truncated samples and the digest-hashed reports are reproducible. */
+    /** Deterministic ordering so truncated samples and digest-hashed reports are reproducible. */
     private static final Comparator<OboIssue> ISSUE_ORDER = Comparator
             .comparing(OboIssue::kind)
             .thenComparing(issue -> issue.focusIri() == null ? "" : issue.focusIri())
@@ -170,7 +171,7 @@ public final class FormatCompatibility {
                                 + frameTag(tag.getKey()) + " tag per term."));
             }
         }
-        // Deterministic order independent of OWLAPI's per-JVM randomized axiom iteration (PLAN §3.3),
+        // Deterministic order independent of OWLAPI's per-JVM randomized axiom iteration,
         // so truncated samples and the digest-hashed release reports stay reproducible.
         issues.sort(ISSUE_ORDER);
         return issues;

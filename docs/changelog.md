@@ -21,6 +21,101 @@ each section is also published as the body of its
 
 ---
 
+## [Unreleased]
+
+## [0.7.1] - 2026-07-20
+
+**Headless parity, least-privilege attribution, local reuse, and release hardening complete the 0.7 line.**
+This patch grows the public surface from 83 to **84 tools** (adding the explicit `export_audit_log`)
+and keeps **11 prompts**, while making the full project/release workflow available headlessly and
+gating the supported live Protégé runtime. The clean release-candidate
+reactor contains **3,446 JUnit tests** (3,112 plugin, 278 core, 56 CLI): zero failures/errors and one
+intentionally skipped opt-in performance test.
+
+### Added
+- A checksum-pinned Protégé 5.6.6/Xvfb harness now gates releases and runs weekly with an explicit
+  Java 17+ runtime. It proves the built OSGi bundle becomes active, rejects unauthenticated access,
+  connects through the shared broker, keeps MCP sessions pinned across two live windows, observes an
+  EDT-backed edit and removes it with exactly one Undo, obtains a real HermiT classification and
+  explanation, and verifies application/broker shutdown. JSON evidence and runtime logs are
+  retained as workflow artifacts; macOS/Windows packaging remains a short manual check.
+- Versioned small/medium/large generated ontology fixtures now benchmark snapshot capture, HermiT reasoning,
+  SPARQL cache construction, SHACL, semantic diff, and verified serialization. A reference-environment
+  regression gate writes machine-readable measurements and runs in weekly and release CI without slowing
+  the normal pull-request suite.
+- `search_entities` now discovers standard and policy-configured preferred labels/synonyms, applies bounded
+  preferred/fallback language ranking, explains every match and collision, and separates review-only
+  `reuse_candidate` results from guaranteed exact grounds. Punned IRIs remain one ground, exact preferred-name
+  ambiguity blocks minting without choosing a winner, and revision-cached lexical expansion reports its cap.
+- Ontology Assistant turns now use non-persisted, non-refreshable, short-lived principals attributed to
+  the provider and an opaque per-window chat/turn identity instead of the static local-admin token. A
+  separate Assistant access setting can restrict chat to reads; the bounded write profile excludes
+  server administration, external files, network, and unrestricted local-admin compatibility, and every
+  launch/finish/Stop/dispose path revokes the credential.
+- The MCP Server view's Connected-clients panel now also lists and revokes OAuth clients when the shared
+  broker owns the endpoint. Revoking a client invalidates its tokens, drops its pinned sessions, terminates
+  its in-flight and queued proxied requests at the broker, and confirms a commit fence across every
+  registered window so no revoked work can commit once the fence is confirmed.
+- Every plugin and headless tool call now records its authenticated/static principal, effective
+  capabilities, operation, target, gate/change summary, confirmation references, and release-manifest
+  link in a rotated owner-only per-workspace stream. Secret-bearing fields, prompts, attachments, and
+  ontology content are excluded and defensively redacted. The new `export_audit_log` tool performs a
+  bounded deterministic merge into an explicitly confirmed project-contained artifact; dry-run remains
+  the default. Reducing `audit.max_files` prunes that workspace's excess numbered rotations on its next
+  append under a loaded, valid policy — fallback defaults never prune — without adopting similarly named
+  sibling streams. A temporarily invalid policy uses the schema's conservative maximum retention and
+  rotation bounds, so it cannot erase same-workspace history that the last valid policy retained.
+- A versioned offline plugin/CLI conformance fixture now pins QC stage and finding identity,
+  semantic/closure fingerprints, HermiT identity, deterministic IRI/CURIE grounding, import-lock bytes,
+  and portable release evidence across both execution surfaces.
+- Reusable ontology CI now validates a PR policy only as a proposal, applies the base branch's trusted
+  policy/assets to the confined candidate root ontology, and preserves full-QC JSON/JUnit/SARIF, dry-run
+  release checksums, and asserted diff through a provenance-checked two-workflow artifact boundary.
+- The standalone CLI distribution now embeds the HermiT `1.3.8.431` baseline with shaded-artifact
+  satisfiability, inconsistency, role-chain, and rare-datatype probes. The executable excludes HermiT's
+  unmaintained JAutomata implementation and supplies its narrow binary API through maintained Apache-2.0
+  AutomataLib `0.12.1`. GPL/LGPL texts, corresponding HermiT source, pinned license evidence, third-party
+  notices, and relinking instructions are assembled into a checksummed release compliance bundle; missing,
+  legacy, or duplicate/inert reasoner dependencies fail the build or release before publication.
+- CLI `validate` now captures one offline project snapshot and runs the policy-required subset of the
+  eight QC stages with the bundled HermiT, emitting portable JSON, Markdown, JUnit, or SARIF evidence
+  with strict gate exit codes.
+- CLI `imports lock` previews or atomically installs deterministic local-import locks, rejects source drift
+  and project escapes, preserves replacement backups, and never trusts an old lock checksum while updating.
+- CLI `release` now runs the shared full-QC/release gate offline, verifies optional baseline bundles, and
+  either previews every checksummed artifact or publishes the complete release directory through guarded
+  atomic replacement with a verified backup. Concurrent source/output changes and failed commits cannot
+  expose a partial bundle; command results contain only project-relative paths.
+- CLI `serve --transport stdio --project FILE` now exposes an eight-tool project-confined headless MCP
+  surface for policy validation, full QC, import-lock verification/generation, release gate/preparation,
+  and audit export. It shares the plugin's 84-tool capability declaration, lists every unavailable live tool explicitly,
+  defaults mutations to dry-run, stays offline, caps inbound/outbound JSON-RPC lines, and keeps stdout clean.
+- Public MCP descriptions are validated to reject internal roadmap/decision identifiers, keeping tool
+  documentation focused on supported behavior rather than repository planning codes.
+- Every MCP tool now declares its required capabilities once at registration and rejects a request before
+  handler execution when the propagated broker/standalone principal lacks them. Explicit OAuth `read`
+  grants are ontology-read-only; exact ontology/release/filesystem/network/server scopes compose without
+  implication. Existing `mcp` grants, omitted legacy scopes, and the static token retain local-admin
+  compatibility, while unknown scopes fail before consent/token issuance.
+
+### Changed
+- Interrupted or timed-out callers now cancel queued Protégé model-thread work through one atomic state
+  transition, so a failed request cannot mutate later when the UI queue drains. If the body had already
+  started, the error explicitly warns that its effects may still complete instead of claiming cancellation.
+- Inferred SPARQL/QC snapshots now bound each inference category independently. Subclass/equivalent-class,
+  type, property-hierarchy, and property-assertion enumeration retain conservative per-category query
+  admission limits and now also stop at a fixed actual-result budget. An over-budget category is dropped
+  atomically instead of leaving a partial graph; an enumeration the active reasoner cannot answer is
+  contained per generator — axioms the reasoner did answer are kept, matching 0.7.0 — and every omission
+  is named in the result note. Ordinary ABoxes whose property assertions 0.7.0 admitted remain unaffected.
+- Reusable ontology-CI callers must now provide the candidate `ontology` path, and trusted annotator
+  callers must provide `expected_release_check`; update the paired workflows together when moving from
+  the 0.7.0 interface.
+- CLI `validate-policy` now accepts `--no-network` and `--no-external`, allowing CI to record its fixed
+  offline posture and refuse a proposed external-path grant without running project QC.
+- Plugin interoperability reports now use a project-relative manifest path, so release evidence no longer
+  embeds a checkout-specific absolute path.
+
 ## [0.7.0] - 2026-07-18
 
 **Release preparation, deterministic change review, and entailment-aware comparison are now first-class workflows.**
@@ -41,7 +136,7 @@ The public surface grows from **78 to 83 tools** and remains at **11 prompts**.
 
 ### Changed
 - Document load, project QC, and change-set preview accept explicit `network=deny|allow` and
-  `lock_mode=off|if_present|required` controls with most-restrictive-wins policy composition.
+  `lock_mode=ignore|verify|required` controls with most-restrictive-wins policy composition.
 - The headless CLI adds `validate`, manifest-backed `diff --check`, distinct 0/1/2/3 exit codes,
   `--help`/`-h`/`help`, clean stderr, and newline-terminated JSON. Policy validation reports
   `policy_loaded=false` when the policy never reached evaluation.

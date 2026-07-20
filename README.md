@@ -16,21 +16,30 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Installation](https://hakjuoh.github.io/protege-mcp/installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](https://hakjuoh.github.io/protege-mcp/connect/) | The server model (ports, OAuth vs. token) + Claude Code, Codex CLI, VS Code, Claude Desktop recipes. |
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
-| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 83 tools by category, including the five tools added in v0.7.0. |
+| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 84 tools by category, including the owner-only audit export added for v0.7.1. |
 | [Prompts](https://hakjuoh.github.io/protege-mcp/prompts/) | The 11 guided workflows available to MCP clients. |
 | [Project policy & QC](https://hakjuoh.github.io/protege-mcp/project-policy.html) | Policy v1 discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [RO-Crate & RDFC](https://hakjuoh.github.io/protege-mcp/interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
 | [Contributing](https://hakjuoh.github.io/protege-mcp/contributing.html) | Build from source, run the tests, and add a tool. |
+| [Performance tests](https://hakjuoh.github.io/protege-mcp/performance.html) | Versioned representative fixtures, regression budgets, and the opt-in benchmark command. |
+| [Live integration test](https://hakjuoh.github.io/protege-mcp/smoke-test.html) | Automated real-Protégé release gate and the platform packaging checklist. |
 | [Versioning & releases](https://hakjuoh.github.io/protege-mcp/versioning.html) · [Changelog](https://hakjuoh.github.io/protege-mcp/changelog.html) | The release scheme and notes for every version. |
 
 ## Highlights
 
-- **83 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
+- **84 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
   govern, extract modules, run SWRL rules, SPARQL and SHACL, and reason.
 - **Enforced project boundaries** (`0.6.1`) — direct paths are confined to the canonical project root
   with request-scoped filesystem capabilities, policy network/import controls block unapproved fetches,
   locked-import checksums are automatic gates, and verified rollback rejects a failing delta before it
   reaches the live ontology.
+- **Least-privilege OAuth** — all 84 tools declare and enforce ontology, release, filesystem, network,
+  and server capabilities from the propagated principal. Explicit `read` grants cannot mutate, release,
+  or open caller-selected files; existing `mcp` grants and the static token retain the documented local-admin
+  compatibility profile.
+- **Attributable local operations** — every authorized, denied, successful, and failed tool call is
+  written to a rotated owner-only stream without tokens, prompts, attachments, or ontology content;
+  `export_audit_log` produces an explicitly confirmed, project-contained review artifact.
 - **One endpoint, any number of windows** (`0.5.0`) — a shared **broker** owns the configured port
   across every Protégé window and instance and routes each MCP session to a live window, so one fixed
   URL (`http://127.0.0.1:8123/mcp`) always works.
@@ -38,8 +47,8 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
   verify=report|rollback` runs the isolated project/change-set gate before commit; a re-runnable
   **competency-question suite** and SPARQL **invariants** (`verify_ontology`) catch regressions; a single
   **`run_qc_suite`** gate rolls up reasoner + profile + structural + invariants + CQ checks; and
-  `search_entities` now returns `score`/`match_kind` + `would_mint` so an assistant grounds a term before
-  minting a new one.
+  `search_entities` ranks policy-configured RDFS/SKOS/OBO preferred labels and synonyms, explains each
+  match/collision, and keeps fuzzy/synonym reuse review-only so an assistant grounds a term before minting.
 - **Reproducible project QC** (`0.6.0`) — discover and validate a checked-in policy, fingerprint the active
   ontology and loaded imports, resolve persisted invariant/CQ/multi-SHACL assets inside a confined project
   root, and run reasoner/profile/structural/governance/invariant/CQ/SHACL checks over one isolated snapshot
@@ -57,7 +66,8 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
   bind-address preference, that requires **OAuth** or a **bearer token** on every request, with
   optional **read-only** mode and **confirm-each-write**.
 - **In-app Ontology Assistant** — chat that drives your existing `claude` / `codex` CLI back into the
-  server; **no API key is stored by Protégé**.
+  server with one short-lived, attributable credential per turn instead of the static admin token;
+  **no API key is stored by Protégé**.
 
 ## Requirements
 
@@ -97,8 +107,10 @@ mvn clean package
 
 The reactor produces `plugin/target/protege-mcp-<version>.jar` (the self-contained OSGi plugin) and
 `cli/target/protege-mcp-cli-<version>-all.jar` (an executable headless Java 17 CLI). The CLI supports
-`--version`, `validate-policy --project FILE`, scoped `validate`, and asserted/manifest-backed
-`diff --left FILE --right FILE [--check]` without a Protégé installation. See the
+policy/full-QC validation, deterministic import locks, verified releases, asserted/manifest-backed diff,
+and a bounded project-confined MCP server via `serve --transport stdio --project FILE`, all without a
+Protégé installation. A fork-safe reusable CI pair applies the base branch's trusted policy to candidate
+ontology bytes and preserves JSON/JUnit/SARIF/release-checksum evidence. See [Ontology CI](https://hakjuoh.github.io/protege-mcp/ci.html) and the
 [Contributing guide](https://hakjuoh.github.io/protege-mcp/contributing.html) for project layout and how
 to add a tool.
 

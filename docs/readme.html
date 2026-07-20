@@ -26,7 +26,7 @@ host are Java 17 bytecode, and the OSGi manifest declares
 <ul>
     <li>A <b>MCP Server</b> view (start / stop, the bound URL and bearer token) and a
         <b>Settings &gt; MCP</b> tab.</li>
-    <li><b>83 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, SPARQL, SHACL, project QC, impact analysis, and release preparation - every model
+    <li><b>84 tools</b> across explore / search, edit, curation, governance, documents, rules, history, reasoning, SPARQL, SHACL, project QC, impact analysis, release preparation, and audit export - every model
         edit goes through <code>OWLModelManager.applyChanges</code>, so it appears in the GUI and joins
         the shared <b>undo stack</b> (document open/save use Prot&#233;g&#233;'s own load/save APIs).</li>
     <li>One <b>shared MCP endpoint</b> for every Prot&#233;g&#233; window and instance - a small broker
@@ -51,6 +51,17 @@ host are Java 17 bytecode, and the OSGi manifest declares
 </p>
 
 <h3>Version information</h3>
+
+<h4>v0.7.1</h4>
+<ul>
+    <li>The executable headless CLI now runs the complete project QC, import-lock, deterministic release,
+        audit-export, and bounded stdio MCP workflows with the same core contracts as the plugin.</li>
+    <li>Every tool enforces its declared capabilities; changes and releases are attributed in redacted,
+        owner-only audit streams, while Ontology Assistant turns use short-lived bounded principals.</li>
+    <li>Local search explains preferred-label and synonym reuse, long-running paths have bounded inference
+        and cancellation guards, and release CI now exercises the built bundle in Prot&#233;g&#233; 5.6.6.
+        The public surface is 84 tools and 11 prompts.</li>
+</ul>
 
 <h4>v0.7.0</h4>
 <ul>

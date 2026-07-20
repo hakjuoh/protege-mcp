@@ -343,8 +343,9 @@ class MainTest {
                 """, StandardCharsets.UTF_8);
         materializeRoCrate(unnamed, "cli-reasoner-unnamed");
         ByteArrayOutputStream unnamedOut = new ByteArrayOutputStream();
-        // PLAN §10.2: a loaded-and-evaluated but invalid policy is a gate-style failure (exit 1), not a
-        // configuration error (exit 2). This is the documented change from the 0.6.1 mapping.
+        // Exit-code contract: a loaded-and-evaluated but invalid policy is a gate-style failure
+        // (exit 1), not a configuration error (exit 2). This is the documented change from the
+        // 0.6.1 mapping.
         assertEquals(1, Main.run(new String[] {"validate-policy", "--project", unnamed.toString()},
                 new PrintStream(unnamedOut), new PrintStream(new ByteArrayOutputStream())));
         String unnamedJson = unnamedOut.toString();

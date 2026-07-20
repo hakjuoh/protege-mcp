@@ -49,9 +49,12 @@ mvn test
 
 The suite covers the tool cores in isolation, and **`ToolPipelineTest`** chains them end-to-end
 **headlessly** (load → edit → validate → govern → diff → SPARQL) so a cross-tool regression fails in
-CI. What the unit tests cannot reach — the OSGi bundle loading in a real Protégé, the HTTP/OAuth
-transport, EDT marshalling, and a live reasoner — is covered by a manual
-[**Live smoke test**](smoke-test.html) checklist you run against the built jar before a release.
+CI. A weekly and release-level [**live integration gate**](smoke-test.html) additionally loads the built
+OSGi bundle in Protégé 5.6.6 under Xvfb and exercises endpoint authentication, two-window session
+pinning, an EDT-backed edit/Undo, and HermiT classification/explanation. The same page retains the short
+macOS/Windows packaging checklist for behavior a Linux virtual display cannot establish.
+The opt-in [**performance regression suite**](performance.html) measures three versioned ontology sizes
+and runs on the weekly and release workflows rather than every pull request.
 
 ## Continuous integration
 

@@ -30,6 +30,11 @@ So the assistant reads and edits through **exactly the same tools** an external 
 
 - Changes appear in the Protégé **GUI** immediately and join the **Edit ▸ Undo** stack.
 - The **read-only** and **confirm-each-write** gates still apply — the chat cannot escalate past them.
+- Each turn uses its own **short-lived, non-refreshable MCP credential**, attributed to the selected
+  provider and an opaque window/chat identity. It is revoked when the turn finishes, is stopped, fails
+  to launch, or the view closes; it is never persisted or reused as the manual static admin token. Its
+  30-minute lease is renewed while the CLI process remains active, so a legitimate long turn keeps working;
+  an orphaned credential expires without renewal.
 - **No API key is stored by Protégé.** Each CLI uses your existing login (Claude subscription/keychain;
   `codex login`).
 - **Axiom edits default to the transactional change-set path.** Each Claude turn appends a write-workflow
@@ -116,12 +121,17 @@ The chat input accepts more than plain text (added in `0.3.1`):
 - **Cost and rate limits** are governed by your CLI's own subscription/account, not by Protégé.
 - **Edits obey the MCP preferences** (read-only, confirm-each-write). A **Confirm each edit** checkbox
   in the panel toggles confirmation live.
+- Assistant credentials never carry server-admin, external-filesystem, network, or unrestricted
+  local-admin authority. Their project/ontology write profile is controlled separately in
+  **Settings ▸ Ontology Assistant**; disabling it leaves read-only chat available.
 
 ## Settings (Settings ▸ Ontology Assistant)
 
 - **CLI path overrides** — if Protégé was launched from the macOS **Dock/Finder**, it may not inherit
   your shell `PATH`, so a CLI can fail to resolve. Set an explicit path to the `claude` / `codex`
   executable here. The panel shows what was detected.
+- **Assistant access** — choose whether per-turn credentials may use the bounded ontology/project write
+  profile. Disable it for read-only Assistant use. The MCP server's global read-only setting always wins.
 - **Privacy** — a non-blocking summary of what is sent to the selected model provider.
 
 (The **Show reasoning** and **Confirm each edit** toggles live in the chat panel itself, next to
@@ -134,8 +144,8 @@ The chat input accepts more than plain text (added in `0.3.1`):
   shell `PATH`).
 - **"Not logged in" / auth errors** — log in in your terminal first (`claude`, or `codex login`). The
   plugin spawns the CLI through a login shell so it can pick up your environment.
-- **Edits don't apply** — check **read-only** mode and any pending **confirm-each-write** dialog
-  (Settings ▸ MCP), and the **Confirm each edit** checkbox in the panel.
+- **Edits don't apply** — check the Assistant access setting, MCP **read-only** mode, and any pending
+  **confirm-each-write** dialog (Settings ▸ MCP), plus the **Confirm each edit** checkbox in the panel.
 - **The chat says the server is stopped** — you stopped it explicitly (**Stop** in the **MCP Server**
   view), which blocks every automatic start, the chat's included. Press **Start** in the view to bring
   it back.

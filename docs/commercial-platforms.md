@@ -231,8 +231,7 @@ does not imply identical runtime semantics.
 | 3. Native workflow adapters | Product-specific revision, approval, staging/promote, and rollback integration where APIs permit | Conditional on official API access and licensing |
 | 4. Governed reverse synchronization | Pull snapshot, semantic impact review, conflict detection, and explicit local commit | Deferred until release, audit, and remote-revision contracts are stable |
 
-Implementation is governed by **M9 — Commercial platform interoperability** in
-[`PLAN.md`](https://github.com/hakjuoh/protege-mcp/blob/main/PLAN.md). M9 depends on the release
+Implementation remains roadmap work under commercial-platform interoperability. It depends on the release
 manifest/headless work rather than bypassing it; vendor SDKs and credentials must remain outside the
 ontology-engineering core.
 

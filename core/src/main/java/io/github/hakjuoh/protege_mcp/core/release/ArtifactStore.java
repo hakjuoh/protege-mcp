@@ -13,7 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Project-relative atomic writer for release and report artifacts (PLAN §4). Every write lands via a
+ * Project-relative atomic writer for release and report artifacts. Every write lands via a
  * sibling temp file and an atomic move, so a reader never observes a half-written artifact, and each
  * write returns the artifact's byte length and {@code sha256:}-prefixed digest for the manifest.
  *

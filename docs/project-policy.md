@@ -6,9 +6,10 @@ nav_order: 7
 # Project policy contracts
 {: .no_toc }
 
-Version 0.7.0 adds deterministic preview rebasing, impact and release gates, policy scaffolding, and an
-explicit invalid-policy save bootstrap while retaining the 0.6.1 filesystem, network, import-lock,
-module-governance, and isolated-preflight boundaries. The public surface is 83 tools and 11 prompts.
+Version 0.7.1 retains the deterministic preview/release workflow from 0.7.0 and adds complete headless
+QC, import-lock, release, audit-export, and bounded stdio execution with cross-surface conformance. The
+filesystem, network, module-governance, and isolated-preflight boundaries remain shared. The public
+surface is 84 tools and 11 prompts.
 {: .fs-6 .fw-300 }
 
 For a user-focused setup guide, including a complete crate example and an explanation of the two
@@ -28,8 +29,8 @@ Start from the example closest to the project:
   explicit filesystem/network defaults, and the core QC stages.
 - [General OWL policy](examples/project-policy/general-owl.yaml) — modules, labels/definitions, IRI
   policy, locked imports, persisted invariants/CQs/SHACL, waivers, and release output.
-- [OBO-oriented policy](examples/project-policy/obo.yaml) — OBO IRIs and definition properties, ELK,
-  ROBOT-compatible query directories, and OBO release format.
+- [OBO-oriented policy](examples/project-policy/obo.yaml) — OBO IRIs and definition properties, HermiT
+  with an EL profile, ROBOT-compatible query directories, and OBO release format.
 
 ### Standards interoperability contract
 
@@ -103,6 +104,69 @@ A discovered policy that is loaded but invalid refuses every filesystem/network 
 time until it validates, while the diagnostic tools (`get_project_policy`, `validate_project_policy`,
 `run_project_qc`, `get_model_revision`) still return their structured invalid-policy results so the
 policy can be repaired.
+
+### Local audit retention policy
+
+The optional `audit` block bounds local audit storage without putting any event, client identity, prompt,
+token, or ontology content in the committed policy:
+
+```yaml
+audit:
+  retention_days: 90
+  max_file_bytes: 10485760
+  max_files: 10
+```
+
+When omitted, those same runtime defaults apply without being injected into the effective policy, so adding
+the 0.7.1 runtime does not silently change an existing project's `policy_digest`. Each backend workspace
+writes a separate owner-only JSON Lines stream below
+`~/.protege-mcp/audit/<project-hash>/`; rotation and retention apply per stream. Runtime streams are outside
+the project and VCS tree. An explicitly requested, re-redacted review export may be written inside the
+project; add `.protege-mcp/audit-export*.jsonl` to ignore rules unless that review artifact is intentionally
+committed. POSIX filesystems enforce `0700` directories and `0600` files; on a non-POSIX filesystem the
+runtime uses the platform's default owner ACL boundary, which administrators should verify before relying
+on the log for confidential attribution. The size/count bounds take precedence over the time window once a
+stream fills; `max_files` is at least 2 so the current stream and one rotated predecessor always exist.
+If `max_files` is reduced, the next append to each workspace under a loaded, valid policy removes its
+excess numbered rotations before writing the new event; a session running on fallback defaults never
+prunes. If the policy is invalid or unreadable, destructive operations on that same workspace use the
+schema maxima (3650 days, 1 GiB per file, and 100 files), rather than the ordinary defaults, so the
+temporary fallback cannot discard history that any valid policy could retain. A valid policy that merely
+omits the `audit` block still uses the ordinary defaults shown above.
+Active projects apply their own retention setting on append. Since an orphaned path hash cannot reveal its
+former policy, root-wide cleanup uses the conservative schema maximum (3650 days) rather than borrowing a
+different project's shorter setting.
+
+### Local entity-search policy
+
+The optional `entity_search` block configures the existing local `search_entities` tool without adding a
+network provider or a new tool:
+
+```yaml
+prefixes:
+  rdfs: http://www.w3.org/2000/01/rdf-schema#
+  skos: http://www.w3.org/2004/02/skos/core#
+entity_search:
+  preferred_properties: [rdfs:label, skos:prefLabel]
+  synonym_properties: [skos:altLabel]
+  preferred_languages: [en, ko]
+  fallback_languages: [und, de]
+```
+
+Property values are absolute IRIs or declared CURIEs. Preferred and synonym sets must not resolve to the
+same property. Language lists are ordered, case-insensitively unique, exactly disjoint, and limited to four
+entries each; `und` selects untagged literals. Tags act as BCP 47 ranges and the first match wins, with the
+preferred list checked before the fallback list, so a broad `en` intentionally shadows a later `en-GB`.
+Preferred languages receive adjustments from +9 to +6, fallbacks from
++4 to +1, and unlisted languages −9. These bounded adjustments preserve exact → prefix → substring → fuzzy
+tier order. With no language lists, all languages rank neutrally and remain searchable.
+
+When the block or an individual field is omitted, runtime defaults supply `rdfs:label` and `skos:prefLabel`
+as preferred properties, and `skos:altLabel`, OBO `hasExactSynonym`, and OBO `hasRelatedSynonym` as synonym
+properties. Omitted runtime defaults are not injected into older effective policies, so upgrading does not
+change their `policy_digest`. An invalid `entity_search` block falls back to the standard local defaults;
+it never grants filesystem/network authority. Policy bytes are content-hash cached off the model thread,
+while ontology lexical indexes are cached by live workspace revision.
 
 ## Executable QC
 
@@ -320,8 +384,9 @@ The 0.6.1 surface remains 78 tools + 11 prompts. The 0.6.0 additions within the 
 import-lock/catalog tools; existing required arguments and interactive defaults remain backward-compatible.
 
 Version 0.7.0 adds five tools for deterministic rebasing, change-impact analysis, policy scaffolding,
-release gating, and release preparation, bringing the current surface to 83 tools + 11 prompts. The
-0.5.0 snapshots continue to enforce backward compatibility for the original contracts.
+release gating, and release preparation, bringing that surface to 83 tools + 11 prompts. Version 0.7.1
+adds the explicit redacted audit export, bringing the current surface to 84 tools + 11 prompts. The 0.5.0
+snapshots continue to enforce backward compatibility for the original contracts.
 
 Maintainers can generate a new historical baseline with:
 

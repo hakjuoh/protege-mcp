@@ -16,8 +16,9 @@ import io.github.hakjuoh.protege_mcp.core.release.ReleaseReports;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
- * The release workflow tools (PLAN §9.3-§9.5): {@code run_release_gate} (read-only preview that writes
- * nothing) and {@code prepare_release} (the mutating/artifact-producing step, dry-run by default). Both
+ * The release workflow tools documented in {@code docs/tools/quality.md}: {@code run_release_gate}
+ * (read-only preview that writes nothing) and {@code prepare_release} (the mutating/artifact-producing step,
+ * dry-run by default). Both
  * delegate the whole gate to {@link ReleaseGate}; this class only shapes the MCP envelopes and, for
  * {@code prepare_release}, applies the read-only/confirm-write gates and the {@link ArtifactStore}
  * writes.

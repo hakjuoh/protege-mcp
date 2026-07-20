@@ -43,8 +43,8 @@ import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
- * The shared read-only orchestrator behind {@code run_release_gate} and {@code prepare_release} (PLAN
- * §9.3). It runs the strict project QC gate ({@link ProjectQcTools#run}), adds the release-only checks
+ * The shared read-only orchestrator behind {@code run_release_gate} and {@code prepare_release}. It runs
+ * the strict project QC gate ({@link ProjectQcTools#run}), adds the release-only checks
  * (import provenance under ADR 0005 decision 2, version IRI, verified serialization round trip,
  * fingerprint stability, optional baseline comparison), aggregates every finding into ONE core
  * {@link GateResult}, and produces the deterministic manifest/report/crate <em>inputs</em>. It writes
@@ -334,7 +334,7 @@ final class ReleaseGate {
             roundTrip.put("clean", serialized.clean());
             if (serialized.clean()) {
                 ontologyBytes = serialized.bytes();
-                // Distinguish byte-for-byte vs axiom-identical reproducibility (PLAN §8.3).
+                // Distinguish byte-for-byte from axiom-identical reproducibility.
                 roundTrip.put("round_trip_class", serialized.roundTripClass());
             } else {
                 roundTrip.put("error", serialized.error());
@@ -347,7 +347,7 @@ final class ReleaseGate {
             }
         }
 
-        // Format loss safeguards (PLAN §8.3): the OBO compatibility report and the default lossy-format
+        // Format loss safeguards: the OBO compatibility report and the default lossy-format
         // warning surface here BEFORE any replacement. In release mode a predicted loss is a gate error
         // (strict) when require_clean_round_trip holds; otherwise a warning finding.
         OWLDocumentFormat releaseFormat = cap.snapshot.format();

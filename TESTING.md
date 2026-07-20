@@ -18,8 +18,9 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
 
-At the time of writing: **3,140 tests, green** (3,043 plugin, 27 standalone-CLI,
-and 70 core tests), across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
+At the time of writing: **3,446 JUnit tests** (3,112 plugin, 56 standalone-CLI,
+and 278 core tests), with zero failures/errors and one intentionally skipped opt-in performance test,
+across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
 pure helpers of `ui`, the headless CLI, and the extractable `ro_crate` interoperability package. Coverage is
 measured by **JaCoCo** (`mvn verify`) and a floor on
 the `tools`/`server`/`oauth` layers gates against regressions; the EDT/subprocess-bound `ui`/`chat`
@@ -27,7 +28,8 @@ surfaces are intentionally not gated.
 
 Historical correction: the `v0.5.0` tag's copy of this page still said 2,044, but that tag's verified
 release commit records the actual clean run as **2,488 tests**. The count above comes from the current
-Surefire XML reports after a clean build.
+Surefire XML reports after a clean build. Seven dependency-free Python contract tests additionally protect
+the live-integration MCP/SSE client; the weekly and release workflows run them before launching Protégé.
 
 ## Real-ontology CLI validation
 
@@ -47,7 +49,7 @@ boundary rather than indicating an unnoticed partial load.
 ## Public-contract and policy-schema harnesses
 
 - `PublicContractSnapshotTest` pins the immutable 0.5.0 baseline (66 tool registrations and 11
-  prompt registrations); the current 83-tool runtime surface is checked against it, allowing only
+  prompt registrations); the current 84-tool runtime surface is checked against it, allowing only
   reviewed additive drift. The tool goldens combine all MCP registration metadata and input schemas with
   the manual's documented result fields; prompt goldens also render every template with deterministic
   sentinel arguments. Compatibility checks allow additive optional surface while rejecting
@@ -70,7 +72,7 @@ boundary rather than indicating an unnoticed partial load.
   capture, proving that profile/structural/governance/invariant/CQ/SHACL stages stay on one private revision,
   imported declarations remain visible to checks without being replayed, closure-only edits change the race
   token, and edits to the private preflight copy cannot leak into Protégé.
-- `IsolatedReasonerSpecTest` and `IsolatedReasonerQcTest` pin the ADR 0002 boundary: exact plugin
+- `IsolatedReasonerSpecTest` and `IsolatedReasonerQcTest` pin the isolated-reasoner parity boundary: exact plugin
   configuration-object identity, buffering-mode dispatch, default-overload injection, runtime policy caveats,
   malformed plugin metadata, no live classification/query access, import-spanning unsatisfiability, adversarial
   post-capture mutation, shared inferred materialization, and timeout interruption/stale-result rejection.
@@ -137,15 +139,21 @@ real collaborator.
 | `ui` pure logic | extracted `ServerViewText` (mask / date / connect-command) and `ChatText` (usage formatting / pasted-text heuristic / image classification); the Swing classes delegate | `ServerViewTextTest`, `ChatTextTest` |
 | `Tools.tryManchesterClassExpression` | widened to package-private — the OWL API (full-IRI) Manchester path is covered; bare-name resolution still needs Protégé's expression checker | `ManchesterClassExpressionSeamTest` |
 
-## Still not covered headless (integration territory)
+## Outside the headless unit suite (integration territory)
+
+The weekly and release workflows run the built bundle in Protégé 5.6.6 under Xvfb. That gate covers
+bundle activation, authenticated HTTP MCP, two live windows and session pinning, an EDT-backed write plus
+one-step Undo, HermiT classification/explanation, and application/broker shutdown. The remaining
+boundaries below are either covered only at that release level or remain visual/manual:
 
 - `McpServerHook.initialise/dispose` — OSGi `EditorKitHook` background start/stop/promote thread
-  coordination; thin delegation, deliberately left for integration testing (not seamed).
+  coordination; exercised by the live harness rather than seamed into unit tests.
 - `EmbeddedClassificationWaiter.runAndWait` with a *live* classification (`classifyAsynchronously`) —
-  tied to Protégé's reasoner-manager event lifecycle (the waiter's coordination logic itself IS tested
-  via the EDT-gateway seam with proxy managers).
+  exercised with HermiT by the live harness; the waiter's coordination logic is also tested via the
+  EDT-gateway seam with proxy managers.
 - `ReasonerTools.get_explanations` for the *explainable* axiom types — the clarkparsia justification
-  (hitting-set) search needs a real DL reasoner (HermiT/Pellet); the fallback path is tested.
+  search is exercised with a two-axiom HermiT justification by the live harness; edge cases remain in
+  the headless reasoner and structural-fallback tests.
 - `ui/*` component wiring (`ChatView`/`McpServerView`/panels) — Swing/AWT construction throws
   `HeadlessException`; only the extracted pure helpers are unit-tested.
 

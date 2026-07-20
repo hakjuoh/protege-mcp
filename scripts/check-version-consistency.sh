@@ -22,8 +22,36 @@ print(root.findtext("{http://maven.apache.org/POM/4.0.0}version") or "")
 PY
 )"
 
+hermit_version="$(python3 - <<'PY'
+import xml.etree.ElementTree as ET
+
+ns = "{http://maven.apache.org/POM/4.0.0}"
+root = ET.parse("pom.xml").getroot()
+properties = root.find(ns + "properties")
+print(properties.findtext(ns + "hermit.version") if properties is not None else "")
+PY
+)"
+
+automatalib_version="$(python3 - <<'PY'
+import xml.etree.ElementTree as ET
+
+ns = "{http://maven.apache.org/POM/4.0.0}"
+root = ET.parse("pom.xml").getroot()
+properties = root.find(ns + "properties")
+print(properties.findtext(ns + "automatalib.version") if properties is not None else "")
+PY
+)"
+
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   echo "Could not read a release version from pom.xml (got '$version')." >&2
+  exit 1
+fi
+if [[ ! "$hermit_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+  echo "Could not read the HermiT version from pom.xml (got '$hermit_version')." >&2
+  exit 1
+fi
+if [[ ! "$automatalib_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+  echo "Could not read the AutomataLib version from pom.xml (got '$automatalib_version')." >&2
   exit 1
 fi
 
@@ -88,6 +116,22 @@ expect_line plugin/src/main/java/io/github/hakjuoh/protege_mcp/server/McpServerM
 expect_line cli/src/main/java/io/github/hakjuoh/protege_mcp/cli/Main.java \
   "    public static final String VERSION = \"${version}\";"
 expect_line docs/_config.yml "version: ${version}"
+
+for file in docs/adr/headless-reasoner-and-workspace-boundary.md \
+            docs/headless-relinking.md THIRD_PARTY_NOTICES.md .github/workflows/release.yml; do
+  if ! grep -qF "$hermit_version" "$file"; then
+    echo "STALE: $file must name HermiT ${hermit_version}." >&2
+    failed=1
+  fi
+done
+
+for file in docs/adr/headless-reasoner-and-workspace-boundary.md \
+            docs/headless-relinking.md THIRD_PARTY_NOTICES.md; do
+  if ! grep -qF "$automatalib_version" "$file"; then
+    echo "STALE: $file must name AutomataLib ${automatalib_version}." >&2
+    failed=1
+  fi
+done
 
 if ! grep -qF "SERVER_VERSION=${version}" DESIGN.md; then
   echo "STALE: DESIGN.md server version must be ${version}." >&2

@@ -23,6 +23,10 @@ interoperability:
 # process working-directory or network state.
 filesystem:
   allow_external_paths: false
+audit:
+  retention_days: 90
+  max_file_bytes: 10485760
+  max_files: 10
 network:
   default: deny
   allowed_hosts: []

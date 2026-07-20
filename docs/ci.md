@@ -6,9 +6,9 @@ nav_order: 10
 # Ontology CI for your project
 {: .no_toc }
 
-Gate pull requests in **your** ontology repository with the reusable workflow published by this
-project. It downloads the [headless CLI](cli.html), verifies it, and runs two gates against your
-project — without a local Protégé.
+Gate ontology pull requests with the reusable workflow published by this project. It downloads and
+verifies the standalone CLI, runs complete offline project QC and a release preview without Protégé,
+and carries the result across a fork-safe trust boundary.
 {: .fs-6 .fw-300 }
 
 ## Table of contents
@@ -19,41 +19,50 @@ project — without a local Protégé.
 
 ---
 
-## What it gates (and what it does not)
+## What the gate runs
 
-The reusable workflow runs the headless CLI, so it gates exactly what the CLI can do headlessly:
+The untrusted pull-request job produces five kinds of evidence:
 
-- **Policy validation** — `validate --project <policy> --no-network --no-external`: your project policy is
-  well-formed, its semantic references resolve, and its local assets exist.
-- **Asserted semantic diff** — `diff --left <baseline> --right <ontology> --no-network`: the
-  asserted-only semantic change between the base branch's ontology and the PR's ontology.
+- Candidate policy validation. The PR policy is checked as a proposed change with network and external
+  paths forbidden, but it never judges the ontology change in that same PR.
+- Trusted full project QC. The workflow copies the base branch's policy, validation assets, imports, and
+  catalog into a private workspace, replaces only the configured root ontology with candidate bytes, and
+  runs every policy-required stage with the bundled HermiT reasoner.
+- JSON, JUnit, and SARIF reports from that trusted workspace. The three executions must agree on their
+  exit verdict.
+- A dry-run release gate with the generated artifact paths, sizes, and SHA-256 checksums. It writes no
+  release directory.
+- An asserted semantic diff between the base and candidate ontology. It is report-only by default;
+  `diff_check: true` turns any difference into a failure.
 
-{: .warning }
-> This is a **policy-validation + asserted-diff gate, not a full ontology QC gate.** It does **not**
-> run the reasoner, OWL 2 profile conformance, or the governance / invariants / competency-question /
-> SHACL stages. The headless CLI bundles no reasoner, so those stages need the in-Protégé
-> [`run_project_qc`](project-policy.html) tool or a future bundled-reasoner headless runner. See
-> [the CLI page](cli.html#not-yet-available-headlessly) for the deferred surface. For OBO/ROBOT
-> projects, complement this workflow with a ROBOT job (`robot reason` / `robot report`) for the
-> reasoner-dependent checks.
+This workflow requires `protege-mcp-cli` 0.7.1 or newer. A policy used by the standalone runner must name
+the bundled `HermiT` baseline. It may still require an OWL 2 EL, QL, RL, or DL profile independently.
 
-The workflow requires **protege-mcp-cli 0.7.0 or newer** — the first release that ships
-`validate --no-network` and `diff --check`. (The current plugin release on this site is
-`{{ site.version }}`; the CLI version is selected separately by the `cli_version` input.)
+Only the configured root ontology is overlaid onto the trusted base workspace. Changes to modules,
+catalogs, shapes, queries, or policy files are validated as proposals but do not become trusted gate inputs
+until merged. Split such changes from the ontology change when they must take effect together, or add a
+repository-specific trusted staging step with an equally strict allowlist.
+
+The base branch must already contain the configured project policy and the root ontology's parent
+directory. Bootstrap a new project policy through normal review first, then enable this gate; a candidate
+policy is deliberately never trusted to bootstrap its own judge.
 
 ## How to call it
 
-Two files go in your ontology repository's `.github/workflows/`. Ready-to-copy versions live under
+Put two workflows in your ontology repository. Ready-to-copy versions live under
 [`docs/examples/ci/`](https://github.com/hakjuoh/protege-mcp/tree/main/docs/examples/ci):
 
 | Example | Role |
 | --- | --- |
-| [`general-owl.yml`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/examples/ci/general-owl.yml) | PR workflow for a general OWL project (pairs with [`general-owl.yaml`](examples/project-policy/general-owl.yaml)). |
-| [`obo.yml`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/examples/ci/obo.yml) | PR workflow for an OBO/ROBOT-compatible project (pairs with [`obo.yaml`](examples/project-policy/obo.yaml)). |
-| [`annotate.yml`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/examples/ci/annotate.yml) | The trusted `workflow_run` companion that posts the PR comment. |
-| [`validate-ontology.sh`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/examples/ci/validate-ontology.sh) | A CI-agnostic shell script for any other CI (GitLab, Jenkins, a pre-commit hook). |
+| [`general-owl.yml`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/examples/ci/general-owl.yml) | Untrusted PR workflow for a general OWL project. |
+| [`obo.yml`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/examples/ci/obo.yml) | Untrusted PR workflow for an OBO-compatible project. |
+| [`annotate.yml`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/examples/ci/annotate.yml) | Trusted `workflow_run` companion that verifies and annotates. |
+| [`validate-ontology.sh`](https://github.com/hakjuoh/protege-mcp/blob/main/docs/examples/ci/validate-ontology.sh) | CI-agnostic shell runner for GitLab, Jenkins, or local use. |
 
-The PR workflow (untrusted) calls the reusable validation workflow:
+When upgrading a 0.7.0 caller, add the required `ontology` input to the PR workflow and
+`expected_release_check` to the annotator at the same time. The latter must match `release_check`.
+
+The PR workflow has read-only repository access:
 
 ```yaml
 name: Ontology CI
@@ -63,14 +72,16 @@ jobs:
   ontology-ci:
     permissions:
       contents: read
-    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.7.0
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.7.1
     with:
       project: .protege-mcp/project.yaml
       ontology: ontology.ttl
-      cli_version: '0.7.0'
+      cli_version: '0.7.1'
+      release_check: true
+      diff_check: false
 ```
 
-The companion (trusted) workflow posts the annotation:
+The trusted companion runs from the default branch after the PR workflow completes:
 
 ```yaml
 name: Ontology CI annotate
@@ -85,7 +96,7 @@ jobs:
       actions: read
       checks: write
       pull-requests: write
-    uses: hakjuoh/protege-mcp/.github/workflows/ontology-annotate.yml@v0.7.0
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-annotate.yml@v0.7.1
     with:
       run_id: ${{ github.event.workflow_run.id }}
       producer_event: ${{ github.event.workflow_run.event }}
@@ -96,134 +107,96 @@ jobs:
       expected_project: .protege-mcp/project.yaml
       expected_ontology: ontology.ttl
       expected_diff_check: false
-      expected_cli_version: '0.7.0'
+      expected_cli_version: '0.7.1'
+      expected_release_check: true
 ```
 
-Require the fixed check name **`Protégé MCP ontology gate`** in branch protection. A `workflow_run`
-job's own status belongs to the default-branch SHA, so the trusted annotator explicitly publishes this
-check-run on the authenticated PR head (and publishes failure even when provenance/artifact verification
-aborts). Set `expected_workflow_path` to the exact path of the first workflow above. The annotator also
-verifies that the PR-side caller did not change, and that its project/ontology paths, diff mode, CLI
-version, and producer head SHA match the default-branch wrapper. The pull request itself is **resolved
-from the authenticated head SHA**, never from `workflow_run.pull_requests` — GitHub leaves that array
-empty for fork PRs, and fork PRs are this pipeline's primary scenario.
+Require the fixed check name **`Protégé MCP ontology gate`** in branch protection. The annotator publishes
+that check on the authenticated PR-head SHA; a `workflow_run` job's ordinary status belongs to the default
+branch SHA and is not an adequate branch-protection target.
+
+{: .warning }
+> The examples use a version tag for readability. Tags in this repository can be re-cut. Pin both reusable
+> workflows to reviewed 40-character commit SHAs in production, and pin `cli_version` to a reviewed release.
+
+## Fork-safe trust split
+
+Ontology PRs commonly come from forks. The pipeline deliberately separates computation from authority:
+
+1. The untrusted `pull_request` job checks out candidate bytes with `contents: read`, no secrets, no PR
+   write scope, and no code-scanning scope. It never uses `pull_request_target`.
+2. It also checks out the immutable base SHA, creates a private judge workspace from those trusted bytes,
+   and overlays only the confined candidate root ontology. Fixed `--no-network --no-external` flags apply
+   regardless of either policy.
+3. Results are written to a fresh directory outside the fork checkout. An exact filename allowlist and a
+   checksum manifest cover candidate-policy JSON, full-QC JSON/JUnit/SARIF, optional release evidence,
+   diff evidence, and provenance metadata.
+4. The trusted `workflow_run` job authenticates the producer run through GitHub's API, resolves the open PR
+   from its head SHA, and requires the caller workflow file to be byte-identical at the PR head and every
+   candidate base SHA.
+5. It caps artifact size, rejects links/directories/extras, rehashes every allowlisted file itself, verifies
+   run/head/input metadata, and validates JSON, JUnit XML, SARIF, release paths, and checksums as data.
+6. Only after verification does it post a comment and rebuild at most 50 bounded check-run annotations from
+   SARIF fields. Artifact SARIF is never executed and is not uploaded to code scanning.
+
+The PR cannot grant itself network access, select an external path, relax the base policy, replace shapes or
+queries used by the gate, route work to a self-hosted runner, or obtain a write-scoped token.
+
+If the base branch advances after a validation run, the trusted annotator rejects the old evidence instead
+of silently comparing it to a different base. Synchronize or update the pull request to trigger a fresh
+pull-request run; rerunning the old event is intentionally insufficient.
+
+## Evidence files
+
+The untrusted artifact contains only these file families:
+
+- `candidate-policy.*` — proposed policy result, stderr, and exit code.
+- `qc.json*`, `qc.junit.xml*`, `qc.sarif*` — trusted full-QC reports, stderr, and exit codes.
+- `release.*` — optional dry-run release result, stderr, and exit code.
+- `diff.*` — asserted diff result or the exact `baseline-absent` marker.
+- `meta.json`, `pr-number.txt`, and `manifest.sha256` — authenticated inputs and complete file integrity.
+
+The trusted comment reports stage verdicts, finding count, semantic fingerprint, release artifact
+checksums, and asserted-diff summary. JUnit remains available to CI systems that ingest test reports; SARIF
+supplies bounded PR-head check annotations without broadening token permissions.
 
 ## Downloading and verifying the CLI
 
-Both the reusable workflow and the shell script download the published asset and verify it before
-running anything:
+The reusable workflow and generic shell example verify the published executable before use:
 
 ```bash
-CLI_VERSION=0.7.0   # pin to a release you reviewed; see the re-cut caveat below
+CLI_VERSION=0.7.1
 base="https://github.com/hakjuoh/protege-mcp/releases/download/v${CLI_VERSION}"
 jar="protege-mcp-cli-${CLI_VERSION}-all.jar"
 curl --fail --location --retry 3 --retry-all-errors -o "$jar" "${base}/${jar}"
 curl --fail --location --retry 3 --retry-all-errors -o "${jar}.sha256" "${base}/${jar}.sha256"
-sha256sum -c "${jar}.sha256"   # the sidecar records the bare basename, so this checks the local jar
+sha256sum -c "${jar}.sha256"
 ```
 
-The release publishes each asset's `.sha256` sidecar with a **bare basename**, so `sha256sum -c`
-verifies the jar in the working directory. `--retry-all-errors` rides the brief 404 window a release
-re-cut opens (the release is deleted and recreated on a moved tag).
+The sidecar records a bare basename. `--retry-all-errors` tolerates the brief 404 window while a moved tag's
+release is deleted and recreated; it does not weaken checksum verification.
 
-## Fork-safe architecture (and why)
+## Other CI systems
 
-Ontology PRs routinely come from forks. A naive PR gate that had write access — or that used
-`pull_request_target` to check out fork code — would hand an attacker's PR the repository's token.
-This pipeline follows the two-workflow split from [PLAN §10.4](https://github.com/hakjuoh/protege-mcp/blob/main/PLAN.md):
+The generic script emits the same candidate-policy, QC, release, diff, exit-code, stderr, and checksum
+file families (GitHub-specific provenance metadata is omitted). It uses either GNU `sha256sum` or the
+macOS `shasum`, writes through a fresh staging directory, and preserves the complete evidence set before
+returning a failed gate. For trusted branches or local hooks, `TRUSTED_PROJECT` may equal `PROJECT`. For
+untrusted merge requests, prepare a base-reviewed workspace first and point `TRUSTED_PROJECT` at its
+policy; do not let the candidate policy or validation assets judge themselves.
 
-1. **Untrusted validation** (`ontology-ci.yml`, triggered by your `pull_request` workflow). Runs the
-   fork's proposed code, so it gets a **read-only token, no secrets, and `permissions: contents:
-   read`** — no PR-write, no security-events. It writes its verdict **only to an uploaded artifact**,
-   never to the PR.
-2. **Trusted annotation** (`ontology-annotate.yml`, triggered by your `workflow_run` companion).
-   GitHub always runs a `workflow_run` workflow from your repository's **default branch**, so a fork
-   PR cannot modify it. It is the **only** place `pull-requests: write` / `checks: write` lives. It downloads the
-   untrusted run's artifact **as data**. Before download it queries GitHub for the run/PR and requires
-   the caller workflow blob to be identical at the PR's base and head; a fork therefore cannot replace
-   the pinned reusable call with a look-alike artifact producer. It then verifies **run-id, head SHA,
-   PR number, digest, size, result shape, and configured inputs** plus an exact **filename allowlist**.
-   It **never executes any string or path taken from the artifact**. Finally it publishes the fixed-name
-   `Protégé MCP ontology gate` check on the verified PR-head SHA; `checks: write` exists only here.
-
-Two details make the artifact channel safe against a hostile fork:
-
-- The untrusted job writes every result into a **fresh directory outside the fork checkout**
-  (`$RUNNER_TEMP/results`), so a PR that commits tracked files under `results/` can never mix into the
-  artifact.
-- The trusted job enforces an **exact filename allowlist** and a strict checksum manifest that covers
-  every regular, non-symlink artifact file exactly once. It hashes only allowlisted basenames itself;
-  an artifact can neither make `sha256sum -c` read a runner path nor hide an unlisted extra. There is
-  deliberately **no SARIF /
-  code-scanning upload** here: the headless CLI emits no SARIF, so uploading an artifact-supplied one
-  would poison base-repo code scanning with untrusted fork input.
-
-Never trigger the validation on `pull_request_target` to check out fork code; that is the exact
-foot-gun this split avoids.
-
-### The base-reviewed workflow judges the PR
-
-The gate that judges a PR is fixed by the **base branch**, not by the PR:
-
-- Consumers pin the reusable workflow by ref (`uses: ...@<sha>`), and the gate flags inside it are
-  **fixed** — `--no-network`, `--no-external`, no external-path inputs, no credentials. A PR that flips
-  `network.default` or `allow_external_paths` in its own policy cannot loosen the parser posture: the
-  CLI denies network and rejects the external-path grant.
-- Candidate-supplied workflow paths are canonicalized below isolated `__candidate__` / `__baseline__`
-  checkouts before use; absolute paths, missing files, and symlink escapes are rejected. Policy validation
-  also passes `--no-external`, so `filesystem.allow_external_paths: true` cannot authorize a runner file.
-- The **asserted-diff baseline is the base branch's ontology** (`github.event.pull_request.base.sha`),
-  checked out separately, so the PR cannot rewrite what it is compared against.
-- Protect the policy file with `CODEOWNERS` and require the trusted annotate check, so a PR cannot
-  both weaken the policy and self-approve the change.
-
-This 0.7.0 workflow validates the **proposed** policy and runs an asserted document diff; it does not
-claim to evaluate the candidate ontology through all stages of the base policy. That stronger
-base-policy QC gate needs the deferred bundled-reasoner/headless workspace adapter described above.
-
-## PR defaults
-
-Per [PLAN §10.4](https://github.com/hakjuoh/protege-mcp/blob/main/PLAN.md), the pull-request defaults
-are deliberately locked down:
-
-- `--no-network` — the CLI performs no network access; imports are never dereferenced (see
-  [ADR 0005](adr/0005-import-network-policy-defaults.html)).
-- **Fixed project root** — policy-relative paths resolve below the canonical project root.
-- **No external paths** — the workflow passes `validate --no-external` and rejects policy grants.
-- **No provider credentials** — the untrusted job has a read-only token and no secrets.
-
-The asserted diff is **report-only by default** (`diff` without `--check`, always exit 0): a PR is
-expected to change the ontology, so the comment summarises the change rather than blocking it. Set
-`diff_check: true` only for a reproducibility / no-drift gate where the two inputs are expected to be
-**identical** (for example, "the committed artifact matches a regeneration").
-
-## Pinning and the re-cut caveat
-
-{: .warning }
-> **`@vX.Y.Z` is not immutable in this repo.** Release tags in `hakjuoh/protege-mcp` are occasionally
-> **re-cut** (moved to a new commit). The examples show `@v0.7.0` for readability, but for a
-> production consumer you should **pin the reusable workflow to a full commit SHA** — for example
-> `uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@<40-hex-sha>` — and pin `cli_version`
-> to a specific release you have reviewed. A SHA is the only reference GitHub treats as immutable.
-
-Inside the reusable workflows, third-party and first-party actions are pinned to reviewed commit
-**SHAs** (with the version named in a comment), rather than to the floating major tags this
-repository's own `ci.yml` uses — a consumer-facing workflow warrants the stricter posture.
-
-## Roadmap: richer annotations
-
-The CLI's `validate` emits `json` or `markdown` only; `--format junit` and `--format sarif` are
-deliberately rejected because a policy-only validation cannot honestly project a full QC gate result
-with a semantic fingerprint. The annotation is therefore a PR comment summarising the validate JSON
-and the diff verdict. There is **no SARIF / code-scanning upload today** — the pipeline never uploads
-an artifact-supplied SARIF, because that would feed untrusted fork input straight into base-repo code
-scanning. SARIF code-scanning (and richer JUnit annotations) will arrive only when a future **trusted
-in-pipeline step** — a bundled-reasoner headless QC runner — produces a real `results.sarif` itself,
-never from a downloaded artifact.
+```bash
+CLI_VERSION=0.7.1 \
+PROJECT=.protege-mcp/project.yaml \
+TRUSTED_PROJECT=/tmp/trusted-project/.protege-mcp/project.yaml \
+ONTOLOGY=ontology.ttl \
+BASELINE=/tmp/base/ontology.ttl \
+RESULTS=ontology-ci-results \
+./validate-ontology.sh
+```
 
 ## See also
 
-- [Headless CLI](cli.html) — the commands and exit codes this workflow invokes.
-- [Project policy & QC](project-policy.html) — the policy the gate validates and the full in-Protégé
-  QC gate.
-- [Contributing](contributing.html) — this repository's own build CI (`mvn -B clean verify`).
+- [Headless CLI](cli.html) — commands, report formats, and exit codes.
+- [Project policy & QC](project-policy.html) — required stages and validation assets.
+- [Contributing](contributing.html) — this repository's own build CI.

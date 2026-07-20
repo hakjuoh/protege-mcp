@@ -1,9 +1,10 @@
 ---
+title: "Ontology fingerprint canonicalization"
 published: false
 nav_exclude: true
 ---
 
-# ADR 0001: ontology fingerprint canonicalization
+# Ontology fingerprint canonicalization
 
 - Status: accepted; canonicalization version 2 supersedes version 1
 - Date: 2026-07-13

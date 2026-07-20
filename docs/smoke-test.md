@@ -8,9 +8,40 @@ nav_order: 2
 
 The unit tests (`mvn test`) cover the tool cores in isolation, and `ToolPipelineTest` chains them
 end-to-end **headlessly** (load → edit → validate → govern → diff → SPARQL) so a cross-tool regression
-fails in CI. What they cannot cover is the live stack: the OSGi bundle loading in a real Protégé, the
-HTTP/OAuth transport, the EDT marshalling, and a real reasoner. This checklist is the manual
-counterpart — run it against the built `v{{ site.version }}` jar before publishing a release.
+fails in CI. The weekly and release workflows also run `scripts/live-integration/run.sh` under Xvfb
+against a checksum-pinned Protégé 5.6.6 distribution and an explicit Java 17+ runtime. That harness
+requires the built OSGi bundle to become active before it tests the static-token endpoint, two live
+windows and session pinning, an EDT-backed write with exactly one Undo transaction, HermiT
+classification and explanation, and final application/broker shutdown. Its JSON result and
+runtime logs are uploaded as workflow artifacts.
+
+The longer checklist below remains useful for platform packaging, visual responsiveness, OAuth consent,
+and workflows that are too broad or interactive for the bounded Linux harness. Run the applicable parts
+against the built `v{{ site.version }}` jar before publishing a release.
+
+## Automated Linux harness
+
+After building the bundle, run the same gate locally on a Linux host with Xvfb, Python 3, `curl`, and
+`unzip`:
+
+```bash
+mvn -B -pl plugin -am -DskipTests package
+xvfb-run --auto-servernum bash scripts/live-integration/run.sh
+```
+
+The Protégé download URL and SHA-256 are fixed in the script. Set `PROTEGE_ARCHIVE` to reuse a local
+copy; checksum verification still applies. Evidence is written to `plugin/target/live-integration/`.
+
+## Platform packaging check
+
+For each release candidate on macOS and Windows:
+
+1. Install the native Protégé 5.6.6 package, replace any older copy of the plugin jar, and confirm the
+   operating system's signature, quarantine, or SmartScreen flow does not hide or duplicate the jar.
+2. Launch with `PROTEGE_JAVA_HOME` pointing to Java 17+, confirm **MCP Server** becomes live, and perform
+   one authenticated read, one GUI-visible edit/Undo, and one HermiT classification.
+3. Open a second window and instance, confirm session routing stays on its original ontology, then quit
+   every instance and confirm the broker and configured port are released.
 
 ## Setup
 
@@ -116,7 +147,7 @@ at the repository root so the project root spans all modules.
 | # | Step | Expect |
 | --- | --- | --- |
 | 53 | With a valid policy, pass a relative direct path and then a symlink that escapes `project_root` to a document/SHACL/module/catalog tool | the relative path resolves below the canonical root; the symlink escape is refused before I/O |
-| 54 | Try an outside path with `filesystem.allow_external_paths: false`, then set it to `true` and retry | the opt-out call is refused with the documented outside-project message; the opt-in call succeeds. (Every live principal carries the full local-admin capability set, so the `filesystem:external`-denied leg is not reproducible on the real runtime — it is pinned by unit tests with a synthesized restricted principal.) |
+| 54 | With a read-scoped OAuth client, try a project file and an outside path; then authorize exact filesystem scopes and repeat with `filesystem.allow_external_paths` false/true | the read-only grant is denied before either tool handler runs; project access additionally needs `filesystem:project:read`/`write`; outside access additionally needs `filesystem:external` and policy opt-in. Broker and standalone endpoints return the same decisions. |
 | 55 | Set network/import modes and a host allowlist; load a denied remote import, then map the same HTTP ontology IRI to a local catalog file | denied dereference fails explicitly without a request; the local mapping succeeds offline; allowlisted root URLs do not follow redirects outside the allowlist |
 | 56 | Write a matching import lock, run project QC, modify one imported file, and rerun QC/change-set preview | the first gate can pass; both later gates return `error`, `imports.lock_mismatch`, and `import_lock_verification.valid=false` |
 | 57 | Configure a module with the wrong ontology IRI, then a subject-position axiom **defining** a term under another module's `owned_namespaces` (a bare foreign declaration must NOT trip it); also test an explicit co-owner | the wrong file IRI is a policy error; the foreign definition fails governance while the bare declaration passes; a declared co-owner passes |
@@ -140,6 +171,21 @@ at the repository root so the project root spans all modules.
 | 70 | `save_ontology` `verify_round_trip=true` on an ontology carrying an anonymous individual, then on a clean ontology | the blank-node save is refused with the documented anonymous-individual message before any temporary or target artifact is written (no partial write); the clean save verifies with `round_trip.round_trip_class=byte_for_byte` |
 | 71 | `write_import_lock` on a closure with a remote-backed or outside-lock-directory import, then on a fully local closure; tamper with one locked file (or add an extra entry) and `verify_import_lock`; finally `load_ontology` `lock_mode=required` with no lockfile | the first write returns `written=false` with per-import reasons in `errors`; the local closure writes a deterministic lock; verification of the tampered/extra entry reports `valid=false` naming it in `mismatched_entries`/`extra_entries`; the lockfile-less required load is refused naming `write_import_lock` |
 | 72 | Headless CLI: `--help`; `validate-policy --project <policy>` on the valid project; `diff --left <release>/manifest.json --right <artifact> --check` | `--help` prints usage to stdout and exits `0`; validate-policy exits `0` with the SAME `policy_digest` as `get_project_policy`; the manifest operand is sha256-verified before diffing and the identical diff exits `0`; stderr stays free of SLF4J noise on every command |
+
+### 0.7.1 — headless parity, attribution, local reuse, and hardening
+
+| # | Step | Expect |
+| --- | --- | --- |
+| 73 | Connect a fresh MCP client, inspect initialize/list responses, and run the CLI with `--version` | server, bundle, CLI, and docs report `0.7.1`; exactly 84 tools and 11 prompts are advertised |
+| 74 | Run plugin `run_project_qc` and CLI `validate` against the conformance fixture | both report the same stage/finding identities, fingerprints, HermiT identity, import-lock bytes, and portable release evidence; the fixture policy's five required stages (interoperability, reasoner, profile, governance, structural) all run |
+| 75 | Run CLI `imports lock` and `release` first as dry runs, then as writes; modify a source immediately before each commit | previews write nothing; clean writes install complete checksum-verified output with backups; either source drift refuses the commit without a partial lock or release directory |
+| 76 | Start `serve --transport stdio --project <policy>`, initialize it, and list/call tools | stdout contains only bounded JSON-RPC; the eight supported project tools work offline and every GUI-only tool is listed explicitly as unavailable |
+| 77 | With an OAuth `read` grant, attempt ontology mutation, release, project-file, external-file, network, and server-admin tools; then retry with the exact scopes | every under-scoped call is rejected before its handler; exact grants authorize only their declared operation; static/legacy local-admin compatibility remains explicit |
+| 78 | Send one Ontology Assistant read turn and one allowed write turn, then inspect/export audit | each turn uses a distinct short-lived Assistant principal; audit identifies the principal, operation, target, gate/change summary, and release link without tokens, prompts, attachments, or ontology content; export is dry-run by default and project-confined when confirmed |
+| 79 | Search a preferred label, configured synonym, diacritic/whitespace variant, exact-name collision, and fuzzy-only candidate | results explain source/property/language/normalization/score; collisions choose no winner; fuzzy/synonym-only reuse remains review-only and never silently changes `would_mint` |
+| 80 | Queue a mutating tool behind a blocked EDT, let it time out or interrupt it, then release the EDT; separately time out after the body has started | queued work is cancelled and never mutates later; started work reports honestly that effects may still complete rather than claiming cancellation |
+| 81 | Run inferred QC/SPARQL over an adversarially large signature/property cross-product | expensive inference categories are omitted independently before enumeration and named in the result note; ordinary large class hierarchies still materialize within the documented estimates |
+| 82 | Inspect the scheduled/release workflow artifacts from `scripts/live-integration/run.sh` | JSON records bundle activation, Java 17+, Protégé 5.6.6, token rejection/acceptance, two-window session pinning, one-step Undo, HermiT justification, and application/broker PID exit |
 
 Any unexpected error, UI freeze, or missing committed edit is a release blocker — capture the JSON error
 and the Protégé log. Steps 16–18 must never undo an unrelated edit: verified rollback now performs all

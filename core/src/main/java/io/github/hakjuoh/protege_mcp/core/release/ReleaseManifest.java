@@ -11,14 +11,15 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import io.github.hakjuoh.protege_mcp.contracts.ContractJson;
 
 /**
- * The {@code manifest_version: 1} release manifest (PLAN §9.3). Deterministic given its inputs — the
- * only non-reproducible field, {@code created_at}, is a caller-supplied timestamp (PLAN §4 Clock
- * seam), so two builds of the same release with the same timestamp are byte-identical.
+ * The {@code manifest_version: 1} release manifest. Deterministic given its inputs — the only
+ * non-reproducible field, {@code created_at}, is a caller-supplied timestamp, so two builds of the
+ * same release with the same timestamp are byte-identical.
  *
  * <p>A manifest is only well-formed for a release whose ontology is within the canonicalization
  * guarantees. When {@code releaseStable} is false (an anonymous-individual {@code session_only}
  * fingerprint), building a manifest is refused with {@link UnstableFingerprintException} rather than
- * stamping a stability the fingerprint cannot back (PLAN §9.3 final paragraph).
+ * stamping a stability the fingerprint cannot back. The public contract is documented under
+ * {@code run_release_gate} and {@code prepare_release} in {@code docs/tools/quality.md}.
  */
 public final class ReleaseManifest {
 

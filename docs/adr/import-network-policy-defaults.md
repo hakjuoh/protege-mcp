@@ -1,13 +1,13 @@
 ---
-title: "ADR 0005: import network policy defaults and request controls"
+title: "Import network policy defaults and request controls"
+published: false
 nav_exclude: true
 ---
 
-# ADR 0005: import network policy defaults and request controls
+# Import network policy defaults and request controls
 
 - Status: accepted
 - Date: 2026-07-17
-- Roadmap issue: Immediate next issue 7; open design decision §20-4
 
 ## Context
 
@@ -24,7 +24,7 @@ can disable that compatibility mode.
 Two request-level controls are planned for `0.7.0` (`network=deny|allow` on document-loading operations
 and gates, `lock_mode=ignore|verify|required` on project/release gates and document-loading operations),
 and the release workflow (`run_release_gate`, `prepare_release`) needs a defined network posture. The
-open question this ADR resolves is the default import network policy for interactive versus release
+open question this decision resolves is the default import network policy for interactive versus release
 mode, and how the request-level controls compose with the released policy semantics.
 
 The relevant released precedents are strictly may-only-tighten: `apply_changes timeout_ms` can only

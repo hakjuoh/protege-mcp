@@ -381,7 +381,7 @@ final class DirectAccessPolicy {
             }
             if (!rule.allowed()) {
                 if (rule.denialSource() == DenialSource.REQUEST) {
-                    // The explicit error PLAN §8.4 requires for the root document: the caller's own
+                    // The import-network contract's explicit error for the root document: the caller's own
                     // request denies the fetch, never a silent partial load — and never a message
                     // that tells the caller to loosen the reviewed policy.
                     throw new ToolArgException("Network access is denied by the request argument "

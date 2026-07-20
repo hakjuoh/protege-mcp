@@ -40,7 +40,7 @@ final class VerifiedOntologyWriter {
     private static final int MAX_LINK_HOPS = 8;
 
     /**
-     * Round-trip reproducibility classes (PLAN §8.3), from strongest to weakest:
+     * Round-trip reproducibility classes documented by {@code save_ontology}, from strongest to weakest:
      * <ul>
      *   <li>{@link #ROUND_TRIP_BYTE_FOR_BYTE}: re-serializing the reloaded artifact reproduces the
      *       written bytes exactly — the artifact is a canonical fixpoint for its format.</li>
@@ -244,7 +244,7 @@ final class VerifiedOntologyWriter {
     }
 
     /**
-     * Classify the strength of a verified round trip (PLAN §8.3). Only meaningful when the axiom-level
+     * Classify the strength of a verified round trip. Only meaningful when the axiom-level
      * comparison already holds; a non-identical reload throws before this ever reaches a caller.
      * {@code byte_for_byte} is a strict superset signal: re-serialize the reloaded ontology with the
      * SAME format instance that wrote the artifact and compare bytes. {@code logically_equivalent} is

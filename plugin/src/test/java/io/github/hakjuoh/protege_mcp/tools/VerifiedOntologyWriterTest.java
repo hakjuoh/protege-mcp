@@ -360,7 +360,7 @@ class VerifiedOntologyWriterTest {
         assertTrue(Files.readString(target).contains("http://example.org/anon#A"));
     }
 
-    // ------------------------------------------------------------------ round-trip class (PLAN §8.3)
+    // ------------------------------------------------------------------ round-trip class
 
     @Test
     void aNormalVerifiedSaveIsClassifiedByteForByte() throws Exception {
@@ -408,7 +408,7 @@ class VerifiedOntologyWriterTest {
     @Test
     void anonymousIndividualRejectionStaysDistinctFromALossyRoundTrip() throws Exception {
         // Blank-node instability is rejected outright before any classification — it is NOT reported as
-        // a lossy/axiom-identical round trip (PLAN §8.3 keeps the two regimes distinct).
+        // a lossy/axiom-identical round trip (the two regimes remain distinct).
         var manager = OWLManager.createOWLOntologyManager();
         var df = manager.getOWLDataFactory();
         var ontology = manager.createOntology(IRI.create("urn:verified:anon-distinct"));

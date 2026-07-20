@@ -22,9 +22,20 @@ prefixes:
   IAO: http://purl.obolibrary.org/obo/IAO_
   oboInOwl: http://www.geneontology.org/formats/oboInOwl#
   rdfs: http://www.w3.org/2000/01/rdf-schema#
+  skos: http://www.w3.org/2004/02/skos/core#
+
+entity_search:
+  preferred_properties: [rdfs:label, skos:prefLabel]
+  synonym_properties: [skos:altLabel, oboInOwl:hasExactSynonym, oboInOwl:hasRelatedSynonym]
+  preferred_languages: [en]
+  fallback_languages: [und]
 
 filesystem:
   allow_external_paths: false
+audit:
+  retention_days: 90
+  max_file_bytes: 10485760
+  max_files: 10
 network:
   default: deny
   allowed_hosts: []
@@ -36,7 +47,8 @@ modules:
       - http://purl.obolibrary.org/obo/EXAMPLE_
 
 reasoning:
-  reasoner: ELK
+  # The standalone 0.7.1 runner bundles HermiT; owl_profile still enforces the OBO-oriented EL subset.
+  reasoner: HermiT
   owl_profile: EL
   required: true
   timeout_ms: 120000

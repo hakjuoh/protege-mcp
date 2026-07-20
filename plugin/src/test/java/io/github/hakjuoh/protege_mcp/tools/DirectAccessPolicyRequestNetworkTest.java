@@ -43,7 +43,7 @@ class DirectAccessPolicyRequestNetworkTest {
         assertEquals(DirectAccessPolicy.DenialSource.REQUEST, rule.denialSource());
         assertFalse(rule.permits(REMOTE));
 
-        // The ROOT document is denied with an explicit error (PLAN §8.4), never a partial load.
+        // The root document is denied with an explicit error, never a partial load.
         ToolArgException root = assertThrows(ToolArgException.class,
                 () -> denied.authorizeNetwork(REMOTE, false));
         assertEquals("Network access is denied by the request argument network=deny.",

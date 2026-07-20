@@ -99,7 +99,7 @@ class ProjectQcLockModeTest {
                 "a beside-document lockfile must be labeled as accident-safety, not tamper-evidence");
 
         // A swapped import document fails run_project_qc without any explicit verify_import_lock
-        // call (PLAN §8.4), reusing the pinned finding code.
+        // call under the import-lock contract, reusing the pinned finding code.
         Files.writeString(temp.resolve("imported.ttl"),
                 Files.readString(temp.resolve("imported.ttl")) + "# tampered\n");
         Map<String, Object> rejected = run(ctx, policy, "verify");

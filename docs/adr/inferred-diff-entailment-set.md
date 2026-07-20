@@ -1,13 +1,13 @@
 ---
-title: "ADR 0004: inferred semantic diff entailment set"
+title: "Inferred semantic diff entailment set"
+published: false
 nav_exclude: true
 ---
 
-# ADR 0004: inferred semantic diff entailment set
+# Inferred semantic diff entailment set
 
 - Status: accepted
 - Date: 2026-07-17
-- Roadmap issue: Immediate next issue 8; open design decision §20-3
 
 ## Context
 
@@ -35,7 +35,7 @@ tautology-flooded by unsatisfiable classes; and the object-property characterist
 inverted simple-property guard. Any adopted grammar must be computed explicitly and fail closed per
 category.
 
-The isolated-reasoner machinery from ADR 0002 (same-hop capture of the selected reasoner's exact factory,
+The accepted isolated-reasoner machinery (same-hop capture of the selected reasoner's exact factory,
 configuration, and buffering; daemon-thread execution under an outer timeout with atomic cleanup
 ownership; configuration-parity reporting) is the established substrate for private classification. The
 structural and profile QC stages — and the governance stage for its intrinsic, no-policy checks —
@@ -47,7 +47,7 @@ cannot be recovered.
 ## Decision
 
 1. **Semantics.** The inferred diff is defined against OWL 2 Direct Semantics *as computed by one
-   explicitly recorded reasoner*: the captured Protégé selection (ADR 0002) evaluates both sides with
+   explicitly recorded reasoner*: the captured Protégé selection evaluates both sides with
    instances built sequentially from the same captured recipe — at most one live instance at a time
    (left fully evaluated and disposed before the right is constructed), because the captured
    configuration object is shared and some factories mutate it in place. Results carry the reasoner
@@ -118,7 +118,7 @@ cannot be recovered.
    a selected reasoner; a told-only reasoner (StructuralReasoner-like) is permitted but its parity
    metadata discloses that the "inferred" view is the told hierarchy. The request timeout is a total
    budget covering *all* reasoner interaction — construction, classification, taxonomy and type
-   queries, and candidate satisfiability checks — under the ADR 0002 daemon-thread/cleanup-ownership
+   queries, and candidate satisfiability checks — under the configuration-parity daemon-thread/cleanup-ownership
    pattern. Disjointness runs last, so a candidate-matrix overrun errors only its own category; on
    overall expiry, `mode=both` still returns the asserted sections with an errored inferred section.
 6. **Determinism.** Category members are canonically rendered and sorted; sample lists obey the shared
@@ -144,7 +144,7 @@ cannot be recovered.
    (with bounded in-result summaries) are deferred to the release-workflow issue that defines the
    manifest and report formats; `reasoner`, `timeout_ms`, `policy_path`, scope, and result limits are
    in issue 8's scope as decided above. The `reasoner` argument selects among the installed Protégé
-   reasoner factories and is still captured through the ADR 0002 recipe; it defaults to the current
+   reasoner factories and is still captured through the configuration-parity recipe; it defaults to the current
    selection, so decision 1's capture discipline holds for every choice.
 
 ## Consequences

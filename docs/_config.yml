@@ -14,7 +14,7 @@ remote_theme: just-the-docs/just-the-docs@v0.12.0
 
 # Current release version, mirrored from pom.xml. The version-consistency gate
 # keeps this value and the other distribution metadata in sync.
-version: 0.7.0
+version: 0.7.1
 
 # Project site lives at https://hakjuoh.github.io/protege-mcp/
 url: https://hakjuoh.github.io
@@ -99,5 +99,9 @@ exclude:
   - Gemfile.lock
   - vendor
   - commercial-platforms.md
-  - adr/0001-ontology-fingerprint-canonicalization.md
-  - adr/0002-isolated-reasoner-configuration-parity.md
+  - adr/ontology-fingerprint-canonicalization.md
+  - adr/isolated-reasoner-configuration-parity.md
+  - adr/project-v1-standard-interoperability.md
+  - adr/inferred-diff-entailment-set.md
+  - adr/import-network-policy-defaults.md
+  - adr/headless-reasoner-and-workspace-boundary.md

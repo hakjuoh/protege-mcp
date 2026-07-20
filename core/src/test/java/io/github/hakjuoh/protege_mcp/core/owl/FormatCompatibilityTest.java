@@ -149,7 +149,7 @@ class FormatCompatibilityTest {
         assertNull(FormatCompatibility.detectLoss(o, new OBODocumentFormat()));
     }
 
-    // ------------------------------------------------------------------ determinism (PLAN §3.3)
+    // ------------------------------------------------------------------ deterministic reporting
 
     @Test
     void oboReportIssuesAndReasonsAreDeterministicallyOrdered() throws Exception {

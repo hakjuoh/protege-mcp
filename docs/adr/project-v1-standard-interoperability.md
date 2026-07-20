@@ -1,9 +1,10 @@
 ---
-title: "ADR 0003: project v1 standard interoperability"
+title: "Project v1 standard interoperability"
+published: false
 nav_exclude: true
 ---
 
-# ADR 0003: project v1 standard interoperability
+# Project v1 standard interoperability
 
 - Status: accepted
 - Date: 2026-07-15

@@ -26,11 +26,11 @@ the official registry with nothing to fill in:
   The descriptor is authoritative and may intentionally lag the source version while the next release is
   being prepared; it is advanced only after the named asset exists.
 
-> This is **Distribution Path B** (how the jar is delivered), the counterpart to the manual-copy
-> [install](https://github.com/hakjuoh/protege-mcp#install) (Distribution Path A). It is unrelated to **Architecture Approach B**
-> (the in-app Claude chat) in [`DESIGN.md`](https://github.com/hakjuoh/protege-mcp/blob/main/DESIGN.md) — that is the plugin's internal shape, not its
-> delivery. The same `Bundle-SymbolicName` / version rules used here are described in
-> [`DESIGN.md` §7 (Packaging)](https://github.com/hakjuoh/protege-mcp/blob/main/DESIGN.md#7-packaging-and-osgi-strategy).
+> This registry path only describes how the built bundle reaches Protégé. The live server, Ontology
+> Assistant, and headless CLI are separate runtime surfaces described in
+> [`DESIGN.md`](https://github.com/hakjuoh/protege-mcp/blob/main/DESIGN.md). The same
+> `Bundle-SymbolicName` / version rules used here are covered under
+> [Packaging and dependency isolation](https://github.com/hakjuoh/protege-mcp/blob/main/DESIGN.md#12-packaging-and-dependency-isolation).
 
 ## Install from the official registry (no setup)
 

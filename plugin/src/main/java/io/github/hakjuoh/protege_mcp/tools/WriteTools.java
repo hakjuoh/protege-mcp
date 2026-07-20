@@ -823,7 +823,7 @@ public final class WriteTools {
         OWLDocumentFormat current = om.getOntologyFormat(ont);
 
         // Resolve the format that WILL be used FIRST — it can reject the extension, and the lossy/OBO
-        // safeguards (0.7.0 M3R, PLAN §8.3) must run BEFORE any directory is created, the format is
+        // safeguards must run BEFORE any directory is created, the format is
         // rebound, or the target is replaced. A rejected save-as leaves no side effects.
         File file;
         OWLDocumentFormat format;
@@ -909,7 +909,7 @@ public final class WriteTools {
         // cut short by the default EDT bound like the install hop below.
         VerifiedSaveCapture captured = ctx.access().compute(mm -> captureVerifiedSave(ctx, mm, path,
                 lockDigest, policy.policy().digest()), SAVE_TIMEOUT_MS);
-        // Format safeguards (0.7.0 M3R, PLAN §8.3): predict serialization loss on the Protégé-free
+        // Format safeguards: predict serialization loss on the Protégé-free
         // snapshot BEFORE prepare touches the target. Verified save is already fail-closed (a lossy
         // format fails the round-trip comparison), but the OBO report gives an earlier, clearer
         // refusal, and on_lossy=fail turns it into a clean lossy_format_refused.
