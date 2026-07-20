@@ -26,7 +26,7 @@ class McpCatalogTest {
         Set<String> registeredPrompts = new LinkedHashSet<>();
         PromptCatalog.buildAll().forEach(spec -> registeredPrompts.add(spec.prompt().name()));
 
-        assertEquals(84, catalog.toolNames().size());
+        assertEquals(85, catalog.toolNames().size());
         assertEquals(11, catalog.promptNames().size());
         assertEquals(catalog.toolNames(), registeredTools,
                 "every JSON tool definition must have exactly one handler registration");

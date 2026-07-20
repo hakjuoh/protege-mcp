@@ -1,10 +1,12 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.protege.editor.owl.model.OWLModelManager;
+import org.semanticweb.owlapi.formats.PrefixDocumentFormat;
 import org.semanticweb.owlapi.model.AddImport;
 import org.semanticweb.owlapi.model.AddOntologyAnnotation;
 import org.semanticweb.owlapi.model.IRI;
@@ -26,9 +28,11 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
  * Ontology-level metadata writes — the ontology IRI/version, import declarations, and ontology
  * annotations. These are {@link org.semanticweb.owlapi.model.OWLOntologyChange}s, not
  * {@link org.semanticweb.owlapi.model.OWLAxiom}s, so they are not expressible via add_axiom; together
- * with add_axiom/add_annotation they let an ontology header be reconstructed incrementally. Every
- * change flows through {@link OWLModelManager#applyChange} (GUI-visible, undoable) and is gated by
- * the same read-only/confirmation switches as the other write tools.
+ * with add_axiom/add_annotation they let an ontology header be reconstructed incrementally. Most
+ * changes flow through {@link OWLModelManager#applyChange} (GUI-visible, undoable); the exceptions are
+ * set_prefix/remove_prefix, which mutate the document format's prefix map directly (no
+ * OWLOntologyChange, no model event, not on the undo stack). All are gated by the same
+ * read-only/confirmation switches as the other write tools.
  */
 public final class OntologyMetadataTools {
 
@@ -137,10 +141,61 @@ public final class OntologyMetadataTools {
                         // model event — so the SPARQL snapshot cache (which caches the prefix map) would
                         // otherwise keep serving the pre-edit prefixes. Invalidate it explicitly.
                         ctx.sparqlCache().invalidate();
+                        // Snapshot the map: getPrefixName2PrefixMap() is a live view over the format's
+                        // mutable backing map, and the result is serialized later off the model thread —
+                        // a copy avoids a concurrent-modification read if another prefix edit lands.
                         return Tools.json()
                                 .put("prefix", name)
                                 .put("namespace", namespace)
-                                .put("prefixes", fmt.asPrefixOWLOntologyFormat().getPrefixName2PrefixMap())
+                                .put("prefixes", new LinkedHashMap<>(
+                                        fmt.asPrefixOWLOntologyFormat().getPrefixName2PrefixMap()))
+                                .result();
+                    });
+                });
+        tools.tool("remove_prefix",
+                (ex, req) -> {
+                    Map<String, Object> a = Tools.args(req);
+                    String prefix = Tools.reqString(a, "prefix");
+                    CallToolResult denied = WriteTools.checkWriteAllowed(ctx, "remove prefix " + prefix);
+                    if (denied != null) {
+                        return denied;
+                    }
+                    return ctx.access().compute(mm -> {
+                        OWLOntology ont = mm.getActiveOntology();
+                        OWLDocumentFormat fmt = mm.getOWLOntologyManager().getOntologyFormat(ont);
+                        if (fmt == null || !fmt.isPrefixOWLOntologyFormat()) {
+                            return Tools.error("The active ontology's document format has no prefix map "
+                                    + "(format: " + (fmt == null ? "none" : fmt.getClass().getSimpleName())
+                                    + ").");
+                        }
+                        PrefixDocumentFormat prefixes = fmt.asPrefixOWLOntologyFormat();
+                        String name = prefix.endsWith(":") ? prefix : prefix + ":";
+                        Map<String, String> current = prefixes.getPrefixName2PrefixMap();
+                        if (!current.containsKey(name)) {
+                            return Tools.error("Prefix not registered in the active ontology's prefix map: "
+                                    + name);
+                        }
+                        // OWLAPI 4.x PrefixManager has no remove-by-name, and unregisterNamespace removes
+                        // by namespace VALUE (which would also drop any sibling prefix bound to the same
+                        // namespace). Rebuild the map without this one binding: copy the (unmodifiable)
+                        // view, drop the name, clear, then re-set every survivor (this also re-seeds the
+                        // standard rdf/rdfs/owl/xsd/xml prefixes, which clear() does not restore on its own).
+                        Map<String, String> remaining = new LinkedHashMap<>(current);
+                        String namespace = remaining.remove(name);
+                        prefixes.clear();
+                        remaining.forEach(prefixes::setPrefix);
+                        // Like set_prefix, this mutates the document format directly — no OWLOntologyChange,
+                        // no model event — so invalidate the SPARQL snapshot cache's stored prefix map.
+                        ctx.sparqlCache().invalidate();
+                        return Tools.json()
+                                .put("removed", true)
+                                .put("prefix", name)
+                                .put("namespace", namespace)
+                                // Snapshot the live view: it is serialized later off the model thread.
+                                .put("prefixes", new LinkedHashMap<>(prefixes.getPrefixName2PrefixMap()))
+                                .put("note", "Not undoable; CURIEs using " + name + " no longer parse or "
+                                        + "render — axioms are unaffected because IRIs are stored in full. "
+                                        + "Re-add with set_prefix to restore.")
                                 .result();
                     });
                 });

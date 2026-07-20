@@ -80,7 +80,7 @@ public final class ToolCapabilityCatalog {
                 "deprecate_entity", "move_class", "rename_entity", "delete_entity", "add_rule",
                 "remove_rule", "add_competency_question", "remove_competency_question");
         declare(map, admin,
-                "set_ontology_id", "add_import", "set_prefix", "remove_import",
+                "set_ontology_id", "add_import", "set_prefix", "remove_prefix", "remove_import",
                 "add_ontology_annotation", "remove_ontology_annotation", "set_active_ontology",
                 "create_ontology", "extract_module", "set_reasoner");
         declare(map, adminProjectRead, "load_ontology", "merge_ontology_document");

@@ -77,6 +77,36 @@ On failure, an error object is returned: `{ "error": "The active ontology's docu
 }
 ```
 
+## `remove_prefix`
+
+Removes a prefix binding from the active ontology's prefix map — for example deleting a mistyped `ex-av` binding that `set_prefix` can otherwise only overwrite, not delete. This changes no axioms (entities keep their full IRIs), but CURIEs using the prefix stop rendering and parsing and the document serializes without it. The standard `rdf`/`rdfs`/`owl`/`xsd`/`xml` prefixes and every other binding are preserved.
+
+*Mutating (not undoable)* — it edits the document format's prefix map directly and is **not** on the undo stack; re-add the binding with `set_prefix` to restore it. Still gated by the read-only/confirm-each-write preferences. Errors if the active ontology's document format has no prefix map or the prefix is not registered.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `prefix` | string | yes | — | Prefix name to remove, with or without a trailing `':'` (e.g. `'ex-av'` or `'ex-av:'`); use `':'` for the default namespace. |
+
+**Returns**
+
+- `removed`: boolean — `true` when the binding was removed.
+- `prefix`: string — the normalized prefix name (always ends with `':'`).
+- `namespace`: string — the namespace the removed prefix had expanded to.
+- `prefixes`: object — the full prefix-name → namespace map after the removal.
+- `note`: string — reminder that the change is not undoable and that CURIEs using the prefix no longer parse or render.
+
+On failure, an error object is returned: `{ "error": "Prefix not registered in the active ontology's prefix map: <prefix>" }` (or the no-prefix-map error when the format has none).
+
+**Example**
+
+```json
+{
+  "prefix": "ex-av"
+}
+```
+
 ## `add_import`
 
 Adds an `owl:imports` declaration to the active ontology. The result's `resolved` flag reports whether the imported document actually loaded into the workspace — an unresolved import is a dangling declaration whose terms stay invisible to lookups and reasoning until it is loaded. Pass `document` (a path/URL/IRI) to resolve the import immediately by loading that document *without* changing your active edit target.

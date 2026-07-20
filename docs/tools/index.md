@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **84 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **85 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -116,7 +116,7 @@ The top-level [Prompts](../prompts/) guide packages these flows for one-click us
 `remove_axiom` · `rename_entity` · `delete_entity` · `deprecate_entity` · `move_class`
 
 ### [Ontology metadata & imports](metadata-imports.html)
-`set_ontology_id` · `set_prefix` · `add_import` · `remove_import` · `add_ontology_annotation` ·
+`set_ontology_id` · `set_prefix` · `remove_prefix` · `add_import` · `remove_import` · `add_ontology_annotation` ·
 `remove_ontology_annotation`
 
 ### [Documents](documents.html)

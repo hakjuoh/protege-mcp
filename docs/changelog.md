@@ -23,6 +23,21 @@ each section is also published as the body of its
 
 ## [Unreleased]
 
+### Added
+- `remove_prefix` deletes a single prefix binding from the active ontology's prefix map, so a mistyped
+  prefix that `set_prefix` could only overwrite can now be removed. Like `set_prefix` it edits the
+  document format directly (no `OWLOntologyChange`, not on the undo stack) and invalidates the SPARQL
+  snapshot cache; it errors on an unregistered prefix or a format with no prefix map, and preserves every
+  other binding including the standard `rdf`/`rdfs`/`owl`/`xsd` prefixes. This grows the public surface
+  from 84 to **85 tools** (still **11 prompts**).
+
+### Tests
+- Pinned the `commit_change_set` → `undo_change` contract over a real Protégé `HistoryManager`: a committed
+  multi-operation change set is reverted by exactly one undo, and the anomalous multi-entry case surfaces
+  its `undo_log_warning` instead of silently under-reverting.
+- Added an end-to-end HTTP test proving the backend rejects a co-resident process's forged principal
+  envelope without the per-start broker secret and trusts it only behind that secret.
+
 ## [0.7.1] - 2026-07-20
 
 **Headless parity, least-privilege attribution, local reuse, and release hardening complete the 0.7 line.**

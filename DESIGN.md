@@ -12,7 +12,7 @@ in-Protégé Ontology Assistant and a headless CLI for reproducible project vali
 
 The design has three execution surfaces:
 
-- The **live plugin** serves 84 MCP tools and 11 prompts over authenticated Streamable HTTP. Reads and writes
+- The **live plugin** serves 85 MCP tools and 11 prompts over authenticated Streamable HTTP. Reads and writes
   operate on the active `OWLModelManager`; committed edits are visible immediately and join Protégé's Undo
   stack.
 - The **Ontology Assistant** drives an installed `claude` or `codex` CLI back through the live plugin's MCP
@@ -301,7 +301,7 @@ one identity as interchangeable with another.
 
 ## 9. Tool and prompt surface
 
-The plugin catalog contains **84 tools and 11 prompts**. The authoritative metadata is the validated resource:
+The plugin catalog contains **85 tools and 11 prompts**. The authoritative metadata is the validated resource:
 
 `plugin/src/main/resources/io/github/hakjuoh/protege_mcp/catalog/mcp-catalog.json`
 
@@ -440,7 +440,7 @@ See [`TESTING.md`](TESTING.md), [`docs/performance.md`](docs/performance.md), an
 - Releases can be exported and verified, but there is no direct publishing adapter for commercial ontology or
   knowledge-graph platforms.
 - The headless stdio server intentionally exposes only the eight project/release tools above, not the live
-  84-tool editor surface.
+  85-tool editor surface.
 - A non-loopback bind is explicit plain-HTTP opt-in and is not a supported multi-user deployment model.
 
 Future work on these boundaries belongs in [`PLAN.md`](PLAN.md); completed behavior should update this design

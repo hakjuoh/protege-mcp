@@ -125,7 +125,7 @@ caller-selected project files. Advanced clients may request one or more exact ca
 | `server:admin` | Server administration operations. |
 
 Capabilities compose literally: requesting `ontology:read filesystem:project:read` grants both; one does
-not silently imply another. Every one of the 84 tools declares its required capabilities centrally and is
+not silently imply another. Every one of the 85 tools declares its required capabilities centrally and is
 checked before its handler runs, identically through the shared broker and a standalone window. The global
 Protégé read-only/confirm-write settings and project path/network policy remain additional hard ceilings.
 Unknown scopes are rejected before consent and token issuance.

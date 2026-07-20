@@ -1970,6 +1970,20 @@
       "additionalProperties" : false
     }
   }, {
+    "name" : "remove_prefix",
+    "description" : "Remove a prefix binding from the active ontology's prefix map (e.g. delete a mistyped 'ex' mapping). This changes no axioms — entities keep their full IRIs — but CURIEs using the prefix stop rendering and parsing and the document serializes without it. The prefix map lives in the ontology's document format, so this is NOT on the undo stack; re-add with set_prefix to restore.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "prefix" : {
+          "type" : "string",
+          "description" : "Prefix name to remove, with or without a trailing ':' (e.g. 'ex' or 'ex:'); use ':' for the default namespace."
+        }
+      },
+      "required" : [ "prefix" ],
+      "additionalProperties" : false
+    }
+  }, {
     "name" : "remove_import",
     "description" : "Remove an owl:imports declaration from the active ontology.",
     "input_schema" : {
