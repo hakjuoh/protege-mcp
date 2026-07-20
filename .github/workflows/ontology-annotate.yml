@@ -1,4 +1,4 @@
-# TRUSTED annotation half of the fork-safe ontology-CI pipeline (PLAN §10.4).
+# TRUSTED annotation half of the fork-safe ontology-CI pipeline.
 #
 # A consumer calls this from a `workflow_run`-triggered wrapper. GitHub always runs a workflow_run
 # workflow from the repository's DEFAULT branch, so a fork PR can never modify this trusted code, and
@@ -10,12 +10,9 @@
 # trusting a byte. It posts a PR comment and propagates the gate verdict to this check's conclusion.
 # It NEVER executes an artifact string/path.
 #
-# Honesty boundary: the comment reports the POLICY-VALIDATION verdict and the ASSERTED-DIFF result
-# only. It does not (and must not) claim a reasoner/profile/governance/invariants/CQ/SHACL QC pass.
-# There is deliberately NO SARIF/code-scanning upload here: the headless CLI emits no SARIF, so
-# uploading an artifact-supplied SARIF would poison base-repo code scanning with untrusted fork input.
-# SARIF code-scanning arrives only when a future TRUSTED in-pipeline step (a bundled-reasoner headless
-# QC runner) produces it directly — never from a downloaded artifact.
+# The artifact now contains candidate-policy, trusted full-QC JSON/JUnit/SARIF, optional release-preview,
+# and asserted-diff evidence. This workflow validates every format as bounded data and rebuilds check-run
+# annotations from sanitized fields; it never executes the artifact or uploads its SARIF to code scanning.
 
 name: Ontology CI annotate (reusable)
 
@@ -62,6 +59,10 @@ on:
         description: 'Trusted CLI release configured by the default-branch wrapper.'
         type: string
         required: true
+      expected_release_check:
+        description: 'Trusted release-preview mode configured by the default-branch wrapper.'
+        type: boolean
+        required: true
       artifact_name:
         description: 'Name of the results artifact to download.'
         type: string
@@ -73,7 +74,8 @@ on:
 
 # Declared here to document intent; the effective token scope is whatever the CALLER grants (a
 # reusable workflow cannot exceed its caller). The example wrapper grants exactly these. No
-# security-events: write — this job intentionally has no code-scanning upload path.
+# security-events: write — this job intentionally rebuilds bounded check annotations instead of
+# uploading artifact-supplied SARIF to code scanning.
 permissions:
   contents: read
   actions: read
@@ -174,6 +176,7 @@ jobs:
               }
             }
             core.setOutput('pr_candidates', candidates.map(pr => String(pr.number)).join(' '));
+            core.setOutput('pr_bases', candidates.map(pr => `${pr.number}:${pr.base.sha}`).join(' '));
             core.setOutput('conclusion', run.conclusion || '');
 
       # Download by run-id from the SAME repository (fork PRs run in the base repo's Actions), so the
@@ -199,16 +202,20 @@ jobs:
           EXPECTED_ONTOLOGY: ${{ inputs.expected_ontology }}
           EXPECTED_DIFF_CHECK: ${{ inputs.expected_diff_check }}
           EXPECTED_CLI_VERSION: ${{ inputs.expected_cli_version }}
+          EXPECTED_RELEASE_CHECK: ${{ inputs.expected_release_check }}
           PR_CANDIDATES: ${{ steps.provenance.outputs.pr_candidates }}
+          PR_BASES: ${{ steps.provenance.outputs.pr_bases }}
         run: |
           cd incoming
-          # ALLOWLIST FIRST, fail-closed: the artifact may contain ONLY these exact basenames. A fork
-          # PR that smuggled an extra file (e.g. a planted results.sarif or a diff.json when the diff
-          # step was skipped) is rejected here before anything downstream can read it. `sha256sum -c`
-          # only checks files LISTED in the manifest, so an unlisted extra would otherwise slip past.
+          # ALLOWLIST FIRST, fail-closed: artifact bytes are untrusted data even though their producer
+          # workflow is authenticated above.
           while IFS= read -r -d '' f; do
             case "$f" in
-              policy-validate.json|policy-validate.err|policy-validate.exit) : ;;
+              candidate-policy.json|candidate-policy.err|candidate-policy.exit) : ;;
+              qc.json|qc.json.err|qc.json.exit) : ;;
+              qc.junit.xml|qc.junit.xml.err|qc.junit.xml.exit) : ;;
+              qc.sarif|qc.sarif.err|qc.sarif.exit) : ;;
+              release.json|release.err|release.exit) : ;;
               diff.json|diff.err|diff.exit|diff.status) : ;;
               meta.json|pr-number.txt|manifest.sha256) : ;;
               *) echo "::error::Unexpected file in artifact: ${f}"; exit 1 ;;
@@ -218,20 +225,54 @@ jobs:
               exit 1
             fi
           done < <(find . -mindepth 1 -printf '%P\0')
+          if ! printf '%s' "$MAX_BYTES" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "::error::max_artifact_bytes must be a positive integer."; exit 1
+          fi
           total="$(du -sb . | cut -f1)"
           if [ "$total" -gt "$MAX_BYTES" ]; then
             echo "::error::Artifact is ${total} bytes, over the ${MAX_BYTES}-byte cap."
             exit 1
           fi
-          for required in policy-validate.json policy-validate.err policy-validate.exit \
+          for required in candidate-policy.json candidate-policy.err candidate-policy.exit \
+              qc.json qc.json.err qc.json.exit \
+              qc.junit.xml qc.junit.xml.err qc.junit.xml.exit \
+              qc.sarif qc.sarif.err qc.sarif.exit \
               meta.json pr-number.txt manifest.sha256; do
             test -f "$required" && test ! -L "$required" || {
               echo "::error::Required artifact file is missing or unsafe: $required"; exit 1;
             }
           done
-          jq -e 'type == "object"' policy-validate.json >/dev/null
-          pol_exit="$(cat policy-validate.exit)"
-          case "$pol_exit" in 0|1|2) ;; *) echo "::error::Invalid policy exit code."; exit 1 ;; esac
+          jq -e '
+            def bounded_text($n): type == "string" and length <= $n;
+            def issue:
+              type == "object"
+              and (.severity == "error" or .severity == "warning")
+              and (.code | bounded_text(200) and length > 0)
+              and ((.path == null) or (.path | bounded_text(1000)))
+              and (.message | bounded_text(10000) and length > 0);
+            type == "object"
+            and (.policy_loaded | type == "boolean")
+            and (.valid | type == "boolean")
+            and ((.policy_path == null) or (.policy_path | bounded_text(4096)))
+            and ((.project_root == null) or (.project_root | bounded_text(4096)))
+            and ((.policy_digest == null)
+              or (.policy_digest | type == "string" and test("^sha256:[0-9a-f]{64}$")))
+            and (.errors | type == "array" and length <= 1000 and all(.[]; issue))
+            and (.warnings | type == "array" and length <= 1000 and all(.[]; issue))
+            and (.no_external_paths == true)
+            and (.no_network | bounded_text(1000))' \
+            candidate-policy.json >/dev/null
+          pol_exit="$(cat candidate-policy.exit)"
+          case "$pol_exit" in 0|1|2|3) ;; *) echo "::error::Invalid policy exit code."; exit 1 ;; esac
+          pol_valid="$(jq -r '.valid|tostring' candidate-policy.json)"
+          pol_loaded="$(jq -r '.policy_loaded|tostring' candidate-policy.json)"
+          pol_digest="$(jq -r '.policy_digest // empty' candidate-policy.json)"
+          case "$pol_exit:$pol_valid:$pol_loaded" in 0:true:true|1:false:true) ;;
+            2:false:false|3:false:false) ;;
+            *) echo "::error::Candidate policy verdict and exit code disagree."; exit 1;; esac
+          if [ "$pol_loaded" = "true" ] && [ -z "$pol_digest" ]; then
+            echo "::error::An evaluated candidate policy must have a digest."; exit 1
+          fi
 
           # Never hand an artifact-supplied path to sha256sum. Parse a strict two-column manifest,
           # allow only already-confined basenames, hash each file ourselves, reject duplicates, and
@@ -243,7 +284,11 @@ jobs:
               echo "::error::Malformed manifest.sha256 entry."; exit 1
             fi
             case "$filename" in
-              policy-validate.json|policy-validate.err|policy-validate.exit) ;;
+              candidate-policy.json|candidate-policy.err|candidate-policy.exit) ;;
+              qc.json|qc.json.err|qc.json.exit) ;;
+              qc.junit.xml|qc.junit.xml.err|qc.junit.xml.exit) ;;
+              qc.sarif|qc.sarif.err|qc.sarif.exit) ;;
+              release.json|release.err|release.exit) ;;
               diff.json|diff.err|diff.exit|diff.status) ;;
               meta.json|pr-number.txt) ;;
               *) echo "::error::Unsafe checksum filename: $filename"; exit 1 ;;
@@ -279,6 +324,13 @@ jobs:
             echo "::error::Artifact PR number is not a pull request authenticated for the producer head."
             exit 1
           fi
+          authenticated_base=''
+          for pair in $PR_BASES; do
+            case "$pair" in "$pr":*) authenticated_base="${pair#*:}";; esac
+          done
+          if ! printf '%s' "$authenticated_base" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::Authenticated PR base SHA is unavailable."; exit 1
+          fi
           meta_run_id="$(jq -r '.producer_run_id // empty' meta.json)"
           if [ "$meta_run_id" != "$EXPECTED_RUN_ID" ]; then
             echo "::error::meta.json run id ($meta_run_id) does not match the triggering run ($EXPECTED_RUN_ID)."
@@ -291,6 +343,11 @@ jobs:
           fi
           meta_head="$(jq -r '.head_sha // empty' meta.json)"
           test "$meta_head" = "$EXPECTED_HEAD_SHA" || { echo "::error::Producer head SHA mismatch."; exit 1; }
+          meta_base="$(jq -r '.base_sha // empty' meta.json)"
+          test "$meta_base" = "$authenticated_base" || {
+            echo "::error::Producer base SHA mismatch; the base branch may have advanced. Synchronize the PR to start a fresh validation run."
+            exit 1
+          }
           meta_project="$(jq -r '.project // empty' meta.json)"
           test "$meta_project" = "$EXPECTED_PROJECT" || { echo "::error::Trusted project-path mismatch."; exit 1; }
           meta_ontology="$(jq -r '.ontology // empty' meta.json)"
@@ -299,11 +356,167 @@ jobs:
           test "$meta_diff_check" = "$EXPECTED_DIFF_CHECK" || { echo "::error::Trusted diff-check mode mismatch."; exit 1; }
           meta_cli="$(jq -r '.cli_version // empty' meta.json)"
           test "$meta_cli" = "$EXPECTED_CLI_VERSION" || { echo "::error::Trusted CLI-version mismatch."; exit 1; }
-          if [ -z "$EXPECTED_ONTOLOGY" ]; then
-            if compgen -G 'diff.*' >/dev/null; then
-              echo "::error::Diff files are forbidden when ontology is disabled."; exit 1
+          meta_release_check="$(jq -r 'if .release_check == true then "true" elif .release_check == false then "false" else empty end' meta.json)"
+          test "$meta_release_check" = "$EXPECTED_RELEASE_CHECK" || { echo "::error::Trusted release-check mode mismatch."; exit 1; }
+          test "$(jq -r '.scope // empty' meta.json)" = \
+            'candidate_policy+trusted_project_qc+asserted_diff+release_preview' || {
+              echo "::error::Unexpected evidence scope."; exit 1;
+            }
+          ontology_relative="$(jq -r '.ontology_relative // empty' meta.json)"
+          case "$ontology_relative" in ''|/*|*\\*|..|../*|*/../*|*/..)
+            echo "::error::Unsafe canonical ontology path."; exit 1;; esac
+          if [ "${#ontology_relative}" -gt 512 ] || printf '%s' "$ontology_relative" | grep -q '[[:cntrl:]]'; then
+            echo "::error::Canonical ontology path is oversized or contains control characters."; exit 1
+          fi
+          if ! jq -e --arg ontology "$ontology_relative" '
+              type == "object" and .scope == "project_qc"
+              and (.gate == "pass" or .gate == "fail" or .gate == "error")
+              and (.semantic_fingerprint | type == "string"
+                and test("^sha256:[0-9a-f]{64}$"))
+              and (.stages | type == "array" and length <= 64
+                and all(.[];
+                  (.stage | type == "string" and length > 0 and length <= 200)
+                  and (.status == "pass" or .status == "fail"
+                    or .status == "error" or .status == "skipped")
+                  and (.ran | type == "boolean")
+                  and (.required | type == "boolean")
+                  and ((.message == null) or (.message | type == "string" and length <= 10000))
+                  and (.findings | type == "array" and length <= 10000)))
+              and (.findings | type == "array" and length <= 10000
+                and all(.[];
+                  (.id | type == "string" and length > 0 and length <= 200)
+                  and (.rule_id | type == "string" and length > 0 and length <= 200)
+                  and (.source | type == "string" and length > 0 and length <= 200)
+                  and (.severity == "info" or .severity == "warning" or .severity == "error")
+                  and (.message | type == "string" and length <= 10000)
+                  and ((.path == null) or (.path | type == "string" and length <= 1000))))
+              and ((.stages | map(.findings | length) | add // 0) == (.findings | length))
+              and .resolved_assets.root_artifact == [$ontology]' qc.json >/dev/null; then
+            echo "::error::Invalid or unbound full-QC JSON evidence."; exit 1
+          fi
+          qc_json_exit="$(cat qc.json.exit)"
+          qc_junit_exit="$(cat qc.junit.xml.exit)"
+          qc_sarif_exit="$(cat qc.sarif.exit)"
+          for code in "$qc_json_exit" "$qc_junit_exit" "$qc_sarif_exit"; do
+            case "$code" in 0|1|3) ;; *) echo "::error::Invalid QC exit code."; exit 1;; esac
+          done
+          if [ "$qc_json_exit" != "$qc_junit_exit" ] || [ "$qc_json_exit" != "$qc_sarif_exit" ]; then
+            echo "::error::JSON/JUnit/SARIF QC executions disagree."; exit 1
+          fi
+          qc_gate="$(jq -r '.gate' qc.json)"
+          case "$qc_json_exit:$qc_gate" in 0:pass|1:fail|3:error) ;;
+            *) echo "::error::Full-QC gate and exit code disagree."; exit 1;; esac
+          python3 - <<'PY'
+          import json
+          import re
+          import xml.etree.ElementTree as ET
+
+          with open('qc.json', encoding='utf-8') as stream:
+              qc = json.load(stream)
+          raw = open('qc.junit.xml', 'rb').read()
+          try:
+              xml = raw.decode('utf-8-sig')
+          except UnicodeDecodeError as exc:
+              raise SystemExit('JUnit evidence must be UTF-8') from exc
+          if re.search(r'<!\s*(?:DOCTYPE|ENTITY)\b', xml, re.IGNORECASE):
+              raise SystemExit('JUnit evidence must not contain a DTD or entity declaration')
+          declaration = re.match(r'\s*<\?xml\s+[^>]*encoding\s*=\s*["\']([^"\']+)["\']',
+                                 xml, re.IGNORECASE)
+          if declaration and declaration.group(1).lower().replace('_', '-') not in {'utf-8', 'utf8'}:
+              raise SystemExit('JUnit XML declaration must name UTF-8')
+          root = ET.fromstring(xml)
+          if root.tag != 'testsuites' or root.attrib.get('name') != 'protege-mcp-project-qc':
+              raise SystemExit('JUnit root must be testsuites')
+          if sum(1 for _ in root.iter()) > 20000:
+              raise SystemExit('JUnit evidence has too many elements')
+          suites = list(root)
+          if len(suites) != len(qc['stages']):
+              raise SystemExit('JUnit suite count does not match QC stages')
+
+          def count(node, attribute):
+              value = node.attrib.get(attribute, '')
+              if not re.fullmatch(r'[0-9]+', value):
+                  raise SystemExit(f'JUnit {attribute} is not a non-negative integer')
+              value = int(value)
+              if value > 10000:
+                  raise SystemExit(f'JUnit {attribute} exceeds the evidence bound')
+              return value
+
+          totals = dict(tests=0, failures=0, errors=0, skipped=0)
+          for suite, stage in zip(suites, qc['stages']):
+              if suite.tag != 'testsuite' or suite.attrib.get('name') != stage['stage']:
+                  raise SystemExit('JUnit suite is not bound to its QC stage')
+              cases = list(suite)
+              if any(case.tag != 'testcase' for case in cases):
+                  raise SystemExit('JUnit suite contains an unexpected element')
+              observed = dict(tests=len(cases), failures=0, errors=0, skipped=0)
+              for case in cases:
+                  if len(case.attrib.get('name', '')) > 200 or len(case.attrib.get('classname', '')) > 200:
+                      raise SystemExit('JUnit testcase metadata exceeds the evidence bound')
+                  children = list(case)
+                  if len(children) > 1 or any(child.tag not in {'failure', 'error', 'skipped'} for child in children):
+                      raise SystemExit('JUnit testcase contains an unexpected result element')
+                  if children:
+                      observed[{'failure': 'failures', 'error': 'errors', 'skipped': 'skipped'}[children[0].tag]] += 1
+              for key in totals:
+                  if count(suite, key) != observed[key]:
+                      raise SystemExit(f'JUnit suite {key} does not match its testcases')
+                  totals[key] += observed[key]
+          for key, value in totals.items():
+              if count(root, key) != value:
+                  raise SystemExit(f'JUnit root {key} does not match its suites')
+          PY
+          if ! jq -e --arg ontology "$ontology_relative" \
+              --argjson finding_count "$(jq '.findings | length' qc.json)" '
+              type == "object" and .version == "2.1.0"
+              and (.runs | type == "array" and length == 1)
+              and (.runs[0].tool.driver.name == "protege-mcp")
+              and (.runs[0].results | type == "array" and length <= 10000)
+              and ((.runs[0].results | length) == $finding_count)
+              and all(.runs[0].results[]?;
+                (.ruleId | type == "string" and length <= 200)
+                and (.level == "none" or .level == "note" or .level == "warning" or .level == "error")
+                and (.message.text | type == "string" and length <= 10000)
+                and (.locations | type == "array" and length <= 10)
+                and all(.locations[]?;
+                  .physicalLocation.artifactLocation.uri == $ontology
+                  and (.physicalLocation.region.startLine | type == "number" and . >= 1)))' \
+              qc.sarif >/dev/null; then
+            echo "::error::Invalid or unsafe SARIF evidence."; exit 1
+          fi
+          if [ "$EXPECTED_RELEASE_CHECK" = "true" ]; then
+            for required in release.json release.err release.exit; do test -f "$required" || {
+              echo "::error::Required release evidence is missing: $required"; exit 1; }; done
+            release_exit="$(cat release.exit)"
+            case "$release_exit" in 0|1|3) ;; *) echo "::error::Invalid release exit code."; exit 1;; esac
+            if ! jq -e --arg fingerprint "$(jq -r '.semantic_fingerprint' qc.json)" '
+                type == "object" and (.dry_run == true)
+                and (.gate == "pass" or .gate == "fail" or .gate == "error")
+                and (.artifacts | type == "array" and length <= 256)
+                and ([.artifacts[]?.path] | length == (unique | length))
+                and all(.artifacts[]?;
+                  (.path | type == "string" and length > 0 and length <= 512
+                    and (test("[\u0000-\u001f\u007f]") | not)
+                    and (startswith("/") | not)
+                    and (test("(^|/)\\.\\.(/|$)") | not))
+                  and (.sha256 | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+                  and (.bytes | type == "number" and . >= 0 and floor == .))
+                and (.semantic_fingerprint == $fingerprint)
+                and (.manifest | type == "object")
+                and (.manifest.semantic_fingerprint == $fingerprint)' \
+                release.json >/dev/null; then
+              echo "::error::Invalid release/checksum evidence."; exit 1
             fi
-          elif [ -f diff.status ]; then
+            release_gate="$(jq -r '.gate' release.json)"
+            case "$release_exit:$release_gate" in 0:pass|1:fail|3:error) ;;
+              *) echo "::error::Release gate and exit code disagree."; exit 1;; esac
+          else
+            if compgen -G 'release.*' >/dev/null; then
+              echo "::error::Release files are forbidden when release_check is false."; exit 1
+            fi
+            release_exit='disabled'
+          fi
+          if [ -f diff.status ]; then
             test "$(cat diff.status)" = "baseline-absent" || {
               echo "::error::Invalid diff.status."; exit 1;
             }
@@ -313,12 +526,27 @@ jobs:
           else
             for required in diff.json diff.err diff.exit; do test -f "$required" || {
               echo "::error::Incomplete diff result set."; exit 1; }; done
-            jq -e 'type == "object"' diff.json >/dev/null
+            jq -e '
+              type == "object"
+              and (.mode == "asserted")
+              and (.include_imports == false)
+              and (.identical | type == "boolean")
+              and (.no_network | type == "string" and length <= 1000)
+              and (.compatibility | type == "object")
+              and (.compatibility.classification | type == "string" and length <= 200)
+              and (.left_unresolved_imports | type == "array" and length <= 10000)
+              and (.right_unresolved_imports | type == "array" and length <= 10000)' \
+              diff.json >/dev/null
             case "$(cat diff.exit)" in 0|1|2|3) ;;
               *) echo "::error::Invalid diff exit code."; exit 1 ;;
             esac
           fi
-          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          {
+            echo "pr=$pr"
+            echo "ontology_relative=$ontology_relative"
+            echo "qc_gate=$(jq -r '.gate' qc.json)"
+            echo "release_exit=$release_exit"
+          } >> "$GITHUB_OUTPUT"
 
       # Build the comment purely as DATA with jq (a data processor — it never evaluates its input as
       # code). The resulting markdown is only ever posted as a PR comment body, never fed to a shell
@@ -328,39 +556,67 @@ jobs:
           PRODUCER_CONCLUSION: ${{ inputs.producer_conclusion }}
         run: |
           cd incoming
-          pol_exit="$(cat policy-validate.exit 2>/dev/null || echo '?')"
-          valid="$(jq -r 'try (.valid|tostring) catch "unknown"' policy-validate.json 2>/dev/null || echo 'unknown')"
-          digest="$(jq -r 'try (.policy_digest // "n/a") catch "n/a"' policy-validate.json 2>/dev/null || echo 'n/a')"
-          errcount="$(jq -r 'try ((.errors // []) | length) catch 0' policy-validate.json 2>/dev/null || echo 0)"
-          warncount="$(jq -r 'try ((.warnings // []) | length) catch 0' policy-validate.json 2>/dev/null || echo 0)"
+          # Artifact text is trusted only as bounded DATA. Remove Markdown control characters before
+          # interpolating candidate-derived fields into the privileged bot comment.
+          # shellcheck disable=SC2016  # jq variables/escapes are intentionally literal here.
+          safe_jq='def safe($n): tostring | gsub("[\u0000-\u001f\u007f`|@<>\\[\\]{}*_#!~\\\\]"; " ") | gsub("https?"; "hxxp"; "i") | gsub("www\\."; "www "; "i") | .[0:$n];'
+          pol_exit="$(cat candidate-policy.exit)"
+          valid="$(jq -r '.valid|tostring' candidate-policy.json)"
+          digest="$(jq -r '.policy_digest // "n/a"' candidate-policy.json)"
+          errcount="$(jq -r '(.errors // []) | length' candidate-policy.json)"
+          warncount="$(jq -r '(.warnings // []) | length' candidate-policy.json)"
+          qc_gate="$(jq -r '.gate' qc.json)"
+          qc_exit="$(cat qc.json.exit)"
+          fingerprint="$(jq -r '.semantic_fingerprint' qc.json)"
+          finding_count="$(jq -r '.findings | length' qc.json)"
           cli_version="$(jq -r '.cli_version // "?"' meta.json 2>/dev/null || echo '?')"
           head_sha="$(jq -r '.head_sha // "?"' meta.json 2>/dev/null || echo '?')"
           run_id="$(jq -r '.producer_run_id // "?"' meta.json 2>/dev/null || echo '?')"
 
-          case "$pol_exit" in
-            0) verdict="passed"; icon="[PASS]" ;;
-            1) verdict="failed (policy invalid)"; icon="[FAIL]" ;;
-            2) verdict="errored (policy could not be loaded)"; icon="[ERROR]" ;;
-            *) verdict="unknown"; icon="[?]" ;;
-          esac
+          verdict="failed"
+          icon="[FAIL]"
+          diff_ok=false
+          if [ -f diff.status ] || { [ -f diff.exit ] && [ "$(cat diff.exit)" = "0" ]; }; then
+            diff_ok=true
+          fi
+          if [ "$PRODUCER_CONCLUSION" = "success" ] && [ "$pol_exit" = "0" ] \
+              && [ "$qc_exit" = "0" ] && [ "$diff_ok" = "true" ] \
+              && { [ ! -f release.exit ] || [ "$(cat release.exit)" = "0" ]; }; then
+            verdict="passed"
+            icon="[PASS]"
+          fi
 
           # shellcheck disable=SC2016  # The single-quoted printf strings below carry LITERAL Markdown
-          # backticks (e.g. `run_project_qc`, `owl:imports`) for the PR comment; they must not expand.
+          # backticks for the PR comment; they must not expand.
           {
-            printf '## %s Ontology CI: policy %s\n\n' "$icon" "$verdict"
-            printf '**Scope:** project-policy validation + asserted semantic diff. '
-            printf 'This gate does **not** run the reasoner/profile/governance/invariants/CQ/SHACL '
-            printf 'project-QC stages — those need the in-Protégé `run_project_qc` tool or a future '
-            printf 'bundled-reasoner headless runner.\n\n'
-            printf '### Policy validation\n\n'
+            printf '## %s Ontology CI %s\n\n' "$icon" "$verdict"
+            printf '**Scope:** candidate-policy validation; base-policy full QC; dry-run release; '
+            printf 'asserted semantic diff. The PR policy and validation assets never judge their own change.\n\n'
+            printf '### Candidate policy proposal\n\n'
             printf -- '- Valid: `%s`\n' "$valid"
             printf -- '- Errors: `%s`  Warnings: `%s`\n' "$errcount" "$warncount"
             printf -- '- Policy digest: `%s`\n' "$digest"
             printf -- '- CLI exit: `%s`\n\n' "$pol_exit"
             if [ "$errcount" != "0" ]; then
               printf '#### Errors\n\n'
-              jq -r 'try ((.errors // [])[:50][] | "- **" + (.code // "error") + "** " + ((.path // "") | if . == "" then "" else "`" + . + "` " end) + "— " + ((.message // "") | gsub("\n";" "))) catch empty' \
-                policy-validate.json 2>/dev/null || true
+              jq -r "${safe_jq}"' try ((.errors // [])[:50][] | "- **" + ((.code // "error") | safe(200)) + "** " + ((.path // "") | safe(1000) | if . == "" then "" else "`" + . + "` " end) + "— " + ((.message // "") | safe(10000))) catch empty' \
+                candidate-policy.json 2>/dev/null || true
+              printf '\n'
+            fi
+            printf '### Trusted full project QC\n\n'
+            printf -- '- Gate: `%s` · CLI exit: `%s`\n' "$qc_gate" "$qc_exit"
+            printf -- '- Findings: `%s`\n' "$finding_count"
+            printf -- '- Semantic fingerprint: `%s`\n\n' "$fingerprint"
+            printf '| Stage | Status | Findings |\n| --- | --- | ---: |\n'
+            jq -r "${safe_jq}"' .stages[] | "| `" + (.stage | safe(200)) + "` | `" + (.status | safe(20)) + "` | " + ((.findings | length) | tostring) + " |"' qc.json
+            printf '\n_JUnit and SARIF evidence was schema-checked by the trusted annotator; bounded SARIF '
+            printf 'findings are attached to the PR-head check._\n\n'
+            if [ -f release.json ]; then
+              printf '### Trusted release preview\n\n'
+              printf -- '- Gate: `%s` · CLI exit: `%s`\n' \
+                "$(jq -r '.gate' release.json)" "$(cat release.exit)"
+              printf -- '- Artifact checksums: `%s`\n\n' "$(jq -r '.artifacts | length' release.json)"
+              jq -r "${safe_jq}"' .artifacts[]? | "- `" + (.path | safe(512)) + "` — `" + .sha256 + "` (" + (.bytes|tostring) + " bytes)"' release.json
               printf '\n'
             fi
             if [ -f diff.json ]; then
@@ -378,9 +634,8 @@ jobs:
               printf '_No base-branch baseline for the ontology (new file); diff skipped._\n\n'
             fi
             printf -- '---\n'
-            printf '_Producer run `%s` · head `%s` · CLI `%s` · validation run conclusion `%s`. ' \
+            printf '_Producer run `%s` · head `%s` · CLI `%s` · validation run conclusion `%s`._\n' \
               "$run_id" "$head_sha" "$cli_version" "${PRODUCER_CONCLUSION:-unknown}"
-            printf 'Richer JUnit/SARIF code-scanning annotations arrive with the headless QC runner._\n'
           } > ../comment.md
 
       - name: Post or update the PR comment
@@ -402,7 +657,10 @@ jobs:
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: prNumber, per_page: 100,
             });
-            const existing = comments.find(c => c.body && c.body.includes(marker));
+            // Only adopt a comment this bot authored: a PR author could plant the marker in
+            // their own comment and later re-edit the report the pipeline keeps updating there.
+            const existing = comments.find(c => c.body && c.body.includes(marker)
+              && c.user && c.user.login === 'github-actions[bot]' && c.user.type === 'Bot');
             if (existing) {
               await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
             } else {
@@ -421,9 +679,20 @@ jobs:
             echo "::error::Producer workflow concluded ${PRODUCER_CONCLUSION:-unknown}."
             fail=1
           fi
-          pol_exit="$(cat policy-validate.exit 2>/dev/null || echo 2)"
+          pol_exit="$(cat candidate-policy.exit 2>/dev/null || echo 2)"
           if [ "$pol_exit" != "0" ]; then
-            echo "::error::Policy gate failed (exit ${pol_exit})."
+            echo "::error::Candidate policy validation failed (exit ${pol_exit})."
+            fail=1
+          fi
+          for result in qc.json.exit qc.junit.xml.exit qc.sarif.exit; do
+            qc_exit="$(cat "$result" 2>/dev/null || echo 3)"
+            if [ "$qc_exit" != "0" ]; then
+              echo "::error::Trusted full-QC evidence failed ($result=$qc_exit)."
+              fail=1
+            fi
+          done
+          if [ -f release.exit ] && [ "$(cat release.exit)" != "0" ]; then
+            echo "::error::Trusted release preview failed (exit $(cat release.exit))."
             fail=1
           fi
           # Present only when the diff actually ran (absent when skipped or baseline-absent).
@@ -448,8 +717,10 @@ jobs:
           VERIFY_OUTCOME: ${{ steps.verify.outcome }}
           COMMENT_OUTCOME: ${{ steps.comment.outcome }}
           PROPAGATE_OUTCOME: ${{ steps.propagate.outcome }}
+          ONTOLOGY_RELATIVE: ${{ steps.verify.outputs.ontology_relative }}
         with:
           script: |
+            const fs = require('fs');
             const { owner, repo } = context.repo;
             const outcomes = [
               process.env.PROVENANCE_OUTCOME,
@@ -458,6 +729,38 @@ jobs:
               process.env.PROPAGATE_OUTCOME,
             ];
             const passed = outcomes.every(value => value === 'success');
+            let annotations = [];
+            let evidenceSummary = 'Evidence could not be trusted.';
+            if (process.env.VERIFY_OUTCOME === 'success') {
+              const sarif = JSON.parse(fs.readFileSync('incoming/qc.sarif', 'utf8'));
+              const results = (((sarif || {}).runs || [])[0] || {}).results || [];
+              const safeRule = value => /^[A-Za-z0-9._:-]{1,200}$/.test(value || '')
+                ? value : 'ontology-qc';
+              const safeText = value => String(value || 'Ontology QC finding')
+                .replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 1000);
+              annotations = results.slice(0, 50).map(result => ({
+                path: process.env.ONTOLOGY_RELATIVE,
+                start_line: 1,
+                end_line: 1,
+                annotation_level: result.level === 'error' ? 'failure'
+                  : result.level === 'warning' ? 'warning' : 'notice',
+                title: safeRule(result.ruleId),
+                message: safeText(result.message && result.message.text),
+              }));
+              const qc = JSON.parse(fs.readFileSync('incoming/qc.json', 'utf8'));
+              const release = fs.existsSync('incoming/release.json')
+                ? JSON.parse(fs.readFileSync('incoming/release.json', 'utf8')) : null;
+              evidenceSummary = `QC gate: ${qc.gate}; findings: ${(qc.findings || []).length}; `
+                + `release: ${release ? release.gate : 'disabled'}; `
+                + `trusted annotations: ${annotations.length}.`;
+            }
+            const output = {
+              title: passed ? 'Ontology gate passed' : 'Ontology gate failed',
+              summary: passed
+                ? `Trusted producer/caller provenance and full ontology evidence verified. ${evidenceSummary}`
+                : `Trusted gate failed. Step outcomes: ${outcomes.join(', ')}. ${evidenceSummary}`,
+            };
+            if (annotations.length) output.annotations = annotations;
             await github.rest.checks.create({
               owner,
               repo,
@@ -466,10 +769,5 @@ jobs:
               status: 'completed',
               conclusion: passed ? 'success' : 'failure',
               details_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
-              output: {
-                title: passed ? 'Ontology gate passed' : 'Ontology gate failed',
-                summary: passed
-                  ? 'Trusted producer/caller provenance and ontology-CI artifacts verified.'
-                  : `Trusted gate failed. Step outcomes: ${outcomes.join(', ')}.`,
-              },
+              output,
             });

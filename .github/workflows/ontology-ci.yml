@@ -1,18 +1,17 @@
 # Reusable ontology-CI gate for CONSUMER projects (not this repo's own build — that is ci.yml).
 #
-# What it gates (be honest about the boundary):
-#   * POLICY VALIDATION — `validate --project <policy> --no-network --no-external`: the project policy is
-#     well-formed, its references resolve, and its local assets exist.
+# What it gates:
+#   * CANDIDATE POLICY VALIDATION — the PR policy is validated as a proposed change, but never judges
+#     the ontology change in the same PR.
+#   * TRUSTED FULL PROJECT QC — the base branch's policy, validation assets, imports, and catalog judge
+#     the candidate root ontology with HermiT, offline, producing JSON/JUnit/SARIF evidence.
+#   * RELEASE PREVIEW — the same trusted workspace runs the complete dry-run release gate and records
+#     every artifact checksum (enabled by default).
 #   * ASSERTED SEMANTIC DIFF — `diff --left <baseline> --right <ontology> --no-network`: the
 #     asserted-only semantic change between the base-branch ontology and the PR's ontology
 #     (imports are never dereferenced; a private empty placeholder satisfies each one).
 #
-# What it does NOT gate: the reasoner-/profile-/governance-/invariants-/CQ-/SHACL-dependent
-# project QC gate. The headless CLI cannot run those stages (no bundled reasoner); they need the
-# in-Protégé `run_project_qc` tool or a future bundled-reasoner headless runner. This workflow is a
-# policy-validation + asserted-diff gate, never a full ontology QC gate.
-#
-# Fork-safe by construction (PLAN §10.4): this workflow is the UNTRUSTED half. A consumer calls it
+# Fork-safe by construction: this workflow is the UNTRUSTED half. A consumer calls it
 # from a `pull_request`-triggered caller (never `pull_request_target`), so a fork PR runs it with a
 # read-only token and no secrets. It grants only `contents: read`, holds no PR-write or
 # security-events scope, and writes its verdict ONLY to an uploaded artifact. The TRUSTED half
@@ -20,8 +19,8 @@
 # artifact as data and posts the annotation. The gate flags here are fixed (`--no-network`,
 # `--no-external`, no credentials), so a PR policy cannot relax the parser posture.
 #
-# Requires protege-mcp-cli 0.7.0+ (the first release that ships `validate --no-network` and
-# `diff --check`). Tags in hakjuoh/protege-mcp are occasionally re-cut (moved), so `cli_version`
+# Requires protege-mcp-cli 0.7.1+ (the first release with complete headless QC/release execution).
+# Tags in hakjuoh/protege-mcp are occasionally re-cut (moved), so `cli_version`
 # pins a release and consumers should pin THIS workflow itself by full commit SHA (see docs/ci.md).
 
 name: Ontology CI (reusable)
@@ -34,9 +33,9 @@ on:
         type: string
         default: '.protege-mcp/project.yaml'
       ontology:
-        description: 'Path to the candidate ontology document to diff. Empty disables the diff.'
+        description: 'Path to the candidate root ontology; must match the trusted policy root artifact.'
         type: string
-        default: ''
+        required: true
       diff_check:
         description: >-
           Turn the asserted diff into an identity gate (`diff --check`, exit 1 on ANY difference).
@@ -45,9 +44,13 @@ on:
         type: boolean
         default: false
       cli_version:
-        description: 'protege-mcp-cli release to download (0.7.0+). Pin to a release you reviewed.'
+        description: 'protege-mcp-cli release to download (0.7.1+). Pin to a release you reviewed.'
         type: string
-        default: '0.7.0'
+        default: '0.7.1'
+      release_check:
+        description: 'Run and enforce the trusted dry-run release gate and preserve its checksums.'
+        type: boolean
+        default: true
       artifact_name:
         description: 'Name of the results artifact the trusted annotator consumes.'
         type: string
@@ -66,6 +69,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Require a pull-request caller
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "::error::This reusable workflow must be called by a pull_request workflow."
+            exit 2
+          fi
+
       # Pin the exact PR-head SHA recorded in the artifact. Treat the checkout as untrusted data only.
       - name: Check out the candidate (PR head)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -77,7 +89,6 @@ jobs:
       # The BASE branch establishes the diff baseline, so the PR cannot rewrite what it is compared
       # against. base.sha is an immutable commit id (safe to pass as a checkout ref input).
       - name: Check out the base-branch baseline
-        if: ${{ github.event_name == 'pull_request' && inputs.ontology != '' }}
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.base.sha }}
@@ -93,6 +104,7 @@ jobs:
       # though this reusable workflow is SHA-pinned. Resolve every input below its checkout before a
       # parser sees it; this also rejects a repository symlink that points at runner files.
       - name: Confine untrusted workflow inputs to their checkouts
+        id: paths
         env:
           PROJECT: ${{ inputs.project }}
           ONTOLOGY: ${{ inputs.ontology }}
@@ -103,6 +115,10 @@ jobs:
             root="$1"
             relative="$2"
             label="$3"
+            if [ "${#relative}" -gt 512 ] || printf '%s' "$relative" | grep -q '[[:cntrl:]]'; then
+              echo "::error::${label} is oversized or contains control characters."
+              exit 2
+            fi
             case "$relative" in
               ''|/*|\\\\*|[A-Za-z]:*)
                 echo "::error::${label} must be a non-empty checkout-relative path."
@@ -123,13 +139,17 @@ jobs:
               exit 2
             fi
           }
-          confine_file "$CANDIDATE" "$PROJECT" project
-          if [ -n "$ONTOLOGY" ]; then
-            confine_file "$CANDIDATE" "$ONTOLOGY" ontology
-            if [ -e "$BASELINE/$ONTOLOGY" ]; then
-              confine_file "$BASELINE" "$ONTOLOGY" baseline-ontology
-            fi
+          confine_file "$CANDIDATE" "$PROJECT" candidate-project
+          confine_file "$BASELINE" "$PROJECT" trusted-base-project
+          confine_file "$CANDIDATE" "$ONTOLOGY" candidate-ontology
+          if [ -e "$BASELINE/$ONTOLOGY" ]; then
+            confine_file "$BASELINE" "$ONTOLOGY" baseline-ontology
           fi
+          candidate_root="$(realpath -e -- "$CANDIDATE")"
+          candidate_ontology="$(realpath -e -- "$CANDIDATE/$ONTOLOGY")"
+          ontology_relative="$(realpath --relative-to="$candidate_root" -- "$candidate_ontology")"
+          case "$ontology_relative" in ''|..|../*) exit 2 ;; esac
+          echo "ontology_relative=$ontology_relative" >> "$GITHUB_OUTPUT"
 
       # Download the published CLI and VERIFY it before running anything. The release publishes a
       # bare-basename `.sha256` sidecar, so `sha256sum -c` verifies the jar in the working directory.
@@ -139,8 +159,15 @@ jobs:
         env:
           CLI_VERSION: ${{ inputs.cli_version }}
         run: |
-          if ! printf '%s' "$CLI_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::cli_version must be a numeric SemVer release (for example 0.7.0)."
+          if ! printf '%s' "$CLI_VERSION" \
+              | grep -Eq '^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$'; then
+            echo "::error::cli_version must be a canonical numeric SemVer release (for example 0.7.1)."
+            exit 2
+          fi
+          IFS=. read -r major minor patch <<< "$CLI_VERSION"
+          if (( major < 0 || (major == 0 && minor < 7) \
+              || (major == 0 && minor == 7 && patch < 1) )); then
+            echo "::error::cli_version must be 0.7.1 or newer."
             exit 2
           fi
           base="https://github.com/hakjuoh/protege-mcp/releases/download/v${CLI_VERSION}"
@@ -152,10 +179,49 @@ jobs:
           mv "$jar" "${jar}.sha256" "$RUNNER_TEMP/"
           echo "jar=${RUNNER_TEMP}/${jar}" >> "$GITHUB_OUTPUT"
 
-      # POLICY GATE. --no-network/--no-external are fixed regardless of policy contents, so a PR
-      # cannot turn its policy parser into a network/outside-checkout reader. --format json is written
-      # to the artifact for the trusted annotator to read as data.
-      - name: Validate project policy
+      # Build the trusted judge from BASE bytes, then replace only the configured root ontology with
+      # candidate bytes. Candidate policy/shapes/queries/catalogs are therefore never able to weaken
+      # the gate judging the same PR.
+      - name: Build trusted candidate workspace
+        id: trusted
+        env:
+          BASELINE: ${{ github.workspace }}/__baseline__
+          CANDIDATE: ${{ github.workspace }}/__candidate__
+          PROJECT_INPUT: ${{ inputs.project }}
+          ONTOLOGY_INPUT: ${{ inputs.ontology }}
+          ONTOLOGY_RELATIVE: ${{ steps.paths.outputs.ontology_relative }}
+          TRUSTED: ${{ runner.temp }}/trusted-project
+        run: |
+          rm -rf "$TRUSTED"
+          mkdir -m 700 "$TRUSTED"
+          cp -a -- "$BASELINE/." "$TRUSTED/"
+          # Checkout metadata is not a project input and can expose unrelated repository internals to
+          # parsers or unnecessarily inflate the private copy. The immutable base SHA is already bound
+          # in meta.json and independently authenticated by the annotator.
+          rm -rf -- "$TRUSTED/.git"
+          trusted_real="$(realpath -e -- "$TRUSTED")"
+          candidate_ontology="$(realpath -e -- "$CANDIDATE/$ONTOLOGY_INPUT")"
+          destination="$TRUSTED/$ONTOLOGY_RELATIVE"
+          parent="$(realpath -e -- "$(dirname -- "$destination")")" || {
+            echo "::error::The candidate ontology parent does not exist in the trusted base workspace."
+            exit 2
+          }
+          case "$parent" in "$trusted_real"|"$trusted_real"/*) ;; *)
+            echo "::error::Trusted ontology destination escapes the workspace."; exit 2;; esac
+          if [ -d "$destination" ]; then
+            echo "::error::Trusted ontology destination is a directory."; exit 2
+          fi
+          rm -f -- "$destination"
+          install -m 600 -- "$candidate_ontology" "$destination"
+          trusted_project="$(realpath -e -- "$TRUSTED/$PROJECT_INPUT")"
+          case "$trusted_project" in "$trusted_real"/*) ;; *)
+            echo "::error::Trusted project policy escapes the workspace."; exit 2;; esac
+          echo "project=$trusted_project" >> "$GITHUB_OUTPUT"
+          echo "ontology_relative=$ONTOLOGY_RELATIVE" >> "$GITHUB_OUTPUT"
+
+      # Validate the PR policy only as a proposal. It does not supply the policy or validation assets
+      # used by the trusted full-QC/release steps below.
+      - name: Validate candidate project policy
         id: policy
         env:
           JAR: ${{ steps.cli.outputs.jar }}
@@ -167,22 +233,68 @@ jobs:
           rm -rf "$RESULTS"
           mkdir -p "$RESULTS"
           set +e
-          java -jar "$JAR" validate --project "$PROJECT" --format json --no-network --no-external \
-            > "$RESULTS/policy-validate.json" 2> "$RESULTS/policy-validate.err"
+          java -jar "$JAR" validate-policy --project "$PROJECT" --no-network --no-external \
+            > "$RESULTS/candidate-policy.json" 2> "$RESULTS/candidate-policy.err"
           code=$?
           set -e
-          printf '%s' "$code" > "$RESULTS/policy-validate.exit"
+          printf '%s' "$code" > "$RESULTS/candidate-policy.exit"
           echo "exit=$code" >> "$GITHUB_OUTPUT"
           echo "Policy validation exit: $code"
-          cat "$RESULTS/policy-validate.json" || true
-          cat "$RESULTS/policy-validate.err" || true
+          cat "$RESULTS/candidate-policy.json" || true
+          cat "$RESULTS/candidate-policy.err" || true
+
+      - name: Run trusted full project QC evidence
+        id: qc
+        env:
+          JAR: ${{ steps.cli.outputs.jar }}
+          PROJECT: ${{ steps.trusted.outputs.project }}
+          ONTOLOGY_RELATIVE: ${{ steps.trusted.outputs.ontology_relative }}
+          RESULTS: ${{ runner.temp }}/results
+        run: |
+          run_format() {
+            format="$1"
+            output="$2"
+            set +e
+            java -jar "$JAR" validate --project "$PROJECT" --format "$format" \
+              --no-network --no-external > "$RESULTS/$output" 2> "$RESULTS/${output}.err"
+            code=$?
+            set -e
+            printf '%s' "$code" > "$RESULTS/${output}.exit"
+            echo "${format}_exit=$code" >> "$GITHUB_OUTPUT"
+          }
+          run_format json qc.json
+          run_format junit qc.junit.xml
+          run_format sarif qc.sarif
+          binding=false
+          if jq -e --arg ontology "$ONTOLOGY_RELATIVE" \
+              '.scope == "project_qc" and .resolved_assets.root_artifact == [$ontology]' \
+              "$RESULTS/qc.json" >/dev/null 2>&1; then
+            binding=true
+          fi
+          echo "binding=$binding" >> "$GITHUB_OUTPUT"
+
+      - name: Run trusted dry-run release evidence
+        id: release
+        if: ${{ inputs.release_check }}
+        env:
+          JAR: ${{ steps.cli.outputs.jar }}
+          PROJECT: ${{ steps.trusted.outputs.project }}
+          RESULTS: ${{ runner.temp }}/results
+        run: |
+          set +e
+          java -jar "$JAR" release --project "$PROJECT" --dry-run --no-network --no-external \
+            > "$RESULTS/release.json" 2> "$RESULTS/release.err"
+          code=$?
+          set -e
+          printf '%s' "$code" > "$RESULTS/release.exit"
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "Release preview exit: $code"
 
       # ASSERTED-DIFF GATE / REPORT. Report-only by default (exit 0); --check makes it an identity
       # gate. Exit 3 (a document that could not be loaded) always fails. A missing baseline file
       # (new ontology) is recorded, not failed.
       - name: Asserted semantic diff against the baseline
         id: diff
-        if: ${{ github.event_name == 'pull_request' && inputs.ontology != '' }}
         env:
           JAR: ${{ steps.cli.outputs.jar }}
           LEFT: ${{ github.workspace }}/__baseline__/${{ inputs.ontology }}
@@ -214,10 +326,13 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CLI_VERSION: ${{ inputs.cli_version }}
           PROJECT: ${{ inputs.project }}
           ONTOLOGY: ${{ inputs.ontology }}
+          ONTOLOGY_RELATIVE: ${{ steps.trusted.outputs.ontology_relative }}
           DIFF_CHECK: ${{ inputs.diff_check }}
+          RELEASE_CHECK: ${{ inputs.release_check }}
           WORKFLOW: ${{ github.workflow }}
           RESULTS: ${{ runner.temp }}/results
         run: |
@@ -229,11 +344,14 @@ jobs:
             --arg run_attempt "$RUN_ATTEMPT" \
             --arg workflow "$WORKFLOW" \
             --arg head_sha "$HEAD_SHA" \
+            --arg base_sha "$BASE_SHA" \
             --arg cli_version "$CLI_VERSION" \
             --arg project "$PROJECT" \
             --arg ontology "$ONTOLOGY" \
+            --arg ontology_relative "$ONTOLOGY_RELATIVE" \
             --argjson diff_check "$DIFF_CHECK" \
-            '{producer_run_id:$run_id, producer_run_attempt:$run_attempt, producer_workflow:$workflow, head_sha:$head_sha, cli_version:$cli_version, project:$project, ontology:$ontology, diff_check:$diff_check, scope:"policy_validation+asserted_diff"}' \
+            --argjson release_check "$RELEASE_CHECK" \
+            '{producer_run_id:$run_id, producer_run_attempt:$run_attempt, producer_workflow:$workflow, head_sha:$head_sha, base_sha:$base_sha, cli_version:$cli_version, project:$project, ontology:$ontology, ontology_relative:$ontology_relative, diff_check:$diff_check, release_check:$release_check, scope:"candidate_policy+trusted_project_qc+asserted_diff+release_preview"}' \
             > meta.json
           # Bare-basename checksums; the annotator parses this strict list and hashes each allowed
           # file itself, never passing an artifact-supplied path to sha256sum.
@@ -256,11 +374,31 @@ jobs:
       - name: Enforce the gate
         env:
           POLICY_EXIT: ${{ steps.policy.outputs.exit }}
+          QC_JSON_EXIT: ${{ steps.qc.outputs.json_exit }}
+          QC_JUNIT_EXIT: ${{ steps.qc.outputs.junit_exit }}
+          QC_SARIF_EXIT: ${{ steps.qc.outputs.sarif_exit }}
+          QC_BINDING: ${{ steps.qc.outputs.binding }}
+          RELEASE_CHECK: ${{ inputs.release_check }}
+          RELEASE_EXIT: ${{ steps.release.outputs.exit }}
           DIFF_EXIT: ${{ steps.diff.outputs.exit }}
         run: |
           fail=0
           if [ "${POLICY_EXIT:-2}" != "0" ]; then
-            echo "::error::Policy gate failed (exit ${POLICY_EXIT:-2})."
+            echo "::error::Candidate policy validation failed (exit ${POLICY_EXIT:-2})."
+            fail=1
+          fi
+          for result in "$QC_JSON_EXIT" "$QC_JUNIT_EXIT" "$QC_SARIF_EXIT"; do
+            if [ "${result:-3}" != "0" ]; then
+              echo "::error::Trusted full-QC evidence failed (exit ${result:-3})."
+              fail=1
+            fi
+          done
+          if [ "$QC_BINDING" != "true" ]; then
+            echo "::error::Trusted policy root artifact does not match the configured candidate ontology."
+            fail=1
+          fi
+          if [ "$RELEASE_CHECK" = "true" ] && [ "${RELEASE_EXIT:-3}" != "0" ]; then
+            echo "::error::Trusted release preview failed (exit ${RELEASE_EXIT:-3})."
             fail=1
           fi
           # Exhaustive and fail-closed: ANY non-zero diff exit fails the gate (never fall through open).

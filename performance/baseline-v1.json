@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "fixture_schema_version": 1,
+  "reference_environment": {
+    "captured_on": "2026-07-19",
+    "hardware": "Apple M2 Max, 64 GiB",
+    "operating_system": "macOS 26.5 arm64",
+    "java": "Homebrew OpenJDK 17.0.19",
+    "measurement": "median of 5 samples after 3 warm-ups"
+  },
+  "warmup_iterations": 3,
+  "sample_iterations": 5,
+  "maximum_regression_factor": 5.0,
+  "minimum_budget_ms": 250.0,
+  "reference_ms": {
+    "small": {
+      "snapshot_capture": 11.774,
+      "reasoning": 9.763,
+      "sparql_cache_build": 7.215,
+      "shacl": 6.911,
+      "semantic_diff": 3.35,
+      "verified_serialization": 12.979
+    },
+    "medium": {
+      "snapshot_capture": 32.875,
+      "reasoning": 33.669,
+      "sparql_cache_build": 20.281,
+      "shacl": 17.5,
+      "semantic_diff": 12.584,
+      "verified_serialization": 33.787
+    },
+    "large": {
+      "snapshot_capture": 85.405,
+      "reasoning": 243.474,
+      "sparql_cache_build": 51.683,
+      "shacl": 39.12,
+      "semantic_diff": 36.496,
+      "verified_serialization": 97.559
+    }
+  }
+}

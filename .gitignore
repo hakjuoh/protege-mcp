@@ -1,5 +1,7 @@
 # Build output
 target/
+__pycache__/
+*.pyc
 *.class
 
 # Recon scratch (API-fact extraction, not source)

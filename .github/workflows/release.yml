@@ -94,6 +94,45 @@ jobs:
       - name: Build, test, and enforce coverage
         run: mvn -B clean verify
 
+      - name: Exercise the real Protégé runtime
+        run: |
+          if [ -f scripts/live-integration/run.sh ]; then
+            sudo apt-get update
+            sudo apt-get install --yes xvfb
+            xvfb-run --auto-servernum bash scripts/live-integration/run.sh
+          else
+            echo "No live integration harness in this legacy tag; skipping."
+          fi
+
+      - name: Upload live-runtime evidence
+        if: ${{ always() && hashFiles('scripts/live-integration/run.sh') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-protege-integration-${{ steps.project.outputs.version }}
+          path: plugin/target/live-integration/
+          if-no-files-found: warn
+
+      - name: Enforce versioned performance baseline
+        run: |
+          if [ -f performance/baseline-v1.json ]; then
+            mvn -B -pl plugin -am \
+              -Dtest=PerformanceBaselineTest \
+              -Dsurefire.failIfNoSpecifiedTests=false \
+              -Dprotege.performance=true \
+              -Dprotege.performance.enforce=true \
+              test
+          else
+            echo "No performance baseline in this legacy tag; skipping."
+          fi
+
+      - name: Upload performance measurements
+        if: ${{ always() && hashFiles('performance/baseline-v1.json') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: performance-results-${{ steps.project.outputs.version }}
+          path: plugin/target/performance-results.json
+          if-no-files-found: warn
+
       - name: Locate plugin release asset
         id: assets
         env:
@@ -129,10 +168,50 @@ jobs:
               echo "Standalone CLI unexpectedly contains Protégé editor classes." >&2
               exit 1
             fi
+            if ! jar tf "$CLI_ASSET" | grep -q '^org/semanticweb/HermiT/ReasonerFactory.class$'; then
+              echo "Standalone CLI is missing the reviewed HermiT baseline reasoner." >&2
+              exit 1
+            fi
+            if ! jar tf "$CLI_ASSET" | grep -q '^net/automatalib/automaton/fsa/impl/CompactNFA.class$'; then
+              echo "Standalone CLI is missing the maintained AutomataLib replacement." >&2
+              exit 1
+            fi
+            if jar tf "$CLI_ASSET" | grep -q '^rationals/converters/toAscii.class$'; then
+              echo "Standalone CLI contains the excluded legacy JAutomata implementation." >&2
+              exit 1
+            fi
+            if jar tf "$CLI_ASSET" | grep -Eq '\.jar$'; then
+              echo "Standalone CLI contains an inert nested dependency jar." >&2
+              exit 1
+            fi
             work="$(mktemp -d)"
             (cd "$work" && java -jar "$GITHUB_WORKSPACE/$CLI_ASSET" --version)
             ( cd "$(dirname "$CLI_ASSET")" && sha256sum "$(basename "$CLI_ASSET")" ) \
               > "${CLI_ASSET}.sha256"
+
+            # The reasoner-bearing CLI is publishable only with complete license/source/relinking
+            # evidence. Maven's prepare-package phase copied the exact corresponding source.
+            hermit_source="cli/target/compliance/org.semanticweb.hermit-1.3.8.431-sources.jar"
+            test -s "$hermit_source"
+            for license in GPL-2.0 LGPL-2.1 GPL-3.0 LGPL-3.0 Apache-2.0 \
+                           dk.brics.automaton-BSD Jaxen-BSD Stax2-BSD; do
+              test -s "LICENSES/${license}.txt"
+            done
+            test -s docs/headless-relinking.md
+            test -s docs/evidence/hermit-upstream-readme-65d3890.txt
+            compliance_stage="$(mktemp -d)"
+            cp "$hermit_source" "$compliance_stage/"
+            cp LICENSES/GPL-2.0.txt LICENSES/LGPL-2.1.txt \
+               LICENSES/GPL-3.0.txt LICENSES/LGPL-3.0.txt \
+               LICENSES/Apache-2.0.txt LICENSES/dk.brics.automaton-BSD.txt \
+               LICENSES/Jaxen-BSD.txt LICENSES/Stax2-BSD.txt "$compliance_stage/"
+            cp docs/headless-relinking.md "$compliance_stage/RELINKING.md"
+            cp docs/evidence/hermit-upstream-readme-65d3890.txt \
+               "$compliance_stage/HERMIT-UPSTREAM-README.txt"
+            cp THIRD_PARTY_NOTICES.md "$compliance_stage/"
+            compliance_asset="protege-mcp-${VERSION}-headless-compliance.zip"
+            jar --create --file "$compliance_asset" -C "$compliance_stage" .
+            sha256sum "$compliance_asset" > "${compliance_asset}.sha256"
           else
             echo "No CLI artifact in this (legacy) tag; skipping the standalone CLI checks."
           fi
@@ -176,7 +255,10 @@ jobs:
           # a legacy-tag republish has neither, so include each only when present.
           assets=("$ASSET" "${ASSET}.sha256" "protege-mcp-${VERSION}-LICENSE.txt")
           if [ -f "$CLI_ASSET" ]; then
-            assets+=("$CLI_ASSET" "${CLI_ASSET}.sha256")
+            compliance_asset="protege-mcp-${VERSION}-headless-compliance.zip"
+            test -s "$compliance_asset"
+            test -s "${compliance_asset}.sha256"
+            assets+=("$CLI_ASSET" "${CLI_ASSET}.sha256" "$compliance_asset" "${compliance_asset}.sha256")
           fi
           if [ -f THIRD_PARTY_NOTICES.md ]; then
             assets+=(THIRD_PARTY_NOTICES.md)

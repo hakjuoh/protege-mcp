@@ -1,0 +1,8 @@
+Prefix(:=<http://example.org/live-b#>)
+Prefix(owl:=<http://www.w3.org/2002/07/owl#>)
+
+Ontology(<http://example.org/live-b>
+ Declaration(Class(:Vehicle))
+ Declaration(Class(:Car))
+ SubClassOf(:Car :Vehicle)
+)

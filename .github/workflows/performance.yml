@@ -1,0 +1,40 @@
+name: Performance Regression
+
+on:
+  schedule:
+    - cron: '23 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run versioned performance regression gate
+        run: >-
+          mvn -B -pl plugin -am
+          -Dtest=PerformanceBaselineTest
+          -Dsurefire.failIfNoSpecifiedTests=false
+          -Dprotege.performance=true
+          -Dprotege.performance.enforce=true
+          test
+
+      - name: Upload performance measurements
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: performance-results
+          path: plugin/target/performance-results.json
+          if-no-files-found: warn

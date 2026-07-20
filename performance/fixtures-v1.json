@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "fixtures": [
+    {
+      "name": "small",
+      "classes": 100,
+      "object_properties": 4,
+      "individuals": 25
+    },
+    {
+      "name": "medium",
+      "classes": 500,
+      "object_properties": 12,
+      "individuals": 150
+    },
+    {
+      "name": "large",
+      "classes": 2000,
+      "object_properties": 24,
+      "individuals": 500
+    }
+  ]
+}
