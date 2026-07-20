@@ -29,6 +29,8 @@ import org.semanticweb.owlapi.model.OWLObjectProperty;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.util.mansyntax.ManchesterOWLSyntaxParser;
 
+import io.github.hakjuoh.protege_mcp.core.owl.EntityGrounding;
+
 /**
  * Resolves textual references (display names or IRIs) to OWL entities / class expressions / data ranges,
  * minting from a full IRI when not yet declared and parsing Manchester syntax where applicable. Split out
@@ -81,14 +83,19 @@ public final class EntityResolver {
         if (local.isEmpty() || local.startsWith("//") || local.indexOf(' ') >= 0) {
             return null;                                   // scheme://… , empty, or a phrase — not a CURIE
         }
-        String prefix = ref.substring(0, colon + 1);       // keep the trailing ':' (prefix map keys carry it)
-        String namespace;
+        Map<String, String> prefixes;
         try {
-            namespace = SparqlTools.prefixMap(mm, mm.getActiveOntology()).get(prefix);
+            prefixes = SparqlTools.prefixMap(mm, mm.getActiveOntology());
         } catch (RuntimeException ignored) {
             return null;                                   // no active ontology / no prefix map available
         }
-        return namespace == null ? null : IRI.create(namespace + local);
+        // A normalized-prefix collision is an ambiguity and must not fall through to the misleading
+        // absolute IRI "prefix:local".
+        try {
+            return EntityGrounding.expandCurie(ref, prefixes);
+        } catch (IllegalArgumentException ambiguous) {
+            throw new ToolArgException(ambiguous.getMessage());
+        }
     }
 
     /** A registered-prefix CURIE expanded to its IRI, else {@code ref} parsed as an absolute IRI (or null). */

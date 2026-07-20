@@ -34,6 +34,7 @@ class EntityResolverCurieTest {
         m.addAxiom(o, df.getOWLDeclarationAxiom(df.getOWLClass(IRI.create(GDC))));
         TurtleDocumentFormat fmt = new TurtleDocumentFormat();
         fmt.setPrefix("bfo:", OBO);
+        fmt.setDefaultPrefix(OBO);
         m.setOntologyFormat(o, fmt);
         return FakeModelManager.over(o);
     }
@@ -43,6 +44,10 @@ class EntityResolverCurieTest {
         OWLModelManager mm = fixture();
         assertEquals(IRI.create(GDC), EntityResolver.expandCurie(mm, "bfo:BFO_0000031"));
         assertEquals(IRI.create(GDC), EntityResolver.iriFor(mm, "bfo:BFO_0000031"));
+        assertEquals(IRI.create(GDC), EntityResolver.iriFor(mm, ":BFO_0000031"));
+        assertEquals(IRI.create(OBO + "path/with~part"),
+                EntityResolver.iriFor(mm, "bfo:path/with~part"));
+        assertEquals(IRI.create(OBO + "표현"), EntityResolver.iriFor(mm, "bfo:표현"));
     }
 
     @Test

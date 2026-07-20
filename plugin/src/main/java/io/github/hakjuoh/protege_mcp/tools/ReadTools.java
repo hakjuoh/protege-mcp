@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -103,10 +104,18 @@ public final class ReadTools {
                     String type = Tools.optString(a, "type");
                     int limit = Tools.optInt(a, "limit", 50);
                     int offset = Tools.optInt(a, "offset", 0);
+                    ProjectPolicyTools.PolicyContext live =
+                            ctx.access().compute(ProjectPolicyTools::capture);
+                    EntitySearch.Settings settings = ctx.entitySearchPolicy().resolve(live);
                     return ctx.access().compute(mm -> {
+                        ctx.revisions().installIfNeeded(mm);
+                        EntitySearch.Settings effectiveSettings = sameWorkspace(live, mm)
+                                ? settings : EntitySearch.Settings.defaults();
                         Set<? extends OWLEntity> matches = search(mm, query, type);
                         Map<String, Object> result =
-                                EntitySearch.enrichedSearch(mm, query, matches, offset, limit, type);
+                                EntitySearch.enrichedSearch(mm, query, matches, offset, limit, type,
+                                        effectiveSettings, ctx.entitySearchCache(),
+                                        ctx.revisions().version());
                         result.put("query", query);
                         result.put("type", type == null ? "all" : type);
                         return Tools.ok(result);
@@ -160,6 +169,17 @@ public final class ReadTools {
                                 .result();
                     });
                 });
+    }
+
+    private static boolean sameWorkspace(ProjectPolicyTools.PolicyContext captured,
+            OWLModelManager current) {
+        OWLOntology active = current.getActiveOntology();
+        String ontologyIri = active.getOntologyID().getOntologyIRI().orNull() == null ? null
+                : active.getOntologyID().getOntologyIRI().orNull().toString();
+        java.io.File document = SidecarPaths.toFile(
+                current.getOWLOntologyManager().getOntologyDocumentIRI(active));
+        return Objects.equals(captured.documentPath(), document == null ? null : document.toPath())
+                && Objects.equals(captured.activeOntologyIri(), ontologyIri);
     }
 
     private static Set<? extends OWLEntity> search(OWLModelManager mm, String query, String type) {
