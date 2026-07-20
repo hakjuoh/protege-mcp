@@ -26,7 +26,7 @@ class McpCatalogTest {
         Set<String> registeredPrompts = new LinkedHashSet<>();
         PromptCatalog.buildAll().forEach(spec -> registeredPrompts.add(spec.prompt().name()));
 
-        assertEquals(83, catalog.toolNames().size());
+        assertEquals(84, catalog.toolNames().size());
         assertEquals(11, catalog.promptNames().size());
         assertEquals(catalog.toolNames(), registeredTools,
                 "every JSON tool definition must have exactly one handler registration");
@@ -95,6 +95,22 @@ class McpCatalogTest {
     void parserRejectsDuplicateJsonFields() {
         assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"version":1,"tools":[],"prompts":[]}
+                """));
+    }
+
+    @Test
+    void parserRejectsInternalRoadmapIdentifiersInPublicDescriptions() {
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
+                {"version":1,"tools":[{"name":"a","description":"See ADR 0006",
+                 "input_schema":{"type":"object","additionalProperties":false}}],
+                 "prompts":[{"name":"p","description":"public behavior","arguments":[]}]}
+                """));
+        assertTrue(error.getMessage().contains("without internal roadmap identifiers"));
+
+        assertThrows(IllegalStateException.class, () -> parse("""
+                {"version":1,"tools":[{"name":"a","description":"See §9.3",
+                 "input_schema":{"type":"object","additionalProperties":false}}],
+                 "prompts":[{"name":"p","description":"public behavior","arguments":[]}]}
                 """));
     }
 

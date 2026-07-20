@@ -293,6 +293,39 @@ performed.**
   returned inline on a dry run.
 - `findings`, `stages`: the aggregated release gate findings and stages, surfaced on a refusal.
 
+## `export_audit_log`
+
+Explicitly export the active project's local audit history. Runtime events remain in separate owner-only
+JSON Lines streams below `~/.protege-mcp/audit/<project-hash>/`; the tool reads those streams under the
+project lock, validates their envelopes and permissions, re-redacts every event, sorts deterministically by
+timestamp/workspace/sequence/event ID, and writes one project-contained JSONL artifact. Events carry the
+authenticated client/provider and effective capabilities, operation and target, gate/change summary,
+change-set or policy confirmation references, and a committed release's manifest link. They do **not**
+carry bearer tokens, raw credentials, prompts, attachments, arbitrary request bodies, or ontology content.
+
+The export is bounded to 16 MiB of source data, 1,000 streams, and 20,000 events. A non-regular, symlinked,
+malformed, duplicate-key, trailing-token, oversized, or non-owner-only source is refused. Dry-run is the
+default and writes nothing. A committed export requires a valid discovered policy, `server:admin`,
+`filesystem:project:read`, and `filesystem:project:write`, then applies the live read-only and
+confirm-each-write gates. The output is restricted to the dedicated
+`.protege-mcp/audit-export*.jsonl` namespace, so it cannot overwrite an ontology, policy, lock, or release
+artifact, and uses the same containment-enforcing atomic writer as release evidence.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `dry_run` | boolean | no | `true` | Report the intended output without writing. Pass `false` to export after confirmation. |
+| `output` | string | no | `.protege-mcp/audit-export.jsonl` | Dedicated project-relative `.protege-mcp/audit-export*.jsonl` file. Absolute paths, escapes, and other filenames are refused. |
+
+**Returns**
+
+- `exported`: `true` only after the artifact is written.
+- `dry_run`: echoes the requested mode.
+- `path`: intended path on a dry run, canonical written path on a commit.
+- `sha256`, `bytes`: written artifact digest and size (committed export only).
+- `event_count`, `source_count`: merged event and stream counts (committed export only).
+
 ## `write_project_policy_template`
 
 Generate a commented, schema-valid **starter** `.protege-mcp/project.yaml` to review and commit like

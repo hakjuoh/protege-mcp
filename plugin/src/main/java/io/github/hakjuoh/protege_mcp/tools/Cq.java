@@ -16,9 +16,12 @@ final class Cq {
     }
 
     // ------------------------------------------------------------------ conventions
-    static final String CONV_ROBOT = "robot-sparql-dir";
-    static final String CONV_MANIFEST = "sidecar-manifest";
-    static final String CONV_ANNOTATIONS = "ontology-annotations";
+    static final String CONV_ROBOT =
+            io.github.hakjuoh.protege_mcp.core.qc.ValidationAssetLoader.ROBOT;
+    static final String CONV_MANIFEST =
+            io.github.hakjuoh.protege_mcp.core.qc.ValidationAssetLoader.MANIFEST;
+    static final String CONV_ANNOTATIONS =
+            io.github.hakjuoh.protege_mcp.core.qc.ValidationAssetLoader.ANNOTATIONS;
 
     // ------------------------------------------------------------------ on-disk layout
     /** The default writer's query folder next to the ontology document. */
@@ -26,12 +29,13 @@ final class Cq {
     /** {@code <basename>-cqs.json} is the full-fidelity manifest next to the document. */
     static final String MANIFEST_SUFFIX = "-cqs.json";
     /** The manifest format version — a public contract the moment it is written (see the plan §3.1). */
-    static final int MANIFEST_VERSION = 1;
+    static final int MANIFEST_VERSION =
+            io.github.hakjuoh.protege_mcp.core.qc.ValidationAssetLoader.MANIFEST_VERSION;
 
     // ------------------------------------------------------------------ ontology-annotations vocab
     /** The ontology-level annotation property under which a CQ (JSON literal) is stored inside the artifact. */
     static final String ANNOTATION_IRI =
-            "https://hakjuoh.github.io/protege-mcp/cq#competencyQuestion";
+            io.github.hakjuoh.protege_mcp.core.qc.ValidationAssetLoader.CQ_ANNOTATION_IRI;
 
     // ------------------------------------------------------------------ JSON helper
     static final JsonIo JSON = new JsonIo();

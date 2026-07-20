@@ -112,7 +112,7 @@ class ImpactToolsTest {
                         "reason", "policy v1 does not yet declare public API terms"),
                 result.get("public_api_terms"));
         assertEquals(Map.of("available", false,
-                        "reason", "mapping management ships with the M6 milestone"),
+                "reason", "mapping management is not available in this release"),
                 result.get("external_mappings"));
 
         // Analysis is read-only: the entry survives and stays claimable/discardable.

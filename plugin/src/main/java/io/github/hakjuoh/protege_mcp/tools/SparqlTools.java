@@ -1,61 +1,19 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.StringWriter;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
-
-import org.apache.jena.query.ARQ;
-import org.apache.jena.query.Query;
-import org.apache.jena.query.QueryCancelledException;
-import org.apache.jena.query.QueryExecution;
-import org.apache.jena.query.QueryExecutionFactory;
-import org.apache.jena.query.QueryFactory;
-import org.apache.jena.query.QueryParseException;
-import org.apache.jena.query.QuerySolution;
-import org.apache.jena.query.ResultSet;
-import org.apache.jena.rdf.model.Literal;
-import org.apache.jena.rdf.model.Model;
-import org.apache.jena.rdf.model.ModelFactory;
-import org.apache.jena.rdf.model.RDFNode;
-import org.apache.jena.rdf.model.Statement;
-import org.apache.jena.riot.Lang;
-import org.apache.jena.riot.RDFDataMgr;
-import org.apache.jena.sparql.algebra.Algebra;
-import org.apache.jena.sparql.algebra.Op;
-import org.apache.jena.sparql.algebra.OpVisitorBase;
-import org.apache.jena.sparql.algebra.OpWalker;
-import org.apache.jena.sparql.algebra.op.OpService;
-import org.apache.jena.sys.JenaSystem;
 import org.protege.editor.owl.model.OWLModelManager;
 import org.protege.editor.owl.model.inference.OWLReasonerManager;
 import org.protege.editor.owl.model.inference.ReasonerStatus;
-import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
-import org.semanticweb.owlapi.model.AddOntologyAnnotation;
-import org.semanticweb.owlapi.model.OWLAnnotation;
-import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
-import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyID;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
-import org.semanticweb.owlapi.model.OWLOntologyStorageException;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
-import org.semanticweb.owlapi.util.InferredAxiomGenerator;
-import org.semanticweb.owlapi.util.InferredClassAssertionAxiomGenerator;
-import org.semanticweb.owlapi.util.InferredEquivalentClassAxiomGenerator;
-import org.semanticweb.owlapi.util.InferredOntologyGenerator;
-import org.semanticweb.owlapi.util.InferredPropertyAssertionGenerator;
-import org.semanticweb.owlapi.util.InferredSubClassAxiomGenerator;
-import org.semanticweb.owlapi.util.InferredSubDataPropertyAxiomGenerator;
-import org.semanticweb.owlapi.util.InferredSubObjectPropertyAxiomGenerator;
+
+import io.github.hakjuoh.protege_mcp.core.qc.RdfQueryService;
 
 /**
  * SPARQL querying over the active ontology, using an embedded Apache Jena ARQ engine.
@@ -80,19 +38,7 @@ public final class SparqlTools {
     private SparqlTools() {
     }
 
-    /** Base IRI used when re-parsing the snapshot's Turtle into Jena (only resolves any relative IRIs;
-     *  the snapshot itself keeps the active ontology's real IRI — see {@link #buildSnapshotOntology}). */
-    private static final String SNAPSHOT_IRI = "urn:protege-mcp:sparql-snapshot";
-
     private static final String XSD_STRING = "http://www.w3.org/2001/XMLSchema#string";
-
-    /**
-     * Cap on {@code |individuals| × |properties|} above which the (potentially quadratic) inferred
-     * property-assertion generator is skipped so {@code include_inferred} cannot freeze the UI on a
-     * large ABox. The cheaper class/type/sub-property inferences are still materialised, and the skip
-     * is reported back to the caller in a {@code note}.
-     */
-    private static final long MAX_INFERRED_PROPERTY_PRODUCT = 250_000L;
 
     public static void register(ToolRegistry tools, ToolContext ctx) {
         tools.tool("sparql_query",
@@ -190,25 +136,13 @@ public final class SparqlTools {
      */
     static Snapshot snapshot(OWLOntologyID activeId, Set<OWLOntology> closure,
             Map<String, String> prefixes, OWLReasoner reasoner, boolean includeInferred) {
-        OWLOntologyManager priv = OwlManagers.create();
-        OWLOntology iso = buildSnapshotOntology(priv, activeId, closure);
-        String note = null;
-        if (includeInferred) {
-            long individuals = iso.getIndividualsInSignature().size();
-            long properties = iso.getObjectPropertiesInSignature().size()
-                    + iso.getDataPropertiesInSignature().size();
-            boolean withPropertyAssertions = individuals * properties <= MAX_INFERRED_PROPERTY_PRODUCT;
-            if (!withPropertyAssertions) {
-                note = "Inferred property assertions were skipped because the ABox is large ("
-                        + individuals + " individuals × " + properties + " properties); inferred "
-                        + "class, type and sub-property axioms are still included. Query without "
-                        + "include_inferred, or use get_inferred_superclasses / execute_dl_query for "
-                        + "targeted property inferences.";
-            }
-            new InferredOntologyGenerator(reasoner, inferredGenerators(withPropertyAssertions))
-                    .fillOntology(priv.getOWLDataFactory(), iso);
+        try {
+            RdfQueryService.Snapshot snapshot = RdfQueryService.snapshot(
+                    activeId, closure, prefixes, reasoner, includeInferred);
+            return new Snapshot(snapshot.ontology(), snapshot.prefixes(), snapshot.note());
+        } catch (RdfQueryService.QueryException error) {
+            throw new ToolArgException(error.getMessage());
         }
-        return new Snapshot(iso, Collections.unmodifiableMap(new LinkedHashMap<>(prefixes)), note);
     }
 
     /**
@@ -220,43 +154,11 @@ public final class SparqlTools {
      */
     static OWLOntology buildSnapshotOntology(OWLOntologyManager priv, OWLOntologyID activeId,
             Set<OWLOntology> closure) {
-        OWLOntology iso;
         try {
-            iso = priv.createOntology(activeId != null && !activeId.isAnonymous()
-                    ? activeId : new OWLOntologyID());
-        } catch (OWLOntologyCreationException e) {
-            throw new ToolArgException("Could not prepare an isolated ontology workspace: "
-                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            return RdfQueryService.buildSnapshotOntology(priv, activeId, closure);
+        } catch (RdfQueryService.QueryException error) {
+            throw new ToolArgException(error.getMessage());
         }
-        for (OWLOntology o : closure) {
-            priv.addAxioms(iso, o.getAxioms());
-            for (OWLAnnotation ann : o.getAnnotations()) {
-                priv.applyChange(new AddOntologyAnnotation(iso, ann));
-            }
-        }
-        return iso;
-    }
-
-    /**
-     * The inferred-axiom generators materialised when {@code include_inferred} is set: the class
-     * hierarchy (subclass / equivalent), individual types, and the property hierarchies — the axioms
-     * that turn into the {@code rdf:type}, {@code rdfs:subClassOf} and {@code rdfs:subPropertyOf}
-     * triples a SPARQL query most often expects to reflect reasoning. Inferred property assertions are
-     * added only when {@code withPropertyAssertions} is set, since that generator is the one quadratic
-     * outlier ({@code O(individuals × properties)} reasoner calls).
-     */
-    private static List<InferredAxiomGenerator<? extends OWLAxiom>> inferredGenerators(
-            boolean withPropertyAssertions) {
-        List<InferredAxiomGenerator<? extends OWLAxiom>> gens = new ArrayList<>();
-        gens.add(new InferredSubClassAxiomGenerator());
-        gens.add(new InferredEquivalentClassAxiomGenerator());
-        gens.add(new InferredClassAssertionAxiomGenerator());
-        gens.add(new InferredSubObjectPropertyAxiomGenerator());
-        gens.add(new InferredSubDataPropertyAxiomGenerator());
-        if (withPropertyAssertions) {
-            gens.add(new InferredPropertyAssertionGenerator());
-        }
-        return gens;
     }
 
     static OWLReasoner requireReasoner(OWLModelManager mm) {
@@ -302,7 +204,11 @@ public final class SparqlTools {
      */
     static Map<String, Object> execute(OWLOntology ontology, Map<String, String> prefixes,
             String query, int limit, long timeoutMs) {
-        return executeTurtle(toTurtleBytes(ontology), prefixes, query, limit, timeoutMs);
+        try {
+            return RdfQueryService.execute(ontology, prefixes, query, limit, timeoutMs);
+        } catch (RdfQueryService.QueryException error) {
+            throw new ToolArgException(error.getMessage());
+        }
     }
 
     /**
@@ -312,76 +218,10 @@ public final class SparqlTools {
      */
     static Map<String, Object> executeTurtle(byte[] turtle, Map<String, String> prefixes,
             String query, int limit, long timeoutMs) {
-        ClassLoader previousTccl = Thread.currentThread().getContextClassLoader();
-        Thread.currentThread().setContextClassLoader(SparqlTools.class.getClassLoader());
         try {
-            JenaSystem.init();
-            Model model = ModelFactory.createDefaultModel();
-            RDFDataMgr.read(model, new ByteArrayInputStream(turtle), SNAPSHOT_IRI, Lang.TURTLE);
-            Query q = parse(withPrefixes(query, prefixes));
-            rejectService(q);
-            try (QueryExecution qe = QueryExecutionFactory.create(q, model)) {
-                // Defence-in-depth: even if a SERVICE op slipped past rejectService, ARQ now refuses
-                // to execute it (throws QueryDeniedException) instead of reaching the network.
-                qe.getContext().set(ARQ.httpServiceAllowed, false);
-                if (timeoutMs > 0) {
-                    qe.setTimeout(timeoutMs, TimeUnit.MILLISECONDS, timeoutMs, TimeUnit.MILLISECONDS);
-                }
-                try {
-                    if (q.isSelectType()) {
-                        return selectJson(qe, limit);
-                    }
-                    if (q.isAskType()) {
-                        return Tools.json().put("query_type", "ASK").put("boolean", qe.execAsk()).map();
-                    }
-                    if (q.isConstructType()) {
-                        return graphJson("CONSTRUCT", qe.execConstruct(), model, limit);
-                    }
-                    if (q.isDescribeType()) {
-                        return graphJson("DESCRIBE", qe.execDescribe(), model, limit);
-                    }
-                    throw new ToolArgException("Unsupported query form. Use SELECT, ASK, CONSTRUCT, or "
-                            + "DESCRIBE (SPARQL UPDATE is not allowed — use the write tools to edit).");
-                } catch (QueryCancelledException e) {
-                    throw new ToolArgException("SPARQL query exceeded the " + timeoutMs + " ms time "
-                            + "budget — add a LIMIT, constrain the pattern, or raise timeout_ms.");
-                }
-            }
-        } finally {
-            Thread.currentThread().setContextClassLoader(previousTccl);
-        }
-    }
-
-    private static Query parse(String query) {
-        try {
-            return QueryFactory.create(query);
-        } catch (QueryParseException e) {
-            // Covers both syntax errors and ARQ validation errors (e.g. a bad GROUP BY projection),
-            // so lead with the engine's own message and state the read-only constraint as a neutral
-            // capability note rather than implying the query failed because it was an UPDATE.
-            throw new ToolArgException("SPARQL query error: " + e.getMessage()
-                    + " (sparql_query accepts only read queries: SELECT, ASK, CONSTRUCT, or DESCRIBE.)");
-        }
-    }
-
-    /** Reject a query that uses SERVICE so it can never reach a remote endpoint. */
-    private static void rejectService(Query q) {
-        final boolean[] hasService = {false};
-        try {
-            Op op = Algebra.compile(q);
-            OpWalker.walk(op, new OpVisitorBase() {
-                @Override
-                public void visit(OpService opService) {
-                    hasService[0] = true;
-                }
-            });
-        } catch (RuntimeException ignored) {
-            // If algebra compilation fails for an exotic query, the httpServiceAllowed=false context
-            // flag set in execute() is the load-bearing guard; nothing reaches the network either way.
-        }
-        if (hasService[0]) {
-            throw new ToolArgException("SPARQL SERVICE is not allowed — sparql_query runs only over the "
-                    + "local ontology and never reaches the network.");
+            return RdfQueryService.executeTurtle(turtle, prefixes, query, limit, timeoutMs);
+        } catch (RdfQueryService.QueryException error) {
+            throw new ToolArgException(error.getMessage());
         }
     }
 
@@ -390,14 +230,11 @@ public final class SparqlTools {
      * {@link SparqlSnapshotCache} and re-parsed into a fresh Jena model per query in {@link #executeTurtle}.
      */
     static byte[] toTurtleBytes(OWLOntology ontology) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
-            ontology.getOWLOntologyManager().saveOntology(ontology, new TurtleDocumentFormat(), out);
-        } catch (OWLOntologyStorageException e) {
-            throw new ToolArgException("Could not render the ontology to RDF for SPARQL: "
-                    + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            return RdfQueryService.toTurtleBytes(ontology);
+        } catch (RdfQueryService.QueryException error) {
+            throw new ToolArgException(error.getMessage());
         }
-        return out.toByteArray();
     }
 
     /**
@@ -409,108 +246,7 @@ public final class SparqlTools {
      * literal, and SPARQL prefix names are case-sensitive.
      */
     static String withPrefixes(String query, Map<String, String> prefixes) {
-        if (prefixes == null || prefixes.isEmpty()) {
-            return query;
-        }
-        StringBuilder prologue = new StringBuilder();
-        for (Map.Entry<String, String> e : prefixes.entrySet()) {
-            String name = e.getKey();
-            String ns = e.getValue();
-            if (name == null || ns == null || ns.isEmpty()) {
-                continue;
-            }
-            prologue.append("PREFIX ").append(name).append(" <").append(ns).append(">\n");
-        }
-        return prologue.length() == 0 ? query : prologue + query;
+        return RdfQueryService.withPrefixes(query, prefixes);
     }
 
-    private static Map<String, Object> selectJson(QueryExecution qe, int limit) {
-        ResultSet rs = qe.execSelect();
-        List<String> vars = rs.getResultVars();
-        List<Map<String, Object>> bindings = new ArrayList<>();
-        boolean truncated = false;
-        while (rs.hasNext()) {
-            if (bindings.size() >= limit) {
-                truncated = true;
-                break;
-            }
-            QuerySolution sol = rs.next();
-            Map<String, Object> row = new LinkedHashMap<>();
-            for (String var : vars) {
-                RDFNode node = sol.get(var);
-                if (node != null) {
-                    row.put(var, nodeJson(node));
-                }
-            }
-            bindings.add(row);
-        }
-        // count is the number of rows returned (capped at limit); a SELECT result is streamed, so the
-        // true total is not enumerated. 'truncated' signals more rows exist — use LIMIT for an exact total.
-        Tools.Json json = Tools.json()
-                .put("query_type", "SELECT")
-                .put("vars", vars)
-                .put("count", bindings.size())
-                .put("bindings", bindings);
-        if (truncated) {
-            json.put("truncated", true);
-        }
-        return json.map();
-    }
-
-    private static Map<String, Object> nodeJson(RDFNode node) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        if (node.isURIResource()) {
-            m.put("type", "uri");
-            m.put("value", node.asResource().getURI());
-        } else if (node.isAnon()) {
-            m.put("type", "bnode");
-            m.put("value", node.asResource().getId().getLabelString());
-        } else {
-            Literal lit = node.asLiteral();
-            m.put("type", "literal");
-            m.put("value", lit.getLexicalForm());
-            String lang = lit.getLanguage();
-            if (lang != null && !lang.isEmpty()) {
-                m.put("lang", lang);
-            } else {
-                String datatype = lit.getDatatypeURI();
-                if (datatype != null && !datatype.equals(XSD_STRING)) {
-                    m.put("datatype", datatype);
-                }
-            }
-        }
-        return m;
-    }
-
-    /**
-     * Serialise a CONSTRUCT/DESCRIBE result graph to Turtle, capped at {@code limit} triples. When the
-     * graph is over {@code limit}, statements are sorted (subject, predicate, object) before the cut so
-     * the shown subset is deterministic run-to-run.
-     */
-    private static Map<String, Object> graphJson(String type, Model result, Model source, int limit) {
-        result.setNsPrefixes(source.getNsPrefixMap());
-        long total = result.size();
-        Model toWrite = result;
-        boolean truncated = false;
-        if (total > limit) {
-            List<Statement> statements = result.listStatements().toList();
-            statements.sort(Comparator.comparing(st -> st.asTriple().toString()));
-            toWrite = ModelFactory.createDefaultModel();
-            toWrite.setNsPrefixes(result.getNsPrefixMap());
-            for (int i = 0; i < limit && i < statements.size(); i++) {
-                toWrite.add(statements.get(i));
-            }
-            truncated = true;
-        }
-        StringWriter sw = new StringWriter();
-        toWrite.write(sw, "TURTLE");
-        Tools.Json json = Tools.json()
-                .put("query_type", type)
-                .put("count", total)
-                .put("turtle", sw.toString());
-        if (truncated) {
-            json.put("truncated", true).put("shown", limit);
-        }
-        return json.map();
-    }
 }

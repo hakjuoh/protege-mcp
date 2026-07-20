@@ -25,8 +25,12 @@ public final class ToolContext {
     private final WriteConfirmer confirmer;
     private final ReentrantLock writeLock = new ReentrantLock();
     private final SparqlSnapshotCache sparqlCache = new SparqlSnapshotCache();
+    private final EntitySearch.Cache entitySearchCache = new EntitySearch.Cache();
+    private final EntitySearchPolicyCache entitySearchPolicy = new EntitySearchPolicyCache();
     private final WorkspaceRevisionTracker revisions = new WorkspaceRevisionTracker();
     private final ChangeSetStore changeSets = new ChangeSetStore();
+    private final WorkspaceAudit audit;
+    private final PrincipalExecutionGate executions = new PrincipalExecutionGate();
 
     public ToolContext(OntologyAccess access, McpServerController controller) {
         this(access, controller, null);
@@ -36,6 +40,7 @@ public final class ToolContext {
         this.access = access;
         this.controller = controller;
         this.confirmer = confirmer;
+        this.audit = new WorkspaceAudit(this);
     }
 
     public OntologyAccess access() {
@@ -64,6 +69,15 @@ public final class ToolContext {
         return sparqlCache;
     }
 
+    /** Revision-keyed lexical index shared by {@code search_entities} calls. */
+    EntitySearch.Cache entitySearchCache() {
+        return entitySearchCache;
+    }
+
+    EntitySearchPolicyCache entitySearchPolicy() {
+        return entitySearchPolicy;
+    }
+
     /** Per-window revision clock used by previews, commits, verified saves, and revision reads. */
     WorkspaceRevisionTracker revisions() {
         return revisions;
@@ -71,6 +85,14 @@ public final class ToolContext {
 
     ChangeSetStore changeSets() {
         return changeSets;
+    }
+
+    WorkspaceAudit audit() {
+        return audit;
+    }
+
+    public PrincipalExecutionGate executions() {
+        return executions;
     }
 
     /**
@@ -88,6 +110,8 @@ public final class ToolContext {
         try {
             access.compute(mm -> {
                 sparqlCache.dispose();
+                entitySearchCache.clear();
+                entitySearchPolicy.clear();
                 revisions.dispose();
                 changeSets.dispose();
                 return null;
@@ -96,6 +120,8 @@ public final class ToolContext {
             try {
                 javax.swing.SwingUtilities.invokeLater(() -> {
                     sparqlCache.dispose();
+                    entitySearchCache.clear();
+                    entitySearchPolicy.clear();
                     revisions.dispose();
                     changeSets.dispose();
                 });

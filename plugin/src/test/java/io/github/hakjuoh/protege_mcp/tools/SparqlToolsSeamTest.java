@@ -179,9 +179,10 @@ class SparqlToolsSeamTest {
         OWLModelManager mm = FakeModelManager.over(o);
         SparqlTools.Snapshot snap = SparqlTools.snapshot(mm, reasonerOver(o), true);
 
-        // individuals * properties (0) is well under MAX_INFERRED_PROPERTY_PRODUCT, so nothing is skipped.
+        // Every per-category query estimate and the actual property-assertion count are below
+        // their materialization budgets.
         assertNull(snap.note(),
-                "a small ABox does not trip the quadratic-property-assertion skip note");
+                "a small ABox does not trip any inference-materialization budget note");
     }
 
     // ---------------------------------------------------------------- prefix-cache revalidation (end-to-end)

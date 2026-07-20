@@ -26,6 +26,7 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
 import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
 import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -113,7 +114,8 @@ class DirectAccessPolicyResolveTest {
                         + "    path: missing.rdf\n");
         ToolContext ctx = context(project);
         McpSyncServerExchange exchange = exchange(
-                principal(Set.of(DirectAccessPolicy.PROJECT_READ)));
+                principal(Set.of(Capability.ONTOLOGY_READ.value(),
+                        DirectAccessPolicy.PROJECT_READ)));
 
         DirectAccessPolicy.Rules rules = assertDoesNotThrow(
                 () -> DirectAccessPolicy.resolve(ctx, exchange, null),
@@ -169,7 +171,8 @@ class DirectAccessPolicyResolveTest {
                 ProjectPolicyFixtures.minimalPolicy("candidate", ONTOLOGY_IRI)
                         + "validation:\n  required_stages: [structural]\n");
         ToolContext ctx = context(project);
-        McpSyncServerExchange exchange = exchange(principal(Set.of(DirectAccessPolicy.PROJECT_READ)));
+        McpSyncServerExchange exchange = exchange(principal(Set.of(
+                Capability.ONTOLOGY_READ.value(), DirectAccessPolicy.PROJECT_READ)));
 
         CallToolResult validate = call(ProjectPolicyTools::register, ctx, exchange,
                 "validate_project_policy", Map.of("policy_path", candidate.toString()));
@@ -211,7 +214,8 @@ class DirectAccessPolicyResolveTest {
                 ProjectPolicyFixtures.minimalPolicy("unresolved-root", ONTOLOGY_IRI)
                         + "project_root: ../escape\n");
         ToolContext ctx = context(project);
-        McpSyncServerExchange exchange = exchange(principal(Set.of(DirectAccessPolicy.PROJECT_READ)));
+        McpSyncServerExchange exchange = exchange(principal(Set.of(
+                Capability.ONTOLOGY_READ.value(), DirectAccessPolicy.PROJECT_READ)));
 
         CallToolResult validate = call(ProjectPolicyTools::register, ctx, exchange,
                 "validate_project_policy", Map.of("policy_path", ".protege-mcp/project.yaml"));

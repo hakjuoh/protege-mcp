@@ -28,6 +28,13 @@ import io.github.hakjuoh.protege_mcp.policy.ReasonerNames;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint;
 import io.github.hakjuoh.protege_mcp.contracts.RdfDatasetFingerprint;
 import io.github.hakjuoh.protege_mcp.contracts.RdfDatasetFingerprints;
+import io.github.hakjuoh.protege_mcp.core.qc.CompetencyQuestionService;
+import io.github.hakjuoh.protege_mcp.core.qc.QcStageExecution;
+import io.github.hakjuoh.protege_mcp.core.qc.GovernanceQcService;
+import io.github.hakjuoh.protege_mcp.core.qc.InvariantQcService;
+import io.github.hakjuoh.protege_mcp.core.qc.PolicyGovernanceService;
+import io.github.hakjuoh.protege_mcp.core.qc.ShaclValidationService;
+import io.github.hakjuoh.protege_mcp.core.qc.StructuralQcService;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -558,78 +565,33 @@ public final class QcSuiteTools {
 
     static QcStageResult structuralStage(OWLModelManager mm, Set<String> disabled,
             Map<String, String> severityOverrides, boolean surfaceInfo) {
-        Set<OWLOntology> scope = Collections.singleton(mm.getActiveOntology());
-        return structuralStage(ValidationTools.analyze(scope), disabled, severityOverrides, surfaceInfo);
+        OWLOntology active = mm.getActiveOntology();
+        return structuralStage(StructuralQcService.evaluate(active, active.getImportsClosure(),
+                disabled, severityOverrides, surfaceInfo));
     }
 
     static QcStageResult structuralStage(IsolatedValidationSnapshot snapshot, Set<String> disabled,
             Map<String, String> severityOverrides, boolean surfaceInfo) {
-        Set<OWLOntology> scope = Collections.singleton(snapshot.active());
-        return structuralStage(ValidationTools.analyze(scope, snapshot.closure()), disabled,
-                severityOverrides, surfaceInfo);
+        return structuralStage(StructuralQcService.evaluate(snapshot.active(),
+                snapshot.closure(), disabled, severityOverrides, surfaceInfo));
     }
 
-    private static QcStageResult structuralStage(List<ValidationTools.Finding> findings, Set<String> disabled,
-            Map<String, String> severityOverrides, boolean surfaceInfo) {
-        int total = 0;
-        int warnings = 0;   // only warning-severity smells gate; info findings are reported, not gated
-        int errors = 0;
-        List<Map<String, Object>> checks = new ArrayList<>();
-        Set<String> gatingIdentities = new LinkedHashSet<>();
-        for (ValidationTools.Finding f : findings) {
-            if (disabled.contains(f.id)) {
-                continue;
-            }
-            String severity = severityOverrides.getOrDefault(f.id, f.severity);
-            total += f.count();
-            if (f.count() > 0) {
-                Map<String, Object> c = new LinkedHashMap<>();
-                c.put("id", f.id);
-                c.put("severity", severity);
-                c.put("count", f.count());
-                List<String> identities = new ArrayList<>();
-                List<String> entityIdentities = new ArrayList<>();
-                f.entities.forEach(entity -> {
-                    String id = FindingIdentity.entity(entity);
-                    identities.add(id);
-                    entityIdentities.add(id);
-                });
-                f.details.forEach(detail -> identities.add("detail\u0000" + detail));
-                c.put("identity_digest", FindingIdentity.digest(identities));
-                checks.add(c);
-                if ("error".equals(severity) || "warning".equals(severity)
-                        || "warn".equals(severity)) {
-                    // Only gating-severity findings feed attribution; qualify each identity with the
-                    // check id so the same entity under two different smells stays distinct.
-                    for (String identity : entityIdentities) {
-                        gatingIdentities.add(f.id + "|" + identity);
-                    }
-                }
-                if ("error".equals(severity)) {
-                    errors += f.count();
-                } else if ("warning".equals(severity) || "warn".equals(severity)) {
-                    warnings += f.count();
-                }
-            }
-        }
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("total_issues", total);
-        summary.put("warnings", warnings);
-        summary.put("errors", errors);
-        summary.put("checks", checks);
+    private static QcStageResult structuralStage(StructuralQcService.Result shared) {
+        QcStageExecution execution = shared.execution();
         QcStageResult stage = new QcStageResult(STRUCTURAL, true,
-                errors > 0 ? FAIL : warnings > 0 ? WARN : surfaceInfo && total > 0 ? INFO : PASS,
-                summary, null);
-        stage.attributionIdentities = Set.copyOf(gatingIdentities);
+                execution.verdict().legacyVerdict(), execution.details(), null);
+        stage.attributionIdentities = shared.gatingIdentities();
         return stage;
     }
 
     static QcStageResult governanceStage(OWLModelManager mm, Pattern iriPattern,
             List<String> requiredNamespaces, List<String> requiredAnnotations,
             boolean checkOwnership, int limit) {
-        List<Map<String, Object>> checks = GovernanceTools.policyChecks(mm, iriPattern,
-                requiredNamespaces, requiredAnnotations, checkOwnership, limit);
-        return governanceStage(checks);
+        OWLOntology active = mm.getActiveOntology();
+        return governanceStage(GovernanceQcService.evaluate(active, active.getImportsClosure(),
+                iriPattern, requiredNamespaces, requiredAnnotations, checkOwnership,
+                PolicyGovernanceService.Rules.empty(), LocalDate.now(ZoneOffset.UTC),
+                List.of(), limit, new GovernancePresentation(mm)));
     }
 
     static QcStageResult governanceStage(IsolatedValidationSnapshot snapshot, Pattern iriPattern,
@@ -650,53 +612,18 @@ public final class QcSuiteTools {
             List<String> requiredNamespaces, List<String> requiredAnnotations,
             boolean checkOwnership, PolicyGovernance.Rules rules,
             List<Map<String, Object>> projectChecks, int limit) {
-        // Collect the STABLE gating identities of the intrinsic governance checks (ownership /
-        // import_layering is enabled by default even with no policy) for verified-apply attribution,
-        // PLUS the complete per-row identity sets the rule-driven PolicyGovernance / module project
-        // checks now publish through the reserved side channel (ADR 0004 decision 3: member-level
-        // stage deltas need the full sets, not count/digest heuristics). No-policy behavior is
-        // unchanged — without a validated policy those checks contribute no identities.
-        Set<String> gatingIdentities = new LinkedHashSet<>();
-        List<Map<String, Object>> checks = GovernanceTools.policyChecks(snapshot.modelManager(),
-                snapshot.active(), snapshot.closure(), iriPattern, requiredNamespaces,
-                requiredAnnotations, checkOwnership, limit, gatingIdentities);
-        checks.addAll(PolicyGovernance.checks(snapshot.active(), snapshot.closure(), rules,
-                LocalDate.now(ZoneOffset.UTC), limit));
-        checks.addAll(projectChecks);
-        // Drain the side channel from a COPY of every check map before the list becomes the
-        // serialized summary: the reserved key must never appear in a public result, and the
-        // originals stay intact because config-owned module checks are reused by the baseline
-        // attribution re-run (mutating them would starve the second run's identity sets).
-        List<Map<String, Object>> sanitized = new ArrayList<>();
-        for (Map<String, Object> check : checks) {
-            Map<String, Object> copy = new LinkedHashMap<>(check);
-            ModulePolicyGovernance.drainAttributionIdentities(copy, gatingIdentities);
-            sanitized.add(copy);
-        }
-        QcStageResult stage = governanceStage(sanitized);
-        stage.attributionIdentities = Set.copyOf(gatingIdentities);
-        return stage;
+        return governanceStage(GovernanceQcService.evaluate(snapshot.active(), snapshot.closure(),
+                iriPattern, requiredNamespaces, requiredAnnotations, checkOwnership,
+                rules.shared(), LocalDate.now(ZoneOffset.UTC), projectChecks, limit,
+                new GovernancePresentation(snapshot.modelManager())));
     }
 
-    private static QcStageResult governanceStage(List<Map<String, Object>> checks) {
-        int warnings = 0;
-        int errors = 0;
-        for (Map<String, Object> check : checks) {
-            int count = num(check.get("count"));
-            String severity = String.valueOf(check.get("severity"));
-            if ("error".equals(severity)) {
-                errors += count;
-            } else if ("warning".equals(severity) || "warn".equals(severity)) {
-                warnings += count;
-            }
-        }
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("violations", warnings + errors);
-        summary.put("warnings", warnings);
-        summary.put("errors", errors);
-        summary.put("checks", checks);
-        return new QcStageResult(GOVERNANCE, true, errors > 0 ? FAIL : warnings > 0 ? WARN : PASS,
-                summary, null);
+    private static QcStageResult governanceStage(GovernanceQcService.Result shared) {
+        QcStageExecution execution = shared.execution();
+        QcStageResult stage = new QcStageResult(GOVERNANCE, true,
+                execution.verdict().legacyVerdict(), execution.details(), null);
+        stage.attributionIdentities = shared.gatingIdentities();
+        return stage;
     }
 
     private static QcStageResult profileStage(Phase1 p1, String profileName, int limit) {
@@ -728,92 +655,30 @@ public final class QcSuiteTools {
 
     static QcStageResult invariantsStage(SuiteSnapshot snap, List<Invariants.Invariant> invariants,
             int limit, long timeout) {
-        if (invariants.isEmpty()) {
-            return QcStageResult.skipped(INVARIANTS, "no invariants supplied — pass an 'invariants' array "
-                    + "(same shape as verify_ontology's queries[]).");
+        InvariantQcService.Result shared = InvariantQcService.evaluate(snap.shared(),
+                invariants.stream().map(Invariants.Invariant::shared).toList(), limit, timeout);
+        QcStageExecution execution = shared.execution();
+        if (!execution.verdict().ran()) {
+            return QcStageResult.skipped(INVARIANTS, execution.message());
         }
-        // Run at an "error" gate purely to read the worst severity as a 3-level stage verdict; the SUITE's
-        // own fail_on is applied by aggregate() over that verdict's level (never passed down here).
-        Map<String, Object> run = Invariants.run(snap, invariants, limit, timeout, "error");
-        int violations = ((Number) run.get("violations")).intValue();
-        int errors = ((Number) run.get("errors")).intValue();
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("checked", run.get("checked"));
-        summary.put("violations", violations);
-        summary.put("errors", errors);   // checks that could not run / were rejected — fail-closed
-        summary.put("identity_digest", resultIdentityDigest(run.get("invariants"), "violated"));
-        // An include_inferred invariant that ran but over a truncated inferred snapshot is surfaced
-        // (never silently gated to PASS): project mode escalates this to a stage error above.
-        int inferenceCaveats = countInferenceCaveats(run.get("invariants"));
-        if (inferenceCaveats > 0) {
-            summary.put("inference_caveats", inferenceCaveats);
-        }
-        // run.gate=="fail" ⇔ an ERROR-severity issue is present (a violation OR a fail-closed errored check —
-        // Invariants.run's worst folds both) → the stage FAILs. A sub-error issue (a warn/info violation OR
-        // a warn/info errored check) must still surface as WARN so the suite's fail_on=warn can trip: a
-        // check that could not run is NEVER silently dropped to PASS. aggregate() maps this level vs fail_on.
-        int issueLevel = invariantIssueLevel(run.get("invariants"));
-        String verdict = issueLevel >= 3 ? FAIL : issueLevel == 2 ? WARN : issueLevel == 1 ? INFO : PASS;
-        QcStageResult stage = new QcStageResult(INVARIANTS, true, verdict, summary, null);
-        stage.attributionIdentities = Set.copyOf(resultIdentities(run.get("invariants"), "violated"));
+        QcStageResult stage = new QcStageResult(INVARIANTS, execution.verdict().ran(),
+                execution.verdict().legacyVerdict(), execution.details(), execution.message());
+        stage.attributionIdentities = shared.gatingIdentities();
         return stage;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static int invariantIssueLevel(Object value) {
-        int worst = 0;
-        if (!(value instanceof List)) {
-            return worst;
-        }
-        for (Object row : (List<Object>) value) {
-            if (!(row instanceof Map)) {
-                continue;
-            }
-            Map<String, Object> invariant = (Map<String, Object>) row;
-            if (!Boolean.TRUE.equals(invariant.get("violated")) && invariant.get("error") == null) {
-                continue;
-            }
-            String severity = String.valueOf(invariant.get("severity"));
-            worst = Math.max(worst, "error".equals(severity) ? 3 : "warn".equals(severity) ? 2 : 1);
-        }
-        return worst;
     }
 
     static QcStageResult cqsStage(SuiteSnapshot snap, List<CompetencyQuestion> cqs, int limit,
             long timeout) {
-        if (cqs == null || cqs.isEmpty()) {
-            return QcStageResult.skipped(CQS, "no competency questions found — add some with "
-                    + "add_competency_question.");
+        CompetencyQuestionService.Result shared = CompetencyQuestionService.evaluate(snap.shared(),
+                cqs == null ? null : cqs.stream().map(CqRunner::shared).toList(), limit, timeout);
+        QcStageExecution execution = shared.execution();
+        if (!execution.verdict().ran()) {
+            return QcStageResult.skipped(CQS, execution.message());
         }
-        Map<String, Object> run = CqRunner.run(snap, cqs, limit, timeout, CqRunner.FAIL_ON_ANY);
-        int failed = ((Number) run.get("failed")).intValue();
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("total", run.get("total"));
-        summary.put("passed", run.get("passed"));
-        summary.put("failed", failed);
-        summary.put("identity_digest", resultIdentityDigest(run.get("questions"), "pass"));
-        int errors = countCqErrors(run.get("questions"));
-        if (errors > 0) {
-            summary.put("errors", errors);
-        }
-        // Surface (never gate on) per-CQ caveats — e.g. an include_inferred CQ that degraded to the asserted
-        // triples because no reasoner was classified — so the aggregate gate is not silently reassuring.
-        int caveated = countCaveated(run.get("questions"));
-        if (caveated > 0) {
-            summary.put("caveats", caveated);
-        }
-        int inferenceCaveats = countInferenceCaveats(run.get("questions"));
-        if (inferenceCaveats > 0) {
-            summary.put("inference_caveats", inferenceCaveats);
-        }
-        QcStageResult stage = new QcStageResult(CQS, true, failed > 0 ? FAIL : PASS, summary, null);
-        stage.attributionIdentities = Set.copyOf(resultIdentities(run.get("questions"), "pass"));
+        QcStageResult stage = new QcStageResult(CQS, true,
+                execution.verdict().legacyVerdict(), execution.details(), execution.message());
+        stage.attributionIdentities = shared.gatingIdentities();
         return stage;
-    }
-
-    /** Digest complete failed result rows while ignoring volatile execution timing. */
-    private static String resultIdentityDigest(Object value, String verdictKey) {
-        return FindingIdentity.digest(resultIdentities(value, verdictKey));
     }
 
     /**
@@ -823,74 +688,15 @@ public final class QcSuiteTools {
      * the {@code QcStageResult.attributionIdentities} side channel (ADR 0004 decision 3).
      */
     static List<String> resultIdentities(Object value, String verdictKey) {
-        List<String> identities = new ArrayList<>();
-        if (!(value instanceof List<?> rows)) return identities;
-        for (Object valueRow : rows) {
-            if (!(valueRow instanceof Map<?, ?> row)) continue;
-            boolean failed = "pass".equals(verdictKey)
-                    ? !Boolean.TRUE.equals(row.get(verdictKey))
-                    : Boolean.TRUE.equals(row.get(verdictKey)) || row.get("error") != null;
-            if (!failed) continue;
-            Map<String, Object> stable = new LinkedHashMap<>();
-            row.forEach((key, entryValue) -> {
-                if (!"ms".equals(String.valueOf(key))) stable.put(String.valueOf(key), entryValue);
-            });
-            identities.add(FindingIdentity.object(stable));
-        }
-        return identities;
+        return InvariantQcService.resultIdentities(value, verdictKey);
     }
 
-    /** Count the per-CQ result maps that carry a {@code caveats} entry (a soft degradation qualifier). */
-    @SuppressWarnings("unchecked")
-    private static int countCaveated(Object questions) {
-        if (!(questions instanceof List)) {
-            return 0;
-        }
-        int n = 0;
-        for (Object q : (List<Object>) questions) {
-            if (q instanceof Map && ((Map<String, Object>) q).containsKey("caveats")) {
-                n++;
-            }
-        }
-        return n;
-    }
-
-    @SuppressWarnings("unchecked")
     static int countCqErrors(Object questions) {
-        if (!(questions instanceof List)) {
-            return 0;
-        }
-        int count = 0;
-        for (Object row : (List<Object>) questions) {
-            if (row instanceof Map && ((Map<String, Object>) row).get("error") != null) {
-                count++;
-            }
-        }
-        return count;
+        return CompetencyQuestionService.countErrors(questions);
     }
 
-    @SuppressWarnings("unchecked")
     static int countInferenceCaveats(Object questions) {
-        if (!(questions instanceof List)) {
-            return 0;
-        }
-        int count = 0;
-        for (Object row : (List<Object>) questions) {
-            if (!(row instanceof Map)) {
-                continue;
-            }
-            Object caveats = ((Map<String, Object>) row).get("caveats");
-            if (!(caveats instanceof List)) {
-                continue;
-            }
-            boolean affected = ((List<Object>) caveats).stream().map(String::valueOf)
-                    .anyMatch(c -> c.startsWith("include_inferred requested")
-                            || c.startsWith("ran_with_caveat: inferences truncated"));
-            if (affected) {
-                count++;
-            }
-        }
-        return count;
+        return InvariantQcService.countInferenceCaveats(questions);
     }
 
     private static List<CompetencyQuestion> loadCqs(OWLModelManager mm) {
@@ -931,83 +737,39 @@ public final class QcSuiteTools {
     /** Validate the captured data snapshot against the supplied SHACL shapes (graceful when none). */
     static QcStageResult shaclStage(byte[] dataTurtle, String shapesText, String shapesPath,
             int limit, long timeout) {
-        if (!hasText(shapesText, shapesPath)) {
-            return QcStageResult.skipped(SHACL, "no SHACL shapes supplied — pass 'shacl_shapes' (inline "
-                    + "Turtle) or 'shacl_shapes_path' (a local file).");
-        }
-        if (dataTurtle == null) {
-            return QcStageResult.skipped(SHACL, "SHACL data snapshot was not captured.");
-        }
-        Map<String, Object> r;
-        List<String> gatingIdentities = new ArrayList<>();
-        try {
-            r = ShaclTools.validate(dataTurtle, shapesText, shapesPath, limit, timeout,
-                    gatingIdentities);
-        } catch (RuntimeException e) {
-            // A malformed shapes graph is a config error for THIS stage — surface it as a failed (errored)
-            // stage rather than aborting the whole suite.
-            Map<String, Object> summary = new LinkedHashMap<>();
-            summary.put("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-            return QcStageResult.errored(SHACL, String.valueOf(summary.get("error")));
-        }
-        int violations = num(r.get("violations"));
-        int warnings = num(r.get("warnings"));
-        Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("conforms", r.get("conforms"));
-        summary.put("violations", violations);
-        summary.put("warnings", warnings);
-        summary.put("infos", r.get("infos"));
-        summary.put("identity_digest", r.get("identity_digest"));
-        // Violations fail; a warning-only report warns; info-only (or conformant) passes.
-        String verdict = violations > 0 ? FAIL : warnings > 0 ? WARN : num(r.get("infos")) > 0 ? INFO : PASS;
-        QcStageResult stage = new QcStageResult(SHACL, true, verdict, summary, null);
-        stage.attributionIdentities = Set.copyOf(gatingIdentities);
-        return stage;
+        return adaptShacl(ShaclValidationService.evaluate(dataTurtle, shapesText, shapesPath,
+                limit, timeout));
     }
 
     /** Strict project stage over the union of every policy-referenced shapes file. */
     static QcStageResult shaclStage(byte[] dataTurtle, List<Path> shapesPaths, int limit, long timeout) {
-        if (shapesPaths == null || shapesPaths.isEmpty()) {
-            return QcStageResult.skipped(SHACL, "no policy SHACL shapes were resolved.");
+        return adaptShacl(ShaclValidationService.evaluatePolicy(
+                dataTurtle, shapesPaths, limit, timeout));
+    }
+
+    private static QcStageResult adaptShacl(ShaclValidationService.Result shared) {
+        QcStageExecution execution = shared.execution();
+        if (!execution.verdict().ran()) {
+            return QcStageResult.skipped(SHACL, execution.message());
         }
-        if (dataTurtle == null) {
-            return QcStageResult.errored(SHACL, "SHACL data snapshot was not captured.");
+        if (execution.verdict().executionError()) {
+            return QcStageResult.errored(SHACL, execution.message());
         }
-        try {
-            List<String> gatingIdentities = new ArrayList<>();
-            Map<String, Object> result = ShaclTools.validate(dataTurtle, shapesPaths, limit, timeout,
-                    gatingIdentities);
-            int violations = num(result.get("violations"));
-            int warnings = num(result.get("warnings"));
-            Map<String, Object> summary = new LinkedHashMap<>();
-            summary.put("conforms", result.get("conforms"));
-            summary.put("violations", violations);
-            summary.put("warnings", warnings);
-            summary.put("infos", result.get("infos"));
-            summary.put("identity_digest", result.get("identity_digest"));
-            summary.put("shape_files", shapesPaths.stream().map(Path::toString).toList());
-            QcStageResult stage = new QcStageResult(SHACL, true,
-                    violations > 0 ? FAIL : warnings > 0 ? WARN
-                            : num(result.get("infos")) > 0 ? INFO : PASS, summary, null);
-            stage.attributionIdentities = Set.copyOf(gatingIdentities);
-            return stage;
-        } catch (RuntimeException e) {
-            return QcStageResult.errored(SHACL, e.getMessage() == null
-                    ? e.getClass().getSimpleName() : e.getMessage());
-        }
+        QcStageResult stage = new QcStageResult(SHACL, true,
+                execution.verdict().legacyVerdict(), execution.details(), null);
+        stage.attributionIdentities = shared.gatingIdentities();
+        return stage;
     }
 
     private static boolean hasText(String... values) {
-        for (String v : values) {
-            if (v != null && !v.trim().isEmpty()) {
-                return true;
-            }
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) return true;
         }
         return false;
     }
 
-    private static int num(Object o) {
-        return o instanceof Number ? ((Number) o).intValue() : 0;
+    private static int num(Object value) {
+        return value instanceof Number ? ((Number) value).intValue() : 0;
     }
 
     // ================================================================== stage / gate helpers

@@ -44,13 +44,15 @@ public final class ToolCatalog {
             ShaclTools::register,
             ProjectPolicyTools::register,
             QcSuiteTools::register,
-            ReleaseTools::register);
+            ReleaseTools::register,
+            AuditTools::register);
 
     public static List<SyncToolSpecification> buildAll(ToolContext ctx) {
-        ToolRegistry registry = new ToolRegistry();
+        ToolRegistry registry = new ToolRegistry(ctx == null ? null : ctx.audit(),
+                ctx == null ? null : ctx.executions());
         for (ToolProvider provider : PROVIDERS) {
             provider.register(registry, ctx);
         }
-        return registry.build();
+        return registry.buildComplete();
     }
 }

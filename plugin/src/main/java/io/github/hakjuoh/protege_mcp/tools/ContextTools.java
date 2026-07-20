@@ -34,6 +34,8 @@ import org.semanticweb.owlapi.search.EntitySearcher;
 
 import com.google.common.collect.Multimap;
 
+import io.github.hakjuoh.protege_mcp.core.impact.SyntacticImpactService;
+
 /**
  * Model-friendly context tools. {@code get_ontology_context} orients an assistant ("what am I
  * looking at, what should I look at first"); {@code get_entity_context} returns a single "entity
@@ -350,25 +352,7 @@ public final class ContextTools {
     }
 
     static boolean isDeprecated(OWLEntity e, Set<OWLOntology> scope) {
-        for (OWLOntology o : scope) {
-            for (OWLAnnotation ann : EntitySearcher.getAnnotations(e, o)) {
-                if (!ann.getProperty().isDeprecated()) {
-                    continue;
-                }
-                com.google.common.base.Optional<OWLLiteral> lit = ann.getValue().asLiteral();
-                if (!lit.isPresent()) {
-                    continue;
-                }
-                try {
-                    if (lit.get().parseBoolean()) {
-                        return true;
-                    }
-                } catch (RuntimeException ignored) {
-                    // a non-boolean owl:deprecated value: treat as not deprecated
-                }
-            }
-        }
-        return false;
+        return SyntacticImpactService.isDeprecated(e, scope);
     }
 
     private static List<Map<String, Object>> annotations(OWLModelManager mm, OWLEntity e,

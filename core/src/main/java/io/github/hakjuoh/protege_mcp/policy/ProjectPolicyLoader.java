@@ -94,6 +94,20 @@ public final class ProjectPolicyLoader {
         return load(explicitPolicy, ontologyDocument, null, null);
     }
 
+    /**
+     * Parse policy bytes that a caller has already captured, while resolving all declared project
+     * paths against the policy's original location. The source file is never read by this method.
+     */
+    public static ProjectPolicy loadCaptured(Path source, byte[] bytes, String activeOntologyIri,
+            Collection<String> installedReasoners, boolean forbidExternalPaths) {
+        if (source == null || bytes == null) {
+            throw new IllegalArgumentException("source and bytes must not be null");
+        }
+        Path path = source.toAbsolutePath().normalize();
+        return parse(new Discovery("explicit", path, null), path, bytes,
+                activeOntologyIri, installedReasoners, forbidExternalPaths);
+    }
+
     private static ProjectPolicy read(Discovery discovery, String activeOntologyIri,
             Collection<String> installedReasoners, boolean forbidExternalPaths) {
         List<PolicyIssue> issues = new ArrayList<>();
@@ -119,9 +133,40 @@ public final class ProjectPolicyLoader {
                     Collections.emptyMap(), Collections.emptyMap(), issues);
         }
 
+        byte[] bytes;
+        try {
+            try (InputStream input = Files.newInputStream(path)) {
+                bytes = input.readNBytes(Math.toIntExact(MAX_POLICY_BYTES + 1));
+            }
+            if (bytes.length > MAX_POLICY_BYTES) {
+                issues.add(error("policy_too_large", "policy_path", "Policy exceeds the maximum of "
+                        + MAX_POLICY_BYTES + " bytes."));
+                return result(discovery.kind, path, null, null, Collections.emptyMap(),
+                        Collections.emptyMap(), issues);
+            }
+        } catch (IOException | RuntimeException e) {
+            issues.add(error("policy_unreadable", "policy_path", "Could not read policy: "
+                    + message(e)));
+            return result(discovery.kind, path, null, null, Collections.emptyMap(),
+                    Collections.emptyMap(), issues);
+        }
+        return parse(discovery, path, bytes, activeOntologyIri, installedReasoners,
+                forbidExternalPaths);
+    }
+
+    private static ProjectPolicy parse(Discovery discovery, Path path, byte[] bytes,
+            String activeOntologyIri, Collection<String> installedReasoners,
+            boolean forbidExternalPaths) {
+        List<PolicyIssue> issues = new ArrayList<>();
+        if (bytes.length > MAX_POLICY_BYTES) {
+            issues.add(error("policy_too_large", "policy_path", "Policy is " + bytes.length
+                    + " bytes; the maximum is " + MAX_POLICY_BYTES + "."));
+            return result(discovery.kind, path, null, null, Collections.emptyMap(),
+                    Collections.emptyMap(), issues);
+        }
+
         Map<String, Object> parsed;
         try {
-            byte[] bytes = Files.readAllBytes(path);
             parsed = YAML.readValue(bytes, new TypeReference<LinkedHashMap<String, Object>>() { });
             if (parsed == null) {
                 throw new IOException("document is empty");
@@ -312,20 +357,47 @@ public final class ProjectPolicyLoader {
         String statusProperty = string(lifecycle, "status_property");
         if (statusProperty != null) refs.add(statusProperty);
         refs.addAll(strings(lifecycle.get("replaced_by_properties")));
-        for (String ref : refs) {
-            int colon = ref.indexOf(':');
-            if (colon <= 0 || colon == ref.length() - 1) {
-                issues.add(error("term_reference_invalid", "annotations",
-                        "Annotation property reference must be an absolute IRI or declared CURIE: " + ref));
-                continue;
-            }
-            String prefix = ref.substring(0, colon);
-            boolean explicitAbsolute = Set.of("http", "https", "urn", "file")
-                    .contains(prefix.toLowerCase(Locale.ROOT));
-            if (!explicitAbsolute && !prefixes.containsKey(prefix)) {
-                issues.add(error("prefix_unknown", "annotations", "CURIE uses undeclared prefix '"
-                        + prefix + "': " + ref));
-            }
+        validateTermReferenceList(refs, prefixes, "annotations", issues);
+
+        Map<String, Object> search = object(policy, "entity_search");
+        List<String> preferredProperties = strings(search.get("preferred_properties"));
+        List<String> synonymProperties = strings(search.get("synonym_properties"));
+        List<String> searchRefs = new ArrayList<>(preferredProperties);
+        searchRefs.addAll(synonymProperties);
+        validateTermReferenceList(searchRefs, prefixes, "entity_search", issues);
+        List<String> effectivePreferred = search.containsKey("preferred_properties")
+                ? preferredProperties : EntitySearchPolicy.DEFAULT_PREFERRED_PROPERTIES;
+        List<String> effectiveSynonyms = search.containsKey("synonym_properties")
+                ? synonymProperties : EntitySearchPolicy.DEFAULT_SYNONYM_PROPERTIES;
+        Set<String> preferredIris = effectivePreferred.stream()
+                .map(ref -> expandTermReference(ref, prefixes)).filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        Set<String> synonymIris = effectiveSynonyms.stream()
+                .map(ref -> expandTermReference(ref, prefixes)).filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        preferredIris.retainAll(synonymIris);
+        if (!preferredIris.isEmpty()) {
+            issues.add(error("search_property_overlap", "entity_search",
+                    "A lexical property cannot be both preferred and synonym: "
+                            + String.join(", ", preferredIris.stream().sorted().toList())));
+        }
+        validateLanguageOrder(search, "preferred_languages", issues);
+        validateLanguageOrder(search, "fallback_languages", issues);
+        Set<String> preferredLanguages = normalizedLanguages(search.get("preferred_languages"));
+        Set<String> fallbackLanguages = normalizedLanguages(search.get("fallback_languages"));
+        preferredLanguages.retainAll(fallbackLanguages);
+        if (!preferredLanguages.isEmpty()) {
+            issues.add(error("search_language_overlap", "entity_search",
+                    "A language cannot be both preferred and fallback: "
+                            + String.join(", ", preferredLanguages.stream().sorted().toList())));
+        }
+        if ((!strings(search.get("preferred_languages")).isEmpty()
+                || !strings(search.get("fallback_languages")).isEmpty())
+                && search.containsKey("preferred_properties")
+                && search.containsKey("synonym_properties")
+                && preferredProperties.isEmpty() && synonymProperties.isEmpty()) {
+            issues.add(error("search_properties_required", "entity_search",
+                    "Language preferences require at least one preferred or synonym property."));
         }
         if ((!strings(labels.get("required_languages")).isEmpty()
                 || bool(labels, "one_preferred_per_language", false))
@@ -355,6 +427,59 @@ public final class ProjectPolicyLoader {
                         "require_replacement=true requires at least one replacement property."));
             }
         }
+    }
+
+    private static void validateTermReferenceList(List<String> refs, Map<String, Object> prefixes,
+            String path, List<PolicyIssue> issues) {
+        for (String ref : refs) {
+            int colon = ref.indexOf(':');
+            if (colon <= 0 || colon == ref.length() - 1) {
+                issues.add(error("term_reference_invalid", path,
+                        "Annotation property reference must be an absolute IRI or declared CURIE: " + ref));
+                continue;
+            }
+            String prefix = ref.substring(0, colon);
+            boolean explicitAbsolute = Set.of("http", "https", "urn", "file")
+                    .contains(prefix.toLowerCase(Locale.ROOT));
+            if (!explicitAbsolute && !prefixes.containsKey(prefix)) {
+                issues.add(error("prefix_unknown", path, "CURIE uses undeclared prefix '"
+                        + prefix + "': " + ref));
+            }
+        }
+    }
+
+    private static String expandTermReference(String ref, Map<String, Object> prefixes) {
+        if (ref == null) return null;
+        int colon = ref.indexOf(':');
+        if (colon <= 0 || colon == ref.length() - 1) return null;
+        String prefix = ref.substring(0, colon);
+        if (Set.of("http", "https", "urn", "file").contains(prefix.toLowerCase(Locale.ROOT))) {
+            return ref;
+        }
+        Object base = prefixes.get(prefix);
+        return base instanceof String ? base + ref.substring(colon + 1) : null;
+    }
+
+    private static void validateLanguageOrder(Map<String, Object> search, String key,
+            List<PolicyIssue> issues) {
+        List<String> languages = strings(search.get(key));
+        if (languages.size() > EntitySearchPolicy.MAX_LANGUAGE_PRIORITIES) {
+            issues.add(error("search_language_limit", "entity_search." + key,
+                    "At most " + EntitySearchPolicy.MAX_LANGUAGE_PRIORITIES
+                            + " language priorities are allowed."));
+        }
+        if (normalizedLanguages(languages).size() != languages.size()) {
+            issues.add(error("search_language_duplicate", "entity_search." + key,
+                    "Language priority lists are case-insensitively unique."));
+        }
+    }
+
+    private static Set<String> normalizedLanguages(Object value) {
+        Set<String> normalized = new LinkedHashSet<>();
+        for (String language : strings(value)) {
+            normalized.add(language.toLowerCase(Locale.ROOT));
+        }
+        return normalized;
     }
 
     private static void validateModules(Map<String, Object> policy, Path projectRoot,

@@ -102,6 +102,25 @@
       },
       "default": {}
     },
+    "entity_search": {
+      "type": "object",
+      "description": "Local lexical discovery settings used by search_entities. Omitted fields use the documented runtime defaults without changing the effective-policy digest of older projects.",
+      "additionalProperties": false,
+      "properties": {
+        "preferred_properties": {
+          "$ref": "#/$defs/termReferences"
+        },
+        "synonym_properties": {
+          "$ref": "#/$defs/termReferences"
+        },
+        "preferred_languages": {
+          "$ref": "#/$defs/languagePriority"
+        },
+        "fallback_languages": {
+          "$ref": "#/$defs/languagePriority"
+        }
+      }
+    },
     "filesystem": {
       "type": "object",
       "additionalProperties": false,
@@ -113,6 +132,36 @@
       },
       "default": {
         "allow_external_paths": false
+      }
+    },
+    "audit": {
+      "type": "object",
+      "description": "Rotation and retention bounds for owner-only local audit streams. Audit events remain outside the project and are never policy content.",
+      "additionalProperties": false,
+      "properties": {
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650,
+          "default": 90
+        },
+        "max_file_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1073741824,
+          "default": 10485760
+        },
+        "max_files": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 100,
+          "default": 10
+        }
+      },
+      "default": {
+        "retention_days": 90,
+        "max_file_bytes": 10485760,
+        "max_files": 10
       }
     },
     "network": {
@@ -501,6 +550,16 @@
     },
     "languages": {
       "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"
+      },
+      "uniqueItems": true,
+      "default": []
+    },
+    "languagePriority": {
+      "type": "array",
+      "maxItems": 4,
       "items": {
         "type": "string",
         "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"

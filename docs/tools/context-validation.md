@@ -244,7 +244,7 @@ loader could not resolve are reported, and with `include_imports=true` they forc
 `potentially_breaking`: a truncated right closure fails closed instead of passing a review gate as
 `metadata_only` or identical.
 
-`mode=inferred|both` additionally evaluates the `inferred-diff-v1` entailment set (ADR 0004): both
+`mode=inferred|both` additionally evaluates the supported `inferred-diff-v1` entailment set: both
 sides are flattened and classified sequentially by one explicitly recorded reasoner (the current
 Protégé selection, or `reasoner`), reporting consistency, class satisfiability, named-class
 subsumption and equivalence closure deltas, named individual types, and candidate-bounded
@@ -352,7 +352,7 @@ that reference scan to the corresponding imports closures.
 - `deprecated_terms_in_use`: `{count, items, truncated?}` — entities carrying `owl:deprecated true` anywhere in the analyzed closures that are referenced by the delta or by the referencing axioms.
 - `validation_references`: textual occurrences of affected IRIs in validation assets. With a loaded valid policy: `{available: true, match: "textual", count, items, truncated?, files_scanned, files_skipped?, scan_truncated?, scan_note?, searched_iris, workspace_cq_error?}` — plain substring matching (`match: "textual"`, no parsing) of up to 500 affected IRIs against the policy-resolved `invariants`/`shacl`/`cqs` asset files (up to 100 files, 1 MiB each; oversized or unreadable files are skipped with a reason) and the in-workspace CQ stores; each item `{source, ref, iris}` where `source` is `invariants`, `shacl`, `cqs`, or `workspace_cq` (workspace rows additionally carry `convention`). `files_scanned` counts only files whose text was actually read and searched — a skipped file is accounted in `files_skipped` instead, never in both; `files_skipped` is `{count, items, truncated?}` with the first 10 skip reasons sampled. Without `policy_path`: `{available: false, reason}`; an unresolvable/invalid policy: `{error}`.
 - `public_api_terms`: `{available: false, reason: "policy v1 does not yet declare public API terms"}` — policy v1 declares no public-API term set yet.
-- `external_mappings`: `{available: false, reason: "mapping management ships with the M6 milestone"}` — the SSSOM mapping store does not exist yet.
+- `external_mappings`: `{available: false, reason: "mapping management is not yet available"}` — the SSSOM mapping store does not exist yet.
 
 **Example**
 

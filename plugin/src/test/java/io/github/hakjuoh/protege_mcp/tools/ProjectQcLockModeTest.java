@@ -273,7 +273,7 @@ class ProjectQcLockModeTest {
         for (io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification spec
                 : registry.build()) {
             if (spec.tool().name().equals("run_qc_suite")) {
-                return spec.callHandler().apply(null,
+                return spec.callHandler().apply(ToolTestExchange.localAdmin(),
                         new io.modelcontextprotocol.spec.McpSchema.CallToolRequest(
                                 "run_qc_suite", args));
             }

@@ -75,8 +75,7 @@ final class DirectAccessPolicy {
 
     static void requireCapability(McpSyncServerExchange exchange, String capability) {
         AuthenticatedPrincipal principal = principal(exchange);
-        if (principal == null || (!principal.capabilities().contains(capability)
-                && !principal.capabilities().contains(LOCAL_ADMIN))) {
+        if (principal == null || !principal.allows(capability)) {
             throw new ToolArgException("Operation requires capability " + capability + ".");
         }
     }
@@ -88,8 +87,7 @@ final class DirectAccessPolicy {
     static Rules resolve(ToolContext ctx, McpSyncServerExchange exchange,
             String configuredPolicyPath) {
         AuthenticatedPrincipal principal = principal(exchange);
-        if (principal == null || (!principal.capabilities().contains(PROJECT_READ)
-                && !principal.capabilities().contains(LOCAL_ADMIN))) {
+        if (principal == null || !principal.allows(PROJECT_READ)) {
             throw new ToolArgException("Resolving project filesystem/network policy requires capability "
                     + PROJECT_READ + ".");
         }
@@ -545,8 +543,7 @@ final class DirectAccessPolicy {
         }
 
         private boolean has(String capability) {
-            return principal != null && (principal.capabilities().contains(capability)
-                    || principal.capabilities().contains(LOCAL_ADMIN));
+            return principal != null && principal.allows(capability);
         }
     }
 

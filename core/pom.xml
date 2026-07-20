@@ -6,7 +6,7 @@
     <parent>
         <groupId>io.github.hakjuoh</groupId>
         <artifactId>protege-mcp-parent</artifactId>
-        <version>0.7.0</version>
+        <version>0.7.1</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>protege-mcp-core</artifactId>
@@ -42,6 +42,16 @@
             <groupId>com.apicatalog</groupId>
             <artifactId>titanium-rdfc</artifactId>
             <version>${titanium.rdfc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.jena</groupId>
+            <artifactId>jena-arq</artifactId>
+            <version>${jena.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.jena</groupId>
+            <artifactId>jena-shacl</artifactId>
+            <version>${jena.version}</version>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>

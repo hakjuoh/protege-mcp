@@ -16,6 +16,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.github.hakjuoh.protege_mcp.core.audit.AuditSettings;
 import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
 
 /** Discovery, strict YAML/schema validation, semantic checks, and path-confinement tests. */
@@ -74,6 +75,8 @@ class ProjectPolicyLoaderTest {
                 object(object(policy.effective(), "interoperability"), "metadata").get("format"));
         assertEquals(List.of("interoperability", "reasoner", "profile", "governance", "structural"),
                 object(policy.effective(), "validation").get("required_stages"));
+        assertFalse(policy.effective().containsKey("entity_search"),
+                "new runtime search defaults must not rewrite an older policy's effective digest");
     }
 
     @Test
@@ -223,6 +226,34 @@ class ProjectPolicyLoaderTest {
         ProjectPolicy b = ProjectPolicyLoader.load(withRelease, null);
         assertTrue(a.valid(), () -> a.issues().toString());
         assertEquals(a.digest(), b.digest());
+    }
+
+    @Test
+    void auditRuntimeDefaultsDoNotRewriteLegacyPolicyDigests(@TempDir Path temp) throws Exception {
+        String stages = "validation:\n  required_stages: [structural]\n";
+        Path legacy = temp.resolve("legacy.yaml");
+        write(legacy, minimal("example") + stages);
+        ProjectPolicy withoutAudit = ProjectPolicyLoader.load(legacy, null);
+        assertTrue(withoutAudit.valid(), () -> withoutAudit.issues().toString());
+        assertFalse(withoutAudit.effective().containsKey("audit"),
+                "runtime retention defaults must not silently change an existing policy digest");
+        AuditSettings implicitDefaults = AuditSettings.from(withoutAudit);
+        assertEquals(new AuditSettings(AuditSettings.DEFAULT_RETENTION_DAYS,
+                AuditSettings.DEFAULT_MAX_FILE_BYTES, AuditSettings.DEFAULT_MAX_FILES),
+                implicitDefaults);
+        assertTrue(implicitDefaults.policyDerived(),
+                "a valid policy that omits the audit block deliberately accepts the defaults, so "
+                        + "its retention may sweep sibling streams");
+        assertFalse(AuditSettings.defaults().policyDerived(),
+                "fallback defaults (no valid policy) must never sweep sibling streams");
+
+        Path configured = temp.resolve("configured.yaml");
+        write(configured, minimal("example") + stages
+                + "audit:\n  retention_days: 30\n  max_file_bytes: 2097152\n  max_files: 4\n");
+        ProjectPolicy withAudit = ProjectPolicyLoader.load(configured, null);
+        assertTrue(withAudit.valid(), () -> withAudit.issues().toString());
+        assertEquals(new AuditSettings(30, 2_097_152, 4), AuditSettings.from(withAudit));
+        assertNotEquals(withoutAudit.digest(), withAudit.digest());
     }
 
     @Test
@@ -670,6 +701,87 @@ class ProjectPolicyLoaderTest {
         assertTrue(ok.valid(), () -> ok.issues().toString());
         assertTrue(ok.issues().stream().noneMatch(i -> "reasoner_unavailable".equals(i.code())),
                 () -> ok.issues().toString());
+    }
+
+    @Test
+    void validatesOrderedEntitySearchPropertiesAndLanguages(@TempDir Path temp) throws Exception {
+        Path policyPath = temp.resolve("search.yaml");
+        write(policyPath, minimal("search")
+                + "prefixes:\n"
+                + "  ex: https://example.org/annotations/\n"
+                + "  rdfs: http://www.w3.org/2000/01/rdf-schema#\n"
+                + "  skos: http://www.w3.org/2004/02/skos/core#\n"
+                + "entity_search:\n"
+                + "  preferred_properties: [rdfs:label, skos:prefLabel]\n"
+                + "  synonym_properties: [skos:altLabel, ex:alias]\n"
+                + "  preferred_languages: [en, ko]\n"
+                + "  fallback_languages: [und, de]\n"
+                + "reasoning:\n  reasoner: HermiT\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+
+        assertTrue(policy.valid(), () -> policy.issues().toString());
+        assertEquals(List.of("en", "ko"),
+                object(policy.effective(), "entity_search").get("preferred_languages"));
+    }
+
+    @Test
+    void rejectsEntitySearchPropertyAndLanguageAmbiguity(@TempDir Path temp) throws Exception {
+        Path overlap = temp.resolve("overlap.yaml");
+        write(overlap, minimal("overlap")
+                + "prefixes:\n  skos: http://www.w3.org/2004/02/skos/core#\n"
+                + "entity_search:\n"
+                + "  preferred_properties: [skos:prefLabel]\n"
+                + "  synonym_properties: [http://www.w3.org/2004/02/skos/core#prefLabel]\n"
+                + "  preferred_languages: [en]\n"
+                + "  fallback_languages: [EN]\n");
+        ProjectPolicy overlapResult = ProjectPolicyLoader.load(overlap, null);
+        assertFalse(overlapResult.valid());
+        assertCode(overlapResult, "search_property_overlap");
+        assertCode(overlapResult, "search_language_overlap");
+
+        Path duplicate = temp.resolve("duplicate.yaml");
+        write(duplicate, minimal("duplicate")
+                + "entity_search:\n  preferred_languages: [en, EN]\n");
+        ProjectPolicy duplicateResult = ProjectPolicyLoader.load(duplicate, null);
+        assertFalse(duplicateResult.valid());
+        assertCode(duplicateResult, "search_language_duplicate");
+
+        Path tooMany = temp.resolve("too-many-languages.yaml");
+        write(tooMany, minimal("too-many-languages")
+                + "entity_search:\n  preferred_languages: [en, de, fr, ko, ja]\n");
+        ProjectPolicy tooManyResult = ProjectPolicyLoader.load(tooMany, null);
+        assertFalse(tooManyResult.valid());
+        assertCode(tooManyResult, "schema_invalid");
+
+        Path defaultOverlap = temp.resolve("default-overlap.yaml");
+        write(defaultOverlap, minimal("default-overlap")
+                + "prefixes:\n  skos: http://www.w3.org/2004/02/skos/core#\n"
+                + "entity_search:\n  preferred_properties: [skos:altLabel]\n");
+        ProjectPolicy defaultOverlapResult = ProjectPolicyLoader.load(defaultOverlap, null);
+        assertFalse(defaultOverlapResult.valid());
+        assertCode(defaultOverlapResult, "search_property_overlap");
+    }
+
+    @Test
+    void languageOnlySearchOverrideUsesDefaultsButExplicitlyEmptyPropertiesFail(@TempDir Path temp)
+            throws Exception {
+        Path languageOnly = temp.resolve("language-only.yaml");
+        write(languageOnly, minimal("language-only")
+                + "entity_search:\n  preferred_languages: [en]\n  fallback_languages: [und]\n"
+                + "reasoning:\n  reasoner: HermiT\n");
+        ProjectPolicy languageOnlyResult = ProjectPolicyLoader.load(languageOnly, null);
+        assertTrue(languageOnlyResult.valid(), () -> languageOnlyResult.issues().toString());
+
+        Path disabled = temp.resolve("disabled.yaml");
+        write(disabled, minimal("disabled")
+                + "entity_search:\n"
+                + "  preferred_properties: []\n"
+                + "  synonym_properties: []\n"
+                + "  preferred_languages: [en]\n");
+        ProjectPolicy disabledResult = ProjectPolicyLoader.load(disabled, null);
+        assertFalse(disabledResult.valid());
+        assertCode(disabledResult, "search_properties_required");
     }
 
     private static String minimal(String projectId) {

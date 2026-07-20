@@ -16,6 +16,8 @@ import io.github.hakjuoh.protege_mcp.contracts.FindingSeverity;
 import io.github.hakjuoh.protege_mcp.contracts.GateResult;
 import io.github.hakjuoh.protege_mcp.contracts.StageResult;
 import io.github.hakjuoh.protege_mcp.contracts.StageStatus;
+import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcReport;
+import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcStageReport;
 
 /**
  * Deterministic report renderers for a release gate result: the same {@link GateResult} always
@@ -42,6 +44,18 @@ public final class ReleaseReports {
             return mapper.writeValueAsString(gate);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("could not render release gate JSON", e);
+        }
+    }
+
+    /** Canonical pretty JSON for an enriched headless project-QC envelope. */
+    public static String projectJson(Map<String, Object> output) {
+        ObjectMapper mapper = ContractJson.mapper().copy()
+                .enable(SerializationFeature.INDENT_OUTPUT)
+                .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+        try {
+            return mapper.writeValueAsString(output);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("could not render project QC JSON", e);
         }
     }
 
@@ -87,6 +101,37 @@ public final class ReleaseReports {
         return md.toString();
     }
 
+    /** Human-readable project-QC summary rendered from the same aggregate used by JSON. */
+    public static String projectMarkdown(ProjectQcReport report, Map<String, Object> output,
+            int findingLimit) {
+        StringBuilder md = new StringBuilder();
+        md.append("# Project QC: ").append(report.gate().json()).append("\n\n");
+        Object projectId = output.get("project_id");
+        if (projectId != null) md.append("- Project: `").append(projectId).append("`\n");
+        md.append("- Semantic fingerprint: `")
+                .append(report.request().fingerprint().semanticFingerprint()).append("`\n");
+        md.append("- Required stages: ")
+                .append(String.join(", ", report.request().requiredStages())).append("\n");
+        md.append("- Stages run/skipped: ").append(report.stagesRan()).append('/')
+                .append(report.stagesSkipped()).append("\n");
+        md.append("- Snapshot consistent: ").append(report.request().snapshotConsistent())
+                .append('\n');
+        if (output.containsKey("no_network")) md.append("- Network: `deny`\n");
+        if (Boolean.TRUE.equals(output.get("no_external_paths"))) {
+            md.append("- External paths: `deny`\n");
+        }
+        md.append('\n');
+        md.append("## Stages\n\n");
+        md.append("| Stage | Required | Status | Findings |\n| --- | --- | --- | --- |\n");
+        for (ProjectQcStageReport stage : report.stages()) {
+            md.append("| `").append(stage.execution().stage()).append("` | ")
+                    .append(stage.required()).append(" | ").append(stage.status().json())
+                    .append(" | ").append(stage.findings().size()).append(" |\n");
+        }
+        appendFindings(md, report.findings(), findingLimit);
+        return md.toString();
+    }
+
     /**
      * JUnit XML: one {@code <testsuite>} per stage, one {@code <testcase>} per finding (a
      * {@code <failure>} at or over the threshold, otherwise an informational pass) plus a synthetic
@@ -95,6 +140,24 @@ public final class ReleaseReports {
      */
     public static String junit(GateResult gate, String timestamp) {
         FindingSeverity failOn = FindingSeverity.fromJson((String) gate.details().get("fail_on"));
+        return junit(gate.stages(), failOn, timestamp, TOOL_NAME + "-release-gate");
+    }
+
+    /** JUnit projection of a headless project-QC aggregate. */
+    public static String projectJunit(ProjectQcReport report, String timestamp) {
+        FindingSeverity failOn = switch (report.request().failOn()) {
+            case "info" -> FindingSeverity.INFO;
+            case "warn" -> FindingSeverity.WARNING;
+            case "error" -> FindingSeverity.ERROR;
+            case "none" -> null;
+            default -> throw new IllegalArgumentException("unsupported fail_on threshold");
+        };
+        return junit(report.stages().stream().map(ReleaseReports::stageResult).toList(),
+                failOn, timestamp, TOOL_NAME + "-project-qc");
+    }
+
+    private static String junit(List<StageResult> stages, FindingSeverity failOn,
+            String timestamp, String suiteName) {
         StringBuilder xml = new StringBuilder();
         xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         int suiteTests = 0;
@@ -102,7 +165,7 @@ public final class ReleaseReports {
         int suiteErrors = 0;
         int suiteSkipped = 0;
         StringBuilder suites = new StringBuilder();
-        for (StageResult stage : gate.stages()) {
+        for (StageResult stage : stages) {
             List<String> cases = new ArrayList<>();
             int tests = 0;
             int failures = 0;
@@ -129,7 +192,7 @@ public final class ReleaseReports {
                     }
                 } else {
                     for (Finding f : stage.findings()) {
-                        if (f.severity().reaches(failOn)) {
+                        if (failOn != null && f.severity().reaches(failOn)) {
                             cases.add(testcase(f.id(), f.severity().json(),
                                     "    <failure message=\"" + attr(f.message()) + "\" type=\""
                                             + attr(f.id()) + "\">" + text(findingBody(f))
@@ -145,7 +208,11 @@ public final class ReleaseReports {
             suites.append("  <testsuite name=\"").append(attr(stage.stage()))
                     .append("\" tests=\"").append(tests).append("\" failures=\"").append(failures)
                     .append("\" errors=\"").append(errors).append("\" skipped=\"").append(skipped)
-                    .append("\" time=\"0\" timestamp=\"").append(attr(timestamp)).append("\">\n");
+                    .append("\" time=\"0\"");
+            if (timestamp != null && !timestamp.isBlank()) {
+                suites.append(" timestamp=\"").append(attr(timestamp)).append('"');
+            }
+            suites.append(">\n");
             cases.forEach(suites::append);
             suites.append("  </testsuite>\n");
             suiteTests += tests;
@@ -153,7 +220,7 @@ public final class ReleaseReports {
             suiteErrors += errors;
             suiteSkipped += skipped;
         }
-        xml.append("<testsuites name=\"").append(TOOL_NAME).append("-release-gate\" tests=\"")
+        xml.append("<testsuites name=\"").append(attr(suiteName)).append("\" tests=\"")
                 .append(suiteTests).append("\" failures=\"").append(suiteFailures)
                 .append("\" errors=\"").append(suiteErrors).append("\" skipped=\"")
                 .append(suiteSkipped).append("\">\n");
@@ -193,8 +260,16 @@ public final class ReleaseReports {
      * report. A null/blank fallback degrades to the literal {@code "ontology"} placeholder.
      */
     public static Map<String, Object> sarif(GateResult gate, String fallbackUri) {
+        return sarif(gate.findings(), fallbackUri);
+    }
+
+    /** SARIF projection of a headless project-QC aggregate. */
+    public static Map<String, Object> projectSarif(ProjectQcReport report, String fallbackUri) {
+        return sarif(report.findings(), fallbackUri);
+    }
+
+    private static Map<String, Object> sarif(List<Finding> findings, String fallbackUri) {
         Map<String, Boolean> ruleErrored = new TreeMap<>();
-        List<Finding> findings = gate.findings();
         for (Finding f : findings) {
             ruleErrored.putIfAbsent(f.id(), Boolean.TRUE);
         }
@@ -264,10 +339,19 @@ public final class ReleaseReports {
 
     /** Render {@link #sarif} to canonical JSON text. */
     public static String sarifJson(GateResult gate, String fallbackUri) {
+        return sarifJson(sarif(gate, fallbackUri));
+    }
+
+    /** Render headless project-QC SARIF to canonical JSON text. */
+    public static String projectSarifJson(ProjectQcReport report, String fallbackUri) {
+        return sarifJson(projectSarif(report, fallbackUri));
+    }
+
+    private static String sarifJson(Map<String, Object> sarif) {
         ObjectMapper mapper = ContractJson.mapper().copy()
                 .enable(SerializationFeature.INDENT_OUTPUT);
         try {
-            return mapper.writeValueAsString(sarif(gate, fallbackUri));
+            return mapper.writeValueAsString(sarif);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("could not render SARIF", e);
         }
@@ -285,7 +369,7 @@ public final class ReleaseReports {
         if (value == null) {
             return "";
         }
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return xmlSafe(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 .replace("\"", "&quot;");
     }
 
@@ -293,10 +377,49 @@ public final class ReleaseReports {
         if (value == null) {
             return "";
         }
-        return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        return xmlSafe(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private static String escapeInline(String value) {
         return value.replace("|", "\\|").replace("\n", " ");
+    }
+
+    private static String xmlSafe(String value) {
+        StringBuilder safe = new StringBuilder(value.length());
+        value.codePoints().filter(codePoint -> codePoint == 0x9 || codePoint == 0xA
+                        || codePoint == 0xD || codePoint >= 0x20 && codePoint <= 0xD7FF
+                        || codePoint >= 0xE000 && codePoint <= 0xFFFD
+                        || codePoint >= 0x10000 && codePoint <= 0x10FFFF)
+                .forEach(safe::appendCodePoint);
+        return safe.toString();
+    }
+
+    private static StageResult stageResult(ProjectQcStageReport stage) {
+        return new StageResult(stage.execution().stage(), stage.status(), stage.message(),
+                stage.findings(), stage.execution().details() == null
+                        ? Map.of() : stage.execution().details());
+    }
+
+    private static void appendFindings(StringBuilder md, List<Finding> findings,
+            int findingLimit) {
+        md.append("\n## Findings (").append(findings.size()).append(")\n\n");
+        if (findings.isEmpty()) {
+            md.append("_No findings._\n");
+            return;
+        }
+        int shown = Math.min(findings.size(), Math.max(0, findingLimit));
+        for (int index = 0; index < shown; index++) {
+            Finding finding = findings.get(index);
+            md.append("- **").append(finding.severity().json()).append("** `")
+                    .append(finding.id()).append("` — ")
+                    .append(escapeInline(finding.message()));
+            if (finding.focusIri() != null) {
+                md.append(" (`").append(finding.focusIri()).append("`)");
+            }
+            md.append('\n');
+        }
+        if (findings.size() > shown) {
+            md.append("- _… ").append(findings.size() - shown).append(" more._\n");
+        }
     }
 }

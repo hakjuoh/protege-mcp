@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprints;
+import io.github.hakjuoh.protege_mcp.core.qc.ValidationAssetLoader;
 import io.github.hakjuoh.protege_mcp.policy.PolicyIssue;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
@@ -147,7 +148,7 @@ final class ProjectQcTools {
                 new QcInteroperabilityConfig(
                         string(interoperability, "profile"),
                         strings(interoperability.get("additional_profiles")),
-                        string(metadata, "format"), manifests.get(0).toString(),
+                        string(metadata, "format"), portable(policy, manifests.get(0)),
                         string(interoperability, "root_artifact"),
                         string(canonicalization, "algorithm"),
                         string(canonicalization, "hash"), string(canonicalization, "scope"),
@@ -158,6 +159,15 @@ final class ProjectQcTools {
                 requiredAnnotations, true, governanceRules(root), disabled, severity, true, configuredReasoner,
                 string(root, "root_ontology"), interopConfig,
                 ModulePolicyGovernance.moduleChecks(policy, limit));
+    }
+
+    /** Keep release/QC evidence reproducible across checkout locations. */
+    private static String portable(ProjectPolicy policy, Path path) {
+        Path root = policy.projectRoot().toAbsolutePath().normalize();
+        Path absolute = path.toAbsolutePath().normalize();
+        return absolute.startsWith(root)
+                ? root.relativize(absolute).toString().replace('\\', '/')
+                : absolute.toString();
     }
 
     /**
@@ -323,43 +333,12 @@ final class ProjectQcTools {
         if (Cq.CONV_ANNOTATIONS.equals(convention)) {
             return null; // QcSuite phase 1 reads ontology annotations from the captured live revision.
         }
-        List<Path> resolved = policy.assets().getOrDefault("cqs", Collections.emptyList());
-        if (resolved.size() != 1) {
-            throw new ToolArgException("Exactly one competency-question path must resolve for convention "
-                    + convention + ".");
+        try {
+            return ValidationAssetLoader.loadQuestions(policy, policy.assets(), null).stream()
+                    .map(CqRunner::plugin).toList();
+        } catch (ValidationAssetLoader.AssetException error) {
+            throw new ToolArgException(error.getMessage());
         }
-        Path path = resolved.get(0);
-        CqStore.LoadResult loaded;
-        if (Cq.CONV_ROBOT.equals(convention)) {
-            if (!java.nio.file.Files.isDirectory(path)) {
-                throw new ToolArgException("robot-sparql-dir competency question path must be a directory: "
-                        + path);
-            }
-            loaded = RobotSparqlDirStore.loadDirectory(path.toFile());
-        } else if (Cq.CONV_MANIFEST.equals(convention)) {
-            if (!java.nio.file.Files.isRegularFile(path)) {
-                throw new ToolArgException("sidecar-manifest competency question path must be a JSON file: "
-                        + path);
-            }
-            loaded = SidecarManifestStore.loadFile(path.toFile());
-        } else {
-            throw new ToolArgException("Unsupported policy CQ convention: " + convention);
-        }
-        if (!loaded.skipped.isEmpty()) {
-            List<String> errors = new ArrayList<>();
-            for (CqStore.LoadWarning warning : loaded.skipped) {
-                errors.add(warning.source + ": " + warning.reason);
-            }
-            throw new ToolArgException("Competency-question assets contain unreadable entries: "
-                    + String.join("; ", errors));
-        }
-        Set<String> ids = new LinkedHashSet<>();
-        for (CompetencyQuestion cq : loaded.ok) {
-            if (!ids.add(cq.id)) {
-                throw new ToolArgException("Duplicate competency-question id in policy assets: " + cq.id);
-            }
-        }
-        return loaded.ok;
     }
 
     private static List<String> annotationRequirements(Map<String, Object> root) {

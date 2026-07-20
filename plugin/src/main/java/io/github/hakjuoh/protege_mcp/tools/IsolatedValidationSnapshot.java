@@ -3,9 +3,6 @@ package io.github.hakjuoh.protege_mcp.tools;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -32,6 +29,7 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprints;
+import io.github.hakjuoh.protege_mcp.core.workspace.WorkspaceFingerprints;
 
 /**
  * Immutable-by-convention, private OWLAPI copy used by every non-reasoner QC stage.
@@ -204,11 +202,7 @@ final class IsolatedValidationSnapshot {
     }
 
     private static String ontologyKey(OWLOntology ontology) {
-        OWLOntologyID id = ontology.getOntologyID();
-        IRI ontologyIri = id.getOntologyIRI().orNull();
-        IRI versionIri = id.getVersionIRI().orNull();
-        return (ontologyIri == null ? "" : ontologyIri.toString()) + "\u0000"
-                + (versionIri == null ? "" : versionIri.toString()) + "\u0000" + id;
+        return WorkspaceFingerprints.ontologyKey(ontology);
     }
 
     /** Same-session digest of every loaded ontology's semantic fingerprint, including imported content. */
@@ -222,26 +216,7 @@ final class IsolatedValidationSnapshot {
      * so a null map (live ontologies) reads them from the ontology; a supplied map restores them.
      */
     static String closureFingerprint(Set<OWLOntology> closure, Map<String, List<String>> importCoordinates) {
-        List<String> members = new ArrayList<>();
-        for (OWLOntology ontology : closure) {
-            String key = ontologyKey(ontology);
-            List<String> imports = importCoordinates == null ? null : importCoordinates.get(key);
-            String semantic = OntologyFingerprints.compute(ontology, null, imports).semanticFingerprint();
-            members.add(key.getBytes(StandardCharsets.UTF_8).length + ":" + key + "\u0000" + semantic);
-        }
-        Collections.sort(members);
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = digest.digest(String.join("\n", members).getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(bytes.length * 2);
-            for (byte value : bytes) {
-                hex.append(Character.forDigit((value >>> 4) & 0xf, 16));
-                hex.append(Character.forDigit(value & 0xf, 16));
-            }
-            return "sha256:" + hex;
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 is unavailable", impossible);
-        }
+        return WorkspaceFingerprints.closure(closure, importCoordinates);
     }
 
     private static Map<OWLObject, String> captureRenderings(OWLModelManager live, OWLOntology active) {

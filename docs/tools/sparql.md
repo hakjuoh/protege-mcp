@@ -45,7 +45,12 @@ are no new arguments and the results are unchanged; this only makes repeated que
 The shape depends on the query form. Common:
 
 - `query_type`: string — one of `SELECT`, `ASK`, `CONSTRUCT`, `DESCRIBE`.
-- `note`: string (only when a large-ABox inference skip occurred with `include_inferred=true`) — explains that inferred property assertions were skipped.
+- `note`: string (only when inference work is omitted with `include_inferred=true`) — names every omitted
+  category. Class hierarchy, class assertions, property hierarchy, and property assertions are admitted by
+  independent query estimates and each has an actual-result budget during enumeration; a category is
+  dropped atomically when its result budget is exceeded, while an enumeration the active reasoner cannot
+  answer is contained per generator, keeping the answered axioms and naming the omission. Targeted reasoner
+  tools remain available.
 
 For **SELECT**:
 

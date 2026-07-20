@@ -33,6 +33,10 @@ public final class McpCatalog {
 
     private static final int FORMAT_VERSION = 1;
     private static final Pattern NAME = Pattern.compile("[a-z][a-z0-9_]*");
+    private static final Pattern INTERNAL_REFERENCE = Pattern.compile(
+            "(?i)(?:\\bADR(?:\\s+|-)0*\\d+\\b|PLAN(?:\\.md)?\\s*§|"
+                    + "§\\s*\\d+|\\bM\\d+[A-Z]?\\s+milestone\\b|"
+                    + "\\bmilestone\\s+M\\d+[A-Z]?\\b)");
     private static final ObjectMapper JSON = JsonMapper.builder()
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
@@ -87,6 +91,7 @@ public final class McpCatalog {
         try (input) {
             JsonNode root = JSON.readTree(input);
             requireObject(root, "catalog");
+            rejectInternalReferences(root, "catalog");
             requireFields(root, "catalog", Set.of("version", "tools", "prompts"));
             int version = requireInteger(root, "version", "catalog");
             if (version != FORMAT_VERSION) {
@@ -119,6 +124,7 @@ public final class McpCatalog {
             requireFields(node, path, Set.of("name", "description", "input_schema"));
             String name = requireName(node, path);
             String description = requireText(node, "description", path);
+            rejectInternalReference(description, path + ".description");
             JsonNode schemaNode = required(node, "input_schema", path);
             requireObject(schemaNode, path + ".input_schema");
             validateInputSchema(schemaNode, path + ".input_schema");
@@ -142,6 +148,7 @@ public final class McpCatalog {
             requireFields(node, path, Set.of("name", "description", "arguments"));
             String name = requireName(node, path);
             String description = requireText(node, "description", path);
+            rejectInternalReference(description, path + ".description");
             JsonNode argumentNodes = requireArray(node, "arguments", path);
             List<PromptArgument> arguments = parseArguments(argumentNodes, path);
             PromptDefinition previous = definitions.putIfAbsent(
@@ -166,6 +173,7 @@ public final class McpCatalog {
                 throw invalid("duplicate prompt argument '" + name + "' at " + promptPath);
             }
             String description = requireText(node, "description", path);
+            rejectInternalReference(description, path + ".description");
             JsonNode required = required(node, "required", path);
             if (!required.isBoolean()) {
                 throw invalid(path + ".required must be a boolean");
@@ -204,6 +212,25 @@ public final class McpCatalog {
                 if (properties == null || !properties.has(field.textValue())) {
                     throw invalid(path + ".required names missing property '" + field.textValue() + "'");
                 }
+            }
+        }
+    }
+
+    private static void rejectInternalReference(String value, String path) {
+        if (INTERNAL_REFERENCE.matcher(value).find()) {
+            throw invalid(path + " must describe public behavior without internal roadmap identifiers");
+        }
+    }
+
+    private static void rejectInternalReferences(JsonNode node, String path) {
+        if (node.isTextual()) {
+            rejectInternalReference(node.textValue(), path);
+        } else if (node.isObject()) {
+            node.properties().forEach(entry -> rejectInternalReferences(
+                    entry.getValue(), path + "." + entry.getKey()));
+        } else if (node.isArray()) {
+            for (int index = 0; index < node.size(); index++) {
+                rejectInternalReferences(node.get(index), path + "[" + index + "]");
             }
         }
     }

@@ -473,7 +473,8 @@ class CurationChangeSetPreviewTest {
         CurationTools.register(registry, ctx);
         for (SyncToolSpecification spec : registry.build()) {
             if (spec.tool().name().equals(tool)) {
-                return spec.callHandler().apply(null, new CallToolRequest(tool, args));
+                return spec.callHandler().apply(ToolTestExchange.localAdmin(),
+                        new CallToolRequest(tool, args));
             }
         }
         throw new AssertionError("no tool named " + tool);

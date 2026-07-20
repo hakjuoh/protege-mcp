@@ -121,6 +121,8 @@ class ImportLockToolsTest {
 
         assertEquals(false, result.get("valid"));
         assertTrue(String.valueOf(result.get("errors")).contains("unknown top-level"));
+        assertTrue(String.valueOf(result.get("sha256")).matches("sha256:[0-9a-f]{64}"),
+                "invalid but fully captured lock bytes retain their digest for triage");
     }
 
     @Test
@@ -255,6 +257,19 @@ class ImportLockToolsTest {
                 "with no delegation an unmapped import remains a hard failure");
         assertEquals(List.of("https://example.org/elsewhere"), result.get("unmapped_imports"));
         assertEquals(List.of(), result.get("delegated_imports"));
+    }
+
+    @Test
+    void malformedCatalogHasOneParseErrorPrefix() throws Exception {
+        Path catalog = temp.resolve("catalog-v001.xml");
+        Files.writeString(catalog, "<catalog><broken></catalog>");
+
+        Map<String, Object> result = structured(ImportLockTools.validateCatalog(
+                context(), Map.of("path", catalog.toString())));
+
+        String errors = String.valueOf(result.get("errors"));
+        assertTrue(errors.contains("could not parse catalog: invalid catalog XML:"), errors);
+        assertFalse(errors.contains("could not parse catalog: could not parse catalog:"), errors);
     }
 
     // ------------------------------------------------------------------ fixtures

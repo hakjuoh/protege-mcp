@@ -17,12 +17,10 @@ import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import org.protege.editor.owl.model.OWLModelManager;
-import org.semanticweb.owlapi.model.IRI;
-import org.semanticweb.owlapi.model.OWLAnnotationAssertionAxiom;
 import org.semanticweb.owlapi.model.OWLAxiom;
-import org.semanticweb.owlapi.model.OWLEntity;
 import org.semanticweb.owlapi.model.OWLOntology;
 
+import io.github.hakjuoh.protege_mcp.core.impact.SyntacticImpactService;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
@@ -44,10 +42,10 @@ public final class ImpactTools {
     private static final int DEFAULT_LIMIT = 50;
 
     /** Documented cap on the downstream breadth-first sweep depth (hops from an affected term). */
-    static final int DOWNSTREAM_DEPTH_CAP = 3;
+    static final int DOWNSTREAM_DEPTH_CAP = SyntacticImpactService.DOWNSTREAM_DEPTH_CAP;
 
     /** Documented cap on how many downstream terms the sweep may discover before stopping. */
-    static final int DOWNSTREAM_SIZE_CAP = 1_000;
+    static final int DOWNSTREAM_SIZE_CAP = SyntacticImpactService.DOWNSTREAM_SIZE_CAP;
 
     /** Per-file text-scan bound for validation assets (larger files are skipped with a reason). */
     static final long MAX_ASSET_TEXT_BYTES = 1_048_576L;
@@ -183,7 +181,7 @@ public final class ImpactTools {
             result.put("public_api_terms", InferredDiffOrchestrator.unavailable(
                     "policy v1 does not yet declare public API terms"));
             result.put("external_mappings", InferredDiffOrchestrator.unavailable(
-                    "mapping management ships with the M6 milestone"));
+                    "mapping management is not available in this release"));
             return Tools.ok(result);
         } finally {
             if (entry != null) {
@@ -206,19 +204,18 @@ public final class ImpactTools {
             String leftRef, String rightRef, OWLOntology rightDocOntology, String rightDocLabel,
             boolean includeImports, int limit, boolean gatherWorkspaceCqs) {
         OWLOntology active = mm.getActiveOntology();
-        OWLOntology leftOntology = active;
-        OWLOntology rightOntology = active;
-        Set<OWLAxiom> added;
-        Set<OWLAxiom> removed;
         String leftLabel = null;
         String rightLabel = null;
+        SyntacticImpactService.Result impact;
         if (entry != null) {
-            added = new LinkedHashSet<>();
-            removed = new LinkedHashSet<>();
+            Set<OWLAxiom> added = new LinkedHashSet<>();
+            Set<OWLAxiom> removed = new LinkedHashSet<>();
             for (NormalizedChange change : entry.changes) {
                 (change.operation() == NormalizedChange.Operation.ADD ? added : removed)
                         .add(change.axiom());
             }
+            impact = SyntacticImpactService.analyze(active, active, added, removed,
+                    includeImports);
         } else {
             OWLOntology left = leftRef == null ? active
                     : OntologyDocumentTools.findLoadedOntology(mm, leftRef);
@@ -226,118 +223,36 @@ public final class ImpactTools {
                 throw new ToolArgException("No loaded ontology matches left='" + leftRef
                         + "' (see list_ontologies).");
             }
-            Set<OWLAxiom> leftAxioms = collect(left, includeImports);
-            Set<OWLAxiom> rightAxioms;
-            leftOntology = left;
+            OWLOntology right;
             if (rightDocOntology != null) {
-                rightOntology = rightDocOntology;
-                rightAxioms = collect(rightDocOntology, includeImports);
+                right = rightDocOntology;
                 rightLabel = rightDocLabel;
             } else {
-                OWLOntology right = OntologyDocumentTools.findLoadedOntology(mm, rightRef);
+                right = OntologyDocumentTools.findLoadedOntology(mm, rightRef);
                 if (right == null) {
                     throw new ToolArgException("No loaded ontology matches right='" + rightRef
                             + "' (see list_ontologies).");
                 }
-                rightOntology = right;
-                rightAxioms = collect(right, includeImports);
                 rightLabel = OntologyDocumentTools.ontologyLabel(right.getOntologyID());
             }
             leftLabel = OntologyDocumentTools.ontologyLabel(left.getOntologyID());
-            DiffTools.Diff diff = DiffTools.diff(leftAxioms, rightAxioms);
-            removed = diff.onlyLeft;
-            added = diff.onlyRight;
+            impact = SyntacticImpactService.compare(left, right, includeImports);
         }
-        // A diff may name two loaded ontologies neither of which is active (or a detached right
-        // document). References/downstream/deprecation must therefore be evaluated over the compared
-        // sides, not over an unrelated active workspace. Use the union so both pre-change and
-        // post-change syntactic reachability remain visible. A change-set still naturally uses active.
-        Set<OWLOntology> scope = new LinkedHashSet<>();
-        scope.addAll(includeImports ? leftOntology.getImportsClosure() : Set.of(leftOntology));
-        scope.addAll(includeImports ? rightOntology.getImportsClosure() : Set.of(rightOntology));
-        Set<OWLOntology> closure = new LinkedHashSet<>(leftOntology.getImportsClosure());
-        closure.addAll(rightOntology.getImportsClosure());
+        Map<String, Object> directly = impact.directlyAffectedMap(limit);
+        Map<String, Object> referencingJson = Tools.axiomList(mm, impact.referencingAxioms(), limit);
+        Map<String, Object> downstreamJson = impact.downstream().toMap(limit);
 
-        // 1. directly_affected: every IRI in the delta axioms' signatures (including annotation
-        // subjects and IRI annotation values, which OWLAPI keeps out of getSignature), with exact
-        // per-IRI added/removed axiom counts. TreeMap => IRI-sorted, deterministic.
-        TreeMap<String, int[]> counts = new TreeMap<>();
-        for (OWLAxiom ax : added) {
-            for (String iri : affectedIris(ax)) {
-                counts.computeIfAbsent(iri, key -> new int[2])[0]++;
-            }
-        }
-        for (OWLAxiom ax : removed) {
-            for (String iri : affectedIris(ax)) {
-                counts.computeIfAbsent(iri, key -> new int[2])[1]++;
-            }
-        }
-        List<String> affected = List.copyOf(counts.keySet());
-        List<Map<String, Object>> affectedRows = new ArrayList<>();
-        counts.entrySet().stream()
-                .sorted(Comparator.<Map.Entry<String, int[]>>comparingInt(
-                        e -> -(e.getValue()[0] + e.getValue()[1]))
-                        .thenComparing(Map.Entry::getKey))
-                .limit(Math.max(0, limit))
-                .forEach(e -> {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("iri", e.getKey());
-                    row.put("added", e.getValue()[0]);
-                    row.put("removed", e.getValue()[1]);
-                    affectedRows.add(row);
-                });
-        Map<String, Object> directly = new LinkedHashMap<>();
-        directly.put("count", counts.size());
-        directly.put("items", affectedRows);
-        if (counts.size() > affectedRows.size()) {
-            directly.put("truncated", counts.size() - affectedRows.size());
-        }
-
-        // 2. referencing_axioms: workspace axioms mentioning an affected IRI that are NOT part of
-        // the delta itself. Annotation assertions are collected explicitly for BOTH positions
-        // OWLAPI keeps out of axiom signatures: assertions ON an affected IRI (subject) and
-        // assertions whose VALUE is an affected IRI — the exact symmetric of affectedIris()'s
-        // subject/value promotion, so a value-only reference is never invisible.
-        Set<OWLAxiom> deltaAxioms = new LinkedHashSet<>(added);
-        deltaAxioms.addAll(removed);
-        Set<String> affectedSet = counts.keySet();
-        Set<OWLAxiom> referencing = new LinkedHashSet<>();
-        for (String iri : affected) {
-            IRI i = IRI.create(iri);
-            for (OWLOntology o : scope) {
-                for (OWLEntity e : o.getEntitiesInSignature(i)) {
-                    referencing.addAll(o.getReferencingAxioms(e));
-                }
-                referencing.addAll(o.getAnnotationAssertionAxioms(i));
-            }
-        }
-        for (OWLOntology o : scope) {
-            for (OWLAnnotationAssertionAxiom ann
-                    : o.getAxioms(org.semanticweb.owlapi.model.AxiomType.ANNOTATION_ASSERTION)) {
-                if (ann.getValue() instanceof IRI value && affectedSet.contains(value.toString())) {
-                    referencing.add(ann);
-                }
-            }
-        }
-        referencing.removeAll(deltaAxioms);
-        Map<String, Object> referencingJson = Tools.axiomList(mm, referencing, limit);
-
-        // 3. downstream_terms: bounded signature-co-occurrence BFS (syntactic reachability).
-        Map<String, Object> downstreamJson = downstream(scope, affected, limit);
-
-        // 4. foreign_reaxiomatization: delta axioms whose subject entity is upstream-owned
-        // (declared in an imported closure member, not in the active ontology) — the same
-        // import-layering notion validate_governance's ownership check enforces.
-        Set<OWLEntity> foreignEntities = new LinkedHashSet<>(
-                GovernanceTools.foreignDeclaredEntities(leftOntology,
-                        leftOntology.getImportsClosure()));
-        foreignEntities.addAll(GovernanceTools.foreignDeclaredEntities(rightOntology,
-                rightOntology.getImportsClosure()));
         List<Map<String, Object>> foreignRows = new ArrayList<>();
-        collectForeignRows(mm, added, "add", foreignEntities, foreignRows);
-        collectForeignRows(mm, removed, "remove", foreignEntities, foreignRows);
-        foreignRows.sort(Comparator
-                .comparing((Map<String, Object> row) -> String.valueOf(row.get("subject")))
+        for (SyntacticImpactService.ForeignImpact foreign : impact.foreignReaxiomatization()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("operation", foreign.operation());
+            row.put("subject", foreign.subjectIri());
+            row.putAll(Tools.axiomJson(mm, foreign.axiom()));
+            foreignRows.add(row);
+        }
+        // Renderer strings are presentation-only but continue to determine the released display
+        // order. The core service already fixed semantic membership and subject attribution.
+        foreignRows.sort(Comparator.comparing((Map<String, Object> row) -> String.valueOf(row.get("subject")))
                 .thenComparing(row -> String.valueOf(row.get("rendering")))
                 .thenComparing(row -> String.valueOf(row.get("operation"))));
         Map<String, Object> foreignJson = new LinkedHashMap<>();
@@ -349,22 +264,7 @@ public final class ImpactTools {
             foreignJson.put("truncated", foreignRows.size() - foreignSample.size());
         }
 
-        // 5. deprecated_terms_in_use: owl:deprecated=true terms (anywhere in the closure)
-        // referenced by the delta or by the referencing axioms above.
-        Set<OWLEntity> candidates = new LinkedHashSet<>();
-        for (OWLAxiom ax : deltaAxioms) {
-            addReferencedEntities(ax, scope, candidates);
-        }
-        for (OWLAxiom ax : referencing) {
-            addReferencedEntities(ax, scope, candidates);
-        }
-        Set<OWLEntity> deprecated = new LinkedHashSet<>();
-        for (OWLEntity e : candidates) {
-            if (ContextTools.isDeprecated(e, closure)) {
-                deprecated.add(e);
-            }
-        }
-        Map<String, Object> deprecatedJson = Tools.entityList(mm, deprecated, limit);
+        Map<String, Object> deprecatedJson = Tools.entityList(mm, impact.deprecatedTerms(), limit);
 
         // In-workspace CQ text (id/question/query) for the textual validation search. The stores
         // must run on the model thread (they read model + sidecar context), matching
@@ -389,144 +289,9 @@ public final class ImpactTools {
             }
         }
 
-        return new Workspace(leftLabel, rightLabel, added.size(), removed.size(), directly,
-                affected, referencingJson, downstreamJson, foreignJson, deprecatedJson, cqs,
-                cqError);
-    }
-
-    /**
-     * The IRIs an axiom syntactically touches: its signature entities plus — because OWLAPI keeps
-     * them out of {@code getSignature()} — the subject and IRI value of an annotation assertion.
-     */
-    private static Set<String> affectedIris(OWLAxiom ax) {
-        Set<String> out = new LinkedHashSet<>();
-        for (OWLEntity e : ax.getSignature()) {
-            out.add(e.getIRI().toString());
-        }
-        if (ax instanceof OWLAnnotationAssertionAxiom ann) {
-            if (ann.getSubject() instanceof IRI subject) {
-                out.add(subject.toString());
-            }
-            if (ann.getValue() instanceof IRI value) {
-                out.add(value.toString());
-            }
-        }
-        return out;
-    }
-
-    /** Signature entities plus workspace entities behind annotation subject/value IRIs. */
-    private static void addReferencedEntities(OWLAxiom ax, Set<OWLOntology> scope,
-            Set<OWLEntity> out) {
-        out.addAll(ax.getSignature());
-        if (ax instanceof OWLAnnotationAssertionAxiom ann) {
-            if (ann.getSubject() instanceof IRI subject) {
-                for (OWLOntology o : scope) {
-                    out.addAll(o.getEntitiesInSignature(subject));
-                }
-            }
-            if (ann.getValue() instanceof IRI value) {
-                for (OWLOntology o : scope) {
-                    out.addAll(o.getEntitiesInSignature(value));
-                }
-            }
-        }
-    }
-
-    private static void collectForeignRows(OWLModelManager mm, Set<OWLAxiom> axioms,
-            String operation, Set<OWLEntity> foreign, List<Map<String, Object>> rows) {
-        for (OWLAxiom ax : axioms) {
-            for (OWLEntity subject : GovernanceTools.subjectEntities(ax)) {
-                if (foreign.contains(subject)) {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("operation", operation);
-                    row.put("subject", subject.getIRI().toString());
-                    row.putAll(Tools.axiomJson(mm, ax));
-                    rows.add(row);
-                    break;
-                }
-            }
-        }
-    }
-
-    /**
-     * Bounded breadth-first sweep of entities syntactically reachable from the affected entities:
-     * every workspace axiom whose signature contains a frontier entity contributes its other
-     * signature entities at the next depth. Deliberately an over-approximation (labelled
-     * {@code analysis: "syntactic"}): co-occurrence in an asserted axiom proves reachability, not
-     * logical impact. Depth/size caps are disclosed; after the last in-cap level one probe
-     * expansion decides whether anything deeper exists, so {@code search_truncated} is never a
-     * guess.
-     */
-    private static Map<String, Object> downstream(Set<OWLOntology> scope,
-            Collection<String> affected, int limit) {
-        LinkedHashMap<String, Integer> found = new LinkedHashMap<>();
-        Set<String> visited = new java.util.HashSet<>(affected);
-        List<String> frontier = new ArrayList<>(new TreeSet<>(affected));
-        boolean searchTruncated = false;
-        for (int depth = 1; depth <= DOWNSTREAM_DEPTH_CAP + 1 && !frontier.isEmpty(); depth++) {
-            TreeSet<String> next = new TreeSet<>();
-            for (String iri : frontier) {
-                IRI i = IRI.create(iri);
-                for (OWLOntology o : scope) {
-                    for (OWLEntity e : o.getEntitiesInSignature(i)) {
-                        for (OWLAxiom ax : o.getReferencingAxioms(e)) {
-                            for (OWLEntity s : ax.getSignature()) {
-                                String candidate = s.getIRI().toString();
-                                if (!visited.contains(candidate)) {
-                                    next.add(candidate);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if (depth > DOWNSTREAM_DEPTH_CAP) {
-                // Probe round: the depth cap stopped the sweep while more terms were reachable.
-                if (!next.isEmpty()) {
-                    searchTruncated = true;
-                }
-                break;
-            }
-            List<String> level = new ArrayList<>();
-            for (String iri : next) {
-                if (found.size() >= DOWNSTREAM_SIZE_CAP) {
-                    searchTruncated = true;
-                    break;
-                }
-                visited.add(iri);
-                found.put(iri, depth);
-                level.add(iri);
-            }
-            if (searchTruncated) {
-                break;
-            }
-            frontier = level;
-        }
-        List<Map<String, Object>> items = new ArrayList<>();
-        for (Map.Entry<String, Integer> e : found.entrySet()) {
-            if (items.size() >= Math.max(0, limit)) {
-                break;
-            }
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("iri", e.getKey());
-            row.put("depth", e.getValue());
-            items.add(row);
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("analysis", "syntactic");
-        out.put("depth_cap", DOWNSTREAM_DEPTH_CAP);
-        out.put("size_cap", DOWNSTREAM_SIZE_CAP);
-        out.put("count", found.size());
-        out.put("items", items);
-        if (found.size() > items.size()) {
-            out.put("truncated", found.size() - items.size());
-        }
-        if (searchTruncated) {
-            out.put("search_truncated", true);
-            out.put("search_note", "The breadth-first sweep stopped at its depth/size cap; "
-                    + "syntactically reachable terms beyond the cap are neither listed nor counted.");
-        }
-        return out;
+        return new Workspace(leftLabel, rightLabel, impact.addedCount(), impact.removedCount(),
+                directly, impact.affectedIris(), referencingJson, downstreamJson, foreignJson,
+                deprecatedJson, cqs, cqError);
     }
 
     // ------------------------------------------------------------------ policy-driven categories
@@ -785,16 +550,6 @@ public final class ImpactTools {
         out.put("items", items);
         if (values.size() > items.size()) {
             out.put("truncated", values.size() - items.size());
-        }
-        return out;
-    }
-
-    private static Set<OWLAxiom> collect(OWLOntology o, boolean closure) {
-        Set<OWLAxiom> out = new LinkedHashSet<>();
-        Collection<OWLOntology> onts = closure ? o.getImportsClosure()
-                : java.util.Collections.singleton(o);
-        for (OWLOntology x : onts) {
-            out.addAll(x.getAxioms());
         }
         return out;
     }

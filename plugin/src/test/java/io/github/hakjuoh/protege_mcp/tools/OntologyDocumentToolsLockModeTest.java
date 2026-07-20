@@ -360,13 +360,14 @@ class OntologyDocumentToolsLockModeTest {
                         Set.of(DirectAccessPolicy.PROJECT_READ), null));
     }
 
-    /** Invoke a registered document tool exactly as the server would (null-exchange test seam). */
+    /** Invoke a registered document tool with the same authenticated exchange as the server. */
     private static CallToolResult call(ToolContext ctx, String tool, Map<String, Object> args) {
         ToolRegistry registry = new ToolRegistry();
         OntologyDocumentTools.register(registry, ctx);
         for (SyncToolSpecification spec : registry.build()) {
             if (spec.tool().name().equals(tool)) {
-                return spec.callHandler().apply(null, new CallToolRequest(tool, args));
+                return spec.callHandler().apply(ToolTestExchange.localAdmin(),
+                        new CallToolRequest(tool, args));
             }
         }
         throw new AssertionError("no tool named " + tool);

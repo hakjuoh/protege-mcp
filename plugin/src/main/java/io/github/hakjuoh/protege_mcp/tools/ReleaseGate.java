@@ -23,7 +23,6 @@ import org.semanticweb.owlapi.model.OWLDocumentFormat;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyID;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 
 import io.github.hakjuoh.protege_mcp.contracts.ContractJson;
@@ -32,14 +31,13 @@ import io.github.hakjuoh.protege_mcp.contracts.FindingSeverity;
 import io.github.hakjuoh.protege_mcp.contracts.GateResult;
 import io.github.hakjuoh.protege_mcp.contracts.GateStatus;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprints;
-import io.github.hakjuoh.protege_mcp.contracts.StageResult;
-import io.github.hakjuoh.protege_mcp.contracts.StageStatus;
 import io.github.hakjuoh.protege_mcp.core.diff.SemanticDiffService;
 import io.github.hakjuoh.protege_mcp.core.owl.FormatCompatibility;
+import io.github.hakjuoh.protege_mcp.core.owl.VerifiedOntologyRoundTrip;
 import io.github.hakjuoh.protege_mcp.core.release.ArtifactStore;
-import io.github.hakjuoh.protege_mcp.core.release.ReleaseCrate;
+import io.github.hakjuoh.protege_mcp.core.release.ReleaseBundleService;
+import io.github.hakjuoh.protege_mcp.core.release.ReleaseGateService;
 import io.github.hakjuoh.protege_mcp.core.release.ReleaseManifest;
-import io.github.hakjuoh.protege_mcp.core.release.ReleaseReports;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
@@ -332,7 +330,7 @@ final class ReleaseGate {
             roundTrip.put("skipped", true);
             roundTrip.put("reason", "release inputs changed between QC and serialization capture");
         } else {
-            Serialized serialized = serialize(cap.snapshot, formatSpec.extension());
+            Serialized serialized = serialize(cap.snapshot);
             roundTrip.put("clean", serialized.clean());
             if (serialized.clean()) {
                 ontologyBytes = serialized.bytes();
@@ -427,115 +425,9 @@ final class ReleaseGate {
 
     // ================================================================== QC → core GateResult adapter
 
-    /**
-     * Adapt the {@code run_project_qc} result map into one core {@link GateResult}: every QC stage
-     * becomes a {@link StageResult}, top-level orchestrator/fingerprint findings not attributable to a
-     * QC stage plus the release-specific findings are collected into a synthetic required {@code
-     * release} stage, and {@link GateResult#aggregate} recomputes the verdict. The QC gate is
-     * faithfully reproduced (pinned by test); a release-blocking error forces the {@code release} stage
-     * to {@link StageStatus#ERROR}, so it outranks any QC {@code fail}/{@code pass}.
-     */
-    @SuppressWarnings("unchecked")
+    /** Plugin compatibility seam over the Protégé-free release aggregation service. */
     static GateResult aggregate(Map<String, Object> qc, List<Finding> releaseFindings, String qcGate) {
-        int policyVersion = qc.get("policy_version") instanceof Number n ? n.intValue() : 1;
-        String fingerprint = str(qc.get("semantic_fingerprint"));
-        FindingSeverity failOn = failOn(qc);
-
-        List<StageResult> stages = new ArrayList<>();
-        List<Map<String, Object>> stageMaps = qc.get("stages") instanceof List<?> list
-                ? (List<Map<String, Object>>) list : List.of();
-        List<Finding> stageFindings = new ArrayList<>();
-        boolean anyQcStageError = false;
-        for (Map<String, Object> stage : stageMaps) {
-            String name = str(stage.get("stage"));
-            StageStatus status = StageStatus.fromJson(str(stage.get("status")));
-            anyQcStageError |= status == StageStatus.ERROR;
-            List<Finding> findings = new ArrayList<>();
-            if (stage.get("findings") instanceof List<?> fs) {
-                for (Object f : fs) {
-                    if (f instanceof Map<?, ?> map) {
-                        Finding finding = toFinding((Map<String, Object>) map);
-                        findings.add(finding);
-                        stageFindings.add(finding);
-                    }
-                }
-            }
-            String message = str(stage.get("message"));
-            if ((status == StageStatus.ERROR || status == StageStatus.SKIPPED)
-                    && (message == null || message.isBlank())) {
-                message = name + " " + status.json();
-            }
-            stages.add(new StageResult(name, status, message,
-                    findings, object(stage.get("details"))));
-        }
-
-        // Orphan QC findings: top-level findings not present inside any stage (snapshot/precondition/
-        // fingerprint). Fold them into the release stage so nothing is lost from the reports.
-        List<Finding> releaseStageFindings = new ArrayList<>();
-        if (qc.get("findings") instanceof List<?> topFindings) {
-            for (Object f : topFindings) {
-                if (f instanceof Map<?, ?> map) {
-                    Finding finding = toFinding((Map<String, Object>) map);
-                    if (!containsFinding(stageFindings, finding)) {
-                        releaseStageFindings.add(finding);
-                    }
-                }
-            }
-        }
-        releaseStageFindings.addAll(releaseFindings);
-
-        boolean releaseError = "error".equals(qcGate)
-                || releaseStageFindings.stream().anyMatch(f -> f.severity() == FindingSeverity.ERROR);
-        StageResult releaseStage;
-        if (releaseError) {
-            releaseStage = new StageResult("release", StageStatus.ERROR,
-                    "release checks reported a blocking error", releaseStageFindings, Map.of());
-        } else {
-            releaseStage = new StageResult("release", StageStatus.PASS, null,
-                    releaseStageFindings, Map.of());
-        }
-        stages.add(releaseStage);
-
-        Set<String> required = new LinkedHashSet<>();
-        if (qc.get("required_stages") instanceof List<?> req) {
-            req.forEach(s -> required.add(String.valueOf(s)));
-        }
-        required.add("release");
-        return GateResult.aggregate(policyVersion, fingerprint, new ArrayList<>(required), stages,
-                failOn);
-    }
-
-    private static FindingSeverity failOn(Map<String, Object> qc) {
-        Object details = qc.get("details");
-        String value = details instanceof Map<?, ?> map ? str(((Map<String, Object>) map).get("fail_on"))
-                : str(qc.get("fail_on"));
-        if (value == null || "none".equals(value)) {
-            // A release must gate at least at error; a policy with fail_on=none still blocks on the
-            // release-specific error findings.
-            return FindingSeverity.ERROR;
-        }
-        if ("warn".equals(value)) {
-            return FindingSeverity.WARNING;
-        }
-        return FindingSeverity.fromJson(value);
-    }
-
-    private static Finding toFinding(Map<String, Object> f) {
-        return new Finding(str(f.get("id")), str(f.get("source")),
-                FindingSeverity.fromJson(str(f.get("severity"))), str(f.get("message")),
-                absoluteOrNull(str(f.get("focus_iri"))), str(f.get("axiom")), str(f.get("path")),
-                str(f.get("rule_id")), object(f.get("waiver")).isEmpty() ? null : object(f.get("waiver")),
-                object(f.get("details")));
-    }
-
-    private static boolean containsFinding(List<Finding> haystack, Finding needle) {
-        for (Finding f : haystack) {
-            if (f.id().equals(needle.id()) && f.message().equals(needle.message())
-                    && java.util.Objects.equals(f.focusIri(), needle.focusIri())) {
-                return true;
-            }
-        }
-        return false;
+        return ReleaseGateService.aggregate(qc, releaseFindings, qcGate);
     }
 
     // ================================================================== provenance + baseline
@@ -770,7 +662,7 @@ final class ReleaseGate {
             summary.put("compared", true);
             summary.put("status", "compared");
             summary.put("mode", "asserted");
-            summary.put("note", "Asserted-axiom diff only; inferred baseline diff is deferred (ADR 0004).");
+            summary.put("note", "Asserted-axiom diff only; inferred baseline diff is deferred.");
             summary.put("unresolved_imports", baselineUnresolved);
             summary.put("compatibility", diff.get("compatibility"));
             summary.put("identical", diff.get("identical"));
@@ -845,46 +737,18 @@ final class ReleaseGate {
     }
 
     /**
-     * Serialize the Protégé-free snapshot to a throwaway temp directory and verify the exact round trip
-     * using the shipped {@link VerifiedOntologyWriter}. Nothing lands in the workspace: the temp
-     * directory is deleted regardless of outcome, so run_release_gate remains write-free.
+     * Serialize the Protégé-free snapshot and verify the exact isolated round trip through the shared
+     * core service. Nothing lands in the workspace, so run_release_gate remains write-free.
      */
-    private static Serialized serialize(VerifiedOntologyWriter.Snapshot snapshot, String extension) {
-        Path dir = null;
+    private static Serialized serialize(VerifiedOntologyWriter.Snapshot snapshot) {
         try {
-            dir = Files.createTempDirectory("protege-mcp-release-");
-            Path target = dir.resolve("ontology" + extension);
-            try (VerifiedOntologyWriter.Prepared prepared =
-                    VerifiedOntologyWriter.prepare(snapshot, target)) {
-                String roundTripClass = prepared.verification.roundTripClass();
-                prepared.install(false, false);
-                byte[] bytes = Files.readAllBytes(target);
-                return new Serialized(bytes, ArtifactStore.sha256(bytes), true, null, roundTripClass);
-            }
-        } catch (ToolArgException e) {
-            return new Serialized(null, null, false, e.getMessage(), null);
-        } catch (IOException e) {
+            VerifiedOntologyRoundTrip.Result result = VerifiedOntologyRoundTrip.serialize(
+                    snapshot.ontology(), snapshot.format());
+            return new Serialized(result.content(), result.sha256(), true, null,
+                    result.roundTripClass());
+        } catch (IOException | IllegalArgumentException e) {
             return new Serialized(null, null, false,
                     e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(), null);
-        } finally {
-            deleteRecursively(dir);
-        }
-    }
-
-    private static void deleteRecursively(Path dir) {
-        if (dir == null) {
-            return;
-        }
-        try (var walk = Files.walk(dir)) {
-            walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    Files.deleteIfExists(path);
-                } catch (IOException ignored) {
-                    // Best effort: an owner-only OS temp entry is not a release artifact.
-                }
-            });
-        } catch (IOException ignored) {
-            // The temp tree may already be gone.
         }
     }
 
@@ -896,74 +760,24 @@ final class ReleaseGate {
      * manifest indexes everything except itself. {@code createdAt} is the only non-reproducible input.
      */
     static List<Artifact> artifacts(Outcome outcome, String createdAt) {
-        List<Artifact> files = new ArrayList<>();
-        files.add(artifact(outcome.ontologyArtifactPath, outcome.ontologyMediaType,
-                outcome.ontologyBytes));
-        files.add(textArtifact("reports/qc.json", "application/json",
-                ReleaseReports.json(outcome.gate)));
-        files.add(textArtifact("reports/qc.md", "text/markdown",
-                ReleaseReports.markdown(outcome.gate, outcome.versionIri, outcome.limit)));
-        files.add(textArtifact("reports/qc.xml", "application/xml",
-                ReleaseReports.junit(outcome.gate, createdAt)));
-        // SARIF URIs are repo-root-relative: pass the release ontology artifact's RELATIVE name as the
-        // fallback (never the absolute policy path, which would leak the local directory layout).
-        files.add(textArtifact("reports/qc.sarif", "application/sarif+json",
-                ReleaseReports.sarifJson(outcome.gate, outcome.ontologyArtifactPath)));
-        if (outcome.baselineDiff != null) {
-            files.add(textArtifact("reports/diff.json", "application/json",
-                    toJson(outcome.baselineDiff)));
-        }
-
-        List<ReleaseCrate.CrateFile> crateFiles = new ArrayList<>();
-        for (Artifact a : files) {
-            crateFiles.add(new ReleaseCrate.CrateFile(a.path(), a.mediaType(), a.sha256(), a.bytes()));
-        }
-        String crateJson = ReleaseCrate.toJson(ReleaseCrate.build(outcome.projectId, null,
-                outcome.versionIri, createdAt, outcome.license, outcome.ontologyArtifactPath,
-                crateFiles));
-        files.add(textArtifact("ro-crate-metadata.json", "application/ld+json", crateJson));
-
-        List<ReleaseManifest.Artifact> manifestArtifacts = new ArrayList<>();
-        for (Artifact a : files) {
-            manifestArtifacts.add(new ReleaseManifest.Artifact(a.path(), a.sha256(), a.bytes()));
-        }
-        ReleaseManifest.Baseline baseline = outcome.baselineDiff != null
-                ? new ReleaseManifest.Baseline(str(outcome.baseline.get("version_iri")),
-                        "reports/diff.json")
-                : null;
-        Map<String, Object> manifest = ReleaseManifest.build(outcome.projectId, outcome.ontologyIri,
-                outcome.versionIri, createdAt, outcome.policySha256, outcome.importLockSha256,
-                outcome.semanticFingerprint, outcome.releaseStable, manifestArtifacts,
-                outcome.gate.gate().json(), "reports/qc.json", baseline);
-        files.add(textArtifact("manifest.json", "application/json", ReleaseManifest.toJson(manifest)));
-        return files;
+        return bundle(outcome, createdAt).artifacts().stream()
+                .map(file -> new Artifact(file.path(), file.mediaType(), file.content(),
+                        file.sha256(), file.bytes()))
+                .toList();
     }
 
     /** The manifest map preview (used by run_release_gate and prepare_release dry-run). */
     static Map<String, Object> manifestPreview(Outcome outcome, String createdAt) {
-        List<ReleaseManifest.Artifact> manifestArtifacts = new ArrayList<>();
-        for (Artifact a : artifacts(outcome, createdAt)) {
-            if (!"manifest.json".equals(a.path())) {
-                manifestArtifacts.add(new ReleaseManifest.Artifact(a.path(), a.sha256(), a.bytes()));
-            }
-        }
-        ReleaseManifest.Baseline baseline = outcome.baselineDiff != null
-                ? new ReleaseManifest.Baseline(str(outcome.baseline.get("version_iri")),
-                        "reports/diff.json")
-                : null;
-        return ReleaseManifest.build(outcome.projectId, outcome.ontologyIri, outcome.versionIri,
-                createdAt, outcome.policySha256, outcome.importLockSha256, outcome.semanticFingerprint,
-                outcome.releaseStable, manifestArtifacts, outcome.gate.gate().json(),
-                "reports/qc.json", baseline);
+        return bundle(outcome, createdAt).manifest();
     }
 
-    private static Artifact artifact(String path, String mediaType, byte[] content) {
-        return new Artifact(path, mediaType, content, ArtifactStore.sha256(content), content.length);
-    }
-
-    private static Artifact textArtifact(String path, String mediaType, String content) {
-        return artifact(path, mediaType,
-                content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    private static ReleaseBundleService.Bundle bundle(Outcome outcome, String createdAt) {
+        return ReleaseBundleService.build(new ReleaseBundleService.Request(
+                outcome.projectId, outcome.ontologyIri, outcome.versionIri, createdAt,
+                outcome.license, outcome.policySha256, outcome.importLockSha256,
+                outcome.semanticFingerprint, outcome.releaseStable, outcome.gate,
+                outcome.ontologyBytes, outcome.ontologyArtifactPath, outcome.ontologyMediaType,
+                outcome.baselineDiff, str(outcome.baseline.get("version_iri")), outcome.limit));
     }
 
     /** Copy the reviewed root Dataset license from the validated project RO-Crate. */
@@ -1022,16 +836,6 @@ final class ReleaseGate {
             String focusIri, Map<String, Object> details) {
         return new Finding(id, source, severity, message, focusIri, null, null, id, null,
                 details == null ? Map.of() : details);
-    }
-
-    static String toJson(Map<String, Object> map) {
-        try {
-            return ContractJson.mapper().copy()
-                    .enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT)
-                    .writeValueAsString(map);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("could not render release diff report", e);
-        }
     }
 
     @SuppressWarnings("unchecked")

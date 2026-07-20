@@ -706,6 +706,15 @@ class ReleaseToolsTest {
                 stage("structural", "fail")), List.of(), "fail");
         assertEquals(GateStatus.FAIL, fail.gate());
 
+        // The released project-QC gate lets a completed optional stage fail the overall gate. The
+        // common GateResult contract only gates required stages, so the synthetic release stage must
+        // carry that legacy verdict instead of silently turning it back into PASS.
+        Map<String, Object> optionalFailure = qcMap(fp, "fail", stage("structural", "pass"),
+                stage("cqs", "fail"));
+        optionalFailure.put("required_stages", List.of("structural"));
+        GateResult optionalFail = ReleaseGate.aggregate(optionalFailure, List.of(), "fail");
+        assertEquals(GateStatus.FAIL, optionalFail.gate());
+
         // A release-specific ERROR finding forces gate=error even over a passing QC map.
         GateResult error = ReleaseGate.aggregate(qcMap(fp, "pass", stage("structural", "pass")),
                 List.of(new Finding("release.version_iri_missing", "release", FindingSeverity.ERROR,
@@ -850,7 +859,8 @@ class ReleaseToolsTest {
         ReleaseTools.register(registry, ctx);
         for (SyncToolSpecification spec : registry.build()) {
             if (spec.tool().name().equals(name)) {
-                return spec.callHandler().apply(null, new CallToolRequest(name, args));
+                return spec.callHandler().apply(ToolTestExchange.localAdmin(),
+                        new CallToolRequest(name, args));
             }
         }
         throw new AssertionError("no tool named " + name);

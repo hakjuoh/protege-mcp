@@ -7,7 +7,7 @@
     <parent>
         <groupId>io.github.hakjuoh</groupId>
         <artifactId>protege-mcp-parent</artifactId>
-        <version>0.7.0</version>
+        <version>0.7.1</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>protege-mcp</artifactId>
@@ -197,7 +197,7 @@
             <!-- 1.3.8.431 is the OWLAPI 4.x build (the 1.3.8.4xx suffix tracks owlapi 4.x, which uses
                  guava Optional; the 1.3.8.5xx / 1.4.x builds target owlapi 5's java.util.Optional and
                  would NoSuchMethodError against the provided owlapi-osgidistribution ${owlapi.version}). -->
-            <version>1.3.8.431</version>
+            <version>${hermit.version}</version>
             <scope>test</scope>
             <exclusions>
                 <exclusion>
@@ -210,6 +210,15 @@
     </dependencies>
 
     <build>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <directory>${project.basedir}/../conformance/fixtures</directory>
+                <targetPath>conformance</targetPath>
+            </testResource>
+        </testResources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

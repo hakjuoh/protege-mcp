@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>io.github.hakjuoh</groupId>
     <artifactId>protege-mcp-parent</artifactId>
-    <version>0.7.0</version>
+    <version>0.7.1</version>
     <packaging>pom</packaging>
     <name>protege-mcp reactor</name>
 
@@ -30,6 +30,13 @@
              instead. -->
         <protege.version>5.6.6</protege.version>
         <owlapi.version>4.5.29</owlapi.version>
+        <!-- OWLAPI-4-compatible HermiT baseline for the standalone/headless runner. Keep this on
+             the 1.3.8.4xx line: later HermiT coordinates target OWLAPI 5. -->
+        <hermit.version>1.3.8.431</hermit.version>
+        <!-- Maintained generic NFA implementation behind the narrow rationals.* compatibility API
+             required by HermiT's object-property inclusion manager. The CLI excludes HermiT's
+             unmaintained, embedded JAutomata implementation from its executable. -->
+        <automatalib.version>0.12.1</automatalib.version>
         <guava.version>18.0</guava.version>
         <slf4j.version>1.7.36</slf4j.version>
 

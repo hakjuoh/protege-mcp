@@ -1,315 +1,92 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 
-/**
- * Judges competency questions against a {@linkplain SuiteSnapshot shared point-in-time snapshot} and
- * aggregates the run into one verdict. Identical for every SPARQL convention — {@code run} sees only the
- * normalised {@link CompetencyQuestion} model, never a file format.
- *
- * <p>The judging table ({@link #judgeExec}) and EXACT_ROWS canonicalisation ({@link #canonicalizeRows})
- * are pure functions over the {@link SparqlTools#execute} result shape, so they are unit-tested directly;
- * the mandatory caveats (open-world EMPTY, truncated results, truncated inferences) are surfaced, never
- * silent.
- */
+import io.github.hakjuoh.protege_mcp.core.qc.CompetencyQuestionService;
+
+/** Source-compatible plugin adapter for the shared competency-question runner. */
 final class CqRunner {
+
+    static final String FAIL_ON_NONE = CompetencyQuestionService.FAIL_ON_NONE;
+    static final String FAIL_ON_ANY = CompetencyQuestionService.FAIL_ON_ANY;
 
     private CqRunner() {
     }
 
-    static final String FAIL_ON_NONE = "none";
-    static final String FAIL_ON_ANY = "any";
-
-    /** Run every CQ against {@code snap} and aggregate {@code {questions, passed, failed, total, gate}}. */
-    static Map<String, Object> run(SuiteSnapshot snap, List<CompetencyQuestion> cqs, int limit,
-            long timeoutMs, String failOn) {
-        List<Map<String, Object>> results = new ArrayList<>();
-        int passed = 0;
-        int failed = 0;
-        for (CompetencyQuestion cq : cqs) {
-            Map<String, Object> r = judge(snap, cq, limit, timeoutMs);
-            if (Boolean.TRUE.equals(r.get("pass"))) {
-                passed++;
-            } else {
-                failed++;
-            }
-            results.add(r);
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("questions", results);
-        out.put("total", cqs.size());
-        out.put("passed", passed);
-        out.put("failed", failed);
-        out.put("gate", gate(failOn, failed));
-        return out;
+    static Map<String, Object> run(SuiteSnapshot snapshot, List<CompetencyQuestion> questions,
+            int limit, long timeoutMs, String failOn) {
+        return CompetencyQuestionService.run(snapshot.shared(),
+                questions.stream().map(CqRunner::shared).toList(), limit, timeoutMs, failOn);
     }
 
-    /** Execute + judge a single CQ (degrading include_inferred to a caveat when no inferred snapshot). */
-    static Map<String, Object> judge(SuiteSnapshot snap, CompetencyQuestion cq, int limit, long timeoutMs) {
-        List<String> caveats = new ArrayList<>();
-        boolean includeInferred = cq.includeInferred;
-        if (includeInferred && !snap.inferredAvailable()) {
-            caveats.add("include_inferred requested but no inferred snapshot was available ("
-                    + (snap.inferredError() == null ? "run run_reasoner first" : snap.inferredError())
-                    + "); ran over the asserted triples only");
-            includeInferred = false;
-        }
-        long start = System.nanoTime();
-        Map<String, Object> exec;
-        try {
-            exec = snap.execute(cq.query, includeInferred, limit, timeoutMs);
-        } catch (RuntimeException e) {
-            Map<String, Object> r = base(cq, caveats);
-            r.put("pass", false);
-            r.put("error", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-            r.put("ms", millis(start));
-            return r;
-        }
-        if (includeInferred && snap.inferredNote() != null) {
-            caveats.add("ran_with_caveat: inferences truncated — " + snap.inferredNote());
-        }
-        Judged judged = judgeExec(cq.expected, exec, limit);
-        caveats.addAll(judged.caveats);
-        Map<String, Object> r = base(cq, caveats);
-        r.put("pass", judged.pass);
-        if (judged.error != null) {
-            r.put("error", judged.error);
-        }
-        r.put("actual_summary", judged.summary);
-        r.put("ms", millis(start));
-        return r;
+    static Map<String, Object> judge(SuiteSnapshot snapshot, CompetencyQuestion question,
+            int limit, long timeoutMs) {
+        return CompetencyQuestionService.judge(snapshot.shared(), shared(question), limit, timeoutMs);
     }
 
-    private static Map<String, Object> base(CompetencyQuestion cq, List<String> caveats) {
-        Map<String, Object> r = new LinkedHashMap<>();
-        r.put("id", cq.id);
-        if (cq.text != null) {
-            r.put("text", cq.text);
-        }
-        r.put("expected", cq.expected.describe());
-        r.put("convention", cq.convention);
-        if (!caveats.isEmpty()) {
-            r.put("caveats", caveats);
-        }
-        return r;
+    static Judged judgeExec(Expectation expected, Map<String, Object> execution, int limit) {
+        return new Judged(CompetencyQuestionService.judgeExecution(
+                shared(expected), execution, limit));
     }
 
-    // ================================================================== pure judging
-
-    /** The pass/summary/caveats for an {@link Expectation} against a {@link SparqlTools#execute} result. */
-    static Judged judgeExec(Expectation expected, Map<String, Object> exec, int limit) {
-        List<String> caveats = new ArrayList<>();
-        boolean truncated = Boolean.TRUE.equals(exec.get("truncated"));
-        switch (expected.kind) {
-            case NON_EMPTY:
-                return new Judged(notEmpty(exec), summary(exec), caveats);
-            case EMPTY:
-                caveats.add("open-world caveat: an EMPTY result can hold for the wrong reason (missing "
-                        + "data reads the same as a genuine absence) — prefer a non-empty check");
-                return new Judged(!notEmpty(exec), summary(exec), caveats);
-            case COUNT: {
-                long n = count(exec);
-                if (truncated) {
-                    if (!"SELECT".equals(exec.get("query_type"))) {
-                        // CONSTRUCT/DESCRIBE truncation cuts only the returned Turtle sample;
-                        // 'count' stays the exact graph size, so the comparison judges the true count.
-                        caveats.add("returned triples truncated at limit " + limit
-                                + "; the count is the exact graph size, so the COUNT check is unaffected");
-                        return new Judged(compare(n, expected.op, expected.value), n + " rows ("
-                                + expected.op + " " + expected.value + ")", caveats);
-                    }
-                    // SELECT caps 'count' at the row limit, so n is a lower bound on the true count:
-                    // a '>='/'>' already met by n provably holds; every other case stays indeterminate.
-                    if ((">=".equals(expected.op) || ">".equals(expected.op))
-                            && compare(n, expected.op, expected.value)) {
-                        caveats.add("results truncated at limit " + limit + "; the capped count is a "
-                                + "lower bound on the true count, and " + n + " already satisfies "
-                                + expected.op + " " + expected.value);
-                        return new Judged(true, n + "+ rows (" + expected.op + " " + expected.value
-                                + ")", caveats);
-                    }
-                    String error = "results truncated at limit " + limit
-                            + "; the true count is unknown — raise 'limit' (project QC and the QC "
-                            + "suite cap it at 10000) or rewrite the query so the complete result "
-                            + "fits for a reliable COUNT";
-                    caveats.add(error);
-                    return new Judged(false, n + "+ rows (indeterminate " + expected.op + " "
-                            + expected.value + ")", caveats, error);
-                }
-                return new Judged(compare(n, expected.op, expected.value), n + " rows ("
-                        + expected.op + " " + expected.value + ")", caveats);
-            }
-            case EXACT_ROWS:
-                return judgeExactRows(expected, exec, limit, truncated, caveats);
-            default:
-                return new Judged(false, "unknown expectation", caveats);
-        }
-    }
-
-    private static Judged judgeExactRows(Expectation expected, Map<String, Object> exec, int limit,
-            boolean truncated, List<String> caveats) {
-        if (!"SELECT".equals(exec.get("query_type"))) {
-            caveats.add("EXACT_ROWS requires a SELECT query; got " + exec.get("query_type"));
-            return new Judged(false, String.valueOf(exec.get("query_type")), caveats);
-        }
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> bindings = (List<Map<String, Object>>) exec.getOrDefault("bindings",
-                new ArrayList<>());
-        if (hasBnode(bindings)) {
-            caveats.add("EXACT_ROWS cannot compare blank nodes (their labels are non-deterministic); "
-                    + "rewrite the query to project stable IRIs/literals");
-            return new Judged(false, bindings.size() + " rows (contain blank nodes)", caveats);
-        }
-        if (truncated) {
-            String error = "results truncated at limit " + limit
-                    + "; raise 'limit' (project QC and the QC suite cap it at 10000) or narrow the "
-                    + "query so the complete result fits for a reliable EXACT_ROWS check";
-            caveats.add(error);
-            return new Judged(false, bindings.size() + "+ rows (incomplete)", caveats, error);
-        }
-        Set<String> got = canonicalizeRows(bindings);
-        Set<String> want = canonicalizeRows(expected.rows);
-        Set<String> matched = new TreeSet<>(got);
-        matched.retainAll(want);
-        return new Judged(got.equals(want), matched.size() + " of " + want.size()
-                + " declared rows matched (" + got.size() + " distinct rows returned)", caveats);
-    }
-
-    /** Order-insensitive canonical form of a SELECT result set: each row → a sorted var=cell string. */
     static Set<String> canonicalizeRows(List<Map<String, Object>> rows) {
-        Set<String> out = new TreeSet<>();
-        for (Map<String, Object> row : rows) {
-            out.add(canonicalRow(row));
-        }
-        return out;
+        return CompetencyQuestionService.canonicalizeRows(rows);
     }
-
-    private static String canonicalRow(Map<String, Object> row) {
-        Map<String, Object> cells = new java.util.TreeMap<>(row);
-        StringBuilder encoded = new StringBuilder();
-        for (Map.Entry<String, Object> entry : cells.entrySet()) {
-            encoded.append(component(entry.getKey())).append(component(canonicalCell(entry.getValue())));
-        }
-        return encoded.toString();
-    }
-
-    @SuppressWarnings("unchecked")
-    private static String canonicalCell(Object cell) {
-        if (!(cell instanceof Map)) {
-            return component("literal") + component(String.valueOf(cell))
-                    + component("") + component("");
-        }
-        Map<String, Object> m = (Map<String, Object>) cell;
-        return component(str(m.get("type"), "literal"))
-                + component(str(m.get("value"), ""))
-                + component(str(m.get("lang"), "").toLowerCase(Locale.ROOT))
-                + component(str(m.get("datatype"), ""));
-    }
-
-    /** Collision-free length prefix for caller-controlled variable names and literal lexical forms. */
-    private static String component(String value) {
-        return value.length() + ":" + value;
-    }
-
-    // ================================================================== result predicates
-
-    private static boolean notEmpty(Map<String, Object> exec) {
-        return count(exec) > 0;
-    }
-
-    private static long count(Map<String, Object> exec) {
-        String type = String.valueOf(exec.get("query_type"));
-        if ("ASK".equals(type)) {
-            return Boolean.TRUE.equals(exec.get("boolean")) ? 1 : 0;
-        }
-        Object c = exec.get("count");
-        return c instanceof Number ? ((Number) c).longValue() : 0;
-    }
-
-    private static String summary(Map<String, Object> exec) {
-        String type = String.valueOf(exec.get("query_type"));
-        if ("ASK".equals(type)) {
-            return "ASK " + exec.get("boolean");
-        }
-        return count(exec) + " " + ("SELECT".equals(type) ? "rows" : "triples");
-    }
-
-    private static boolean compare(long n, String op, int value) {
-        switch (op) {
-            case ">=":
-                return n >= value;
-            case "<=":
-                return n <= value;
-            case "==":
-                return n == value;
-            case ">":
-                return n > value;
-            case "<":
-                return n < value;
-            default:
-                return false;
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static boolean hasBnode(List<Map<String, Object>> bindings) {
-        for (Map<String, Object> row : bindings) {
-            for (Object cell : row.values()) {
-                if (cell instanceof Map && "bnode".equals(((Map<String, Object>) cell).get("type"))) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    // ================================================================== gate
 
     static String normalizeFailOn(String raw) {
-        if (raw == null || raw.trim().isEmpty()) {
-            return FAIL_ON_NONE;
+        try {
+            return CompetencyQuestionService.normalizeFailOn(raw);
+        } catch (IllegalArgumentException error) {
+            throw new ToolArgException(error.getMessage());
         }
-        String s = raw.trim().toLowerCase(Locale.ROOT);
-        if (s.equals(FAIL_ON_NONE) || s.equals(FAIL_ON_ANY)) {
-            return s;
-        }
-        throw new ToolArgException("fail_on must be 'none' or 'any' (not '" + raw + "').");
     }
 
     static String gate(String failOn, int failed) {
-        return FAIL_ON_ANY.equals(failOn) && failed > 0 ? "fail" : "pass";
+        return CompetencyQuestionService.gate(failOn, failed);
     }
 
-    private static long millis(long startNanos) {
-        return Math.max(0, (System.nanoTime() - startNanos) / 1_000_000);
+    static CompetencyQuestionService.Question shared(CompetencyQuestion question) {
+        return new CompetencyQuestionService.Question(question.id, question.text,
+                shared(question.expected), question.convention, question.query,
+                question.includeInferred);
     }
 
-    private static String str(Object v, String def) {
-        return v == null ? def : String.valueOf(v);
+    private static CompetencyQuestionService.Expectation shared(Expectation expected) {
+        return new CompetencyQuestionService.Expectation(
+                CompetencyQuestionService.ExpectationKind.valueOf(expected.kind.name()),
+                expected.op, expected.value, expected.rows);
     }
 
-    /** A single CQ's verdict + human summary + caveats. */
+    static CompetencyQuestion plugin(CompetencyQuestionService.Question question) {
+        CompetencyQuestion out = new CompetencyQuestion();
+        out.id = question.id();
+        out.text = question.text();
+        out.query = question.query();
+        out.includeInferred = question.includeInferred();
+        out.convention = question.convention();
+        CompetencyQuestionService.Expectation expected = question.expected();
+        out.expected = switch (expected.kind()) {
+            case NON_EMPTY -> Expectation.nonEmpty();
+            case EMPTY -> Expectation.empty();
+            case COUNT -> Expectation.count(expected.op(), expected.value());
+            case EXACT_ROWS -> Expectation.exactRows(expected.rows());
+        };
+        return out;
+    }
+
     static final class Judged {
         final boolean pass;
         final String summary;
         final List<String> caveats;
         final String error;
 
-        Judged(boolean pass, String summary, List<String> caveats) {
-            this(pass, summary, caveats, null);
-        }
-
-        Judged(boolean pass, String summary, List<String> caveats, String error) {
-            this.pass = pass;
-            this.summary = summary;
-            this.caveats = caveats;
-            this.error = error;
+        private Judged(CompetencyQuestionService.Judged shared) {
+            this.pass = shared.pass();
+            this.summary = shared.summary();
+            this.caveats = shared.caveats();
+            this.error = shared.error();
         }
     }
 }

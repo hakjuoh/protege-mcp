@@ -11,7 +11,7 @@ import java.util.Locale;
  *
  * <p>This is a one-shot scaffold: it emits YAML whose REQUIRED blocks (version, project_id,
  * root_ontology, interoperability) are populated from the live ontology and whose OPTIONAL blocks are
- * either populated with safe, asset-free defaults (filesystem/network/imports/reasoning/validation) or
+ * either populated with safe, asset-free defaults (filesystem/audit/network/imports/reasoning/validation) or
  * commented out with guidance (prefixes, modules, annotations, iri_policy, lifecycle, the
  * asset-referencing validation stages, and release). The generated file references two files the user
  * must still create — the {@code root_artifact} and the RO-Crate metadata — so the bare template does
@@ -76,7 +76,7 @@ final class ProjectPolicyTemplate {
         String rootOntology = placeholder ? PLACEHOLDER_IRI : rootOntologyIri;
         boolean obo = OBO.equals(profile);
         String rootArtifact = obo ? "ontology-edit.owl" : "ontology.ttl";
-        String reasoner = obo ? "ELK" : "HermiT";
+        String reasoner = "HermiT";
         String owlProfile = obo ? "EL" : "DL";
         String yaml = header()
                 + required(yamlScalar(projectId), yamlScalar(rootOntology), rootArtifact,
@@ -103,9 +103,12 @@ final class ProjectPolicyTemplate {
         hint.add("Confirm reasoning.reasoner names a reasoner installed in Protégé (currently '"
                 + t.reasoner() + "'; a version-less name is resolved against the installed "
                 + "reasoners and must match exactly one).");
-        hint.add("Uncomment and edit any optional blocks you need (prefixes, modules, annotations, "
-                + "iri_policy, lifecycle, validation invariants/shacl/competency_questions, the imports "
-                + "lockfile, release) and create the files they reference.");
+        hint.add("Uncomment and edit any optional blocks you need (prefixes, modules, entity_search, "
+                + "annotations, iri_policy, lifecycle, validation invariants/shacl/competency_questions, "
+                + "the imports lockfile, release) and create the files they reference.");
+        hint.add("Runtime audit streams stay owner-only outside the project. Add "
+                + "'.protege-mcp/audit-export*.jsonl' to VCS ignore rules unless an explicitly exported "
+                + "review artifact is meant to be committed.");
         hint.add("Run validate_project_policy (then run_project_qc) to confirm the completed policy is "
                 + "valid before you commit it.");
         return hint;
@@ -163,6 +166,12 @@ final class ProjectPolicyTemplate {
                 # working directory or ambient network state.
                 filesystem:
                   allow_external_paths: false
+                # Runtime events are stored owner-only outside the project/VCS tree. These settings bound
+                # retention and rotation; they never place audit content in this policy.
+                audit:
+                  retention_days: 90
+                  max_file_bytes: 10485760
+                  max_files: 10
                 network:
                   default: deny
                   allowed_hosts: []
@@ -254,6 +263,13 @@ final class ProjectPolicyTemplate {
                 #     required_languages: [en]
                 #   required: [dcterms:source]
 
+                # Local term discovery. 'und' means an untagged literal; order is priority order.
+                # entity_search:
+                #   preferred_properties: [rdfs:label, skos:prefLabel]
+                #   synonym_properties: [skos:altLabel]
+                #   preferred_languages: [en]
+                #   fallback_languages: [und]
+
                 # IRI shape policy (Java regex).
                 # iri_policy:
                 #   required_namespaces:
@@ -286,6 +302,7 @@ final class ProjectPolicyTemplate {
                 #   IAO: http://purl.obolibrary.org/obo/IAO_
                 #   oboInOwl: http://www.geneontology.org/formats/oboInOwl#
                 #   rdfs: http://www.w3.org/2000/01/rdf-schema#
+                #   skos: http://www.w3.org/2004/02/skos/core#
 
                 # Governed modules that make up the ontology (each path is a file you maintain).
                 # modules:
@@ -305,6 +322,14 @@ final class ProjectPolicyTemplate {
                 #     required: true
                 #     required_languages: [en]
                 #   required: ['oboInOwl:hasDbXref']
+
+                # Local term discovery. 'und' means an untagged literal; order is priority order.
+                # entity_search:
+                #   preferred_properties: [rdfs:label, skos:prefLabel]
+                #   synonym_properties: [skos:altLabel, oboInOwl:hasExactSynonym,
+                #     oboInOwl:hasRelatedSynonym]
+                #   preferred_languages: [en]
+                #   fallback_languages: [und]
 
                 # IRI shape policy (OBO numeric IDs).
                 # iri_policy:

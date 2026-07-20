@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -327,6 +328,31 @@ class InferredDiffOrchestratorTest {
         assertTrue(String.valueOf(merged.get("caveat")).isEmpty()
                         || !String.valueOf(merged.get("caveat")).contains("stage delta errored"),
                 merged::toString);
+    }
+
+    @Test
+    void governanceStageDeltaPreservesTheReleasedLargeLimitBehavior() throws Exception {
+        OWLOntology left = ontology("large-limit-left");
+        OWLOntology right = ontology("large-limit-right");
+        declareClasses(left, "A");
+        declareClasses(right, "A");
+        OWLModelManager mm = hermitModelManager(left);
+        InferredDiffOrchestrator.Captured captured =
+                InferredDiffOrchestrator.capture(mm, left, right, false, "HermiT");
+        InferredDiffOrchestrator.StagePlan plan =
+                new InferredDiffOrchestrator.StagePlan(java.util.List.of("governance"));
+        plan.governanceRules = new PolicyGovernance.Rules(List.of(), Set.of(), false,
+                List.of(IRI.create("http://www.w3.org/2004/02/skos/core#definition")),
+                true, Set.of(), null, Set.of(), Set.of(), List.of(), true, List.of());
+
+        Map<String, Object> evaluated = InferredDiffOrchestrator.run(
+                captured, 60_000, 20_000, plan);
+
+        Map<?, ?> stageDeltas = (Map<?, ?>) evaluated.get("stage_deltas");
+        assertEquals(Boolean.TRUE, stageDeltas.get("available"), stageDeltas::toString);
+        Map<?, ?> governance = (Map<?, ?>) stageDeltas.get("governance");
+        assertEquals("policy_rules_only", governance.get("scope"), governance::toString);
+        assertEquals(null, governance.get("error"), governance::toString);
     }
 
     @Test

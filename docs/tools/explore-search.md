@@ -142,12 +142,18 @@ imports are not listed). One asymmetry: a wildcard `type=datatype` query reads O
 accessor and so still lists the implicit datatypes of plain literals (e.g. `xsd:string`), which the
 `type=all` listing derives from the document's own content and therefore omits. This is the general-purpose lookup when you know part of a name but not its exact rendering or IRI.
 
-**Grounding-aware (0.4.0).** Results are **ranked**: each hit carries a `score` and a `match_kind`
-(`exact` \| `prefix` \| `substring` \| `fuzzy` — the *exact* tier considers every `rdfs:label` language
-variant and the IRI local name, case/whitespace/diacritic-folded). Two top-level fields help decide
-whether to reuse a term or mint a new one: `best_match` is the IRI the query grounds to (or `null`), and
-`would_mint` is true when a **single-term** query grounds to nothing — so using it as a `create_*` name
-would introduce a NEW entity. A full-IRI, Manchester-expression, or multi-word query is never flagged.
+**Grounding- and synonym-aware.** Results are **ranked** across renderer text, IRI/local name, preferred
+labels, and synonyms. Runtime defaults include `rdfs:label`, SKOS preferred/alternative labels, and OBO
+exact/related synonyms; a locally valid `entity_search` policy block can replace those properties and prioritize up to four
+preferred and four fallback languages. Matching folds case, whitespace, and diacritics. Every hit explains
+its source, matched value/property, language, normalization, score adjustments, collisions, and whether
+review is required.
+
+`best_match` is reserved for an exact IRI/renderer/local-name/preferred-label ground. A fuzzy or synonym
+hit is returned separately as `reuse_candidate` and never changes `would_mint`; review it before minting.
+If several IRIs share an exact preferred name, no winner is chosen, `mint_blocked_by_collision=true`, and
+`would_mint=false`. Full-IRI, Manchester-expression, multi-word, blank, wildcard-only, and normalization-empty
+queries are never mint candidates.
 
 **Paginated (0.4.1).** Pass `offset` (0-based) alongside `limit` to page through a large result set. The
 result carries `count` (the total), `offset`, `returned`, `items`, and — when more remain — `next_offset`;
@@ -174,10 +180,18 @@ fields and echoed query:
 - `count`: integer — full number of matches.
 - `offset`: integer — the 0-based offset this page started at.
 - `returned`: integer — number of matches in `items` for this page.
-- `items`: array — each entry `{iri, display, type, score, match_kind}`.
+- `items`: array — each entry includes `iri`, `display`, `type`, `score`, `match_kind`, `match_source`,
+  `matched_value`, nullable `matched_property`/`language`, `normalization`, `score_explanation`, `collision`,
+  optional `collision_iris`, and `needs_review`.
 - `next_offset`: integer — present only when more matches remain; pass it back as `offset` to fetch the next page.
 - `would_mint`: boolean — true when a single-term query resolves to no existing entity.
 - `best_match`: string or null — the IRI the query grounds to.
+- `mint_blocked_by_collision`: boolean — true when distinct IRIs share an exact preferred name.
+- `reuse_candidate`: object or null — the highest review-only approximate/synonym candidate.
+- `collisions`: array — exact normalized-name collisions for the submitted query.
+- `lexical_policy`: object — effective preferred/synonym property IRIs and language priorities.
+- `lexical_match_count` / `lexical_candidates_truncated`: integers — present when more than 1,000 lexical
+  candidates matched; report the total and how many were omitted before full rendering/ranking.
 - `query`: string — the query as submitted.
 - `type`: string — the effective type filter (`"all"` when none was given).
 

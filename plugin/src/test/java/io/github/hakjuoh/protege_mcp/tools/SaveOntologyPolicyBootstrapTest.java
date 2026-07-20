@@ -30,6 +30,7 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
@@ -131,7 +132,8 @@ class SaveOntologyPolicyBootstrapTest {
         Map<String, Object> args = Map.of("path", target.toString(), "policy_bootstrap", true);
 
         CallToolResult noWrite = call(ctx,
-                exchange(Set.of(DirectAccessPolicy.PROJECT_READ)), args);
+                exchange(Set.of(Capability.ONTOLOGY_ADMIN.value(),
+                        DirectAccessPolicy.PROJECT_READ)), args);
         assertEquals(Boolean.TRUE, noWrite.isError(),
                 () -> String.valueOf(noWrite.structuredContent()));
         assertTrue(String.valueOf(structured(noWrite).get("error"))
@@ -139,7 +141,8 @@ class SaveOntologyPolicyBootstrapTest {
                 () -> String.valueOf(structured(noWrite)));
 
         CallToolResult noRead = call(ctx,
-                exchange(Set.of(DirectAccessPolicy.PROJECT_WRITE)), args);
+                exchange(Set.of(Capability.ONTOLOGY_ADMIN.value(),
+                        DirectAccessPolicy.PROJECT_WRITE)), args);
         assertEquals(Boolean.TRUE, noRead.isError(),
                 () -> String.valueOf(noRead.structuredContent()));
         assertTrue(String.valueOf(structured(noRead).get("error"))
@@ -228,7 +231,7 @@ class SaveOntologyPolicyBootstrapTest {
     }
 
     private static CallToolResult call(ToolContext ctx, Map<String, Object> args) {
-        return call(ctx, null, args);
+        return call(ctx, ToolTestExchange.localAdmin(), args);
     }
 
     private static CallToolResult call(ToolContext ctx, McpSyncServerExchange exchange,

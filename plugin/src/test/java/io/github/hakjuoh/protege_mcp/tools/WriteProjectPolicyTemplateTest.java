@@ -72,6 +72,7 @@ class WriteProjectPolicyTemplateTest {
         String yaml = Files.readString(policyPath);
         assertTrue(yaml.contains("root_artifact: ontology.ttl"), yaml);
         assertTrue(yaml.contains("reasoner: HermiT"), yaml);
+        assertTrue(yaml.contains("audit:\n  retention_days: 90"), yaml);
 
         // The bare template names files that do not exist yet, so it is NOT valid on its own.
         assertFalse(ProjectPolicyLoader.load(policyPath, null).valid(),
@@ -94,7 +95,7 @@ class WriteProjectPolicyTemplateTest {
         Path policyPath = temp.resolve(POLICY_RELATIVE);
         String yaml = Files.readString(policyPath);
         assertTrue(yaml.contains("root_artifact: ontology-edit.owl"), yaml);
-        assertTrue(yaml.contains("reasoner: ELK"), yaml);
+        assertTrue(yaml.contains("reasoner: HermiT"), yaml);
 
         ProjectPolicyFixtures.materialize(policyPath, yaml);
         ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
@@ -132,6 +133,9 @@ class WriteProjectPolicyTemplateTest {
                         line -> String.valueOf(line).contains("policy_bootstrap=true")),
                 () -> "the hint must name the explicit-path bootstrap that can create the root "
                         + "artifact while the policy is still invalid: " + hint);
+        assertTrue(((List<?>) hint).stream().anyMatch(
+                        line -> String.valueOf(line).contains("audit-export")),
+                () -> "the hint must explain VCS handling for explicit audit exports: " + hint);
         assertFalse(result.containsKey("valid"), "a scaffold must not claim valid=true");
     }
 
@@ -226,7 +230,7 @@ class WriteProjectPolicyTemplateTest {
         ProjectPolicyTools.register(registry, ctx);
         for (SyncToolSpecification spec : registry.build()) {
             if (spec.tool().name().equals("write_project_policy_template")) {
-                return spec.callHandler().apply(null,
+                return spec.callHandler().apply(ToolTestExchange.localAdmin(),
                         new CallToolRequest("write_project_policy_template", args));
             }
         }

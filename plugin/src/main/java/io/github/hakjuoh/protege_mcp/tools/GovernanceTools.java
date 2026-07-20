@@ -18,30 +18,16 @@ import org.semanticweb.owlapi.model.OWLAnnotation;
 import org.semanticweb.owlapi.model.OWLAnnotationProperty;
 import org.semanticweb.owlapi.model.OWLAxiom;
 import org.semanticweb.owlapi.model.OWLClass;
-import org.semanticweb.owlapi.model.OWLClassExpression;
-import org.semanticweb.owlapi.model.OWLDataPropertyExpression;
-import org.semanticweb.owlapi.model.OWLDeclarationAxiom;
-import org.semanticweb.owlapi.model.OWLDisjointUnionAxiom;
 import org.semanticweb.owlapi.model.OWLEntity;
-import org.semanticweb.owlapi.model.OWLHasKeyAxiom;
-import org.semanticweb.owlapi.model.OWLInverseObjectPropertiesAxiom;
-import org.semanticweb.owlapi.model.OWLNaryClassAxiom;
-import org.semanticweb.owlapi.model.OWLNaryPropertyAxiom;
-import org.semanticweb.owlapi.model.OWLObjectPropertyExpression;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyID;
-import org.semanticweb.owlapi.model.OWLPropertyDomainAxiom;
-import org.semanticweb.owlapi.model.OWLPropertyRangeAxiom;
-import org.semanticweb.owlapi.model.OWLSubClassOfAxiom;
-import org.semanticweb.owlapi.model.OWLSubObjectPropertyOfAxiom;
-import org.semanticweb.owlapi.model.OWLSubPropertyAxiom;
-import org.semanticweb.owlapi.model.OWLSubPropertyChainOfAxiom;
-import org.semanticweb.owlapi.model.OWLUnaryPropertyAxiom;
 import org.semanticweb.owlapi.profiles.OWLProfileReport;
 import org.semanticweb.owlapi.profiles.OWLProfileViolation;
 import org.semanticweb.owlapi.profiles.Profiles;
 import org.semanticweb.owlapi.profiles.violations.UndeclaredEntityViolation;
 import org.semanticweb.owlapi.search.EntitySearcher;
+
+import io.github.hakjuoh.protege_mcp.core.impact.SyntacticImpactService;
 
 /**
  * Project-governance validation: the layer above {@code validate_ontology}'s generic modelling-quality
@@ -455,22 +441,7 @@ public final class GovernanceTools {
     }
 
     static Set<OWLEntity> foreignDeclaredEntities(OWLOntology active, Set<OWLOntology> closure) {
-        Set<OWLEntity> activeDeclared = new HashSet<>();
-        for (OWLDeclarationAxiom ax : active.getAxioms(AxiomType.DECLARATION)) {
-            activeDeclared.add(ax.getEntity());
-        }
-        Set<OWLEntity> foreign = new LinkedHashSet<>();
-        for (OWLOntology o : closure) {
-            if (o.equals(active)) {
-                continue;
-            }
-            for (OWLDeclarationAxiom ax : o.getAxioms(AxiomType.DECLARATION)) {
-                if (!activeDeclared.contains(ax.getEntity())) {
-                    foreign.add(ax.getEntity());
-                }
-            }
-        }
-        return foreign;
+        return SyntacticImpactService.foreignDeclaredEntities(active, closure);
     }
 
     /**
@@ -482,64 +453,7 @@ public final class GovernanceTools {
      * shapes not enumerated here contribute no subjects (conservative: no false positives).
      */
     static Set<OWLEntity> subjectEntities(OWLAxiom ax) {
-        Set<OWLEntity> out = new LinkedHashSet<>();
-        if (ax instanceof OWLSubClassOfAxiom) {
-            addNamedClass(out, ((OWLSubClassOfAxiom) ax).getSubClass());
-        } else if (ax instanceof OWLNaryClassAxiom) {
-            // equivalent_classes / disjoint_classes: every named operand is a subject.
-            for (OWLClassExpression ce : ((OWLNaryClassAxiom) ax).getClassExpressions()) {
-                addNamedClass(out, ce);
-            }
-        } else if (ax instanceof OWLDisjointUnionAxiom) {
-            out.add(((OWLDisjointUnionAxiom) ax).getOWLClass());
-        } else if (ax instanceof OWLHasKeyAxiom) {
-            addNamedClass(out, ((OWLHasKeyAxiom) ax).getClassExpression());
-        } else if (ax instanceof OWLPropertyDomainAxiom) {
-            addNamedProperty(out, ((OWLPropertyDomainAxiom<?>) ax).getProperty());
-        } else if (ax instanceof OWLPropertyRangeAxiom) {
-            addNamedProperty(out, ((OWLPropertyRangeAxiom<?, ?>) ax).getProperty());
-        } else if (ax instanceof OWLUnaryPropertyAxiom) {
-            // property characteristics: functional / transitive / symmetric / ...
-            addNamedProperty(out, ((OWLUnaryPropertyAxiom<?>) ax).getProperty());
-        } else if (ax instanceof OWLSubPropertyChainOfAxiom) {
-            // sub_property_chain_of: the axiom characterises (re-axiomatises) the SUPER property.
-            addNamedProperty(out, ((OWLSubPropertyChainOfAxiom) ax).getSuperProperty());
-        } else if (ax instanceof OWLSubObjectPropertyOfAxiom) {
-            addNamedProperty(out, ((OWLSubObjectPropertyOfAxiom) ax).getSubProperty());
-        } else if (ax instanceof OWLSubPropertyAxiom) {
-            // sub_data_property_of (sub_annotation_property_of is a non-logical annotation axiom).
-            addNamedProperty(out, ((OWLSubPropertyAxiom<?>) ax).getSubProperty());
-        } else if (ax instanceof OWLNaryPropertyAxiom) {
-            // equivalent/disjoint object|data properties.
-            for (Object p : ((OWLNaryPropertyAxiom<?>) ax).getProperties()) {
-                addNamedProperty(out, p);
-            }
-        } else if (ax instanceof OWLInverseObjectPropertiesAxiom) {
-            OWLInverseObjectPropertiesAxiom inv = (OWLInverseObjectPropertiesAxiom) ax;
-            addNamedProperty(out, inv.getFirstProperty());
-            addNamedProperty(out, inv.getSecondProperty());
-        }
-        return out;
-    }
-
-    private static void addNamedClass(Set<OWLEntity> out, OWLClassExpression ce) {
-        if (ce != null && !ce.isAnonymous()) {
-            out.add(ce.asOWLClass());
-        }
-    }
-
-    private static void addNamedProperty(Set<OWLEntity> out, Object p) {
-        if (p instanceof OWLObjectPropertyExpression) {
-            OWLObjectPropertyExpression ope = (OWLObjectPropertyExpression) p;
-            if (!ope.isAnonymous()) {
-                out.add(ope.asOWLObjectProperty());
-            }
-        } else if (p instanceof OWLDataPropertyExpression) {
-            OWLDataPropertyExpression dpe = (OWLDataPropertyExpression) p;
-            if (!dpe.isAnonymous()) {
-                out.add(dpe.asOWLDataProperty());
-            }
-        }
+        return SyntacticImpactService.subjectEntities(ax);
     }
 
     // ================================================================== phase 2 (off the EDT)

@@ -42,6 +42,7 @@ import org.semanticweb.owlapi.reasoner.ReasonerInterruptedException;
 import com.clarkparsia.owlapi.explanation.DefaultExplanationGenerator;
 import com.clarkparsia.owlapi.explanation.util.SilentExplanationProgressMonitor;
 
+import io.github.hakjuoh.protege_mcp.core.qc.SwrlReasonerSupport;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -575,24 +576,16 @@ public final class ReasonerTools {
 
     /** Snapshot-safe counterpart used after the live model boundary has been released. */
     static String swrlIgnoredWarning(Set<OWLOntology> closure, String name, String id) {
-        int rules = closure.stream().mapToInt(o -> o.getAxiomCount(AxiomType.SWRL_RULE)).sum();
-        return swrlIgnoredWarning(rules, name, id);
+        return SwrlReasonerSupport.ignoredWarning(closure, name, id);
     }
 
     private static String swrlIgnoredWarning(int rules, String name, String id) {
-        if (rules == 0 || (!isElkName(name) && !isElkName(id))) {
-            return null;
-        }
-        return swrlIgnoredWarning(rules, name != null ? name : id);
+        return SwrlReasonerSupport.ignoredWarning(rules, name, id);
     }
 
     /** The warning text itself; parameterized so tests need no live reasoner manager. */
     static String swrlIgnoredWarning(int rules, String reasonerName) {
-        return "The ontology (with imports) contains " + rules + " SWRL rule"
-                + (rules == 1 ? "" : "s") + ", but the selected reasoner (" + reasonerName
-                + ") does not support SWRL and silently IGNORES rules — these results include no "
-                + "rule-derived inferences. Use a rule-aware reasoner (e.g. Pellet, or HermiT for "
-                + "rules without built-in atoms) when the rules matter.";
+        return SwrlReasonerSupport.ignoredWarning(rules, reasonerName);
     }
 
     /**

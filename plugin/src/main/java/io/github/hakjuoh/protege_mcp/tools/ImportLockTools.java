@@ -21,6 +21,8 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import io.github.hakjuoh.protege_mcp.contracts.ModelRevision;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprints;
+import io.github.hakjuoh.protege_mcp.core.workspace.ImportLockFile;
+import io.github.hakjuoh.protege_mcp.core.workspace.OfflineCatalog;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.server.McpAccessException;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -897,34 +899,16 @@ public final class ImportLockTools {
         Map<String, LockEntry> expected = new LinkedHashMap<>();
         String lockDigest = null;
         try {
-            if (!Files.isRegularFile(current.path)
-                    || Files.size(current.path) > RevisionTools.MAX_BUFFERED_BYTES) {
-                throw new IOException("lock file is missing or exceeds " + RevisionTools.MAX_BUFFERED_BYTES
-                        + " bytes");
+            ImportLockFile.Document parsed = ImportLockFile.read(current.path);
+            lockDigest = parsed.sha256();
+            for (ImportLockFile.Entry value : parsed.entries()) {
+                LockEntry entry = lockEntry(value);
+                expected.put(entry.key(), entry);
             }
-            byte[] bytes = Files.readAllBytes(current.path);
-            lockDigest = RevisionTools.sha256(bytes);
-            @SuppressWarnings("unchecked")
-            Map<String, Object> parsed = JSON.readValue(bytes, LinkedHashMap.class);
-            Set<String> unknownFields = new LinkedHashSet<>(parsed.keySet());
-            unknownFields.removeAll(Set.of("version", "imports"));
-            if (!unknownFields.isEmpty()) {
-                errors.add("unknown top-level lock field(s): " + unknownFields);
-            }
-            if (!Integer.valueOf(1).equals(parsed.get("version"))) {
-                errors.add("lock version must be integer 1");
-            }
-            Object entries = parsed.get("imports");
-            if (!(entries instanceof List<?>)) {
-                errors.add("imports must be an array");
-            } else {
-                for (Object value : (List<?>) entries) {
-                    LockEntry entry = parseEntry(value, current.path.getParent());
-                    if (expected.putIfAbsent(entry.key(), entry) != null) {
-                        errors.add("duplicate lock entry: " + entry.key());
-                    }
-                }
-            }
+        } catch (ImportLockFile.InvalidLockException invalid) {
+            lockDigest = invalid.sha256();
+            errors.add("could not read/parse lock: " + (invalid.getMessage() == null
+                    ? invalid.getClass().getSimpleName() : invalid.getMessage()));
         } catch (Exception e) {
             errors.add("could not read/parse lock: " + (e.getMessage() == null
                     ? e.getClass().getSimpleName() : e.getMessage()));
@@ -978,78 +962,49 @@ public final class ImportLockTools {
         List<String> nextCatalogs = new ArrayList<>();
         Set<String> names = new LinkedHashSet<>();
         try {
-            javax.xml.parsers.DocumentBuilderFactory factory = javax.xml.parsers.DocumentBuilderFactory.newInstance();
-            factory.setNamespaceAware(true);
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");
-            factory.setAttribute(javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
-            org.w3c.dom.Document document = factory.newDocumentBuilder().parse(context.path.toFile());
-            java.net.URI catalogUri = context.path.toUri();
-            org.w3c.dom.NodeList nodes = document.getElementsByTagNameNS("*", "uri");
-            for (int i = 0; i < nodes.getLength(); i++) {
-                org.w3c.dom.Element element = (org.w3c.dom.Element) nodes.item(i);
-                String name = element.getAttribute("name");
-                String uri = element.getAttribute("uri");
-                if (name.isBlank() || uri.isBlank()) {
-                    errors.add("catalog uri entry " + i + " is missing name/uri");
-                    continue;
-                }
-                if (!names.add(name)) errors.add("duplicate catalog name: " + name);
+            OfflineCatalog.Document catalog = OfflineCatalog.read(context.path);
+            errors.addAll(catalog.errors());
+            for (OfflineCatalog.Entry entry : catalog.entries()) {
+                String name = entry.name();
+                String uri = entry.reference();
+                names.add(name);
                 String status;
-                try {
-                    java.net.URI resolved = effectiveXmlBase(element, catalogUri).resolve(uri);
-                    if (!"file".equalsIgnoreCase(resolved.getScheme())) {
-                        status = "remote_forbidden";
-                        errors.add("remote catalog document is not allowed in no-network validation: "
-                                + resolved);
-                    } else {
-                        Path local;
-                        try {
-                            local = rules.readPath(Path.of(resolved).toString());
-                        } catch (ToolArgException refusal) {
-                            // The direct-access policy refuses to read this mapping target (outside
-                            // project_root with external paths disabled, caller-selected paths off with
-                            // no policy, a missing capability, or an unresolvable path). readPath's
-                            // ToolArgException is a RuntimeException, so if it escaped it would land in
-                            // the per-entry catch below (IllegalArgumentException does not catch it) and
-                            // then the outer catch, aborting the whole scan as a fake "could not parse
-                            // catalog" failure. Report it per-entry instead and keep scanning — with a
-                            // cause-neutral status (the specific cause can vary) and WITHOUT a filesystem
-                            // existence probe or a resolved path that would leak an out-of-scope location.
-                            local = null;
-                        }
-                        if (local == null) {
-                            status = "policy_refused";
-                            errors.add("catalog document is not readable under the project policy: " + uri);
+                java.net.URI resolved = entry.resolved();
+                if (resolved == null) {
+                    status = "invalid_uri";
+                } else {
+                    try {
+                        if (!"file".equalsIgnoreCase(resolved.getScheme())) {
+                            status = "remote_forbidden";
+                            errors.add("remote catalog document is not allowed in no-network validation: "
+                                    + resolved);
                         } else {
-                            status = Files.isRegularFile(local) ? "local_ok" : "local_missing";
-                            if ("local_missing".equals(status)) {
-                                errors.add("missing catalog document: " + local);
+                            Path local;
+                            try {
+                                local = rules.readPath(Path.of(resolved).toString());
+                            } catch (ToolArgException refusal) {
+                                // Report a refused target per entry without probing or leaking it.
+                                local = null;
+                            }
+                            if (local == null) {
+                                status = "policy_refused";
+                                errors.add("catalog document is not readable under the project policy: "
+                                        + uri);
+                            } else {
+                                status = Files.isRegularFile(local) ? "local_ok" : "local_missing";
+                                if ("local_missing".equals(status)) {
+                                    errors.add("missing catalog document: " + local);
+                                }
                             }
                         }
+                    } catch (IllegalArgumentException e) {
+                        status = "invalid_uri";
+                        errors.add("catalog uri entry does not resolve to a valid URI: " + uri);
                     }
-                } catch (IllegalArgumentException e) {
-                    status = "invalid_uri";
-                    errors.add("catalog uri entry does not resolve to a valid URI: " + uri);
                 }
                 entries.add(Map.of("name", name, "uri", uri, "status", status));
             }
-            org.w3c.dom.NodeList nexts = document.getElementsByTagNameNS("*", "nextCatalog");
-            for (int i = 0; i < nexts.getLength(); i++) {
-                org.w3c.dom.Element element = (org.w3c.dom.Element) nexts.item(i);
-                String catalog = element.getAttribute("catalog");
-                if (catalog.isBlank()) {
-                    errors.add("catalog nextCatalog entry " + i + " is missing catalog");
-                    continue;
-                }
-                try {
-                    nextCatalogs.add(effectiveXmlBase(element, catalogUri).resolve(catalog).toString());
-                } catch (IllegalArgumentException e) {
-                    errors.add("nextCatalog does not resolve to a valid URI: " + catalog);
-                }
-            }
+            catalog.nextCatalogs().forEach(next -> nextCatalogs.add(next.toString()));
         } catch (Exception e) {
             errors.add("could not parse catalog: " + (e.getMessage() == null
                     ? e.getClass().getSimpleName() : e.getMessage()));
@@ -1069,28 +1024,6 @@ public final class ImportLockTools {
         return Tools.json().put("valid", valid).put("catalog", context.path.toString())
                 .put("entries", entries).put("errors", errors).put("next_catalogs", nextCatalogs)
                 .put("unmapped_imports", unmapped).put("delegated_imports", delegated).result();
-    }
-
-    /**
-     * The OASIS effective base for a catalog entry: the nearest xml:base on the element or an ancestor
-     * (uri, then group, then the catalog root), where each relative xml:base is itself resolved against
-     * the next outer base, ending at the catalog file's own URI. Matches org.protege.xmlcatalog's
-     * resolution — what Protégé's XMLCatalogIRIMapper uses to actually load imports — so a catalog this
-     * validator accepts is one Protégé resolves the same way.
-     */
-    private static java.net.URI effectiveXmlBase(org.w3c.dom.Element element, java.net.URI catalogUri) {
-        List<String> bases = new ArrayList<>();
-        for (org.w3c.dom.Node node = element; node instanceof org.w3c.dom.Element;
-                node = node.getParentNode()) {
-            String base = ((org.w3c.dom.Element) node).getAttributeNS(
-                    javax.xml.XMLConstants.XML_NS_URI, "base");
-            if (!base.isBlank()) bases.add(base);
-        }
-        java.net.URI effective = catalogUri;
-        for (int i = bases.size() - 1; i >= 0; i--) {
-            effective = effective.resolve(bases.get(i));
-        }
-        return effective;
     }
 
     /**
@@ -1264,32 +1197,13 @@ public final class ImportLockTools {
         return lock;
     }
 
-    @SuppressWarnings("unchecked")
     static LockEntry parseEntry(Object value, Path base) throws IOException {
-        if (!(value instanceof Map<?, ?>)) throw new IOException("lock entry must be an object");
-        Map<String, Object> row = (Map<String, Object>) value;
-        Set<String> allowed = Set.of("ontology_iri", "version_iri", "document", "sha256", "direct");
-        if (!allowed.containsAll(row.keySet())) throw new IOException("unknown lock entry field");
-        String document = string(row.get("document"));
-        if (document.isBlank() || Path.of(document).isAbsolute()) {
-            throw new IOException("lock document must be a non-empty relative path");
-        }
-        Path normalizedBase = base.toAbsolutePath().normalize();
-        Path absolute = normalizedBase.resolve(document).normalize();
-        if (!absolute.startsWith(normalizedBase)) throw new IOException("lock document escapes lock directory");
-        String ontologyIri = string(row.get("ontology_iri"));
-        if (ontologyIri.isBlank() || !isAbsoluteIri(ontologyIri)) {
-            throw new IOException("ontology_iri must be an absolute IRI");
-        }
-        String versionIri = string(row.get("version_iri"));
-        if (!versionIri.isBlank() && !isAbsoluteIri(versionIri)) {
-            throw new IOException("version_iri must be null or an absolute IRI");
-        }
-        String lockedSha = string(row.get("sha256"));
-        if (!lockedSha.matches("[0-9a-f]{64}")) throw new IOException("sha256 must be 64 lowercase hex digits");
-        if (!(row.get("direct") instanceof Boolean)) throw new IOException("direct must be boolean");
-        return new LockEntry(ontologyIri, versionIri, document,
-                lockedSha, Boolean.TRUE.equals(row.get("direct")), absolute);
+        return lockEntry(ImportLockFile.parseEntry(value, base));
+    }
+
+    private static LockEntry lockEntry(ImportLockFile.Entry entry) {
+        return new LockEntry(entry.ontologyIri(), entry.versionIri(), entry.document(),
+                entry.sha256(), entry.direct(), entry.absolute());
     }
 
     private static void atomicWrite(Path target, byte[] bytes) throws IOException {

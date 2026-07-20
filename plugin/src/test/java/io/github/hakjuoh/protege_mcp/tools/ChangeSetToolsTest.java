@@ -629,7 +629,8 @@ class ChangeSetToolsTest {
         register.accept(registry, ctx);
         for (SyncToolSpecification spec : registry.build()) {
             if (spec.tool().name().equals(name)) {
-                return spec.callHandler().apply(null, new CallToolRequest(name, args));
+                return spec.callHandler().apply(ToolTestExchange.localAdmin(),
+                        new CallToolRequest(name, args));
             }
         }
         throw new AssertionError("no tool named " + name);

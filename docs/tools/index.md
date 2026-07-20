@@ -8,13 +8,12 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **83 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **84 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
-Version 0.7.0 expands the surface to 83 tools with deterministic preview rebasing, impact analysis,
-policy scaffolding, and release gating/preparation while retaining the 0.6.1 project-boundary and
-isolated-preflight guarantees.
+Version 0.7.1 adds explicit, redacted audit export to the 83-tool v0.7.0 surface while retaining its
+deterministic preview, impact, release, project-boundary, and isolated-preflight guarantees.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -23,6 +22,12 @@ isolated-preflight guarantees.
 {:toc}
 
 ---
+
+## New tool in 0.7.1
+
+| Task | New tool | What it adds |
+| --- | --- | --- |
+| Audit | [`export_audit_log`](quality.html#export_audit_log) | Deterministically merge the active project's rotated, owner-only streams into one bounded, re-redacted JSONL artifact. Dry-run is the default; a write requires a valid project policy, server administration plus project read/write capabilities, and the normal confirmation gate. |
 
 ## New tools in 0.7.0
 
@@ -67,7 +72,9 @@ These hold for every tool:
   so it appears in Protégé immediately and joins the shared **Edit ▸ Undo** stack. (Document
   open/save operations use Protégé's own load/save APIs and are **not** undoable.)
 - **Safety gates.** Mutating tools obey the **read-only** and **confirm-each-write** preferences
-  (Settings ▸ MCP). Read/query tools work even in read-only mode.
+  (Settings ▸ MCP). Every tool also checks the authenticated principal's declared ontology/release/
+  filesystem/network capabilities before its handler runs. Read/query tools work in global read-only mode,
+  but a caller-selected file still needs its explicit filesystem capability.
 - **Minting signal.** Many create/add tools report **`new_entities`** (the entities the call
   introduced) and accept **`strict`** — set it to fail instead of minting a brand-new entity from an
   unrecognized IRI/name (a typo guard).
@@ -98,7 +105,7 @@ The top-level [Prompts](../prompts/) guide packages these flows for one-click us
 
 ### [Safe authoring & QC](quality.html)
 `get_project_policy` · `validate_project_policy` · `run_project_qc` · `write_project_policy_template` ·
-`run_release_gate` · `prepare_release` · `verify_ontology` · `run_qc_suite` · `shacl_validate` · `add_competency_question` ·
+`run_release_gate` · `prepare_release` · `export_audit_log` · `verify_ontology` · `run_qc_suite` · `shacl_validate` · `add_competency_question` ·
 `list_competency_questions` · `remove_competency_question` · `run_competency_questions` *(plus
 `apply_changes verify=` and `search_entities` grounding — see their category pages)*
 

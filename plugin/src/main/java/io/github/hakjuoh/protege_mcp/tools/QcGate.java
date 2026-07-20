@@ -1,17 +1,18 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcRequest;
+import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcService;
+import io.github.hakjuoh.protege_mcp.core.qc.QcStageExecution;
+import io.github.hakjuoh.protege_mcp.core.qc.QcStageVerdict;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /** Pure aggregation and strict-gate rendering for completed QC stage executions. */
 final class QcGate {
-    private static final String INTEROPERABILITY = "interoperability";
     private static final String REASONER = "reasoner";
 
     private QcGate() {
@@ -77,159 +78,19 @@ final class QcGate {
     /** Strict pass/fail/error gate used by project policy and opt-in strict legacy calls. */
     static Map<String, Object> strictResult(QcSuiteExecution execution, Set<String> requiredStages,
             String failOn, int policyVersion, String policyDigest, boolean policyLoaded) {
-        Map<String, QcStageResult> byStage = new LinkedHashMap<>();
+        List<QcStageExecution> stages = new ArrayList<>();
         for (QcStageResult result : execution.results) {
-            byStage.put(result.stage, result);
+            QcStageVerdict verdict = result.executionError ? QcStageVerdict.ERROR
+                    : !result.ran ? QcStageVerdict.SKIPPED
+                    : QcStageVerdict.fromLegacy(result.verdict);
+            stages.add(new QcStageExecution(result.stage, verdict, result.reason, result.summary));
         }
-        List<Map<String, Object>> stages = new ArrayList<>();
-        List<Map<String, Object>> findings = new ArrayList<>();
-        int ran = 0;
-        int skipped = 0;
-        boolean gateError = !execution.snapshotConsistent || execution.preconditionError != null;
-        boolean gateFail = false;
-
-        if (!execution.snapshotConsistent) {
-            findings.add(commonFinding("snapshot.changed", "orchestrator", "error",
-                    "The active ontology or loaded import closure changed between project-QC "
-                            + "preconditions/classification and the shared validation snapshot; results "
-                            + "are not one revision.", null));
-        }
-        if (execution.preconditionError != null) {
-            findings.add(commonFinding("precondition.changed", "orchestrator", "error",
-                    execution.preconditionError, null));
-        }
-        if (!execution.fingerprint.releaseStable()) {
-            findings.add(commonFinding("fingerprint.session_only", "fingerprint", "warning",
-                    String.join(" ", execution.fingerprint.warnings()),
-                    Map.of("stability", execution.fingerprint.stability())));
-        }
-
-        for (String stage : execution.results.stream().map(result -> result.stage).toList()) {
-            QcStageResult result = byStage.get(stage);
-            boolean required = requiredStages.contains(stage);
-            Map<String, Object> row = result.toJson();
-            row.put("required", required);
-            List<Map<String, Object>> stageFindings = new ArrayList<>();
-            String stageMessage = null;
-            String status;
-            if (result.executionError) {
-                status = "error";
-                ran++;
-                // A stage that ERRORED could not produce a verdict; fail closed regardless of whether it
-                // was required. The `required` flag governs only the missing/skipped→error escalation.
-                gateError = true;
-                Map<String, Object> finding = commonFinding(stage + ".execution", stage, "error",
-                        result.reason, result.summary);
-                findings.add(finding);
-                stageFindings.add(finding);
-                stageMessage = result.reason;
-            } else if (!result.ran) {
-                status = required ? "error" : "skipped";
-                skipped++;
-                stageMessage = result.reason;
-                if (required) {
-                    gateError = true;
-                    Map<String, Object> finding = commonFinding(stage + ".missing", stage, "error",
-                            result.reason, null);
-                    findings.add(finding);
-                    stageFindings.add(finding);
-                }
-            } else {
-                ran++;
-                boolean fails = level(result.verdict) >= threshold(failOn);
-                status = fails ? "fail" : "pass";
-                // The gate is the worst RAN stage versus fail_on (the documented contract). A ran stage
-                // that reaches fail_on fails the gate whether or not it was required; `required` only
-                // adds the missing/skipped→error semantics handled above.
-                if (fails) {
-                    gateFail = true;
-                }
-                if (!QcSuiteTools.PASS.equals(result.verdict)) {
-                    String severity = QcSuiteTools.FAIL.equals(result.verdict) ? "error"
-                            : QcSuiteTools.WARN.equals(result.verdict) ? "warning" : "info";
-                    Map<String, Object> finding = commonFinding(stage + ".finding", stage, severity,
-                            stage + " reported " + result.verdict, result.summary);
-                    findings.add(finding);
-                    stageFindings.add(finding);
-                }
-            }
-            row.put("status", status);
-            row.put("message", stageMessage);
-            row.put("findings", stageFindings);
-            row.put("details", result.summary == null ? Collections.emptyMap() : result.summary);
-            stages.add(row);
-        }
-        // A required stage absent from execution is also an error (e.g. a caller passed a stale/future id).
-        for (String required : requiredStages) {
-            if (!byStage.containsKey(required)) {
-                gateError = true;
-                skipped++;
-                Map<String, Object> finding = commonFinding(required + ".missing", required, "error",
-                        "required stage was not scheduled", null);
-                Map<String, Object> missing = new LinkedHashMap<>();
-                missing.put("stage", required);
-                missing.put("required", true);
-                missing.put("ran", false);
-                missing.put("status", "error");
-                missing.put("reason", "required stage was not scheduled");
-                missing.put("message", "required stage was not scheduled");
-                missing.put("findings", List.of(finding));
-                missing.put("details", Collections.emptyMap());
-                stages.add(missing);
-                findings.add(finding);
-            }
-        }
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("gate", gateError ? "error" : gateFail ? "fail" : "pass");
-        result.put("policy_loaded", policyLoaded);
-        if (policyVersion > 0) {
-            result.put("policy_version", policyVersion);
-        }
-        if (policyDigest != null) {
-            result.put("policy_digest", policyDigest);
-        }
-        result.put("semantic_fingerprint", execution.fingerprint.semanticFingerprint());
-        QcStageResult interoperability = byStage.get(INTEROPERABILITY);
-        if (interoperability != null && interoperability.ran && !interoperability.executionError
-                && interoperability.summary != null) {
-            result.put("rdf_dataset_fingerprint",
-                    interoperability.summary.get("rdf_dataset_fingerprint"));
-            result.put("rdf_dataset_identity", interoperability.summary);
-        }
-        result.put("fingerprint_stability", execution.fingerprint.stability());
-        result.put("release_stable", execution.fingerprint.releaseStable());
-        result.put("fingerprint_warnings", execution.fingerprint.warnings());
-        result.put("reasoner", execution.selectedReasoner);
-        result.put("required_stages", new ArrayList<>(requiredStages));
-        result.put("stages_ran", ran);
-        result.put("stages_skipped", skipped);
-        result.put("fail_on", failOn);
-        result.put("stages", stages);
-        result.put("findings", findings);
-        result.put("artifacts", Collections.emptyList());
-        result.put("snapshot_consistent", execution.snapshotConsistent);
-        Map<String, Object> validationSnapshot = new LinkedHashMap<>();
-        validationSnapshot.put("mode", execution.snapshotMode);
-        validationSnapshot.put("same_snapshot", execution.sameValidationSnapshot);
-        validationSnapshot.put("semantic_fingerprint", execution.fingerprint.semanticFingerprint());
-        validationSnapshot.put("closure_fingerprint", execution.closureFingerprint);
-        validationSnapshot.put("stages", execution.snapshotStages);
-        result.put("validation_snapshot", validationSnapshot);
-        Map<String, Object> details = new LinkedHashMap<>();
-        details.put("fail_on", "warn".equals(failOn) ? "warning" : failOn);
-        List<String> missingRequired = new ArrayList<>();
-        for (String required : requiredStages) {
-            QcStageResult stage = byStage.get(required);
-            if (stage == null || !stage.ran || stage.executionError) {
-                missingRequired.add(required);
-            }
-        }
-        if (!missingRequired.isEmpty()) {
-            details.put("missing_required_stages", missingRequired);
-        }
-        result.put("details", details);
-        return result;
+        ProjectQcRequest request = new ProjectQcRequest(policyLoaded, policyVersion, policyDigest,
+                new ArrayList<>(requiredStages), failOn, execution.fingerprint,
+                execution.selectedReasoner, execution.snapshotConsistent, execution.preconditionError,
+                execution.snapshotMode, execution.snapshotStages, execution.sameValidationSnapshot,
+                execution.closureFingerprint);
+        return ProjectQcService.aggregate(request, stages).toMap();
     }
 
     static int level(String verdict) {
@@ -254,19 +115,4 @@ final class QcGate {
         };
     }
 
-    private static Map<String, Object> commonFinding(String id, String source, String severity,
-            String message, Map<String, Object> details) {
-        Map<String, Object> finding = new LinkedHashMap<>();
-        finding.put("id", id);
-        finding.put("source", source);
-        finding.put("severity", severity);
-        finding.put("message", message == null ? id : message);
-        finding.put("focus_iri", null);
-        finding.put("axiom", null);
-        finding.put("path", null);
-        finding.put("rule_id", id);
-        finding.put("waiver", null);
-        finding.put("details", details == null ? Collections.emptyMap() : details);
-        return finding;
-    }
 }
