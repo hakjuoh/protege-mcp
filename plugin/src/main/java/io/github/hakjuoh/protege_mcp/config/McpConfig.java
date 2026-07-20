@@ -58,6 +58,8 @@ public final class McpConfig {
     public static final String KEY_CHAT_CODEX_PATH = "chatCodexPath";
     /** Whether the chat should show the model's reasoning ("thinking") in the transcript. */
     public static final String KEY_CHAT_SHOW_THINKING = "chatShowThinking";
+    /** Whether Assistant turn principals may request the bounded project/ontology write profile. */
+    public static final String KEY_CHAT_ALLOW_WRITES = "chatAllowWrites";
 
     /** Default listen port. A configured port of {@code 0} means "pick an ephemeral port". */
     public static final int DEFAULT_PORT = 8123;

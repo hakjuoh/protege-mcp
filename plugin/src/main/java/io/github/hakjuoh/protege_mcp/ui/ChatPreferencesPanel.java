@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.ui;
 import java.awt.BorderLayout;
 
 import javax.swing.JLabel;
+import javax.swing.JCheckBox;
 import javax.swing.JTextField;
 
 import org.protege.editor.core.prefs.Preferences;
@@ -27,6 +28,7 @@ public class ChatPreferencesPanel extends PreferencesPanel {
     private JTextField codexPath;
     private JLabel claudeStatus;
     private JLabel codexStatus;
+    private JCheckBox allowWrites;
 
     @Override
     public void initialise() throws Exception {
@@ -55,6 +57,17 @@ public class ChatPreferencesPanel extends PreferencesPanel {
                 "Leave blank to auto-detect on PATH and common install dirs. Set the full path "
                 + "to the executable if Protégé (launched from Finder/Dock) cannot find it."));
 
+        panel.addGroup("Assistant access");
+        allowWrites = new JCheckBox("Allow the Ontology Assistant to edit the ontology and project",
+                p.getBoolean(McpConfig.KEY_CHAT_ALLOW_WRITES, true));
+        panel.addGroupComponent(allowWrites);
+        panel.addHelpText(PreferencesText.wrapped(
+                "Each chat turn receives its own short-lived credential. Disabling this keeps chat "
+                + "usable for ontology reads but rejects edits. When enabled, the credential is still "
+                + "limited to ontology/project operations: it has no server-admin, external-file, "
+                + "network, or unrestricted local-admin authority. MCP read-only and confirm-write "
+                + "settings remain hard limits."));
+
         panel.addGroup("Privacy");
         panel.addHelpText(PreferencesText.wrapped(
                 "The chat sends your prompts, any attachments or pasted content you include, and the "
@@ -81,6 +94,7 @@ public class ChatPreferencesPanel extends PreferencesPanel {
         Preferences p = McpConfig.prefs();
         p.putString(McpConfig.KEY_CHAT_CLAUDE_PATH, claudePath.getText().trim());
         p.putString(McpConfig.KEY_CHAT_CODEX_PATH, codexPath.getText().trim());
+        p.putBoolean(McpConfig.KEY_CHAT_ALLOW_WRITES, allowWrites.isSelected());
     }
 
     @Override

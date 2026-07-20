@@ -556,7 +556,32 @@ class OAuthServletTest {
         assertTrue(html.contains("name=\"code_challenge\" value=\"abc123\""),
                 "code_challenge carried as hidden input");
         assertTrue(html.contains("name=\"state\" value=\"st-1\""), "state carried as hidden input");
+        assertTrue(html.contains("wants to read the ontology"),
+                "read scope must not claim edit authority on the consent page");
+        assertFalse(html.contains("wants to read or change"));
+        assertTrue(html.contains("Requested scope: <code>read</code>"));
         assertNull(resp.redirect, "consent page is not a redirect");
+    }
+
+    @Test
+    void authorizeGetRejectsUnknownScopeBeforeConsent() throws IOException {
+        OAuthStore store = emptyStore();
+        OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
+        FakeRequest req = new FakeRequest().path("/authorize")
+                .param("client_id", c.clientId)
+                .param("redirect_uri", "http://127.0.0.1/cb")
+                .param("response_type", "code")
+                .param("code_challenge", "chal")
+                .param("code_challenge_method", "S256")
+                .param("scope", "read unknown")
+                .param("state", "s");
+        FakeResponse resp = new FakeResponse();
+
+        servlet(store).doGet(req, resp);
+
+        assertTrue(resp.redirect.contains("error=invalid_scope"), resp.redirect);
+        assertTrue(resp.redirect.contains("state=s"), resp.redirect);
+        assertFalse(resp.body().contains("Authorize access"));
     }
 
     @Test
@@ -729,6 +754,25 @@ class OAuthServletTest {
                 "redirect carries code with ? separator");
         assertTrue(resp.redirect.contains("&state=state+1"),
                 "state URL-encoded (space -> +) and appended with &");
+    }
+
+    @Test
+    void authorizeDecisionRevalidatesScopeAgainstHiddenFieldTampering() throws IOException {
+        OAuthStore store = emptyStore();
+        OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
+        FakeRequest req = new FakeRequest().path("/authorize")
+                .param("client_id", c.clientId)
+                .param("redirect_uri", "http://127.0.0.1/cb")
+                .param("decision", "allow")
+                .param("code_challenge", s256("verifier"))
+                .param("scope", "server:root")
+                .param("state", "s");
+        FakeResponse resp = new FakeResponse();
+
+        servlet(store).doPost(req, resp);
+
+        assertTrue(resp.redirect.contains("error=invalid_scope"), resp.redirect);
+        assertFalse(resp.redirect.contains("code="), "no authorization code is minted");
     }
 
     @Test

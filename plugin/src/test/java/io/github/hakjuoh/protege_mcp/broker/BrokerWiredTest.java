@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.broker;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.BufferedReader;
@@ -33,6 +34,7 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import io.github.hakjuoh.protege_mcp.oauth.OAuthStore;
 import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
+import io.github.hakjuoh.protege_mcp.server.BrokerControlServlet;
 import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
 
 /**
@@ -61,14 +63,30 @@ class BrokerWiredTest {
         final String name;
         final Map<String, String> lastHeaders = new ConcurrentHashMap<>();
         final CountDownLatch sseGate = new CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicInteger fencedClients =
+                new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicBoolean acknowledgeFences;
 
         FakeBackend(String name) {
+            this(name, true);
+        }
+
+        FakeBackend(String name, boolean acknowledgeFences) {
             this.name = name;
+            this.acknowledgeFences = new java.util.concurrent.atomic.AtomicBoolean(acknowledgeFences);
         }
 
         @Override
         protected void service(HttpServletRequest req, HttpServletResponse resp) throws IOException {
             record(req);
+            if (BrokerControlServlet.PATH.equals(req.getServletPath())) {
+                fencedClients.incrementAndGet();
+                resp.setStatus(200);
+                resp.setContentType("application/json");
+                resp.getWriter().write("{\"commit_fence_confirmed\":"
+                        + acknowledgeFences.get() + "}");
+                return;
+            }
             String forcedStatus = req.getParameter("status");
             if (forcedStatus != null) {
                 resp.setStatus(Integer.parseInt(forcedStatus));
@@ -123,9 +141,14 @@ class BrokerWiredTest {
     }
 
     private FakeBackend startBackend(String name) throws Exception {
-        FakeBackend servlet = new FakeBackend(name);
+        return startBackend(name, true);
+    }
+
+    private FakeBackend startBackend(String name, boolean acknowledgeFences) throws Exception {
+        FakeBackend servlet = new FakeBackend(name, acknowledgeFences);
         EmbeddedHttpServer server = new EmbeddedHttpServer();
         server.addServlet(servlet, "/mcp/*", true);
+        server.addServlet(servlet, BrokerControlServlet.PATH + "/*", false);
         int port = server.start(0);
         backends.add(server);
         servlet.lastHeaders.put("_port", String.valueOf(port));
@@ -341,9 +364,15 @@ class BrokerWiredTest {
     void internalClientRevocationAndSessionTerminationAreAuthenticatedAndExplicit() throws Exception {
         OAuthStore.Client registered = broker.oauthStore().registerClient(
                 List.of("http://127.0.0.1/cb"), "review-client");
-        broker.oauthStore().issueTokens(registered.clientId, "mcp", null);
+        broker.oauthStore().issueTokens(registered.clientId, "read", null);
         broker.registry().pinSession("oauth-session", "window",
-                AuthenticatedPrincipal.oauthAdmin(registered.clientId, "review-client", "grant"));
+                AuthenticatedPrincipal.oauth(registered.clientId, "review-client", "grant", "read"));
+
+        List<BrokerClient.ClientInfo> listed = client().listClients();
+        assertEquals(1, listed.size());
+        assertEquals(registered.clientId, listed.get(0).clientId);
+        assertEquals(java.util.Set.of("ontology:read"), listed.get(0).capabilities);
+        assertTrue(listed.get(0).latestAccessExpiry > System.currentTimeMillis());
 
         HttpResponse<String> clients = http.send(HttpRequest.newBuilder(
                         URI.create("http://127.0.0.1:" + brokerPort + "/internal/clients"))
@@ -351,6 +380,8 @@ class BrokerWiredTest {
                 HttpResponse.BodyHandlers.ofString());
         assertEquals(200, clients.statusCode());
         assertTrue(clients.body().contains(registered.clientId));
+        assertEquals("[\"ontology:read\"]", new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(clients.body()).path("clients").get(0).path("capabilities").toString());
         assertFalse(clients.body().contains("mcpa_"), "management output must never disclose tokens");
 
         HttpResponse<String> revoked = http.send(HttpRequest.newBuilder(
@@ -362,6 +393,7 @@ class BrokerWiredTest {
         assertEquals(200, revoked.statusCode());
         assertTrue(revoked.body().contains("\"revoked\":true"));
         assertTrue(revoked.body().contains("\"terminated_session_pins\":1"));
+        assertTrue(revoked.body().contains("\"terminated_in_flight_requests\":0"));
         assertTrue(revoked.body().contains("\"in_flight_termination\":false"));
 
         HttpResponse<String> wrongMethod = http.send(HttpRequest.newBuilder(
@@ -370,6 +402,80 @@ class BrokerWiredTest {
                 HttpResponse.BodyHandlers.ofString());
         assertEquals(405, wrongMethod.statusCode());
         assertEquals("POST", wrongMethod.headers().firstValue("Allow").orElse(null));
+    }
+
+    @Test
+    void revokingAnOauthClientCutsOffItsLiveProxyStream() throws Exception {
+        FakeBackend sse = startBackend("revoked-sse");
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(sse, "w-revoked", 1)));
+        OAuthStore.Client registered = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/revoked"), "stream-client");
+        OAuthStore.Tokens tokens = broker.oauthStore().issueTokens(registered.clientId, "read", null);
+
+        HttpResponse<InputStream> response = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/mcp?mode=sse"))
+                .header("Authorization", "Bearer " + tokens.accessToken)
+                .GET().build(), HttpResponse.BodyHandlers.ofInputStream());
+        assertEquals(200, response.statusCode());
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+            assertEquals("data: first-from-revoked-sse", reader.readLine());
+            assertEquals("", reader.readLine());
+
+            BrokerClient.RevocationResult result = client().revokeClient(registered.clientId);
+            assertTrue(result.revoked());
+            assertEquals(1, result.terminatedInFlightRequests(),
+                    "the management response must account for the stream it actively cancelled");
+            assertTrue(result.commitFenceConfirmed());
+            assertEquals(1, sse.fencedClients.get(),
+                    "the broker must install a commit fence in the serving backend");
+
+            var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                var eof = executor.submit(() -> {
+                    try {
+                        return reader.readLine() == null;
+                    } catch (IOException closed) {
+                        return true;
+                    }
+                });
+                assertTrue(eof.get(3, TimeUnit.SECONDS),
+                        "revocation must close the client stream before the backend emits another event");
+            } finally {
+                executor.shutdownNow();
+            }
+        } finally {
+            sse.sseGate.countDown();
+        }
+        assertEquals(401, call("POST", "/mcp", tokens.accessToken).statusCode(),
+                "the revoked token must not start a follow-up request");
+    }
+
+    @Test
+    void revocationDoesNotClaimSuccessWithoutEveryBackendCommitFence() throws Exception {
+        FakeBackend fenced = startBackend("fenced", true);
+        FakeBackend unfenced = startBackend("unfenced", false);
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(fenced, "w-fenced", 2), reg(unfenced, "w-unfenced", 1)));
+        OAuthStore.Client registered = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/unfenced"), "unfenced-client");
+        OAuthStore.Tokens tokens = broker.oauthStore().issueTokens(registered.clientId, "read", null);
+
+        IOException incomplete = assertThrows(IOException.class,
+                () -> client().revokeClient(registered.clientId));
+        assertTrue(incomplete.getMessage().contains("did not confirm the execution fence"));
+        assertEquals(1, fenced.fencedClients.get());
+        assertEquals(1, unfenced.fencedClients.get());
+        assertEquals(401, call("POST", "/mcp", tokens.accessToken).statusCode(),
+                "token invalidation remains effective even when backend confirmation is partial");
+
+        unfenced.acknowledgeFences.set(true);
+        BrokerClient.RevocationResult retried = client().revokeClient(registered.clientId);
+        assertTrue(retried.revoked(), "retry must finish fencing after the credential is already gone");
+        assertTrue(retried.commitFenceConfirmed());
+        assertEquals(2, fenced.fencedClients.get(), "an idempotent retry reaffirms every live window");
+        assertEquals(2, unfenced.fencedClients.get());
     }
 
     @Test

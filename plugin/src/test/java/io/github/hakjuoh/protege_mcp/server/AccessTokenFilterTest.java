@@ -79,6 +79,11 @@ final class AccessTokenFilterTest {
      */
     private static HttpServletRequest request(Map<String, String> headers, String scheme,
             String serverName, int serverPort) {
+        return request(headers, scheme, serverName, serverPort, new HashMap<>());
+    }
+
+    private static HttpServletRequest request(Map<String, String> headers, String scheme,
+            String serverName, int serverPort, Map<String, Object> attributes) {
         Map<String, String> lower = new HashMap<>();
         for (Map.Entry<String, String> e : headers.entrySet()) {
             lower.put(e.getKey().toLowerCase(), e.getValue());
@@ -94,7 +99,10 @@ final class AccessTokenFilterTest {
                 case "getServerPort":
                     return serverPort;
                 case "setAttribute":
+                    attributes.put((String) args[0], args[1]);
                     return null;
+                case "getAttribute":
+                    return attributes.get((String) args[0]);
                 case "toString":
                     return "FakeHttpServletRequest";
                 case "hashCode":
@@ -222,6 +230,72 @@ final class AccessTokenFilterTest {
         assertTrue(cc.invoked, "chain must be invoked");
         assertTrue(cc.passedRequest == req, "the original request object must be forwarded to the chain");
         assertTrue(cc.passedResponse == resp, "the original response object must be forwarded to the chain");
+    }
+
+    @Test
+    void oauthScopeBecomesTheExactStandalonePrincipalCapabilities() throws Exception {
+        OAuthStore store = storeAcceptingNothing();
+        OAuthStore.Client client = store.registerClient(
+                java.util.List.of("http://127.0.0.1/cb"), "Reader");
+        OAuthStore.Tokens tokens = store.issueTokens(client.clientId, "read", "http://localhost/mcp");
+        Map<String, Object> attributes = new HashMap<>();
+        HttpServletRequest req = request(headers(
+                "Authorization", "Bearer " + tokens.accessToken),
+                "http", "localhost", 8080, attributes);
+        ChainCapture chain = new ChainCapture();
+
+        new AccessTokenFilter(store).doFilter(req, response(new ResponseCapture()), chain(chain));
+
+        assertTrue(chain.invoked);
+        AuthenticatedPrincipal principal = (AuthenticatedPrincipal) attributes.get(
+                AuthenticatedPrincipal.REQUEST_ATTRIBUTE);
+        assertEquals(java.util.Set.of("ontology:read"), principal.capabilities());
+        assertEquals(client.clientId, principal.clientId());
+    }
+
+    @Test
+    void ephemeralAssistantTokenPropagatesItsExactPrincipalAndRevokes() throws Exception {
+        OAuthStore store = storeAcceptingNothing();
+        AuthenticatedPrincipal assistant = new AuthenticatedPrincipal(1, "assistant:claude",
+                "assistant-window-turn-3", "Ontology Assistant (claude)",
+                java.util.Set.of("ontology:read"), "assistant-grant-3");
+        OAuthStore.EphemeralToken token = store.issueEphemeralToken(assistant, 60_000L);
+        Map<String, Object> attributes = new HashMap<>();
+        HttpServletRequest req = request(headers("Authorization", "Bearer " + token.token()),
+                "http", "localhost", 8080, attributes);
+        ChainCapture accepted = new ChainCapture();
+
+        new AccessTokenFilter(store).doFilter(req, response(new ResponseCapture()), chain(accepted));
+
+        assertTrue(accepted.invoked);
+        assertEquals(assistant, attributes.get(AuthenticatedPrincipal.REQUEST_ATTRIBUTE));
+        assertTrue(store.revokeEphemeralToken(token.token()));
+
+        ResponseCapture denied = new ResponseCapture();
+        ChainCapture deniedChain = new ChainCapture();
+        new AccessTokenFilter(store).doFilter(request(headers(
+                        "Authorization", "Bearer " + token.token(), "Host", "localhost:8080"),
+                "http", "localhost", 8080), response(denied), chain(deniedChain));
+        assertUnauthorized(denied, deniedChain,
+                "http://localhost:8080/.well-known/oauth-protected-resource");
+    }
+
+    @Test
+    void persistedGrantWithUnknownScopeFailsClosedAtAuthentication() throws Exception {
+        OAuthStore store = storeAcceptingNothing();
+        OAuthStore.Client client = store.registerClient(
+                java.util.List.of("http://127.0.0.1/cb"), "Unknown scope");
+        OAuthStore.Tokens tokens = store.issueTokens(
+                client.clientId, "unknown", "http://localhost/mcp");
+        ResponseCapture response = new ResponseCapture();
+        ChainCapture chain = new ChainCapture();
+        HttpServletRequest req = request(headers("Authorization", "Bearer " + tokens.accessToken,
+                "Host", "localhost:8080"), "http", "localhost", 8080);
+
+        new AccessTokenFilter(store).doFilter(req, response(response), chain(chain));
+
+        assertUnauthorized(response, chain,
+                "http://localhost:8080/.well-known/oauth-protected-resource");
     }
 
     @Test

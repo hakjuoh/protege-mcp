@@ -7,6 +7,8 @@ import java.util.Map;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
+
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -46,7 +48,7 @@ public class OAuthMetadataServlet extends HttpServlet {
         if (uri.contains("/.well-known/oauth-protected-resource")) {
             doc.put("resource", base + "/mcp");
             doc.put("authorization_servers", Arrays.asList(base));
-            doc.put("scopes_supported", Arrays.asList("mcp"));
+            doc.put("scopes_supported", AuthenticatedPrincipal.supportedScopes());
             doc.put("bearer_methods_supported", Arrays.asList("header"));
         } else {
             // oauth-authorization-server / openid-configuration
@@ -60,7 +62,7 @@ public class OAuthMetadataServlet extends HttpServlet {
             doc.put("grant_types_supported", Arrays.asList("authorization_code", "refresh_token"));
             doc.put("code_challenge_methods_supported", Arrays.asList("S256"));
             doc.put("token_endpoint_auth_methods_supported", Arrays.asList("none"));
-            doc.put("scopes_supported", Arrays.asList("mcp"));
+            doc.put("scopes_supported", AuthenticatedPrincipal.supportedScopes());
         }
         OAuthSupport.writeJson(resp, HttpServletResponse.SC_OK, doc, mapper);
     }

@@ -71,9 +71,12 @@ public final class AccessTokenFilter implements Filter {
         } else {
             OAuthStore.TokenIdentity identity = store.authenticate(token);
             if (identity != null) {
-                principal = identity.staticToken() ? AuthenticatedPrincipal.staticAdmin()
-                        : AuthenticatedPrincipal.oauthAdmin(identity.clientId(), identity.clientName(),
-                                identity.grantId());
+                try {
+                    principal = identity.principal();
+                } catch (IllegalArgumentException invalidScope) {
+                    deny(httpRequest, httpResponse);
+                    return;
+                }
             }
         }
         if (principal != null) {

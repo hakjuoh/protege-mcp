@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -22,6 +23,8 @@ import org.junit.jupiter.api.Test;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
 
 /**
  * Method-level tests for {@link OAuthStore}. Private members ({@code persist}, {@code load},
@@ -143,6 +146,55 @@ class OAuthStoreTest {
         assertNotEquals(first.accessToken, refreshed.accessToken, "the access token rotates on refresh");
         String grantAfter = s.authenticate(refreshed.accessToken).grantId();
         assertEquals(grantBefore, grantAfter, "the grant id is preserved across a token refresh");
+    }
+
+    @Test
+    void ephemeralPrincipalIsNonPersistentExpiresAndRevokesImmediately() {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000L);
+        SaveCapture save = new SaveCapture();
+        OAuthStore store = store(clock, save);
+        AuthenticatedPrincipal principal = new AuthenticatedPrincipal(1, "assistant:codex",
+                "assistant-window-turn-1", "Ontology Assistant (codex)",
+                Set.of("ontology:read"), "assistant-grant-1");
+        int persistedBefore = save.saved.size();
+
+        OAuthStore.EphemeralToken first = store.issueEphemeralToken(principal, 1_000L);
+
+        assertTrue(first.token().startsWith("mcpe_"),
+                "ephemeral bearer tokens must not share the mcpa_ authorization-code prefix");
+        assertEquals(persistedBefore, save.saved.size(), "turn credentials must never be persisted");
+        assertTrue(store.listClients().isEmpty(), "internal Assistant turns are not OAuth clients");
+        assertEquals("assistant:codex", store.authenticate(first.token()).principalType());
+        assertEquals(Set.of("ontology:read"), store.authenticate(first.token()).principal().capabilities());
+        store.registerClient(List.of("http://localhost/cb"), "persistence trigger");
+        assertFalse(save.last.contains(first.token()),
+                "a later OAuth persistence snapshot must not capture an ephemeral token");
+
+        assertTrue(store.revokeEphemeralToken(first.token()));
+        assertNull(store.authenticate(first.token()));
+        assertFalse(store.revokeEphemeralToken(first.token()), "revocation is idempotent");
+
+        OAuthStore.EphemeralToken renewable = store.issueEphemeralToken(principal, 1_000L);
+        clock.set(renewable.expiresAt() - 1);
+        assertTrue(store.renewEphemeralToken(renewable.token(), 1_000L));
+        clock.set(renewable.expiresAt());
+        assertNotNull(store.authenticate(renewable.token()),
+                "a live turn can renew the same bearer beyond its original expiry");
+        clock.addAndGet(1_000L);
+        assertFalse(store.renewEphemeralToken(renewable.token(), 1_000L),
+                "an already expired credential cannot be resurrected");
+        assertNull(store.authenticate(renewable.token()), "expiry is exclusive and fail-closed");
+    }
+
+    @Test
+    void ephemeralPrincipalCannotSmuggleLocalAdminAuthority() {
+        OAuthStore store = store("tok");
+        AuthenticatedPrincipal principal = new AuthenticatedPrincipal(1, "assistant:codex",
+                "assistant-window-turn-1", "Assistant",
+                Set.of("local:admin"), "assistant-grant-1");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> store.issueEphemeralToken(principal, 1_000L));
     }
 
     @Test
@@ -659,6 +711,8 @@ class OAuthStoreTest {
         s.issueTokens(c.clientId, "read", "res");
         OAuthStore.ClientInfo info = s.listClients().get(0);
         assertEquals(1, info.activeAccessTokens, "one active access token counted");
+        assertEquals(Set.of("ontology:read"), info.capabilities,
+                "the client snapshot reports its effective grant capabilities");
         assertTrue(info.latestAccessExpiry > System.currentTimeMillis(),
                 "latestAccessExpiry is in the future for a live token");
     }
@@ -1158,13 +1212,14 @@ class OAuthStoreTest {
     @Test
     void clientInfoConstructorStoresFields() {
         OAuthStore.ClientInfo info = new OAuthStore.ClientInfo("id", "name",
-                100L, 200L, 3, 400L);
+                100L, 200L, 3, 400L, Set.of("ontology:read"));
         assertEquals("id", info.clientId, "clientId stored");
         assertEquals("name", info.clientName, "clientName stored");
         assertEquals(100L, info.registeredAt, "registeredAt stored");
         assertEquals(200L, info.lastSeenAt, "lastSeenAt stored");
         assertEquals(3, info.activeAccessTokens, "activeAccessTokens stored");
         assertEquals(400L, info.latestAccessExpiry, "latestAccessExpiry stored");
+        assertEquals(Set.of("ontology:read"), info.capabilities, "capabilities stored");
     }
 
     // ------------------------------------------------------------- hooks invocation

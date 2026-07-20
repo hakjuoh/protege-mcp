@@ -2,12 +2,16 @@ package io.github.hakjuoh.protege_mcp.server;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
+import io.github.hakjuoh.protege_mcp.core.auth.CapabilityAuthorizer;
 
 /** Versioned, secret-free authenticated identity propagated from broker to one backend. */
 public record AuthenticatedPrincipal(int version, String type, String clientId, String displayName,
@@ -17,15 +21,17 @@ public record AuthenticatedPrincipal(int version, String type, String clientId, 
     public static final String CONTEXT_KEY = "protege_mcp.principal";
     public static final String BROKER_HEADER = "X-Protege-Mcp-Principal";
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final Set<String> LOCAL_ADMIN = Set.of(
-            "ontology:read", "ontology:write", "filesystem:project:read",
-            "filesystem:project:write", "filesystem:external", "network:access", "local:admin");
+    public static final String LEGACY_FULL_SCOPE = "mcp";
+    public static final String READ_SCOPE = "read";
+    public static final String LOCAL_ADMIN_CAPABILITY = CapabilityAuthorizer.LOCAL_ADMIN;
+    private static final Set<String> LOCAL_ADMIN = localAdminCapabilities();
 
     public AuthenticatedPrincipal {
         if (version != 1 || type == null || type.isBlank() || clientId == null || clientId.isBlank()) {
             throw new IllegalArgumentException("invalid authenticated principal");
         }
-        capabilities = Set.copyOf(capabilities == null ? Set.of() : capabilities);
+        capabilities = Collections.unmodifiableSet(new LinkedHashSet<>(
+                capabilities == null ? Set.of() : capabilities));
     }
 
     public static AuthenticatedPrincipal staticAdmin() {
@@ -36,6 +42,47 @@ public record AuthenticatedPrincipal(int version, String type, String clientId, 
     public static AuthenticatedPrincipal oauthAdmin(String clientId, String name, String grantId) {
         return new AuthenticatedPrincipal(1, "oauth", clientId,
                 name == null || name.isBlank() ? clientId : name, LOCAL_ADMIN, grantId);
+    }
+
+    /** Resolve an OAuth scope string to the exact capabilities propagated with that grant. */
+    public static AuthenticatedPrincipal oauth(String clientId, String name, String grantId,
+            String scope) {
+        return new AuthenticatedPrincipal(1, "oauth", clientId,
+                name == null || name.isBlank() ? clientId : name,
+                capabilitiesForScope(scope), grantId);
+    }
+
+    /**
+     * Backward-compatible scope mapping. Existing clients use {@code mcp} (or omitted scope) and
+     * retain local-admin access. A deliberately requested {@code read} scope is ontology-read only;
+     * otherwise each whitespace-separated token must be one public capability value.
+     */
+    public static Set<String> capabilitiesForScope(String scope) {
+        if (scope == null || scope.isBlank()) return LOCAL_ADMIN;
+        Set<String> resolved = new LinkedHashSet<>();
+        boolean legacyFull = false;
+        for (String token : scope.trim().split("\\s+")) {
+            if (LEGACY_FULL_SCOPE.equals(token)) {
+                legacyFull = true;
+            } else if (READ_SCOPE.equals(token)) {
+                resolved.add(Capability.ONTOLOGY_READ.value());
+            } else {
+                resolved.add(Capability.fromValue(token).value());
+            }
+        }
+        return legacyFull ? LOCAL_ADMIN : Collections.unmodifiableSet(resolved);
+    }
+
+    public static Set<String> supportedScopes() {
+        Set<String> scopes = new LinkedHashSet<>();
+        scopes.add(LEGACY_FULL_SCOPE);
+        scopes.add(READ_SCOPE);
+        scopes.addAll(Capability.valuesSet());
+        return Collections.unmodifiableSet(scopes);
+    }
+
+    public boolean allows(String capability) {
+        return CapabilityAuthorizer.allows(capabilities, capability);
     }
 
     /**
@@ -96,5 +143,12 @@ public record AuthenticatedPrincipal(int version, String type, String clientId, 
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private static Set<String> localAdminCapabilities() {
+        Set<String> capabilities = new LinkedHashSet<>(Capability.valuesSet());
+        capabilities.add("ontology:write"); // accepted by pre-capability 0.6.x principal envelopes
+        capabilities.add(LOCAL_ADMIN_CAPABILITY);
+        return Collections.unmodifiableSet(capabilities);
     }
 }

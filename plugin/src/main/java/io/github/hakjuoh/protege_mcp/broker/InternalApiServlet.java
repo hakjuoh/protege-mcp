@@ -44,21 +44,26 @@ public final class InternalApiServlet extends HttpServlet {
     private final java.util.function.Supplier<BrokerState> identity;
     private final Runnable shutdown;
     private final OAuthStore oauthStore;
+    private final ActiveProxyRequests activeRequests;
+    private final BackendRevocationFanout backendRevocations;
     private final ObjectMapper mapper = new ObjectMapper();
 
     /** {@code identity} is a supplier because the bound port is only known after the bind. */
     public InternalApiServlet(String dirSecret, InstanceRegistry registry,
             java.util.function.Supplier<BrokerState> identity, Runnable shutdown) {
-        this(dirSecret, registry, identity, shutdown, null);
+        this(dirSecret, registry, identity, shutdown, null, new ActiveProxyRequests());
     }
 
     public InternalApiServlet(String dirSecret, InstanceRegistry registry,
-            java.util.function.Supplier<BrokerState> identity, Runnable shutdown, OAuthStore oauthStore) {
+            java.util.function.Supplier<BrokerState> identity, Runnable shutdown, OAuthStore oauthStore,
+            ActiveProxyRequests activeRequests) {
         this.dirSecret = dirSecret;
         this.registry = registry;
         this.identity = identity;
         this.shutdown = shutdown;
         this.oauthStore = oauthStore;
+        this.activeRequests = activeRequests;
+        this.backendRevocations = new BackendRevocationFanout(registry);
     }
 
     @Override
@@ -157,10 +162,9 @@ public final class InternalApiServlet extends HttpServlet {
             item.put("registered_at", client.registeredAt);
             item.put("last_seen_at", client.lastSeenAt);
             item.put("active_access_tokens", client.activeAccessTokens);
-            item.putArray("capabilities").add("local:admin").add("ontology:read")
-                    .add("ontology:write").add("filesystem:project:read")
-                    .add("filesystem:project:write").add("filesystem:external")
-                    .add("network:access");
+            item.put("latest_access_expiry", client.latestAccessExpiry);
+            ArrayNode capabilities = item.putArray("capabilities");
+            client.capabilities.stream().sorted().forEach(capabilities::add);
         }
         ObjectNode body = mapper.createObjectNode();
         body.set("clients", clients);
@@ -174,24 +178,45 @@ public final class InternalApiServlet extends HttpServlet {
         }
         JsonNode body = mapper.readTree(req.getInputStream());
         String clientId = body.path("client_id").asText("");
-        boolean revoked = oauthStore.revokeClient(clientId);
+        if (clientId.isBlank() || clientId.length() > 512) {
+            writeJson(resp, 400, mapper.createObjectNode().put("error", "invalid_client_id"));
+            return;
+        }
+        boolean credentialRemoved = oauthStore.revokeClient(clientId);
+        // Idempotent by design: after a partial 503 the credential is already absent, but retrying
+        // this same request must still re-send every backend fence until all windows acknowledge.
         int sessions = registry.dropSessionsForPrincipal(clientId);
+        int inFlight = activeRequests.terminateClient(clientId);
+        BackendRevocationFanout.Result backend = backendRevocations.revokeClient(clientId);
         ObjectNode result = mapper.createObjectNode();
-        result.put("revoked", revoked);
+        result.put("revoked", backend.confirmed());
+        result.put("credential_removed", credentialRemoved);
         result.put("terminated_session_pins", sessions);
-        result.put("in_flight_termination", false);
-        writeJson(resp, revoked ? 200 : 404, result);
+        result.put("terminated_in_flight_requests", inFlight);
+        result.put("in_flight_termination", inFlight > 0);
+        result.put("backend_windows", backend.windows());
+        result.put("backend_acknowledged", backend.acknowledged());
+        result.put("commit_fence_confirmed", backend.confirmed());
+        ArrayNode failed = result.putArray("unacknowledged_window_ids");
+        backend.failedWindowIds().forEach(failed::add);
+        writeJson(resp, backend.confirmed() ? 200 : 503, result);
     }
 
     private void terminateSession(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         JsonNode body = mapper.readTree(req.getInputStream());
         String sessionId = body.path("session_id").asText("");
+        if (sessionId.isBlank() || sessionId.length() > 512) {
+            writeJson(resp, 400, mapper.createObjectNode().put("error", "invalid_session_id"));
+            return;
+        }
         boolean existed = registry.windowForSession(sessionId).isPresent();
         registry.unpinSession(sessionId);
+        int inFlight = activeRequests.terminateSession(sessionId);
         ObjectNode result = mapper.createObjectNode();
         result.put("terminated", existed);
-        result.put("in_flight_termination", false);
-        writeJson(resp, existed ? 200 : 404, result);
+        result.put("terminated_in_flight_requests", inFlight);
+        result.put("in_flight_termination", inFlight > 0);
+        writeJson(resp, existed || inFlight > 0 ? 200 : 404, result);
     }
 
     private void shutdown(HttpServletResponse resp) throws IOException {

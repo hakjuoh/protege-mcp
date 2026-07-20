@@ -20,6 +20,9 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
+import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
+
 /**
  * State for the embedded OAuth 2.1 authorization server: dynamically registered clients, one-time
  * authorization codes (bound to PKCE challenge + redirect + resource), and access/refresh tokens.
@@ -75,6 +78,8 @@ public final class OAuthStore {
     private final Map<String, AuthCode> codes = new ConcurrentHashMap<>();
     private final Map<String, Grant> accessTokens = new ConcurrentHashMap<>();
     private final Map<String, Grant> refreshTokens = new ConcurrentHashMap<>();
+    /** Process-local, non-persisted credentials such as one Ontology Assistant turn. */
+    private final Map<String, EphemeralGrant> ephemeralTokens = new ConcurrentHashMap<>();
 
     /** Last time the static fallback token authenticated a request (0 = never). */
     private final AtomicLong staticTokenLastSeen = new AtomicLong(0L);
@@ -315,7 +320,19 @@ public final class OAuthStore {
         String configured = staticToken.get();
         if (configured != null && PkceUtil.constantTimeEquals(token, configured)) {
             staticTokenLastSeen.set(clock.getAsLong());
-            return new TokenIdentity(true, "static-local-admin", "Static local token", null, "mcp");
+            return new TokenIdentity(true, "static-local-admin", "Static local token", null, "mcp",
+                    "static");
+        }
+        EphemeralGrant ephemeral = ephemeralTokens.get(token);
+        if (ephemeral != null) {
+            long now = clock.getAsLong();
+            if (ephemeral.expiresAt > now) {
+                AuthenticatedPrincipal principal = ephemeral.principal;
+                return new TokenIdentity(false, principal.clientId(), principal.displayName(),
+                        principal.grantId(), String.join(" ", principal.capabilities().stream()
+                                .sorted().toList()), principal.type());
+            }
+            ephemeralTokens.remove(token, ephemeral);
         }
         Grant g = accessTokens.get(token);
         if (g != null && g.expiresAt > clock.getAsLong()) {
@@ -329,10 +346,56 @@ public final class OAuthStore {
                 // on every request), so the displayed "last seen" only reaches disk via a later
                 // register/issue/revoke and may read stale right after a restart.
                 c.lastSeenAt.set(clock.getAsLong());
-                return new TokenIdentity(false, c.clientId, c.clientName, g.grantId, g.scope);
+                return new TokenIdentity(false, c.clientId, c.clientName, g.grantId, g.scope, "oauth");
             }
         }
         return null;
+    }
+
+    /**
+     * Mint one bounded, process-local credential for an already constructed secret-free principal.
+     * It is deliberately absent from persisted OAuth state and the external connected-client list.
+     */
+    public EphemeralToken issueEphemeralToken(AuthenticatedPrincipal principal, long ttlMillis) {
+        if (principal == null || ttlMillis < 1 || ttlMillis > 60L * 60_000L) {
+            throw new IllegalArgumentException("ephemeral principal and a 1ms..1h TTL are required");
+        }
+        principal.capabilities().forEach(Capability::fromValue);
+        long expiresAt = Math.addExact(clock.getAsLong(), ttlMillis);
+        String token = "mcpe_" + randomId();
+        ephemeralTokens.put(token, new EphemeralGrant(principal, expiresAt));
+        return new EphemeralToken(token, expiresAt, principal);
+    }
+
+    /** Extend a still-live process-local credential without changing its bearer value or principal. */
+    public boolean renewEphemeralToken(String token, long ttlMillis) {
+        if (token == null || ttlMillis < 1 || ttlMillis > 60L * 60_000L) return false;
+        long now = clock.getAsLong();
+        final boolean[] renewed = {false};
+        ephemeralTokens.computeIfPresent(token, (ignored, grant) -> {
+            if (grant.expiresAt <= now) return null;
+            renewed[0] = true;
+            return new EphemeralGrant(grant.principal, Math.addExact(now, ttlMillis));
+        });
+        return renewed[0];
+    }
+
+    /** Revoke one process-local credential; it can never be refreshed. */
+    public boolean revokeEphemeralToken(String token) {
+        return token != null && ephemeralTokens.remove(token) != null;
+    }
+
+    /** Secret-free principal snapshot used to fence an ephemeral grant before removing its token. */
+    public AuthenticatedPrincipal ephemeralPrincipal(String token) {
+        EphemeralGrant grant = token == null ? null : ephemeralTokens.get(token);
+        if (grant == null) {
+            return null;
+        }
+        if (grant.expiresAt <= clock.getAsLong()) {
+            ephemeralTokens.remove(token, grant);
+            return null;
+        }
+        return grant.principal;
     }
 
     // -------------------------------------------------------------- revocation
@@ -478,19 +541,35 @@ public final class OAuthStore {
         for (Client c : clients.values()) {
             int activeAccess = 0;
             long latestExpiry = 0L;
+            Set<String> capabilities = new LinkedHashSet<>();
             for (Grant g : accessTokens.values()) {
                 if (c.clientId.equals(g.clientId) && g.expiresAt > now) {
                     activeAccess++;
                     if (g.expiresAt > latestExpiry) {
                         latestExpiry = g.expiresAt;
                     }
+                    addEffectiveCapabilities(capabilities, g.scope);
+                }
+            }
+            for (Grant g : refreshTokens.values()) {
+                if (c.clientId.equals(g.clientId) && g.expiresAt > now) {
+                    addEffectiveCapabilities(capabilities, g.scope);
                 }
             }
             out.add(new ClientInfo(c.clientId, c.clientName, c.registeredAt, c.lastSeenAt.get(),
-                    activeAccess, latestExpiry));
+                    activeAccess, latestExpiry, capabilities));
         }
         out.sort((a, b) -> Long.compare(b.registeredAt, a.registeredAt));
         return out;
+    }
+
+    private static void addEffectiveCapabilities(Set<String> target, String scope) {
+        try {
+            target.addAll(AuthenticatedPrincipal.capabilitiesForScope(scope));
+        } catch (IllegalArgumentException invalidPersistedScope) {
+            // The request filter also rejects this grant. Keep management status available and
+            // report no authority from corrupted/unsupported persisted scope data.
+        }
     }
 
     /** Last time the static fallback token authenticated a request (0 = never). */
@@ -654,6 +733,7 @@ public final class OAuthStore {
         long now = clock.getAsLong();
         codes.values().removeIf(c -> c.expiresAt < now);
         accessTokens.values().removeIf(g -> g.expiresAt < now);
+        ephemeralTokens.values().removeIf(g -> g.expiresAt <= now);
     }
 
     private String randomId() {
@@ -718,6 +798,9 @@ public final class OAuthStore {
         }
     }
 
+    private record EphemeralGrant(AuthenticatedPrincipal principal, long expiresAt) {
+    }
+
     public static final class Tokens {
         public final String accessToken;
         public final String refreshToken;
@@ -732,9 +815,29 @@ public final class OAuthStore {
         }
     }
 
-    /** Secret-free result of authenticating a static or OAuth bearer token. */
+    /** Non-persisted bearer material returned only to its local issuer. */
+    public record EphemeralToken(String token, long expiresAt, AuthenticatedPrincipal principal) {
+    }
+
+    /** Secret-free result of authenticating a static, OAuth, or process-local bearer token. */
     public record TokenIdentity(boolean staticToken, String clientId, String clientName,
-            String grantId, String scope) { }
+            String grantId, String scope, String principalType) {
+
+        public AuthenticatedPrincipal principal() {
+            if (staticToken) return AuthenticatedPrincipal.staticAdmin();
+            if (principalType != null && principalType.startsWith("assistant:")) {
+                Set<String> exact = new LinkedHashSet<>();
+                if (scope != null && !scope.isBlank()) {
+                    for (String value : scope.trim().split("\\s+")) {
+                        exact.add(Capability.fromValue(value).value());
+                    }
+                }
+                return new AuthenticatedPrincipal(1, principalType, clientId, clientName,
+                        exact, grantId);
+            }
+            return AuthenticatedPrincipal.oauth(clientId, clientName, grantId, scope);
+        }
+    }
 
     /** Immutable per-client snapshot for the UI — decoupled from the mutable {@link Client}. */
     public static final class ClientInfo {
@@ -744,15 +847,17 @@ public final class OAuthStore {
         public final long lastSeenAt;          // 0 = never authenticated
         public final int activeAccessTokens;
         public final long latestAccessExpiry;  // 0 = no active access token
+        public final Set<String> capabilities;
 
         ClientInfo(String clientId, String clientName, long registeredAt, long lastSeenAt,
-                int activeAccessTokens, long latestAccessExpiry) {
+                int activeAccessTokens, long latestAccessExpiry, Set<String> capabilities) {
             this.clientId = clientId;
             this.clientName = clientName;
             this.registeredAt = registeredAt;
             this.lastSeenAt = lastSeenAt;
             this.activeAccessTokens = activeAccessTokens;
             this.latestAccessExpiry = latestAccessExpiry;
+            this.capabilities = Set.copyOf(capabilities);
         }
     }
 }

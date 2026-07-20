@@ -51,6 +51,7 @@ public final class BrokerServer {
     private ScheduledExecutorService maintenance;
     private volatile BrokerState identity;
     private volatile OAuthStore oauthStore;
+    private final ActiveProxyRequests activeRequests = new ActiveProxyRequests();
 
     public BrokerServer(BrokerHome home, String dirSecret, String version, Runnable shutdown) {
         this(home, dirSecret, version, shutdown, HEARTBEAT_STALE_MS, IDLE_LINGER_MS, BOOT_GRACE_MS);
@@ -111,12 +112,12 @@ public final class BrokerServer {
         // per heartbeat). /internal is deliberately NOT behind it: its auth is the directory secret.
         http.addFilter(new BrokerTokenFilter(registry, new AccessTokenFilter(oauthStore)), "/mcp/*");
         http.addFilter(new BrokerTokenFilter(registry, new AccessTokenFilter(oauthStore)), "/instances/*");
-        http.addServlet(new McpProxyServlet(registry), "/mcp/*", true);
-        http.addServlet(new McpProxyServlet(registry), "/instances/*", true);
+        http.addServlet(new McpProxyServlet(registry, activeRequests), "/mcp/*", true);
+        http.addServlet(new McpProxyServlet(registry, activeRequests), "/instances/*", true);
         http.addServlet(new OAuthMetadataServlet(mapper), "/.well-known/*", false);
         http.addServlet(new OAuthServlet(oauthStore, mapper), "/oauth/*", false);
         http.addServlet(new InternalApiServlet(dirSecret, registry, this::identity, this::shutdownAsync,
-                oauthStore),
+                oauthStore, activeRequests),
                 "/internal/*", false);
 
         int bound = http.start(port);
@@ -140,6 +141,7 @@ public final class BrokerServer {
             maintenance = null;
         }
         if (http != null) {
+            activeRequests.closeAll();
             http.stop();
             http = null;
         }

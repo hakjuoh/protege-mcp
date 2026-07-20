@@ -43,7 +43,7 @@ public class McpServerView extends AbstractOWLViewComponent {
     private static final long serialVersionUID = 1L;
 
     private static final String[] CLIENT_COLUMNS =
-            {"Client", "Client ID", "Registered", "Last seen", "Active tokens", "Expires"};
+            {"Client", "Client ID", "Capabilities", "Registered", "Last seen", "Active tokens", "Expires"};
     private static final int COL_CLIENT_ID = 1;
 
     private JLabel statusLabel;
@@ -60,6 +60,8 @@ public class McpServerView extends AbstractOWLViewComponent {
     private JTable clientsTable;
     private JButton revokeButton;
     private JLabel staticUseLabel;
+    /** EDT-confined: identifies the management authority that produced the currently shown rows. */
+    private boolean clientsFromBroker;
 
     private Timer refreshTimer;
 
@@ -186,6 +188,7 @@ public class McpServerView extends AbstractOWLViewComponent {
             startButton.setEnabled(false);
             stopButton.setEnabled(false);
             clientsModel.setRowCount(0);
+            clientsFromBroker = false;
             clientsLabel.setText("Connected clients:");
             staticUseLabel.setText("");
             updateRevokeEnabled();
@@ -220,14 +223,8 @@ public class McpServerView extends AbstractOWLViewComponent {
         stopButton.setEnabled(running && !brokerDown);
 
         if (running && c.isBrokerManaged() && !brokerDown) {
-            // OAuth clients live in the broker process in this mode; this window's store is empty by
-            // design. Don't render an empty table as "no clients connected".
-            clientsModel.setRowCount(0);
-            clientsLabel.setText("Connected clients: managed by the shared broker");
-            clientsLabel.setToolTipText("In shared-broker mode, OAuth clients register with the "
-                    + "broker process; their state lives in ~/.protege-mcp/oauth.json");
+            updateBrokerClientsTable();
             staticUseLabel.setText("");
-            updateRevokeEnabled();
         } else {
             // Includes the broker-down shape: the view advertises this window's direct URL then,
             // so a client that connects (and OAuth-registers) during the outage lands in THIS
@@ -238,6 +235,7 @@ public class McpServerView extends AbstractOWLViewComponent {
     }
 
     private void updateClientsTable(McpServerController c) {
+        clientsFromBroker = false;
         List<OAuthStore.ClientInfo> clients = c.listClients();
         clientsLabel.setText("Connected clients (" + clients.size() + "):");
         clientsLabel.setToolTipText(null);
@@ -248,6 +246,7 @@ public class McpServerView extends AbstractOWLViewComponent {
             clientsModel.addRow(new Object[] {
                     ci.clientName,
                     ci.clientId,
+                    String.join(", ", ci.capabilities.stream().sorted().toList()),
                     fmtDateTime(ci.registeredAt),
                     ci.lastSeenAt == 0 ? "—" : fmtDateTime(ci.lastSeenAt),
                     String.valueOf(ci.activeAccessTokens),
@@ -267,6 +266,48 @@ public class McpServerView extends AbstractOWLViewComponent {
         staticUseLabel.setText("Static fallback token last used: "
                 + (staticSeen == 0 ? "never" : fmtDateTime(staticSeen)));
         updateRevokeEnabled();
+    }
+
+    private void updateBrokerClientsTable() {
+        clientsFromBroker = true;
+        io.github.hakjuoh.protege_mcp.broker.BrokerLink link =
+                io.github.hakjuoh.protege_mcp.broker.BrokerLink.get();
+        List<io.github.hakjuoh.protege_mcp.broker.BrokerClient.ClientInfo> clients =
+                link.brokerClients();
+        int pending = link.pendingBrokerRevocations();
+        clientsLabel.setText(link.isBrokerClientManagementAvailable()
+                ? "Connected clients via shared broker (" + clients.size() + ")"
+                        + (pending == 0 ? ":" : "; " + pending + " revocation(s) need retry:")
+                : "Connected clients: shared-broker management is temporarily unavailable");
+        clientsLabel.setToolTipText("OAuth client state is managed by the shared broker.");
+
+        String selectedId = selectedClientId();
+        clientsModel.setRowCount(0);
+        for (io.github.hakjuoh.protege_mcp.broker.BrokerClient.ClientInfo ci : clients) {
+            clientsModel.addRow(new Object[] {
+                    ci.clientName,
+                    ci.clientId,
+                    String.join(", ", ci.capabilities.stream().sorted().toList()),
+                    fmtDateTime(ci.registeredAt),
+                    ci.lastSeenAt == 0 ? "—" : fmtDateTime(ci.lastSeenAt),
+                    String.valueOf(ci.activeAccessTokens),
+                    ci.latestAccessExpiry == 0 ? "—" : fmtDateTime(ci.latestAccessExpiry),
+            });
+        }
+        restoreSelection(selectedId);
+        updateRevokeEnabled();
+    }
+
+    private void restoreSelection(String selectedId) {
+        if (selectedId == null) {
+            return;
+        }
+        for (int row = 0; row < clientsModel.getRowCount(); row++) {
+            if (selectedId.equals(clientsModel.getValueAt(row, COL_CLIENT_ID))) {
+                clientsTable.setRowSelectionInterval(row, row);
+                return;
+            }
+        }
     }
 
     private void updateRevokeEnabled() {
@@ -290,8 +331,30 @@ public class McpServerView extends AbstractOWLViewComponent {
                         + "re-authorize through the browser to reconnect.",
                 "Revoke MCP client", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
         if (choice == JOptionPane.OK_OPTION) {
-            c.revokeClient(clientId);
-            refresh();
+            revokeButton.setEnabled(false);
+            boolean brokerManaged = clientsFromBroker;
+            Thread worker = new Thread(() -> {
+                try {
+                    boolean revoked;
+                    if (brokerManaged) {
+                        revoked = io.github.hakjuoh.protege_mcp.broker.BrokerLink.get()
+                                .revokeBrokerClient(clientId);
+                    } else {
+                        revoked = c.revokeClient(clientId);
+                    }
+                    if (!revoked) {
+                        throw new java.io.IOException("the client is no longer registered");
+                    }
+                } catch (Exception ex) {
+                    SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
+                            "Could not revoke the client: " + ex.getMessage(),
+                            "Revoke MCP client", JOptionPane.ERROR_MESSAGE));
+                } finally {
+                    SwingUtilities.invokeLater(this::refresh);
+                }
+            }, "protege-mcp-revoke-client");
+            worker.setDaemon(true);
+            worker.start();
         }
     }
 

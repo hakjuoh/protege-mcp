@@ -31,6 +31,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -40,6 +41,7 @@ import java.util.Collection;
 import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 
 import javax.imageio.ImageIO;
 import javax.swing.Action;
@@ -190,6 +192,10 @@ public class ChatView extends AbstractOWLViewComponent {
     /** Provider and assistant text captured for the turn currently in flight. */
     private String activeTurnProviderId;
     private final StringBuilder activeTurnAssistant = new StringBuilder();
+    /** The current turn's non-persisted MCP credential; EDT-owned and revoked on every exit path. */
+    private McpServerController.AssistantCredential activeAssistantCredential;
+    private McpServerController activeAssistantController;
+    private long nextAssistantCredentialRenewal;
 
     private long turnStartMillis;
 
@@ -1034,21 +1040,34 @@ public class ChatView extends AbstractOWLViewComponent {
         // (no CLI sends reasoning text unless asked), so it snapshots per turn like the model does.
         boolean reasoningOn = showThinking != null && showThinking.isSelected();
         showReasoningForTurn = reasoningOn;
+        boolean assistantWrites = McpConfig.prefs().getBoolean(
+                McpConfig.KEY_CHAT_ALLOW_WRITES, true);
+        String assistantChatIdentity = chatIdentity(providerId, resume, turn);
 
         Thread launcher = new Thread(() -> {
+            McpServerController.AssistantCredential credential = null;
             try {
                 // Broker-first lazy start; degrades to a standalone start (which itself falls back
                 // to an ephemeral port when the configured port is busy). The chat always talks to
                 // THIS window's server directly — never through the broker.
                 io.github.hakjuoh.protege_mcp.broker.McpBoot.ensureStarted(controller);
-                McpEndpoint endpoint = new McpEndpoint(controller.getEndpointUrl(), controller.getToken());
+                credential = controller.issueAssistantCredential(
+                        providerId, assistantChatIdentity, assistantWrites);
+                McpEndpoint endpoint = new McpEndpoint(
+                        controller.getEndpointUrl(), credential.token());
                 ChatRequest req = new ChatRequest(model, prompt, resume, endpoint, turnAttachments,
                         reasoningOn, handoffContext);
                 ChatProcess proc = provider.startTurn(req, uiListener(providerId));
                 // Publish on the EDT: if this turn already finalized (a fast turn) or the user hit Stop during
                 // the launch window, publishProcess cancels the freshly-spawned process instead of leaking it.
-                SwingUtilities.invokeLater(() -> publishProcess(turn, proc));
+                McpServerController.AssistantCredential publishedCredential = credential;
+                SwingUtilities.invokeLater(() -> publishProcess(
+                        turn, proc, controller, publishedCredential));
+                credential = null; // ownership transferred to publishProcess
             } catch (Exception ex) {
+                if (credential != null) {
+                    revokeCredentialAsync(controller, credential);
+                }
                 String msg = ex.getMessage();
                 enqueue(Kind.ERROR, "Could not start " + provider.displayName() + ": "
                         + (msg == null ? ex.getClass().getSimpleName() : msg) + "\n");
@@ -1060,17 +1079,24 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     /** EDT: adopt the just-spawned process for the in-flight turn, or cancel it if the turn is already over. */
-    private void publishProcess(int turn, ChatProcess proc) {
+    private void publishProcess(int turn, ChatProcess proc, McpServerController controller,
+            McpServerController.AssistantCredential credential) {
         if (turn != activeTurn) {
             // The turn finalized (or was superseded / the view disposed) before the handle arrived — don't
             // leave a stale handle or an orphan process running.
             proc.cancel();
+            revokeCredentialAsync(controller, credential);
             return;
         }
         currentProcess = proc;
         if (cancelRequested) {
             // Stop was pressed during the launch window, before a handle existed — honour it now.
             proc.cancel();
+            revokeCredentialAsync(controller, credential);
+        } else {
+            activeAssistantCredential = credential;
+            activeAssistantController = controller;
+            nextAssistantCredentialRenewal = System.currentTimeMillis() + 60_000L;
         }
     }
 
@@ -1079,6 +1105,7 @@ public class ChatView extends AbstractOWLViewComponent {
             return;   // nothing in flight
         }
         turnStopped = true;
+        revokeActiveAssistantCredential();
         ChatProcess p = currentProcess;
         if (p != null) {
             enqueue(Kind.SYSTEM, "\n[stopped]\n");
@@ -1109,8 +1136,23 @@ public class ChatView extends AbstractOWLViewComponent {
 
     /** Only the elapsed-seconds number changes; the rest of the indicator stays put. */
     private void tickWorking() {
-        long secs = (System.currentTimeMillis() - turnStartMillis) / 1000;
+        long now = System.currentTimeMillis();
+        long secs = (now - turnStartMillis) / 1000;
         workingLabel.setText("● running   " + secs + "s");
+        McpServerController.AssistantCredential credential = activeAssistantCredential;
+        if (credential != null && now >= nextAssistantCredentialRenewal) {
+            McpServerController controller = activeAssistantController;
+            if (controller == null || !controller.renewAssistantCredential(credential.token())) {
+                activeAssistantCredential = null;
+                turnStopped = true;
+                enqueue(Kind.ERROR, "\nThe Assistant MCP credential expired or its server restarted; "
+                        + "start a new turn.\n");
+                ChatProcess process = currentProcess;
+                if (process != null) process.cancel();
+            } else {
+                nextAssistantCredentialRenewal = now + 60_000L;
+            }
+        }
     }
 
     // ------------------------------------------------------------------ streaming listener (off-EDT)
@@ -1239,6 +1281,7 @@ public class ChatView extends AbstractOWLViewComponent {
         }
         activeTurnProviderId = null;
         activeTurnAssistant.setLength(0);
+        revokeActiveAssistantCredential();
         currentProcess = null;
         activeTurn = 0;
         cancelRequested = false;
@@ -1261,6 +1304,40 @@ public class ChatView extends AbstractOWLViewComponent {
         setInputEnabled(true);
         showStop(false);
         input.requestFocusInWindow();
+    }
+
+    private void revokeActiveAssistantCredential() {
+        McpServerController.AssistantCredential credential = activeAssistantCredential;
+        McpServerController controller = activeAssistantController;
+        activeAssistantCredential = null;
+        activeAssistantController = null;
+        nextAssistantCredentialRenewal = 0L;
+        if (credential != null) {
+            revokeCredentialAsync(controller, credential);
+        }
+    }
+
+    /**
+     * Revocation may wait for a non-interruptible tool invocation to leave its commit fence. All
+     * callers of this helper are EDT lifecycle paths, so the wait must stay off the Swing thread.
+     */
+    private static void revokeCredentialAsync(McpServerController controller,
+            McpServerController.AssistantCredential credential) {
+        if (controller == null || credential == null) {
+            return;
+        }
+        Thread revoker = new Thread(
+                () -> controller.revokeAssistantCredential(credential),
+                "protege-chat-revoke-credential");
+        revoker.setDaemon(true);
+        revoker.start();
+    }
+
+    static String chatIdentity(String provider, String session, int turn) {
+        if (session == null || session.isBlank()) return "turn-" + turn;
+        UUID digest = UUID.nameUUIDFromBytes(
+                (provider + "\0" + session).getBytes(StandardCharsets.UTF_8));
+        return "session-" + digest;
     }
 
     private static String formatUsage(ChatUsage u) {
@@ -1680,6 +1757,7 @@ public class ChatView extends AbstractOWLViewComponent {
             flushTimer = null;
         }
         activeTurn = 0;     // so a handle still being spawned is cancelled (not adopted) when it publishes
+        revokeActiveAssistantCredential();
         ChatProcess p = currentProcess;
         if (p != null) {
             p.cancel();     // non-blocking; the kill escalation runs off the EDT

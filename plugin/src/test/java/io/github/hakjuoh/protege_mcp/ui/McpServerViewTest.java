@@ -139,13 +139,14 @@ class McpServerViewTest {
     void clientColumnsHaveExpectedHeaders() throws Exception {
         String[] cols = (String[]) staticField("CLIENT_COLUMNS");
         assertNotNull(cols, "CLIENT_COLUMNS must exist");
-        assertEquals(6, cols.length, "there should be six client-table columns");
+        assertEquals(7, cols.length, "there should be seven client-table columns");
         assertEquals("Client", cols[0], "column 0 header");
         assertEquals("Client ID", cols[1], "column 1 header");
-        assertEquals("Registered", cols[2], "column 2 header");
-        assertEquals("Last seen", cols[3], "column 3 header");
-        assertEquals("Active tokens", cols[4], "column 4 header");
-        assertEquals("Expires", cols[5], "column 5 header");
+        assertEquals("Capabilities", cols[2], "column 2 header");
+        assertEquals("Registered", cols[3], "column 3 header");
+        assertEquals("Last seen", cols[4], "column 4 header");
+        assertEquals("Active tokens", cols[5], "column 5 header");
+        assertEquals("Expires", cols[6], "column 6 header");
     }
 
     @Test

@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
 import java.util.List;
+import java.util.Set;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +22,8 @@ import org.protege.editor.core.prefs.Preferences;
 
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.oauth.OAuthStore;
+import io.github.hakjuoh.protege_mcp.tools.ToolArgException;
+import io.github.hakjuoh.protege_mcp.tools.ToolContext;
 
 /**
  * Method-level tests for {@link McpServerController}.
@@ -354,6 +357,114 @@ class McpServerControllerTest {
                 "stop() nulls the store, so last-seen reports 0");
     }
 
+    @Test
+    void assistantCredentialUsesBoundedWriteOrReadProfileAndRevokes() throws Exception {
+        McpServerController controller = newController();
+        OAuthStore store = new OAuthStore(() -> null, () -> null, ignored -> { });
+        setRuntimeStore(controller, store);
+        prefs.putBoolean(McpConfig.KEY_READ_ONLY, false);
+
+        McpServerController.AssistantCredential writable = controller.issueAssistantCredential(
+                "codex", "turn-1", true);
+        Set<String> capabilities = writable.principal().capabilities();
+        assertTrue(capabilities.containsAll(Set.of("ontology:read", "ontology:curate",
+                "ontology:admin", "ontology:release", "filesystem:project:read",
+                "filesystem:project:write")));
+        assertFalse(capabilities.contains("server:admin"));
+        assertFalse(capabilities.contains("filesystem:external"));
+        assertFalse(capabilities.contains("network:access"));
+        assertFalse(capabilities.contains("local:admin"));
+        assertEquals("assistant:codex", store.authenticate(writable.token()).principalType());
+        assertTrue(controller.renewAssistantCredential(writable.token()));
+        assertTrue(controller.revokeAssistantCredential(writable.token()));
+        assertNull(store.authenticate(writable.token()));
+        assertFalse(controller.renewAssistantCredential(writable.token()));
+
+        prefs.putBoolean(McpConfig.KEY_READ_ONLY, true);
+        McpServerController.AssistantCredential readOnly = controller.issueAssistantCredential(
+                "claude", "session-123", true);
+        assertEquals(Set.of("ontology:read"), readOnly.principal().capabilities());
+        controller.revokeAssistantCredential(readOnly.token());
+
+        prefs.putBoolean(McpConfig.KEY_READ_ONLY, false);
+        McpServerController.AssistantCredential preferenceReadOnly =
+                controller.issueAssistantCredential("claude", "turn-2", false);
+        assertEquals(Set.of("ontology:read"), preferenceReadOnly.principal().capabilities());
+        controller.revokeAssistantCredential(preferenceReadOnly.token());
+    }
+
+    @Test
+    void assistantCredentialRequiresRunningStoreAndSafeIdentity() throws Exception {
+        McpServerController stopped = newController();
+        assertThrows(IllegalStateException.class,
+                () -> stopped.issueAssistantCredential("codex", "turn-1", true));
+
+        OAuthStore store = new OAuthStore(() -> null, () -> null, ignored -> { });
+        setRuntimeStore(stopped, store);
+        assertThrows(IllegalArgumentException.class,
+                () -> stopped.issueAssistantCredential("Codex/../../", "turn-1", true));
+        assertThrows(IllegalArgumentException.class,
+                () -> stopped.issueAssistantCredential("codex", "raw session with spaces", true));
+    }
+
+    @Test
+    void standaloneClientRevocationWaitsForExecutionWithoutBlockingServerStop() throws Exception {
+        McpServerController controller = newController();
+        OAuthStore store = new OAuthStore(() -> null, () -> null, ignored -> { });
+        ToolContext context = new ToolContext(null, controller);
+        setRuntimeStore(controller, store);
+        setRuntimeContext(controller, context);
+        OAuthStore.Client client = store.registerClient(List.of("http://127.0.0.1/client"), "client");
+        AuthenticatedPrincipal principal = AuthenticatedPrincipal.oauthAdmin(
+                client.clientId, "client", "grant-client");
+        var active = context.executions().acquire(principal);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var revoked = pool.submit(() -> controller.revokeClient(client.clientId));
+            assertThrows(java.util.concurrent.TimeoutException.class,
+                    () -> revoked.get(100, java.util.concurrent.TimeUnit.MILLISECONDS));
+            var stopped = pool.submit(controller::stop);
+            stopped.get(1, java.util.concurrent.TimeUnit.SECONDS);
+            assertFalse(controller.isRunning(),
+                    "the controller lifecycle monitor must not be held during the fence wait");
+            active.close();
+            assertTrue(revoked.get(2, java.util.concurrent.TimeUnit.SECONDS));
+            assertThrows(ToolArgException.class, () -> context.executions().acquire(principal));
+        } finally {
+            active.close();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void assistantRevocationFencesOnlyThatTurnsGrant() throws Exception {
+        McpServerController controller = newController();
+        OAuthStore store = new OAuthStore(() -> null, () -> null, ignored -> { });
+        ToolContext context = new ToolContext(null, controller);
+        setRuntimeStore(controller, store);
+        setRuntimeContext(controller, context);
+        var first = controller.issueAssistantCredential("codex", "same-chat", true);
+        var active = context.executions().acquire(first.principal());
+        var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            var revoked = pool.submit(() -> controller.revokeAssistantCredential(first));
+            assertThrows(java.util.concurrent.TimeoutException.class,
+                    () -> revoked.get(100, java.util.concurrent.TimeUnit.MILLISECONDS));
+            active.close();
+            assertTrue(revoked.get(2, java.util.concurrent.TimeUnit.SECONDS));
+            assertThrows(ToolArgException.class,
+                    () -> context.executions().acquire(first.principal()));
+
+            var nextTurn = controller.issueAssistantCredential("codex", "same-chat", true);
+            try (var ignored = context.executions().acquire(nextTurn.principal())) {
+                assertNotEquals(first.principal().grantId(), nextTurn.principal().grantId());
+            }
+        } finally {
+            active.close();
+            pool.shutdownNow();
+        }
+    }
+
     // ---- getLastError ---------------------------------------------------------------------------
 
     @Test
@@ -441,6 +552,23 @@ class McpServerControllerTest {
         Field bf = McpServerController.class.getDeclaredField("boundPort");
         bf.setAccessible(true);
         bf.setInt(c, bound);
+    }
+
+    private static void setRuntimeStore(McpServerController controller, OAuthStore store)
+            throws Exception {
+        Field storeField = McpServerController.class.getDeclaredField("oauthStore");
+        storeField.setAccessible(true);
+        storeField.set(controller, store);
+        Field runningField = McpServerController.class.getDeclaredField("running");
+        runningField.setAccessible(true);
+        runningField.setBoolean(controller, true);
+    }
+
+    private static void setRuntimeContext(McpServerController controller, ToolContext context)
+            throws Exception {
+        Field contextField = McpServerController.class.getDeclaredField("toolContext");
+        contextField.setAccessible(true);
+        contextField.set(controller, context);
     }
 
     @Test

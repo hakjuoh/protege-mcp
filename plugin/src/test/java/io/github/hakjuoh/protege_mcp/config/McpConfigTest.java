@@ -104,6 +104,7 @@ class McpConfigTest {
         assertEquals("chatClaudePath", McpConfig.KEY_CHAT_CLAUDE_PATH);
         assertEquals("chatCodexPath", McpConfig.KEY_CHAT_CODEX_PATH);
         assertEquals("chatShowThinking", McpConfig.KEY_CHAT_SHOW_THINKING);
+        assertEquals("chatAllowWrites", McpConfig.KEY_CHAT_ALLOW_WRITES);
     }
 
     // ---- prefs() --------------------------------------------------------------------------------

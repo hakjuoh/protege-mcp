@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.broker;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,6 +48,9 @@ public final class BrokerLink {
 
     private final BrokerHome home;
     private final Map<McpServerController, InstanceRegistry.Window> windows = new ConcurrentHashMap<>();
+    /** Rows retained after credential removal until every backend confirms the commit fence. */
+    private final Map<String, BrokerClient.ClientInfo> pendingRevocations = new LinkedHashMap<>();
+    private volatile int pendingRevocationCount;
 
     private String dirSecret;
     private BrokerClient client;
@@ -57,6 +61,7 @@ public final class BrokerLink {
     /** EDT-readable mirrors of the synchronized state (see class javadoc on threading). */
     private volatile String brokerBaseUrl;
     private volatile ScheduledExecutorService heartbeats;
+    private volatile ClientManagementSnapshot clientManagement = ClientManagementSnapshot.unavailable();
 
     BrokerLink(BrokerHome home) {
         this.home = home;
@@ -176,6 +181,70 @@ public final class BrokerLink {
         pokeHeartbeat();
     }
 
+    /** Lock-free snapshot refreshed off the EDT by registration and heartbeat traffic. */
+    public List<BrokerClient.ClientInfo> brokerClients() {
+        return clientManagement.clients;
+    }
+
+    public boolean isBrokerClientManagementAvailable() {
+        return clientManagement.available;
+    }
+
+    public int pendingBrokerRevocations() {
+        return pendingRevocationCount;
+    }
+
+    /** Called from a UI worker thread; never call this blocking control-plane request on the EDT. */
+    public boolean revokeBrokerClient(String clientId) throws IOException, InterruptedException {
+        BrokerClient target;
+        synchronized (this) {
+            target = client;
+            if (target == null) {
+                throw new IOException("shared broker is unavailable");
+            }
+        }
+        // Do not hold this object's monitor during network I/O: attach/detach can run on the EDT.
+        final boolean revoked;
+        try {
+            revoked = target.revokeClient(clientId).revoked();
+        } catch (IOException | InterruptedException incomplete) {
+            synchronized (this) {
+                if (!windows.isEmpty()) {
+                    BrokerClient.ClientInfo source = clientManagement.clients.stream()
+                            .filter(info -> clientId.equals(info.clientId))
+                            .findFirst()
+                            .orElse(new BrokerClient.ClientInfo(clientId, "Revoked client", 0, 0,
+                                    0, 0, java.util.Set.of()));
+                    String baseName = source.clientName == null || source.clientName.isBlank()
+                            ? "Revoked client" : source.clientName;
+                    String pendingName = baseName.endsWith(" (revocation incomplete)")
+                            ? baseName : baseName + " (revocation incomplete)";
+                    pendingRevocations.put(clientId, new BrokerClient.ClientInfo(
+                            source.clientId, pendingName,
+                            source.registeredAt, source.lastSeenAt, 0, 0, source.capabilities));
+                    pendingRevocationCount = pendingRevocations.size();
+                    clientManagement = new ClientManagementSnapshot(
+                            mergePending(clientManagement.clients), clientManagement.available);
+                }
+            }
+            throw incomplete;
+        }
+        if (revoked) {
+            synchronized (this) {
+                if (client == target) {
+                    pendingRevocations.remove(clientId);
+                    pendingRevocationCount = pendingRevocations.size();
+                    List<BrokerClient.ClientInfo> remaining = clientManagement.clients.stream()
+                            .filter(info -> !clientId.equals(info.clientId))
+                            .toList();
+                    clientManagement = new ClientManagementSnapshot(remaining,
+                            clientManagement.available);
+                }
+            }
+        }
+        return revoked;
+    }
+
     // ------------------------------------------------------------------ internals
 
     /** Ensure a live BrokerClient; when {@code spawnIfMissing}, discovery may spawn the broker. */
@@ -252,7 +321,9 @@ public final class BrokerLink {
                 new ArrayList<>(windows.values()))) {
             processId = null;
             syncRegistration();
+            return;
         }
+        refreshBrokerClientsQuietly();
     }
 
     private void startHeartbeats() {
@@ -285,6 +356,7 @@ public final class BrokerLink {
         try {
             if (processId != null && client != null
                     && client.heartbeat(processId, config.getToken(), config.getBrokerLingerMs(), regs)) {
+                refreshBrokerClientsQuietly();
                 return;
             }
             // 404: the broker is alive but restarted — it lost us; fall through and re-register.
@@ -298,6 +370,7 @@ public final class BrokerLink {
             brokerBaseUrl = null;
         }
         processId = null;
+        clientManagement = ClientManagementSnapshot.unavailable();
         long now = System.currentTimeMillis();
         if (now - lastEnsureAttemptAt < ENSURE_THROTTLE_MS) {
             return;
@@ -324,6 +397,50 @@ public final class BrokerLink {
             }
         }
         processId = null;
+        clientManagement = ClientManagementSnapshot.unavailable();
+        pendingRevocations.clear();
+        pendingRevocationCount = 0;
+    }
+
+    private void refreshBrokerClients() throws IOException, InterruptedException {
+        clientManagement = client == null
+                ? ClientManagementSnapshot.unavailable()
+                : new ClientManagementSnapshot(mergePending(client.listClients()), true);
+    }
+
+    private List<BrokerClient.ClientInfo> mergePending(List<BrokerClient.ClientInfo> clients) {
+        Map<String, BrokerClient.ClientInfo> merged = new LinkedHashMap<>();
+        clients.forEach(info -> merged.put(info.clientId, info));
+        pendingRevocations.forEach(merged::put);
+        return List.copyOf(merged.values());
+    }
+
+    private void refreshBrokerClientsQuietly() {
+        // Callers hold this BrokerLink's monitor, which serializes the snapshot read-modify-write
+        // on failure and prevents a stale broker response from replacing a newer broker's cache.
+        try {
+            refreshBrokerClients();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            clientManagement = new ClientManagementSnapshot(clientManagement.clients, false);
+        } catch (IOException | RuntimeException e) {
+            // Client management was added after the original broker protocol. A mixed-version or
+            // temporarily busy broker must not be misdiagnosed as down just because this optional
+            // view refresh failed; keep the last good snapshot and retry on the next heartbeat.
+            clientManagement = new ClientManagementSnapshot(clientManagement.clients, false);
+            log.debug("protege-mcp: broker client management refresh failed", e);
+        }
+    }
+
+    private record ClientManagementSnapshot(List<BrokerClient.ClientInfo> clients,
+            boolean available) {
+        private ClientManagementSnapshot {
+            clients = List.copyOf(clients);
+        }
+
+        private static ClientManagementSnapshot unavailable() {
+            return new ClientManagementSnapshot(List.of(), false);
+        }
     }
 
     private void installShutdownHook() {

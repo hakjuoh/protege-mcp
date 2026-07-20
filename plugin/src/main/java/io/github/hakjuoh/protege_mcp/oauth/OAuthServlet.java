@@ -7,8 +7,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
 
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -134,6 +137,10 @@ public class OAuthServlet extends HttpServlet {
             redirectError(resp, redirectUri, "invalid_request", req.getParameter("state"));
             return;
         }
+        if (!validScope(req.getParameter("scope"))) {
+            redirectError(resp, redirectUri, "invalid_scope", req.getParameter("state"));
+            return;
+        }
         consentPage(resp, req, client);
     }
 
@@ -151,6 +158,10 @@ public class OAuthServlet extends HttpServlet {
         store.noteClientActivity(clientId);
         if (!"allow".equals(req.getParameter("decision"))) {
             redirectError(resp, redirectUri, "access_denied", state);
+            return;
+        }
+        if (!validScope(req.getParameter("scope"))) {
+            redirectError(resp, redirectUri, "invalid_scope", state);
             return;
         }
         String code = store.newAuthCode(clientId, redirectUri, req.getParameter("code_challenge"),
@@ -216,6 +227,16 @@ public class OAuthServlet extends HttpServlet {
 
     private void consentPage(HttpServletResponse resp, HttpServletRequest req, OAuthStore.Client client)
             throws IOException {
+        Set<String> requested = AuthenticatedPrincipal.capabilitiesForScope(
+                req.getParameter("scope"));
+        boolean canChange = requested.stream().anyMatch(capability ->
+                capability.equals("ontology:curate") || capability.equals("ontology:admin")
+                        || capability.equals("ontology:release")
+                        || capability.equals("filesystem:project:write")
+                        || capability.equals("filesystem:external")
+                        || capability.equals("network:access")
+                        || capability.equals("server:admin")
+                        || capability.equals(AuthenticatedPrincipal.LOCAL_ADMIN_CAPABILITY));
         String[][] hidden = {
                 {"client_id", req.getParameter("client_id")},
                 {"redirect_uri", req.getParameter("redirect_uri")},
@@ -245,8 +266,11 @@ public class OAuthServlet extends HttpServlet {
                 + ".deny{background:#e5e5ea;color:#111}</style></head><body><div class=\"card\">"
                 + "<h1>Authorize access to Protégé</h1>"
                 + "<p><span class=\"who\">" + OAuthSupport.htmlEscape(client.clientName) + "</span> wants to "
-                + "read and edit the ontology currently open in Protégé via the MCP server on this "
-                + "machine. Edits appear in the GUI and can be undone.</p>"
+                + (canChange ? "read or change" : "read")
+                + " the ontology through the MCP server on this machine.</p>"
+                + "<p>Requested scope: <code>" + OAuthSupport.htmlEscape(
+                        req.getParameter("scope") == null ? AuthenticatedPrincipal.LEGACY_FULL_SCOPE
+                                : req.getParameter("scope")) + "</code></p>"
                 + "<form method=\"post\" action=\"/oauth/authorize\">" + inputs
                 + "<div class=\"row\"><button class=\"deny\" name=\"decision\" value=\"deny\">Deny</button>"
                 + "<button class=\"allow\" name=\"decision\" value=\"allow\">Allow</button></div></form>"
@@ -255,6 +279,15 @@ public class OAuthServlet extends HttpServlet {
         resp.setContentType("text/html;charset=utf-8");
         resp.setHeader("Cache-Control", "no-store");
         resp.getWriter().write(html);
+    }
+
+    private static boolean validScope(String scope) {
+        try {
+            AuthenticatedPrincipal.capabilitiesForScope(scope);
+            return true;
+        } catch (IllegalArgumentException invalid) {
+            return false;
+        }
     }
 
     private void errorPage(HttpServletResponse resp, String message) throws IOException {

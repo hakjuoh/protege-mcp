@@ -50,6 +50,17 @@ import io.github.hakjuoh.protege_mcp.config.McpConfig;
  */
 class ChatViewTest {
 
+    @Test
+    void assistantChatIdentityIsOpaqueStableAndTurnBoundWhenNew() {
+        String first = ChatView.chatIdentity("codex", "provider-secret-session", 1);
+        String resumed = ChatView.chatIdentity("codex", "provider-secret-session", 99);
+        assertEquals(first, resumed);
+        assertTrue(first.startsWith("session-"));
+        assertFalse(first.contains("provider-secret-session"));
+        assertEquals("turn-7", ChatView.chatIdentity("claude", null, 7));
+        assertNotNull(first);
+    }
+
     // ------------------------------------------------------------------ reflection plumbing
 
     private static Method staticMethod(String name, Class<?>... params) throws Exception {

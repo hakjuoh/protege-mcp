@@ -18,6 +18,8 @@ import java.util.Map;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
+import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
@@ -180,8 +182,9 @@ class OAuthMetadataServletTest {
                 "resource should be base + /mcp");
         assertEquals(List.of("http://127.0.0.1:8123"), doc.get("authorization_servers"),
                 "authorization_servers should be a single-element list of the base");
-        assertEquals(List.of("mcp"), doc.get("scopes_supported"),
-                "scopes_supported should be [mcp]");
+        assertEquals(AuthenticatedPrincipal.supportedScopes(),
+                new java.util.LinkedHashSet<>((List<String>) doc.get("scopes_supported")),
+                "metadata must advertise every enforceable scope");
         assertEquals(List.of("header"), doc.get("bearer_methods_supported"),
                 "bearer_methods_supported should be [header]");
     }
@@ -281,8 +284,9 @@ class OAuthMetadataServletTest {
                 "code_challenge_methods_supported should be [S256]");
         assertEquals(List.of("none"), doc.get("token_endpoint_auth_methods_supported"),
                 "token_endpoint_auth_methods_supported should be [none]");
-        assertEquals(List.of("mcp"), doc.get("scopes_supported"),
-                "scopes_supported should be [mcp]");
+        assertEquals(AuthenticatedPrincipal.supportedScopes(),
+                new java.util.LinkedHashSet<>((List<String>) doc.get("scopes_supported")),
+                "metadata must advertise every enforceable scope");
     }
 
     @Test

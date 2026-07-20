@@ -60,6 +60,7 @@ public final class McpProxyServlet extends HttpServlet {
             "transfer-encoding", "upgrade", "host", "content-length", "expect", "date");
 
     private final InstanceRegistry registry;
+    private final ActiveProxyRequests activeRequests;
     private final com.fasterxml.jackson.databind.ObjectMapper mapper =
             new com.fasterxml.jackson.databind.ObjectMapper();
     private final HttpClient client = HttpClient.newBuilder()
@@ -68,7 +69,12 @@ public final class McpProxyServlet extends HttpServlet {
             .build();
 
     public McpProxyServlet(InstanceRegistry registry) {
+        this(registry, new ActiveProxyRequests());
+    }
+
+    McpProxyServlet(InstanceRegistry registry, ActiveProxyRequests activeRequests) {
         this.registry = registry;
+        this.activeRequests = activeRequests;
     }
 
     @Override
@@ -95,20 +101,34 @@ public final class McpProxyServlet extends HttpServlet {
             writeError(resp, 401, "missing_principal", "authenticated broker request has no principal");
             return;
         }
-        builder.header(AuthenticatedPrincipal.BROKER_HEADER, principal.encode());
-        String method = req.getMethod();
-        if ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method)) {
-            builder.method(method, HttpRequest.BodyPublishers.ofInputStream(() -> {
-                try {
-                    return req.getInputStream();
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            }));
-        } else {
-            builder.method(method, HttpRequest.BodyPublishers.noBody());
+        ActiveProxyRequests.Reservation reservation = activeRequests.open(
+                principal, req.getHeader(SESSION_HEADER));
+        if (reservation == null) {
+            writeError(resp, 401, "principal_or_session_revoked",
+                    "this client or routed session was revoked while the request was starting");
+            return;
         }
+        try (reservation) {
+            builder.header(AuthenticatedPrincipal.BROKER_HEADER, principal.encode());
+            String method = req.getMethod();
+            if ("POST".equals(method) || "PUT".equals(method) || "PATCH".equals(method)) {
+                builder.method(method, HttpRequest.BodyPublishers.ofInputStream(() -> {
+                    try {
+                        return req.getInputStream();
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }));
+            } else {
+                builder.method(method, HttpRequest.BodyPublishers.noBody());
+            }
+            proxy(req, resp, target, window, principal, method, builder, reservation);
+        }
+    }
 
+    private void proxy(HttpServletRequest req, HttpServletResponse resp, Target target,
+            InstanceRegistry.Window window, AuthenticatedPrincipal principal, String method,
+            HttpRequest.Builder builder, ActiveProxyRequests.Reservation reservation) throws IOException {
         HttpResponse<InputStream> upstreamResp;
         try {
             upstreamResp = client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
@@ -118,6 +138,13 @@ public final class McpProxyServlet extends HttpServlet {
             }
             writeError(resp, 502, "instance_unreachable",
                     "the Protégé window behind this session is not answering; it may have been closed");
+            return;
+        }
+
+        InputStream in = upstreamResp.body();
+        if (!reservation.attach(in)) {
+            writeError(resp, 401, "principal_or_session_revoked",
+                    "this client or routed session was revoked while the backend was answering");
             return;
         }
 
@@ -142,7 +169,6 @@ public final class McpProxyServlet extends HttpServlet {
                 .map(ct -> ct.toLowerCase(Locale.ROOT).contains("text/event-stream"))
                 .orElse(false);
 
-        InputStream in = upstreamResp.body();
         OutputStream out = resp.getOutputStream();
         Object writeLock = new Object();
         java.util.concurrent.ScheduledFuture<?> watchdog = null;

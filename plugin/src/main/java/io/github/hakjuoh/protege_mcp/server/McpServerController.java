@@ -2,8 +2,11 @@ package io.github.hakjuoh.protege_mcp.server;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.oauth.OAuthMetadataServlet;
 import io.github.hakjuoh.protege_mcp.oauth.OAuthServlet;
 import io.github.hakjuoh.protege_mcp.oauth.OAuthStore;
@@ -28,9 +31,17 @@ import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 public final class McpServerController implements ManagedServer {
 
     private static final Logger log = LoggerFactory.getLogger(McpServerController.class);
+    private static final long ASSISTANT_TOKEN_TTL_MS = 30L * 60_000L;
+    private static final Set<String> ASSISTANT_READ = Set.of(Capability.ONTOLOGY_READ.value());
+    private static final Set<String> ASSISTANT_WRITE = Set.of(
+            Capability.ONTOLOGY_READ.value(), Capability.ONTOLOGY_CURATE.value(),
+            Capability.ONTOLOGY_ADMIN.value(), Capability.ONTOLOGY_RELEASE.value(),
+            Capability.FILESYSTEM_PROJECT_READ.value(),
+            Capability.FILESYSTEM_PROJECT_WRITE.value());
 
     private final OntologyAccess access;
     private final WriteConfirmer confirmer;
+    private final String assistantWindowId = UUID.randomUUID().toString();
 
     private volatile boolean running;
     private volatile int boundPort;
@@ -149,6 +160,8 @@ public final class McpServerController implements ManagedServer {
             // proxy attaches after IT authenticated the client.
             httpServer.addFilter(new AccessTokenFilter(oauthStore, this::getBrokerSecret), "/mcp/*");
             httpServer.addServlet(serverManager.getTransportServlet(), "/mcp/*", true);
+            httpServer.addServlet(new BrokerControlServlet(this::getBrokerSecret,
+                    context.executions()), BrokerControlServlet.PATH + "/*", false);
             httpServer.addServlet(new OAuthMetadataServlet(objectMapper), "/.well-known/*", false);
             httpServer.addServlet(new OAuthServlet(oauthStore, objectMapper), "/oauth/*", false);
             // The configured port is process-exclusive: another Protégé window or a second Protégé
@@ -325,12 +338,23 @@ public final class McpServerController implements ManagedServer {
 
     /** Revoke a registered OAuth client and all its tokens; returns true if it existed. */
     public boolean revokeClient(String clientId) {
-        OAuthStore s = oauthStore;
-        if (s == null) {
-            return false;
+        final boolean revoked;
+        final ToolContext context;
+        synchronized (this) {
+            OAuthStore store = oauthStore;
+            if (store == null) {
+                return false;
+            }
+            // Remove the credential under the lifecycle monitor so stop/restart cannot swap stores
+            // between removal and the context snapshot. The potentially long execution-fence wait
+            // deliberately happens after releasing this monitor.
+            revoked = store.revokeClient(clientId);
+            context = toolContext;
         }
-        boolean revoked = s.revokeClient(clientId);
         if (revoked) {
+            if (context != null) {
+                context.executions().revokeClient(clientId);
+            }
             log.info("protege-mcp: revoked OAuth client {}", clientId);
         }
         return revoked;
@@ -340,6 +364,77 @@ public final class McpServerController implements ManagedServer {
     public long getStaticTokenLastSeen() {
         OAuthStore s = oauthStore;
         return s == null ? 0L : s.getStaticTokenLastSeen();
+    }
+
+    /**
+     * Mint one non-persisted, non-refreshable credential for a single Assistant turn. The writable
+     * profile deliberately excludes server administration, external files, network, and local-admin
+     * compatibility; global read-only mode can only narrow it further.
+     */
+    public AssistantCredential issueAssistantCredential(String provider, String chatIdentity,
+            boolean allowWrites) {
+        OAuthStore store = oauthStore;
+        if (!running || store == null) {
+            throw new IllegalStateException("MCP server is not running");
+        }
+        if (provider == null || !provider.matches("[a-z0-9_-]{1,32}")) {
+            throw new IllegalArgumentException("invalid Assistant provider identity");
+        }
+        if (chatIdentity == null || !chatIdentity.matches("[A-Za-z0-9._-]{1,80}")) {
+            throw new IllegalArgumentException("invalid Assistant chat identity");
+        }
+        String clientId = "assistant-" + assistantWindowId + "-" + chatIdentity;
+        Set<String> capabilities = allowWrites && !isReadOnly() ? ASSISTANT_WRITE : ASSISTANT_READ;
+        AuthenticatedPrincipal principal = new AuthenticatedPrincipal(1, "assistant:" + provider,
+                clientId, "Ontology Assistant (" + provider + ")", capabilities,
+                "assistant-grant-" + UUID.randomUUID());
+        OAuthStore.EphemeralToken issued = store.issueEphemeralToken(
+                principal, ASSISTANT_TOKEN_TTL_MS);
+        return new AssistantCredential(issued.token(), issued.expiresAt(), issued.principal());
+    }
+
+    /** Revoke a turn credential immediately; idempotent across stop/restart races. */
+    public boolean revokeAssistantCredential(String token) {
+        return revokeAssistantCredential(token, null);
+    }
+
+    /** Turn-object overload preserves the principal even if its short token expired before cleanup. */
+    public boolean revokeAssistantCredential(AssistantCredential credential) {
+        return credential != null
+                && revokeAssistantCredential(credential.token(), credential.principal());
+    }
+
+    private boolean revokeAssistantCredential(String token, AuthenticatedPrincipal suppliedPrincipal) {
+        final boolean revoked;
+        final AuthenticatedPrincipal principal;
+        final ToolContext context;
+        synchronized (this) {
+            OAuthStore store = oauthStore;
+            if (store == null) {
+                return false;
+            }
+            principal = suppliedPrincipal == null
+                    ? store.ephemeralPrincipal(token) : suppliedPrincipal;
+            revoked = store.revokeEphemeralToken(token);
+            context = toolContext;
+        }
+        // Fence whenever the caller can identify the grant, even if expiry cleanup won the token
+        // removal race. This wait is outside the controller monitor so Stop/restart stays responsive.
+        if (principal != null && principal.grantId() != null && context != null) {
+            context.executions().revokeGrant(principal.clientId(), principal.grantId());
+        }
+        return revoked;
+    }
+
+    /** Renew the lease only while the same server/store still owns a live turn credential. */
+    public boolean renewAssistantCredential(String token) {
+        OAuthStore store = oauthStore;
+        return running && store != null
+                && store.renewEphemeralToken(token, ASSISTANT_TOKEN_TTL_MS);
+    }
+
+    public record AssistantCredential(String token, long expiresAt,
+            AuthenticatedPrincipal principal) {
     }
 
     /** Live read — reflects preference changes without a restart. */
