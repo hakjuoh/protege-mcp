@@ -31,6 +31,15 @@
             <version>${project.version}</version>
         </dependency>
 
+        <!-- Pinned, embedded HTTPS client for the provider executor. A request-scoped Dns implementation
+             returns only addresses that passed endpoint policy. OkHttp has no implicit request/wire logger,
+             so sensitive queries and credential headers never enter a third-party logging sink. -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>${okhttp.version}</version>
+        </dependency>
+
         <!-- ===================================================================== -->
         <!-- embedded Jackson, deliberately BEFORE the provided Protégé jars    -->
         <!-- ===================================================================== -->
@@ -184,6 +193,18 @@
             <version>6.1.2</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>mockwebserver</artifactId>
+            <version>${okhttp.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp-tls</artifactId>
+            <version>${okhttp.version}</version>
+            <scope>test</scope>
+        </dependency>
 
         <!-- A real OWL 2 DL reasoner (HermiT, OWLAPI 4.x line) for the headless tests that verify the
              apply_changes(verify) rollback path actually detects a genuine unsatisfiable class /
@@ -271,6 +292,9 @@
                             !jakarta.servlet.*,
                             !org.commonmark.*,
                             !com.apicatalog.*,
+                            !okhttp3.*,
+                            !okio.*,
+                            !kotlin.*,
                             org.protege.editor.core.*,
                             org.protege.editor.owl.*,
                             <!--

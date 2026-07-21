@@ -36,7 +36,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Other embedded libraries
 ------------------------
-The MCP Java SDK, Jackson, Reactor, json-schema-validator (and its transitive
+The MCP Java SDK, Jackson, Reactor, OkHttp/Okio/Kotlin standard library,
+json-schema-validator (and its transitive
 jackson-dataformat-yaml, SnakeYAML, itu), Jetty 12 / jakarta.servlet-api, and
 Apache Jena ARQ/SHACL (including transitive Apache Commons libraries) are used
 under their respective licenses — Apache License 2.0 and, for Jetty, the
