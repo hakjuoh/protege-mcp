@@ -2,6 +2,8 @@ package io.github.hakjuoh.protege_mcp.policy;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitOption;
 import java.nio.file.FileVisitResult;
@@ -10,12 +12,16 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -24,10 +30,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -37,25 +45,37 @@ import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.fasterxml.jackson.dataformat.yaml.YAMLParser;
+import com.networknt.schema.ExecutionContext;
+import com.networknt.schema.Schema;
+import com.networknt.schema.SchemaRegistry;
+import com.networknt.schema.dialect.Dialects;
 
-import io.modelcontextprotocol.json.schema.JsonSchemaValidator.ValidationResponse;
-import io.modelcontextprotocol.json.schema.jackson2.DefaultJsonSchemaValidator;
+import org.yaml.snakeyaml.LoaderOptions;
 
-/** Secure discovery and validation for the version 1 project-policy authoring format. */
+import io.github.hakjuoh.protege_mcp.contracts.ContractRedactor;
+
+/** Secure discovery, version dispatch, normalization, and validation for project policy. */
 public final class ProjectPolicyLoader {
 
     public static final String DEFAULT_RELATIVE_PATH = ".protege-mcp/project.yaml";
     public static final long MAX_POLICY_BYTES = 1_048_576L;
     static final int MAX_ASSET_FILES = 10_000;
+    static final int MAX_POLICY_NODES = 10_000;
+    public static final int MAX_POLICY_ISSUES = 128;
+    static final long MAX_EXPANDED_SCALAR_BYTES = MAX_POLICY_BYTES;
     private static final Pattern WINDOWS_ABSOLUTE = Pattern.compile("^[A-Za-z]:[\\\\/].*");
     private static final Pattern URI_SCHEME = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*:.*");
 
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
     private static final ObjectMapper YAML = yamlMapper();
-    private static final Map<String, Object> SCHEMA = loadSchema();
-    private static final DefaultJsonSchemaValidator SCHEMA_VALIDATOR =
-            new DefaultJsonSchemaValidator(JSON);
+    private static final Map<String, Object> SCHEMA_V1 = loadSchema(1);
+    private static final Map<String, Object> SCHEMA_V2 = loadSchema(2);
+    private static final SchemaRegistry SCHEMA_REGISTRY =
+            SchemaRegistry.withDialect(Dialects.getDraft202012());
+    private static final Schema VALIDATOR_V1 = compiledSchema(SCHEMA_V1);
+    private static final Schema VALIDATOR_V2 = compiledSchema(SCHEMA_V2);
 
     private ProjectPolicyLoader() {
     }
@@ -80,6 +100,23 @@ public final class ProjectPolicyLoader {
     public static ProjectPolicy load(Path explicitPolicy, Path ontologyDocument,
             String activeOntologyIri, Collection<String> installedReasoners,
             boolean forbidExternalPaths) {
+        return load(explicitPolicy, ontologyDocument, activeOntologyIri, installedReasoners,
+                forbidExternalPaths, () -> { }, () -> { });
+    }
+
+    /** Test seam for a deterministic directory-swap immediately after the stable source read. */
+    static ProjectPolicy load(Path explicitPolicy, Path ontologyDocument,
+            String activeOntologyIri, Collection<String> installedReasoners,
+            boolean forbidExternalPaths, ReadInterlock beforeParse) {
+        return load(explicitPolicy, ontologyDocument, activeOntologyIri, installedReasoners,
+                forbidExternalPaths, beforeParse, () -> { });
+    }
+
+    /** Test seam for a deterministic replacement after semantic asset validation. */
+    static ProjectPolicy load(Path explicitPolicy, Path ontologyDocument,
+            String activeOntologyIri, Collection<String> installedReasoners,
+            boolean forbidExternalPaths, ReadInterlock beforeParse,
+            ReadInterlock afterSemanticValidation) {
         Discovery discovery = discover(explicitPolicy, ontologyDocument);
         if (discovery.path == null) {
             if (discovery.issue == null) {
@@ -87,7 +124,9 @@ public final class ProjectPolicyLoader {
             }
             return invalidDiscovery(discovery);
         }
-        return read(discovery, activeOntologyIri, installedReasoners, forbidExternalPaths);
+        return read(discovery, activeOntologyIri, installedReasoners, forbidExternalPaths,
+                Objects.requireNonNull(beforeParse, "beforeParse"),
+                Objects.requireNonNull(afterSemanticValidation, "afterSemanticValidation"));
     }
 
     public static ProjectPolicy load(Path explicitPolicy, Path ontologyDocument) {
@@ -95,31 +134,161 @@ public final class ProjectPolicyLoader {
     }
 
     /**
-     * Parse policy bytes that a caller has already captured, while resolving all declared project
-     * paths against the policy's original location. The source file is never read by this method.
+     * Capture bytes together with the discovery-time source and anchor identities. The returned
+     * object is the only accepted input to the hardened captured-policy parser, preventing callers
+     * from re-anchoring stale or unrelated bytes after capture.
      */
-    public static ProjectPolicy loadCaptured(Path source, byte[] bytes, String activeOntologyIri,
-            Collection<String> installedReasoners, boolean forbidExternalPaths) {
+    public static CapturedPolicy captureStablePolicy(PolicySourcePin pin) throws IOException {
+        return new CapturedPolicy(pin, captureStablePolicyBytes(pin));
+    }
+
+    private static byte[] captureStablePolicyBytes(PolicySourcePin pin) throws IOException {
+        Objects.requireNonNull(pin, "pin");
+        if (!pin.isCurrent()) {
+            throw new PolicyChangedDuringReadException(
+                    "Project policy source or project anchor changed after secure discovery.");
+        }
+        Path normalized = pin.source;
+        if (Files.isSymbolicLink(normalized)) {
+            throw new IOException("Project policy files must not be symbolic links");
+        }
+        Path path = normalized.toRealPath();
+        if (!path.equals(normalized)) {
+            throw new PolicyChangedDuringReadException(
+                    "Project policy path changed after secure discovery.");
+        }
+        BasicFileAttributes before = Files.readAttributes(path, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+        if (!before.isRegularFile()) throw new IOException("Project policy is not a regular file");
+        if (before.size() > MAX_POLICY_BYTES) throw new IOException("Project policy is too large");
+        Set<OpenOption> options = Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        byte[] bytes = readStablePolicyBytes(path, options, () -> { });
+        BasicFileAttributes after = Files.readAttributes(path, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+        if (!path.toRealPath().equals(path)
+                || !Objects.equals(before.fileKey(), after.fileKey())
+                || before.size() != after.size()
+                || !before.lastModifiedTime().equals(after.lastModifiedTime())) {
+            throw new PolicyChangedDuringReadException(
+                    "Project policy identity changed while it was being read.");
+        }
+        if (bytes.length > MAX_POLICY_BYTES) throw new IOException("Project policy is too large");
+        if (!pin.isCurrent()) {
+            throw new PolicyChangedDuringReadException(
+                    "Project policy source or project anchor changed while it was being read.");
+        }
+        return bytes;
+    }
+
+    /**
+     * Compatibility entry point for callers that captured bytes themselves. It now recaptures the
+     * canonical source and accepts the supplied bytes only when they exactly match the current,
+     * identity-pinned policy; stale bytes are never interpreted against a replacement project.
+     */
+    public static ProjectPolicy loadCaptured(Path source, byte[] bytes,
+            String activeOntologyIri, Collection<String> installedReasoners,
+            boolean forbidExternalPaths) {
         if (source == null || bytes == null) {
             throw new IllegalArgumentException("source and bytes must not be null");
         }
-        Path path = source.toAbsolutePath().normalize();
-        return parse(new Discovery("explicit", path, null), path, bytes,
-                activeOntologyIri, installedReasoners, forbidExternalPaths);
+        try {
+            Path normalized = source.toAbsolutePath().normalize();
+            CapturedPolicy captured = captureStablePolicy(pinCanonicalPolicy(normalized,
+                    canonicalProjectAnchor(normalized)));
+            if (!java.util.Arrays.equals(bytes, captured.bytes)) {
+                return invalidCapturedPolicy(normalized,
+                        "Captured policy bytes no longer match the pinned source.");
+            }
+            return loadCaptured(captured,
+                    activeOntologyIri, installedReasoners, forbidExternalPaths);
+        } catch (IOException unsafeSource) {
+            return invalidCapturedPolicy(source.toAbsolutePath().normalize(),
+                    "Captured policy source is not safely pinned: " + message(unsafeSource));
+        }
+    }
+
+    /** Parse exactly the bytes and identities produced by {@link #captureStablePolicy}. */
+    public static ProjectPolicy loadCaptured(CapturedPolicy captured,
+            String activeOntologyIri, Collection<String> installedReasoners,
+            boolean forbidExternalPaths) {
+        if (captured == null) {
+            throw new IllegalArgumentException("captured policy must not be null");
+        }
+        PolicySourcePin pin = captured.pin;
+        return parse(new Discovery("explicit", pin.source, null, pin.trustedProjectAnchor, pin),
+                pin.source, captured.bytes, activeOntologyIri, installedReasoners,
+                forbidExternalPaths, () -> { });
+    }
+
+    /** Pin a canonical policy source and its exact project-anchor directory identity. */
+    public static PolicySourcePin pinCanonicalPolicy(Path source, Path trustedProjectAnchor)
+            throws IOException {
+        if (source == null || trustedProjectAnchor == null) {
+            throw new IllegalArgumentException("source and trustedProjectAnchor must not be null");
+        }
+        Path normalizedSource = source.toAbsolutePath().normalize();
+        Path normalizedRoot = trustedProjectAnchor.toAbsolutePath().normalize();
+        Path realSource = normalizedSource.toRealPath();
+        Path realRoot = normalizedRoot.toRealPath();
+        if (!realSource.equals(normalizedSource) || !realRoot.equals(normalizedRoot)
+                || !realSource.startsWith(realRoot)
+                || !canonicalProjectAnchor(realSource).equals(realRoot)) {
+            throw new IOException("policy source or project anchor is not canonical");
+        }
+        return new PolicySourcePin(realSource, realRoot,
+                PathIdentity.source(realSource), PathIdentity.directory(realRoot));
+    }
+
+    /**
+     * Return the lexical project anchor for an already-canonical policy source. No filesystem
+     * lookup is performed, so callers can carry the pinned anchor across a later stable capture.
+     */
+    public static Path canonicalProjectAnchor(Path canonicalSource) {
+        if (canonicalSource == null) {
+            throw new IllegalArgumentException("canonicalSource must not be null");
+        }
+        Path source = canonicalSource.toAbsolutePath().normalize();
+        Path parent = source.getParent();
+        if (parent == null) {
+            throw new IllegalArgumentException("canonicalSource must have a parent directory");
+        }
+        return projectRootAnchor(parent).toAbsolutePath().normalize();
     }
 
     private static ProjectPolicy read(Discovery discovery, String activeOntologyIri,
-            Collection<String> installedReasoners, boolean forbidExternalPaths) {
-        List<PolicyIssue> issues = new ArrayList<>();
+            Collection<String> installedReasoners, boolean forbidExternalPaths,
+            ReadInterlock beforeParse, ReadInterlock afterSemanticValidation) {
+        List<PolicyIssue> issues = new PolicyIssues();
         Path path;
+        BasicFileAttributes capturedAttributes;
         try {
+            if (discovery.sourcePin == null || !discovery.sourcePin.isCurrent()) {
+                issues.add(error("policy_changed_during_read", "policy_path",
+                        "Project policy source or project anchor changed after discovery."));
+                return result(discovery.kind, discovery.path.toAbsolutePath().normalize(), null, null,
+                        Collections.emptyMap(), Collections.emptyMap(), issues);
+            }
+            if (Files.isSymbolicLink(discovery.path)) {
+                issues.add(error("policy_symlink_forbidden", "policy_path",
+                        "Project policy files must not be symbolic links."));
+                return result(discovery.kind, discovery.path.toAbsolutePath().normalize(), null, null,
+                        Collections.emptyMap(), Collections.emptyMap(), issues);
+            }
             path = discovery.path.toRealPath();
+            if (discovery.trustedRoot != null && !path.startsWith(discovery.trustedRoot)) {
+                issues.add(error("policy_symlink_escape", "policy_path",
+                        "Discovered project policy resolves outside the ontology directory being searched."));
+                return result(discovery.kind, discovery.path.toAbsolutePath().normalize(), null, null,
+                        Collections.emptyMap(), Collections.emptyMap(), issues);
+            }
             if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && !Files.isRegularFile(path)) {
                 issues.add(error("policy_not_file", "policy_path", "Policy is not a regular file: " + path));
                 return result(discovery.kind, path, null, null, Collections.emptyMap(),
                         Collections.emptyMap(), issues);
             }
-            long size = Files.size(path);
+            capturedAttributes = Files.readAttributes(path, BasicFileAttributes.class,
+                    LinkOption.NOFOLLOW_LINKS);
+            long size = capturedAttributes.size();
             if (size > MAX_POLICY_BYTES) {
                 issues.add(error("policy_too_large", "policy_path", "Policy is " + size
                         + " bytes; the maximum is " + MAX_POLICY_BYTES + "."));
@@ -135,29 +304,56 @@ public final class ProjectPolicyLoader {
 
         byte[] bytes;
         try {
-            try (InputStream input = Files.newInputStream(path)) {
-                bytes = input.readNBytes(Math.toIntExact(MAX_POLICY_BYTES + 1));
-            }
+            Set<OpenOption> readOptions = Set.of(StandardOpenOption.READ,
+                    LinkOption.NOFOLLOW_LINKS);
+            bytes = readStablePolicyBytes(path, readOptions, () -> { });
             if (bytes.length > MAX_POLICY_BYTES) {
                 issues.add(error("policy_too_large", "policy_path", "Policy exceeds the maximum of "
                         + MAX_POLICY_BYTES + " bytes."));
                 return result(discovery.kind, path, null, null, Collections.emptyMap(),
                         Collections.emptyMap(), issues);
             }
+            Path resolvedAfterRead = path.toRealPath();
+            BasicFileAttributes afterRead = Files.readAttributes(path, BasicFileAttributes.class,
+                    LinkOption.NOFOLLOW_LINKS);
+            if (!resolvedAfterRead.equals(path)
+                    || discovery.trustedRoot != null
+                            && !resolvedAfterRead.startsWith(discovery.trustedRoot)
+                    || !Objects.equals(capturedAttributes.fileKey(), afterRead.fileKey())
+                    || capturedAttributes.size() != afterRead.size()
+                    || !capturedAttributes.lastModifiedTime().equals(afterRead.lastModifiedTime())) {
+                issues.add(error("policy_changed_during_read", "policy_path",
+                        "Project policy identity changed while it was being read."));
+                return result(discovery.kind, path, null, null, Collections.emptyMap(),
+                        Collections.emptyMap(), issues);
+            }
+        } catch (PolicyChangedDuringReadException e) {
+            issues.add(error("policy_changed_during_read", "policy_path", e.getMessage()));
+            return result(discovery.kind, path, null, null, Collections.emptyMap(),
+                    Collections.emptyMap(), issues);
         } catch (IOException | RuntimeException e) {
             issues.add(error("policy_unreadable", "policy_path", "Could not read policy: "
                     + message(e)));
             return result(discovery.kind, path, null, null, Collections.emptyMap(),
                     Collections.emptyMap(), issues);
         }
+
+        try {
+            beforeParse.run();
+        } catch (IOException | RuntimeException changed) {
+            issues.add(error("policy_changed_during_read", "policy_path",
+                    "Project policy source changed before validation."));
+            return result(discovery.kind, path, discovery.trustedRoot, null,
+                    Collections.emptyMap(), Collections.emptyMap(), issues);
+        }
         return parse(discovery, path, bytes, activeOntologyIri, installedReasoners,
-                forbidExternalPaths);
+                forbidExternalPaths, afterSemanticValidation);
     }
 
     private static ProjectPolicy parse(Discovery discovery, Path path, byte[] bytes,
             String activeOntologyIri, Collection<String> installedReasoners,
-            boolean forbidExternalPaths) {
-        List<PolicyIssue> issues = new ArrayList<>();
+            boolean forbidExternalPaths, ReadInterlock afterSemanticValidation) {
+        List<PolicyIssue> issues = new PolicyIssues();
         if (bytes.length > MAX_POLICY_BYTES) {
             issues.add(error("policy_too_large", "policy_path", "Policy is " + bytes.length
                     + " bytes; the maximum is " + MAX_POLICY_BYTES + "."));
@@ -167,30 +363,83 @@ public final class ProjectPolicyLoader {
 
         Map<String, Object> parsed;
         try {
+            rejectYamlAliases(bytes);
             parsed = YAML.readValue(bytes, new TypeReference<LinkedHashMap<String, Object>>() { });
             if (parsed == null) {
                 throw new IOException("document is empty");
             }
         } catch (IOException | RuntimeException e) {
-            issues.add(error("yaml_invalid", null, "Could not parse policy YAML: " + message(e)));
-            return result(discovery.kind, path, projectRootAnchor(path.getParent()), null,
+            issues.add(error("yaml_invalid", null, "Policy YAML could not be parsed safely."));
+            return result(discovery.kind, path, discovery.trustedRoot, null,
                     Collections.emptyMap(), Collections.emptyMap(), issues);
         }
 
-        ValidationResponse schema = SCHEMA_VALIDATOR.validate(SCHEMA, parsed);
-        if (!schema.valid()) {
-            issues.add(error("schema_invalid", null, schema.errorMessage()));
-            return result(discovery.kind, path, projectRootAnchor(path.getParent()), null, parsed,
+        Integer version = policyVersion(parsed);
+        if (version == null) {
+            issues.add(error("schema_invalid", "version",
+                    "Policy version must be the integer 1 or 2."));
+            return result(discovery.kind, path, discovery.trustedRoot, null,
+                    Collections.emptyMap(),
+                    Collections.emptyMap(), issues);
+        }
+        if (version != 1 && version != 2) {
+            issues.add(error("unsupported_policy_version", "version",
+                    "Unsupported project policy version " + version + "; supported versions are 1 and 2."));
+            return result(discovery.kind, path, discovery.trustedRoot, null,
+                    Collections.emptyMap(),
+                    Collections.emptyMap(), issues);
+        }
+        if (exceedsExpandedScalarBudget(parsed, MAX_EXPANDED_SCALAR_BYTES)) {
+            issues.add(error("policy_scalar_budget_exceeded", null,
+                    "Expanded policy scalar content exceeds " + MAX_EXPANDED_SCALAR_BYTES
+                            + " UTF-8 bytes."));
+            return result(discovery.kind, path, discovery.trustedRoot, null,
+                    Collections.emptyMap(), Collections.emptyMap(), issues);
+        }
+        if (version == 2 && exceedsStructureBudget(parsed, MAX_POLICY_NODES)) {
+            issues.add(error("policy_structure_too_large", null,
+                    "Policy v2 structure exceeds the maximum of " + MAX_POLICY_NODES
+                            + " parsed nodes."));
+            return result(discovery.kind, path, discovery.trustedRoot, null,
+                    Collections.emptyMap(), Collections.emptyMap(), issues);
+        }
+
+        if (!schemaValid(version == 1 ? VALIDATOR_V1 : VALIDATOR_V2, parsed)) {
+            issues.add(error("schema_invalid", null,
+                    "Policy does not conform to project-policy v" + version + " schema."));
+            return result(discovery.kind, path, discovery.trustedRoot, null,
+                    Collections.emptyMap(),
                     Collections.emptyMap(), issues);
         }
 
         boolean authoredRoCrateFormat = object(
                 object(parsed, "interoperability"), "metadata").containsKey("format");
-        Map<String, Object> effective = defaults(parsed);
-        Path projectRoot = resolveProjectRoot(path.getParent(), string(effective, "project_root"), issues);
+        Map<String, Object> effective = version == 1 ? defaults(parsed) : defaultsV2(parsed);
+        Path projectRoot = resolveProjectRoot(discovery.trustedRoot,
+                string(effective, "project_root"), issues);
+        if (!sourceStillPinned(discovery.sourcePin)) {
+            issues.add(error("policy_changed_during_validation", "policy_path",
+                    "Project policy source or project anchor changed before validation."));
+            return result(discovery.kind, path, projectRoot, digest(effective), effective,
+                    Collections.emptyMap(), issues);
+        }
         Map<String, List<Path>> assets = new LinkedHashMap<>();
-        semanticValidation(effective, projectRoot, activeOntologyIri, installedReasoners,
+        semanticValidation(effective, path, projectRoot, activeOntologyIri, installedReasoners,
                 !authoredRoCrateFormat, forbidExternalPaths, assets, issues);
+        try {
+            afterSemanticValidation.run();
+        } catch (IOException | RuntimeException changed) {
+            issues.add(error("policy_changed_during_validation", "policy_path",
+                    "Project policy source or project anchor changed during validation."));
+            assets.clear();
+            return result(discovery.kind, path, projectRoot, digest(effective), effective,
+                    assets, issues);
+        }
+        if (!sourceStillPinned(discovery.sourcePin)) {
+            issues.add(error("policy_changed_during_validation", "policy_path",
+                    "Project policy source or project anchor changed during validation."));
+            assets.clear();
+        }
         return result(discovery.kind, path, projectRoot, digest(effective), effective, assets, issues);
     }
 
@@ -198,14 +447,31 @@ public final class ProjectPolicyLoader {
         if (explicit != null) {
             try {
                 Path normalized = explicit.toAbsolutePath().normalize();
+                if (Files.isSymbolicLink(normalized)) {
+                    return new Discovery("explicit", null,
+                            error("policy_symlink_forbidden", "policy_path",
+                                    "Project policy files must not be symbolic links."));
+                }
                 if (!Files.exists(normalized)) {
                     return new Discovery("explicit", null, error("policy_not_found", "policy_path",
                             "Explicit policy does not exist: " + normalized));
                 }
-                return new Discovery("explicit", normalized, null);
+                Path anchor = canonicalProjectAnchor(normalized).toRealPath();
+                Path real = normalized.toRealPath();
+                if (!real.startsWith(anchor) || !canonicalProjectAnchor(real).equals(anchor)) {
+                    return new Discovery("explicit", null,
+                            error("policy_symlink_escape", "policy_path",
+                                    "Explicit project policy resolves outside its project anchor."));
+                }
+                PolicySourcePin pin = pinCanonicalPolicy(real, anchor);
+                return new Discovery("explicit", real, null, anchor, pin);
             } catch (InvalidPathException e) {
                 return new Discovery("explicit", null, error("policy_path_invalid", "policy_path",
                         "Explicit policy path is invalid: " + message(e)));
+            } catch (IOException e) {
+                return new Discovery("explicit", null,
+                        error("policy_path_unresolvable", "policy_path",
+                                "Could not resolve the explicit policy anchor."));
             }
         }
         if (ontologyDocument == null) {
@@ -215,8 +481,28 @@ public final class ProjectPolicyLoader {
                 : ontologyDocument.toAbsolutePath().normalize().getParent();
         for (Path current = start; current != null; current = current.getParent()) {
             Path candidate = current.resolve(DEFAULT_RELATIVE_PATH);
-            if (Files.isRegularFile(candidate)) {
-                return new Discovery("discovered", candidate, null);
+            if (Files.isSymbolicLink(candidate)) {
+                return new Discovery("discovered", null,
+                        error("policy_symlink_forbidden", "policy_path",
+                                "Discovered project policy must not be a symbolic link."));
+            }
+            if (Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    Path root = current.toRealPath();
+                    Path source = candidate.toRealPath();
+                    if (!source.startsWith(root)
+                            || !canonicalProjectAnchor(source).equals(root)) {
+                        return new Discovery("discovered", null,
+                                error("policy_symlink_escape", "policy_path",
+                                        "Discovered project policy resolves outside the ontology directory being searched."));
+                    }
+                    PolicySourcePin pin = pinCanonicalPolicy(source, root);
+                    return new Discovery("discovered", source, null, root, pin);
+                } catch (IOException e) {
+                    return new Discovery("discovered", null,
+                            error("policy_path_unresolvable", "policy_path",
+                                    "Could not resolve the policy discovery anchor."));
+                }
             }
         }
         return new Discovery("none", null, null);
@@ -224,12 +510,27 @@ public final class ProjectPolicyLoader {
 
     private static ProjectPolicy invalidDiscovery(Discovery discovery) {
         return new ProjectPolicy(true, discovery.kind, null, null, null,
-                Collections.emptyMap(), Collections.emptyMap(), List.of(discovery.issue));
+                Collections.emptyMap(), Collections.emptyMap(), List.of(discovery.issue), null);
+    }
+
+    private static ProjectPolicy invalidCapturedPolicy(Path path, String message) {
+        List<PolicyIssue> issues = new PolicyIssues();
+        issues.add(error("policy_changed_during_read", "policy_path", message));
+        return result("explicit", path, null, null, Collections.emptyMap(),
+                Collections.emptyMap(), issues);
     }
 
     private static ProjectPolicy result(String discovery, Path path, Path projectRoot, String digest,
             Map<String, Object> effective, Map<String, List<Path>> assets, List<PolicyIssue> issues) {
-        return new ProjectPolicy(true, discovery, path, projectRoot, digest, effective, assets, issues);
+        boolean truncated = issues instanceof PolicyIssues bounded && bounded.truncated;
+        boolean hasError = issues instanceof PolicyIssues bounded ? bounded.hasError
+                : issues.stream().anyMatch(issue -> "error".equals(issue.severity()));
+        boolean valid = !truncated && !hasError;
+        List<PolicyIssue> boundedIssues = boundedIssues(issues);
+        return new ProjectPolicy(true, discovery, path, projectRoot, digest, effective, assets,
+                boundedIssues,
+                valid && Integer.valueOf(1).equals(policyVersion(effective))
+                        ? PolicyMigrationRecommendation.v1ToV2() : null);
     }
 
     /**
@@ -247,8 +548,12 @@ public final class ProjectPolicyLoader {
                 ? parent : policyDir;
     }
 
-    private static Path resolveProjectRoot(Path policyDir, String configured, List<PolicyIssue> issues) {
-        Path anchor = projectRootAnchor(policyDir);
+    private static Path resolveProjectRoot(Path anchor, String configured, List<PolicyIssue> issues) {
+        if (anchor == null) {
+            issues.add(error("project_root_invalid", "project_root",
+                    "Project root anchor is unavailable."));
+            return null;
+        }
         Path candidate = anchor.resolve(configured == null ? "." : configured).normalize();
         if (!candidate.startsWith(anchor.normalize())) {
             issues.add(error("project_root_escape", "project_root",
@@ -258,7 +563,7 @@ public final class ProjectPolicyLoader {
         try {
             Path realAnchor = anchor.toRealPath();
             Path real = candidate.toRealPath();
-            if (!Files.isDirectory(real) || !real.startsWith(realAnchor)) {
+            if (!realAnchor.equals(anchor) || !Files.isDirectory(real) || !real.startsWith(anchor)) {
                 issues.add(error("project_root_invalid", "project_root",
                         "project_root must resolve to a directory at or below " + anchor
                                 + ": " + candidate));
@@ -272,7 +577,11 @@ public final class ProjectPolicyLoader {
         }
     }
 
-    private static void semanticValidation(Map<String, Object> policy, Path projectRoot,
+    private static boolean sourceStillPinned(PolicySourcePin pin) {
+        return pin != null && pin.isCurrent();
+    }
+
+    private static void semanticValidation(Map<String, Object> policy, Path policyPath, Path projectRoot,
             String activeOntologyIri, Collection<String> installedReasoners,
             boolean inferRoCrateVersion, boolean forbidExternalPaths,
             Map<String, List<Path>> assets,
@@ -287,6 +596,7 @@ public final class ProjectPolicyLoader {
                     "The caller forbids external paths; filesystem.allow_external_paths must be false."));
         }
         boolean allowExternal = authoredAllowExternal && !forbidExternalPaths;
+        AssetScanBudget assetBudget = new AssetScanBudget();
 
         String rootIri = string(policy, "root_ontology");
         if (activeOntologyIri != null && !activeOntologyIri.equals(rootIri)) {
@@ -300,13 +610,14 @@ public final class ProjectPolicyLoader {
         validateModules(policy, projectRoot, allowExternal, assets, issues);
         validateReasoner(policy, installedReasoners, issues);
         validateImports(policy, projectRoot, allowExternal, assets, issues);
-        validateValidationAssets(policy, projectRoot, allowExternal, assets, issues);
+        validateValidationAssets(policy, projectRoot, allowExternal, assets, issues, assetBudget);
         validateReleasePath(policy, projectRoot, allowExternal, assets, issues);
+        if (Integer.valueOf(2).equals(policyVersion(policy))) {
+            validateV2(policy, policyPath, projectRoot, assets, issues);
+        }
         if (interopManifest != null) {
-            if (inferRoCrateVersion) {
-                RoCrateProjectManifest.inferVersion(interopManifest, policy);
-            }
-            RoCrateProjectManifest.validate(interopManifest, policy, issues);
+            RoCrateProjectManifest.inspect(interopManifest, policy, issues,
+                    inferRoCrateVersion);
         }
     }
 
@@ -513,6 +824,10 @@ public final class ProjectPolicyLoader {
                                                 : inspection.ontologyIri())
                                         + " instead of policy value " + iri + "."));
                     }
+                } catch (ModuleDocumentInspector.DocumentTooLargeException tooLarge) {
+                    issues.add(error("module_document_too_large", "modules[" + index + "].path",
+                            "Module file exceeds the bounded policy-inspection size limit of "
+                                    + ModuleDocumentInspector.MAX_DOCUMENT_BYTES + " bytes."));
                 } catch (IOException e) {
                     issues.add(error("module_document_invalid", "modules[" + index + "].path",
                             "Could not inspect module file " + resolved + ": " + e.getMessage()));
@@ -572,12 +887,12 @@ public final class ProjectPolicyLoader {
 
     private static void validateValidationAssets(Map<String, Object> policy,
             Path projectRoot, boolean allowExternal, Map<String, List<Path>> assets,
-            List<PolicyIssue> issues) {
+            List<PolicyIssue> issues, AssetScanBudget assetBudget) {
         Map<String, Object> validation = object(policy, "validation");
         expandPaths(object(validation, "invariants"), "invariants", ".rq", projectRoot,
-                allowExternal, assets, issues);
+                allowExternal, assets, issues, assetBudget);
         expandPaths(object(validation, "shacl"), "shacl", null, projectRoot,
-                allowExternal, assets, issues);
+                allowExternal, assets, issues, assetBudget);
         Map<String, Object> cqs = object(validation, "competency_questions");
         String cqPath = string(cqs, "path");
         String convention = string(cqs, "convention");
@@ -606,13 +921,15 @@ public final class ProjectPolicyLoader {
 
     private static void expandPaths(Map<String, Object> block, String key, String extension,
             Path projectRoot, boolean allowExternal,
-            Map<String, List<Path>> assets, List<PolicyIssue> issues) {
+            Map<String, List<Path>> assets, List<PolicyIssue> issues,
+            AssetScanBudget assetBudget) {
         List<Path> resolved = new ArrayList<>();
         int index = 0;
         for (String configured : strings(block.get("paths"))) {
             String field = "validation." + key + ".paths[" + index + "]";
             if (hasGlob(configured)) {
-                resolved.addAll(expandGlob(configured, projectRoot, allowExternal, field, issues));
+                resolved.addAll(expandGlob(configured, projectRoot, allowExternal, field, issues,
+                        assetBudget));
             } else {
                 Path path = resolveAsset(configured, projectRoot, allowExternal, true, field, issues);
                 if (path != null && requireRegularFile(path, field, issues)) {
@@ -646,7 +963,12 @@ public final class ProjectPolicyLoader {
     }
 
     private static List<Path> expandGlob(String configured, Path projectRoot,
-            boolean allowExternal, String field, List<PolicyIssue> issues) {
+            boolean allowExternal, String field, List<PolicyIssue> issues,
+            AssetScanBudget assetBudget) {
+        if (assetBudget.exhausted) {
+            assetBudget.report(field, issues);
+            return Collections.emptyList();
+        }
         final Path lexical;
         final List<String> segments = new ArrayList<>();
         try {
@@ -697,18 +1019,29 @@ public final class ProjectPolicyLoader {
             return Collections.emptyList();
         }
         List<Path> matches = new ArrayList<>();
-        final int[] visited = {0};
-        final Path walkBase = base;
+        final Path walkBase;
+        try {
+            walkBase = base.toRealPath();
+            if (!allowExternal && !walkBase.startsWith(projectRoot)) {
+                issues.add(error("symlink_escape", field,
+                        "Glob base resolves outside project_root: " + base));
+                return Collections.emptyList();
+            }
+        } catch (IOException e) {
+            issues.add(error("glob_read_failed", field,
+                    "Could not resolve glob base: " + message(e)));
+            return Collections.emptyList();
+        }
         try {
             Files.walkFileTree(walkBase, Collections.<FileVisitOption>emptySet(),
                     64, new FileVisitor<>() {
                         @Override public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                            return ++visited[0] > MAX_ASSET_FILES ? FileVisitResult.TERMINATE
+                            return !assetBudget.visit() ? FileVisitResult.TERMINATE
                                     : FileVisitResult.CONTINUE;
                         }
                         @Override public FileVisitResult visitFile(Path file, BasicFileAttributes attrs)
                                 throws IOException {
-                            if (++visited[0] > MAX_ASSET_FILES) {
+                            if (!assetBudget.visit()) {
                                 return FileVisitResult.TERMINATE;
                             }
                             if (matcher.matches(walkBase.relativize(file)) && attrs.isRegularFile()) {
@@ -723,7 +1056,8 @@ public final class ProjectPolicyLoader {
                             return FileVisitResult.CONTINUE;
                         }
                         @Override public FileVisitResult visitFileFailed(Path file, IOException exc) {
-                            return FileVisitResult.CONTINUE;
+                            return assetBudget.visit() ? FileVisitResult.CONTINUE
+                                    : FileVisitResult.TERMINATE;
                         }
                         @Override public FileVisitResult postVisitDirectory(Path dir, IOException exc) {
                             return FileVisitResult.CONTINUE;
@@ -732,10 +1066,7 @@ public final class ProjectPolicyLoader {
         } catch (IOException e) {
             issues.add(error("glob_read_failed", field, "Could not scan assets: " + message(e)));
         }
-        if (visited[0] > MAX_ASSET_FILES) {
-            issues.add(error("asset_scan_limit", field, "Asset scan exceeded " + MAX_ASSET_FILES
-                    + " files/directories; narrow the configured glob."));
-        }
+        if (assetBudget.exhausted) assetBudget.report(field, issues);
         return matches;
     }
 
@@ -751,6 +1082,77 @@ public final class ProjectPolicyLoader {
                 || requireDirectory(resolved, "release.output_dir", issues))) {
             assets.put("release_output", List.of(resolved));
         }
+    }
+
+    private static void validateV2(Map<String, Object> policy, Path policyPath, Path projectRoot,
+            Map<String, List<Path>> assets, List<PolicyIssue> issues) {
+        Set<String> providerIds = new LinkedHashSet<>();
+        Set<String> enabledProviderIds = new LinkedHashSet<>();
+        for (Map<String, Object> provider : objects(object(policy, "external_terms").get("providers"))) {
+            String id = string(provider, "id");
+            if (id != null && !providerIds.add(id)) {
+                issues.add(error("provider_id_duplicate", "external_terms.providers",
+                        "Provider id '" + id + "' is declared more than once."));
+            }
+            if (id != null && bool(provider, "enabled", false)) enabledProviderIds.add(id);
+        }
+        int evidenceIndex = 0;
+        for (String id : strings(object(object(policy, "validation"),
+                "provider_evidence").get("providers"))) {
+            if (!providerIds.contains(id)) {
+                issues.add(error("provider_id_unknown",
+                        "validation.provider_evidence.providers[" + evidenceIndex + "]",
+                        "Provider-evidence stage references undeclared provider '" + id + "'."));
+            } else if (!enabledProviderIds.contains(id)) {
+                issues.add(error("provider_disabled_for_evidence",
+                        "validation.provider_evidence.providers[" + evidenceIndex + "]",
+                        "Provider-evidence stage references disabled provider '" + id + "'."));
+            }
+            evidenceIndex++;
+        }
+
+        Map<String, Object> mappings = object(policy, "mappings");
+        String mappingPath = string(mappings, "path");
+        Path resolvedMapping = resolveAsset(mappingPath, projectRoot, false, false,
+                "mappings.path", issues);
+        if (resolvedMapping != null && conflictsWithReservedPath(resolvedMapping, policyPath, assets)) {
+            issues.add(error("mapping_path_collision", "mappings.path",
+                    "Mapping output must be a dedicated sidecar and cannot reuse the policy or another "
+                            + "declared project asset path."));
+            resolvedMapping = null;
+        }
+        if (resolvedMapping != null && Files.exists(resolvedMapping)
+                && requireRegularFile(resolvedMapping, "mappings.path", issues)) {
+            assets.put("mapping_store", List.of(resolvedMapping));
+        }
+        validateTermReferenceList(strings(mappings.get("allowed_predicates")),
+                object(policy, "prefixes"), "mappings.allowed_predicates", issues);
+        int ruleIndex = 0;
+        for (Map<String, Object> rule : objects(mappings.get("many_to_one_rules"))) {
+            String path = "mappings.many_to_one_rules[" + ruleIndex++ + "]";
+            validateTermReferenceList(List.of(string(rule, "predicate")),
+                    object(policy, "prefixes"), path + ".predicate", issues);
+            validateTermReferenceList(strings(rule.get("subject_ontologies")),
+                    object(policy, "prefixes"), path + ".subject_ontologies", issues);
+            validateTermReferenceList(strings(rule.get("target_ontologies")),
+                    object(policy, "prefixes"), path + ".target_ontologies", issues);
+            if (strings(rule.get("subject_ontologies")).isEmpty()
+                    && strings(rule.get("subject_providers")).isEmpty()
+                    && strings(rule.get("target_ontologies")).isEmpty()) {
+                issues.add(error("mapping_scope_empty", path,
+                        "A many-to-one rule must name a non-empty subject ontology/provider or target scope."));
+            }
+            int providerIndex = 0;
+            for (String id : strings(rule.get("subject_providers"))) {
+                if (!providerIds.contains(id)) {
+                    issues.add(error("provider_id_unknown",
+                            path + ".subject_providers[" + providerIndex + "]",
+                            "Many-to-one rule references undeclared provider '" + id + "'."));
+                }
+                providerIndex++;
+            }
+        }
+
     }
 
     private static boolean requireRegularFile(Path path, String field, List<PolicyIssue> issues) {
@@ -802,9 +1204,26 @@ public final class ProjectPolicyLoader {
             return null;
         }
         try {
+            if (!projectRoot.equals(projectRoot.toRealPath())) {
+                issues.add(error("project_root_changed", field,
+                        "project_root changed while policy assets were being resolved."));
+                return null;
+            }
+            if (!mustExist && symbolicComponent(path) != null) {
+                issues.add(error("symlink_escape", field,
+                        "Writable policy output paths must not contain symbolic links: " + path));
+                return null;
+            }
+            if (!mustExist && Files.isSymbolicLink(path)) {
+                issues.add(error("symlink_escape", field,
+                        "Writable policy output paths must not be symbolic links: " + path));
+                return null;
+            }
             if (Files.exists(path)) {
                 Path real = path.toRealPath();
-                if (!allowExternal && !real.startsWith(projectRoot)) {
+                boolean authoredInside = path.startsWith(projectRoot);
+                if (authoredInside && !real.startsWith(projectRoot)
+                        || !allowExternal && !real.startsWith(projectRoot)) {
                     issues.add(error("symlink_escape", field,
                             "Path resolves outside project_root through a symbolic link: " + path));
                     return null;
@@ -816,13 +1235,19 @@ public final class ProjectPolicyLoader {
                 issues.add(error("path_parent_missing", field, "No existing parent for path: " + path));
                 return null;
             }
+            if (!Files.isDirectory(parent)) {
+                issues.add(error("path_parent_not_directory", field,
+                        "The nearest existing path ancestor is not a directory: " + parent));
+                return null;
+            }
             Path realParent = parent.toRealPath();
             if (!allowExternal && !realParent.startsWith(projectRoot)) {
                 issues.add(error("symlink_escape", field,
                         "Path parent resolves outside project_root: " + path));
                 return null;
             }
-            return path.toAbsolutePath().normalize();
+            Path suffix = parent.relativize(path.toAbsolutePath().normalize());
+            return realParent.resolve(suffix).normalize();
         } catch (IOException e) {
             issues.add(error("path_unresolvable", field, "Could not resolve path " + path + ": " + message(e)));
             return null;
@@ -831,9 +1256,20 @@ public final class ProjectPolicyLoader {
 
     private static Path nearestExistingParent(Path path) {
         for (Path current = path.toAbsolutePath().normalize(); current != null; current = current.getParent()) {
-            if (Files.exists(current)) {
+            if (Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
                 return current;
             }
+        }
+        return null;
+    }
+
+    private static Path symbolicComponent(Path path) {
+        Path absolute = path.toAbsolutePath().normalize();
+        Path current = absolute.getRoot();
+        for (Path name : absolute) {
+            current = current == null ? name : current.resolve(name);
+            if (Files.isSymbolicLink(current)) return current;
+            if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) return null;
         }
         return null;
     }
@@ -930,6 +1366,69 @@ public final class ProjectPolicyLoader {
         return out;
     }
 
+    private static Map<String, Object> defaultsV2(Map<String, Object> parsed) {
+        Map<String, Object> out = defaults(parsed);
+
+        Map<String, Object> audit = ensureObject(out, "audit");
+        audit.putIfAbsent("retention_days", 90);
+        audit.putIfAbsent("max_file_bytes", 10_485_760);
+        audit.putIfAbsent("max_files", 10);
+
+        Map<String, Object> external = ensureObject(out, "external_terms");
+        external.putIfAbsent("providers", new ArrayList<>());
+        for (Map<String, Object> provider : objects(external.get("providers"))) {
+            provider.putIfAbsent("ontologies", new ArrayList<>());
+            provider.putIfAbsent("languages", new ArrayList<>());
+            provider.putIfAbsent("ttl_seconds", 900);
+            provider.putIfAbsent("freshness", "cache_ok");
+            provider.putIfAbsent("required_evidence_for", new ArrayList<>());
+            provider.putIfAbsent("max_results", 25);
+        }
+
+        Map<String, Object> providerEvidence = object(ensureObject(out, "validation"),
+                "provider_evidence");
+        if (!providerEvidence.isEmpty()) {
+            providerEvidence.putIfAbsent("freshness", "fresh_required");
+        }
+
+        Map<String, Object> mappings = ensureObject(out, "mappings");
+        mappings.putIfAbsent("path", ".protege-mcp/mappings.sssom.tsv");
+        mappings.putIfAbsent("allowed_predicates", new ArrayList<>());
+        mappings.putIfAbsent("allowed_sources", new ArrayList<>());
+        mappings.putIfAbsent("allowed_licenses", new ArrayList<>());
+        mappings.putIfAbsent("require_license", false);
+        mappings.putIfAbsent("required_findings", new ArrayList<>());
+        Map<String, Object> cycle = ensureObject(mappings, "directional_cycle_policy");
+        cycle.putIfAbsent("skos:broadMatch", "error");
+        cycle.putIfAbsent("skos:narrowMatch", "error");
+        mappings.putIfAbsent("many_to_one_rules", new ArrayList<>());
+
+        Map<String, Object> jobs = ensureObject(out, "jobs");
+        jobs.putIfAbsent("allowed_types", new ArrayList<>(List.of(
+                "classification", "project_qc", "semantic_diff", "inference_materialization")));
+        jobs.putIfAbsent("workers", 2);
+        jobs.putIfAbsent("queue_capacity", 32);
+        jobs.putIfAbsent("active_per_principal", 8);
+        jobs.putIfAbsent("retained_per_principal", 32);
+        jobs.putIfAbsent("retained_per_backend", 128);
+        jobs.putIfAbsent("retention_seconds", 3_600);
+
+        Map<String, Object> materialization = ensureObject(out, "materialization");
+        materialization.putIfAbsent("allowed_reasoners", new ArrayList<>());
+        materialization.putIfAbsent("allowed_categories", new ArrayList<>(List.of(
+                "subclass_axioms", "equivalent_class_axioms", "class_assertions",
+                "property_hierarchy_axioms", "object_property_assertions",
+                "data_property_assertions")));
+        materialization.putIfAbsent("allowed_destinations",
+                new ArrayList<>(List.of("new_ontology", "project_file")));
+        materialization.putIfAbsent("allow_source_write", false);
+        materialization.putIfAbsent("max_axioms_per_category", 50_000);
+        materialization.putIfAbsent("max_axioms_total", 50_000);
+        materialization.putIfAbsent("max_bytes", 67_108_864);
+        materialization.putIfAbsent("timeout_ms", 120_000);
+        return out;
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> ensureObject(Map<String, Object> map, String key) {
         Object value = map.get(key);
@@ -958,7 +1457,12 @@ public final class ProjectPolicyLoader {
     }
 
     private static ObjectMapper yamlMapper() {
+        LoaderOptions loaderOptions = new LoaderOptions();
+        loaderOptions.setAllowDuplicateKeys(false);
+        loaderOptions.setNestingDepthLimit(100);
+        loaderOptions.setCodePointLimit((int) MAX_POLICY_BYTES);
         YAMLFactory factory = YAMLFactory.builder()
+                .loaderOptions(loaderOptions)
                 .streamReadConstraints(StreamReadConstraints.builder()
                         .maxNestingDepth(100).maxStringLength((int) MAX_POLICY_BYTES).build())
                 .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -969,20 +1473,172 @@ public final class ProjectPolicyLoader {
                 .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS);
     }
 
-    private static Map<String, Object> loadSchema() {
-        try (InputStream in = ProjectPolicyLoader.class.getResourceAsStream(
-                "/schema/project-policy-v1.schema.json")) {
-            if (in == null) {
-                throw new IllegalStateException("Packaged project-policy v1 schema is missing");
+    private static void rejectYamlAliases(byte[] bytes) throws IOException {
+        try (JsonParser parser = YAML.getFactory().createParser(bytes)) {
+            while (parser.nextToken() != null) {
+                if (parser instanceof YAMLParser yaml && yaml.isCurrentAlias()) {
+                    throw new IOException("YAML aliases are not supported in project policies");
+                }
             }
-            return JSON.readValue(in, new TypeReference<LinkedHashMap<String, Object>>() { });
-        } catch (IOException e) {
-            throw new IllegalStateException("Could not load project-policy v1 schema", e);
         }
     }
 
+    private static Map<String, Object> loadSchema(int version) {
+        try (InputStream in = ProjectPolicyLoader.class.getResourceAsStream(
+                "/schema/project-policy-v" + version + ".schema.json")) {
+            if (in == null) {
+                throw new IllegalStateException("Packaged project-policy v" + version
+                        + " schema is missing");
+            }
+            return JSON.readValue(in, new TypeReference<LinkedHashMap<String, Object>>() { });
+        } catch (IOException e) {
+            throw new IllegalStateException("Could not load project-policy v" + version + " schema", e);
+        }
+    }
+
+    private static Schema compiledSchema(Map<String, Object> schema) {
+        return SCHEMA_REGISTRY.getSchema(JSON.valueToTree(schema));
+    }
+
+    private static boolean schemaValid(Schema schema, Map<String, Object> value) {
+        return schema.validate(JSON.valueToTree(value),
+                (java.util.function.Consumer<ExecutionContext>) context -> context.setFailFast(true))
+                .isEmpty();
+    }
+
+    private static Integer policyVersion(Map<String, Object> policy) {
+        Object raw = policy == null ? null : policy.get("version");
+        if (!(raw instanceof Number number)) return null;
+        int value = number.intValue();
+        return number.doubleValue() == value ? value : null;
+    }
+
     private static PolicyIssue error(String code, String path, String message) {
-        return new PolicyIssue("error", code, path, message == null ? code : message);
+        String safe = ContractRedactor.sanitize(message == null ? code : message);
+        if (safe.length() > 2_048) safe = safe.substring(0, 2_048);
+        return new PolicyIssue("error", code, path, safe);
+    }
+
+    private static boolean exceedsStructureBudget(Object root, int maximum) {
+        ArrayDeque<Object> pending = new ArrayDeque<>();
+        pending.add(root);
+        long nodes = 0;
+        while (!pending.isEmpty()) {
+            Object value = pending.removeLast();
+            if (++nodes > maximum) return true;
+            if (value instanceof Map<?, ?> map) {
+                nodes += map.size();
+                if (nodes > maximum) return true;
+                for (Object nested : map.values()) {
+                    if (nested == null) {
+                        if (++nodes > maximum) return true;
+                    } else {
+                        pending.add(nested);
+                    }
+                }
+            } else if (value instanceof Collection<?> collection) {
+                for (Object nested : collection) {
+                    if (nested == null) {
+                        if (++nodes > maximum) return true;
+                    } else {
+                        pending.add(nested);
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean exceedsExpandedScalarBudget(Object root, long maximum) {
+        ArrayDeque<Object> pending = new ArrayDeque<>();
+        pending.add(root);
+        long bytes = 0;
+        while (!pending.isEmpty()) {
+            Object value = pending.removeLast();
+            if (value instanceof Map<?, ?> map) {
+                for (Map.Entry<?, ?> entry : map.entrySet()) {
+                    bytes += utf8Length(String.valueOf(entry.getKey()));
+                    if (bytes > maximum) return true;
+                    if (entry.getValue() != null) pending.add(entry.getValue());
+                }
+            } else if (value instanceof Collection<?> collection) {
+                collection.stream().filter(Objects::nonNull).forEach(pending::add);
+            } else if (value instanceof CharSequence text) {
+                bytes += utf8Length(text);
+                if (bytes > maximum) return true;
+            }
+        }
+        return false;
+    }
+
+    private static long utf8Length(CharSequence value) {
+        long bytes = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char current = value.charAt(i);
+            if (current <= 0x7f) {
+                bytes++;
+            } else if (current <= 0x7ff) {
+                bytes += 2;
+            } else if (Character.isHighSurrogate(current) && i + 1 < value.length()
+                    && Character.isLowSurrogate(value.charAt(i + 1))) {
+                bytes += 4;
+                i++;
+            } else {
+                bytes += 3;
+            }
+        }
+        return bytes;
+    }
+
+    private static List<PolicyIssue> boundedIssues(List<PolicyIssue> issues) {
+        boolean truncated = issues instanceof PolicyIssues bounded && bounded.truncated;
+        if (!truncated && issues.size() <= MAX_POLICY_ISSUES) return issues;
+        List<PolicyIssue> bounded = new ArrayList<>(issues.subList(0, MAX_POLICY_ISSUES - 1));
+        bounded.add(error("policy_issues_truncated", null,
+                "Policy validation produced more than " + MAX_POLICY_ISSUES
+                        + " issues; remaining issues were omitted."));
+        return bounded;
+    }
+
+    private static boolean conflictsWithReservedPath(Path candidate, Path policyPath,
+            Map<String, List<Path>> assets) {
+        Path normalized = candidate.toAbsolutePath().normalize();
+        if (policyPath != null && pathsOverlap(normalized,
+                policyPath.toAbsolutePath().normalize())) return true;
+        return assets.values().stream().flatMap(Collection::stream)
+                .map(path -> path.toAbsolutePath().normalize())
+                .anyMatch(path -> pathsOverlap(normalized, path));
+    }
+
+    private static boolean pathsOverlap(Path left, Path right) {
+        if (left.equals(right) || left.startsWith(right) || right.startsWith(left)) return true;
+        if (!Files.exists(left, LinkOption.NOFOLLOW_LINKS)
+                || !Files.exists(right, LinkOption.NOFOLLOW_LINKS)) return false;
+        try {
+            return Files.isSameFile(left, right);
+        } catch (IOException cannotProveDistinct) {
+            return true;
+        }
+    }
+
+    static byte[] readStablePolicyBytes(Path path, Set<OpenOption> readOptions,
+            ReadInterlock interlock) throws IOException {
+        byte[] first = readPolicyBytesOnce(path, readOptions);
+        interlock.run();
+        byte[] second = readPolicyBytesOnce(path, readOptions);
+        if (!Arrays.equals(first, second)) {
+            throw new PolicyChangedDuringReadException(
+                    "Project policy content changed while it was being read.");
+        }
+        return first;
+    }
+
+    private static byte[] readPolicyBytesOnce(Path path, Set<OpenOption> readOptions)
+            throws IOException {
+        try (SeekableByteChannel channel = Files.newByteChannel(path, readOptions);
+                InputStream input = Channels.newInputStream(channel)) {
+            return input.readNBytes(Math.toIntExact(MAX_POLICY_BYTES + 1));
+        }
     }
 
     private static String message(Throwable error) {
@@ -1027,5 +1683,157 @@ public final class ProjectPolicyLoader {
         return value instanceof List ? (List<Map<String, Object>>) value : Collections.emptyList();
     }
 
-    private record Discovery(String kind, Path path, PolicyIssue issue) { }
+    /** Immutable policy bytes inseparably paired with their discovery-time identity pin. */
+    public static final class CapturedPolicy {
+        private final PolicySourcePin pin;
+        private final byte[] bytes;
+
+        private CapturedPolicy(PolicySourcePin pin, byte[] bytes) {
+            this.pin = Objects.requireNonNull(pin, "pin");
+            this.bytes = bytes.clone();
+        }
+
+        public Path source() {
+            return pin.source();
+        }
+
+        /** A defensive copy suitable for a private workspace snapshot. */
+        public byte[] bytes() {
+            return bytes.clone();
+        }
+
+        /** True only while the source and project anchor still match this capture. */
+        public boolean isCurrent() {
+            return pin.isCurrent();
+        }
+    }
+
+    /** Opaque discovery-time identity pin carried through capture and semantic validation. */
+    public static final class PolicySourcePin {
+        private final Path source;
+        private final Path trustedProjectAnchor;
+        private final PathIdentity sourceIdentity;
+        private final PathIdentity anchorIdentity;
+
+        private PolicySourcePin(Path source, Path trustedProjectAnchor,
+                PathIdentity sourceIdentity, PathIdentity anchorIdentity) {
+            this.source = source;
+            this.trustedProjectAnchor = trustedProjectAnchor;
+            this.sourceIdentity = sourceIdentity;
+            this.anchorIdentity = anchorIdentity;
+        }
+
+        public Path source() {
+            return source;
+        }
+
+        public Path trustedProjectAnchor() {
+            return trustedProjectAnchor;
+        }
+
+        /** True only while both lexical paths still name the originally pinned filesystem objects. */
+        public boolean isCurrent() {
+            try {
+                return source.equals(source.toRealPath())
+                        && trustedProjectAnchor.equals(trustedProjectAnchor.toRealPath())
+                        && source.startsWith(trustedProjectAnchor)
+                        && sourceIdentity.matches(source)
+                        && anchorIdentity.matches(trustedProjectAnchor);
+            } catch (IOException unavailableOrReplaced) {
+                return false;
+            }
+        }
+    }
+
+    private record PathIdentity(Object fileKey, long size,
+            java.nio.file.attribute.FileTime modifiedTime,
+            boolean directory, boolean contentSensitive) {
+        static PathIdentity source(Path path) throws IOException {
+            return capture(path, false, true);
+        }
+
+        static PathIdentity directory(Path path) throws IOException {
+            return capture(path, true, false);
+        }
+
+        private static PathIdentity capture(Path path, boolean directory,
+                boolean contentSensitive) throws IOException {
+            BasicFileAttributes attributes = Files.readAttributes(path,
+                    BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (attributes.fileKey() == null
+                    || directory && !attributes.isDirectory()
+                    || !directory && !attributes.isRegularFile()) {
+                throw new IOException("filesystem identity is unavailable for policy source");
+            }
+            return new PathIdentity(attributes.fileKey(), attributes.size(),
+                    attributes.lastModifiedTime(), directory, contentSensitive);
+        }
+
+        boolean matches(Path path) throws IOException {
+            BasicFileAttributes current = Files.readAttributes(path,
+                    BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            return Objects.equals(fileKey, current.fileKey())
+                    && (directory ? current.isDirectory() : current.isRegularFile())
+                    && (!contentSensitive || size == current.size()
+                            && modifiedTime.equals(current.lastModifiedTime()));
+        }
+    }
+
+    private record Discovery(String kind, Path path, PolicyIssue issue, Path trustedRoot,
+            PolicySourcePin sourcePin) {
+        private Discovery(String kind, Path path, PolicyIssue issue) {
+            this(kind, path, issue, null, null);
+        }
+
+        private Discovery(String kind, Path path, PolicyIssue issue, Path trustedRoot) {
+            this(kind, path, issue, trustedRoot, null);
+        }
+    }
+
+    @FunctionalInterface
+    interface ReadInterlock {
+        void run() throws IOException;
+    }
+
+    private static final class PolicyChangedDuringReadException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        private PolicyChangedDuringReadException(String message) {
+            super(message);
+        }
+    }
+
+    private static final class PolicyIssues extends ArrayList<PolicyIssue> {
+        private static final long serialVersionUID = 1L;
+        private boolean truncated;
+        private boolean hasError;
+
+        @Override
+        public boolean add(PolicyIssue issue) {
+            hasError |= "error".equals(issue.severity());
+            if (size() < MAX_POLICY_ISSUES) return super.add(issue);
+            truncated = true;
+            return false;
+        }
+    }
+
+    private static final class AssetScanBudget {
+        private int visited;
+        private boolean exhausted;
+        private boolean reported;
+
+        private boolean visit() {
+            if (exhausted) return false;
+            exhausted = ++visited > MAX_ASSET_FILES;
+            return !exhausted;
+        }
+
+        private void report(String field, List<PolicyIssue> issues) {
+            if (reported) return;
+            reported = true;
+            issues.add(error("asset_scan_limit", field,
+                    "Cumulative asset scan exceeded " + MAX_ASSET_FILES
+                            + " files/directories; narrow the configured globs."));
+        }
+    }
 }

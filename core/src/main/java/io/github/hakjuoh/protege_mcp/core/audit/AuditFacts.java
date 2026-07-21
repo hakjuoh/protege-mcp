@@ -15,8 +15,10 @@ public final class AuditFacts {
             "applied", "bytes", "change_count", "change_set_id", "closure_fingerprint",
             "committed", "created", "deleted", "discarded", "dry_run", "entry_count",
             "error_code", "event_count", "exported", "gate", "import_lock_digest", "output_dir", "path",
-            "policy_digest", "prepared", "removed", "saved", "semantic_fingerprint", "sha256",
-            "source_count", "valid", "verified", "written");
+            "policy_digest", "prepared", "previous_mapping_revision", "mapping_revision",
+            "record_count", "removed", "saved", "semantic_fingerprint", "sha256",
+            "source_count", "source_records", "spreadsheet_safe", "lossless", "valid",
+            "verified", "written");
     private static final Set<String> REVISION_FIELDS = Set.of(
             "closure_fingerprint", "document_fingerprint", "import_lock_digest",
             "policy_digest", "semantic_fingerprint", "session_revision", "workspace_fingerprint");
@@ -77,6 +79,10 @@ public final class AuditFacts {
         List<String> references = new ArrayList<>();
         addReference(references, "change_set", arguments.get("change_set_id"), SAFE_REFERENCE);
         addReference(references, "policy_digest", arguments.get("confirm_policy_digest"), SHA256);
+        addReference(references, "mapping_revision",
+                arguments.get("expected_mapping_revision"), SHA256);
+        addReference(references, "target_digest",
+                arguments.get("expected_target_digest"), SHA256);
         return List.copyOf(references);
     }
 

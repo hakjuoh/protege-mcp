@@ -88,7 +88,7 @@ ROBOT-compatible `.rq` files for [`run_project_qc`](#run_project_qc); their lead
 
 Discover and return the effective project policy. An explicit local `policy_path` wins; otherwise the tool
 walks from the active ontology document upward for `.protege-mcp/project.yaml`. It strictly parses YAML,
-validates schema v1, applies deterministic defaults, and checks the active ontology IRI, installed required
+dispatches strict policy schema v1/v2, applies versioned deterministic defaults, and checks the active ontology IRI, installed required
 reasoner, CURIEs/regexes, referenced files, project-root confinement, and symlink escapes. With the
 default preferences, no policy is a compatible interactive state: `policy_loaded=false` and
 `path_mode=legacy_local_admin_unrestricted` are reported explicitly. When **Allow unrestricted
@@ -113,7 +113,10 @@ policy loads (saves and sidecars derived from the already-open document still wo
 - `policy_digest`: SHA-256 over canonical effective policy data (comments/key order do not change it).
 - `schema_version`: integer policy schema version.
 - `policy`: effective policy object with deterministic defaults.
-- `resolved_assets`: paths grouped as modules/import lock/invariants/SHACL/CQs/release output.
+- `migration`: for valid v1 policies, an out-of-band v1→v2 recommendation including the enabled
+  feature blocks and explicit `automatic_write=false` / `diagnostic_affects_digest=false`; absent for v2.
+- `resolved_assets`: paths grouped as modules/import lock/invariants/SHACL/CQs/release output and an existing
+  v2 SSSOM `mapping_store` (an absent future sidecar is not captured).
 - `errors` / `warnings`: structured `{severity, code, path?, message}` validation issues.
 
 ## `validate_project_policy`
@@ -135,6 +138,7 @@ Run the same strict discovery, schema, semantic, reasoner, and filesystem valida
 - `policy_digest`: canonical digest of the effective policy.
 - `schema_version`: its schema version.
 - `policy`: the effective (defaulted) policy object.
+- `migration`: the non-mutating v1→v2 recommendation when the loaded policy is v1; absent for v2.
 - `resolved_assets`: the validation assets the policy references.
 - `errors`: structured validation errors.
 - `warnings`: non-fatal issues.
@@ -155,6 +159,10 @@ A live waiver suppresses only its matching rule/focus and remains visible; an ex
 A completed policy violation is `gate=fail`; invalid configuration, wrong/
 unavailable reasoner, classification failure/timeout, malformed asset, inference degradation, or a skipped/
 errored required stage is `gate=error` and takes precedence over a separate failure. *Read-only.*
+The v2-only `provider_evidence` stage is recognized by the strict policy workflow on every QC surface.
+Until the OLS4 executor lands in the next implementation slice, requiring it fails closed with
+`provider_evidence_unavailable`; it is never scheduled by default and is not added to the frozen legacy
+`run_qc_suite` eight-stage request vocabulary.
 
 **Arguments**
 
@@ -344,6 +352,10 @@ resolves the target under `project_root` (default `.protege-mcp/project.yaml` be
 document), and lands atomically via a temp-file rename. `overwrite=false` refuses an existing file with
 `error_code: policy_exists` and writes nothing.
 
+The default remains `version=1` for compatibility. Passing `version=2` also emits reviewed, bounded
+`external_terms`, `mappings`, `jobs`, and `materialization` blocks. Provider endpoints and credential
+bindings are deliberately not written because they are owner-local configuration.
+
 **Arguments**
 
 | Name | Type | Required | Default | Description |
@@ -351,6 +363,7 @@ document), and lands atomically via a temp-file rename. `overwrite=false` refuse
 | `path` | string | no | `.protege-mcp/project.yaml` beside the document | Explicit project-relative or absolute policy path to write. |
 | `project_id` | string | no | derived from the ontology IRI's last segment, else `my-project` | Project identifier written into the template. |
 | `profile` | string | no | `general` | Which starter to emit: `general` (OWL/Turtle, HermiT/DL) or `obo` (OBO edit file, ELK/EL). |
+| `version` | integer | no | `1` | Policy schema to emit: `1` or `2`. |
 | `overwrite` | boolean | no | `false` | Replace an existing file; otherwise an existing target is refused with `policy_exists`. |
 
 **Returns**
@@ -359,6 +372,7 @@ document), and lands atomically via a temp-file rename. `overwrite=false` refuse
 - `path`: the canonical path the template was written to.
 - `project_id`: the identifier written into the template.
 - `profile`: the emitted profile (`general` or `obo`).
+- `schema_version`: the emitted policy schema (`1` or `2`).
 - `bytes`: the size in bytes of the written file.
 - `sha256`: the SHA-256 of the written bytes.
 - `validation_hint`: the ordered list of files to create and edits to make before the policy validates.

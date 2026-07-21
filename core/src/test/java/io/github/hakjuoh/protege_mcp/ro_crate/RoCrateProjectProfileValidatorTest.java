@@ -2,11 +2,17 @@ package io.github.hakjuoh.protege_mcp.ro_crate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +28,15 @@ class RoCrateProjectProfileValidatorTest {
     private static final String PROJECT_PROFILE = "https://example.org/profiles/project-v1/";
     private static final String ONTOLOGY = "https://example.org/ontology";
     private static final String OWL2 = "https://www.w3.org/TR/owl2-overview/";
+
+    @Test
+    void detectionRetainsItsExplicitNullContract() {
+        assertThrows(IllegalArgumentException.class,
+                () -> RoCrateProjectProfileValidator.detectVersion(null));
+        assertThrows(IllegalArgumentException.class,
+                () -> RoCrateProjectProfileValidator.validate(
+                        null, RoCrateVersion.V1_1, profile()));
+    }
 
     @Test
     void validatesEveryRecommendationWithItsNormativeFilenameAndProfileModel(@TempDir Path temp)
@@ -48,6 +63,49 @@ class RoCrateProjectProfileValidatorTest {
 
             assertEquals(version,
                     RoCrateProjectProfileValidator.detectVersion(manifest).orElseThrow());
+        }
+    }
+
+    @Test
+    void postSizeCheckGrowthRemainsBoundedForDetectionAndValidation(@TempDir Path temp)
+            throws Exception {
+        Path manifest = temp.resolve(RoCrateVersion.V1_1.metadataFile());
+        String detectable = "{\"@context\":\"" + RoCrateVersion.V1_1.context() + "\"}\n";
+        Files.writeString(manifest, detectable);
+
+        assertTrue(RoCrateProjectProfileValidator.detectVersion(manifest,
+                () -> growWithJsonWhitespace(manifest)).isEmpty(),
+                "an unbounded read would parse this valid JSON and detect 1.1");
+
+        Files.writeString(manifest, detectable, StandardOpenOption.TRUNCATE_EXISTING);
+        RoCrateValidationResult validation = RoCrateProjectProfileValidator.validate(
+                manifest, RoCrateVersion.V1_1, profile(),
+                () -> growWithJsonWhitespace(manifest));
+        assertCode(validation, "manifest_too_large");
+    }
+
+    @Test
+    void capturedManifestPinsItsOrdinaryParentDirectoryIdentity(@TempDir Path temp)
+            throws Exception {
+        Path directory = Files.createDirectory(temp.resolve("crate"));
+        Path manifest = directory.resolve(RoCrateVersion.V1_1.metadataFile());
+        JSON.writeValue(manifest.toFile(), crate(RoCrateVersion.V1_1,
+                RoCrateVersion.V1_1.metadataFile(), null));
+        var captured = RoCrateProjectProfileValidator.capture(manifest);
+        Path saved = temp.resolve("crate-before-replacement");
+
+        try {
+            Files.move(directory, saved);
+            Files.createDirectory(directory);
+            Files.createLink(manifest, saved.resolve(manifest.getFileName()));
+
+            assertFalse(captured.isCurrent());
+            assertTrue(RoCrateProjectProfileValidator.detectCapturedVersion(captured).isEmpty());
+            assertCode(RoCrateProjectProfileValidator.validateCaptured(
+                    captured, RoCrateVersion.V1_1, profile()), "manifest_unreadable");
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
         }
     }
 
@@ -280,5 +338,20 @@ class RoCrateProjectProfileValidatorTest {
         assertFalse(result.valid());
         assertTrue(result.issues().stream().anyMatch(issue -> code.equals(issue.code())),
                 () -> "missing " + code + " in " + result.issues());
+    }
+
+    private static void growWithJsonWhitespace(Path path) throws IOException {
+        byte[] spaces = new byte[8192];
+        Arrays.fill(spaces, (byte) ' ');
+        try (FileChannel channel = FileChannel.open(path, StandardOpenOption.WRITE)) {
+            channel.position(channel.size());
+            long remaining = RoCrateProjectProfileValidator.MAX_BYTES + 1 - channel.position();
+            while (remaining > 0) {
+                int count = (int) Math.min(spaces.length, remaining);
+                int written = channel.write(ByteBuffer.wrap(spaces, 0, count));
+                if (written <= 0) throw new IOException("failed to grow test manifest");
+                remaining -= written;
+            }
+        }
     }
 }

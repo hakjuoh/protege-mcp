@@ -239,6 +239,10 @@ public final class Main {
         result.put("policy_path", policy.path() == null ? null : policy.path().toString());
         result.put("project_root", policy.projectRoot() == null ? null : policy.projectRoot().toString());
         result.put("policy_digest", policy.digest());
+        result.put("schema_version", policy.version() == 0 ? null : policy.version());
+        if (policy.migration() != null) {
+            result.put("migration", policy.migration().toJson());
+        }
         result.put("errors", policy.issues().stream().filter(issue -> "error".equals(issue.severity()))
                 .map(issue -> issue.toJson()).toList());
         result.put("warnings", policy.issues().stream().filter(issue -> !"error".equals(issue.severity()))

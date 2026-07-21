@@ -54,6 +54,10 @@
             <version>${jena.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-csv</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <version>6.1.2</version>
@@ -79,6 +83,48 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.6</version>
+                <configuration>
+                    <workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.15</version>
+                <executions>
+                    <execution><id>prepare-agent</id><goals><goal>prepare-agent</goal></goals></execution>
+                    <execution><id>report</id><phase>test</phase><goals><goal>report</goal></goals></execution>
+                    <execution>
+                        <id>check-contracts</id><phase>verify</phase><goals><goal>check</goal></goals>
+                        <configuration>
+                            <rules><rule><element>BUNDLE</element>
+                                <includes>
+                                    <include>io.github.hakjuoh.protege_mcp.contracts.*</include>
+                                    <include>io.github.hakjuoh.protege_mcp.core.headless.HeadlessToolCatalog*</include>
+                                    <include>io.github.hakjuoh.protege_mcp.core.headless.HeadlessExecutionException*</include>
+                                </includes>
+                                <limits>
+                                    <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.45</minimum></limit>
+                                    <limit><counter>BRANCH</counter><value>COVEREDRATIO</value><minimum>0.30</minimum></limit>
+                                </limits>
+                            </rule></rules>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>check-headless-service</id><phase>verify</phase><goals><goal>check</goal></goals>
+                        <configuration>
+                            <rules><rule><element>CLASS</element>
+                                <includes>
+                                    <include>io.github.hakjuoh.protege_mcp.core.headless.HeadlessToolService</include>
+                                </includes>
+                                <limits>
+                                    <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.35</minimum></limit>
+                                    <limit><counter>BRANCH</counter><value>COVEREDRATIO</value><minimum>0.15</minimum></limit>
+                                </limits>
+                            </rule></rules>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

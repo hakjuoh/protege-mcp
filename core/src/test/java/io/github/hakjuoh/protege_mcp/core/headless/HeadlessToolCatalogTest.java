@@ -15,7 +15,7 @@ class HeadlessToolCatalogTest {
 
     @Test
     void supportedAndUnavailableNamesPartitionTheLiveCatalogExactly() {
-        assertEquals(8, HeadlessToolCatalog.definitions().size());
+        assertEquals(14, HeadlessToolCatalog.definitions().size());
         assertTrue(HeadlessToolCatalog.supportedNames().contains(
                 HeadlessToolCatalog.SURFACE_TOOL));
         assertTrue(HeadlessToolCatalog.definition(

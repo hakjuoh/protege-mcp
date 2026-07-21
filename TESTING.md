@@ -20,13 +20,14 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
 
-At the time of writing: **3,459 JUnit tests** (3,125 plugin, 56 standalone-CLI,
-and 278 core tests), with zero failures/errors and one intentionally skipped opt-in performance test,
+At the time of writing: **3,503 JUnit tests** (3,143 plugin, 61 standalone-CLI,
+and 299 core tests), with zero failures/errors and one intentionally skipped opt-in performance test,
 across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
 pure helpers of `ui`, the headless CLI, and the extractable `ro_crate` interoperability package. Coverage is
-measured by **JaCoCo** (`mvn verify`) and a floor on
-the `tools`/`server`/`oauth` layers gates against regressions; the EDT/subprocess-bound `ui`/`chat`
-surfaces are intentionally not gated.
+measured by **JaCoCo** (`mvn verify`). The plugin's `tools`/`server`/`oauth` layers, the core contract
+and headless service/catalog boundary, and the CLI headless registry each have explicit regression floors; the
+EDT/subprocess-bound `ui`/`chat` surfaces are intentionally not gated. The current whole-module reports
+are core 78.51% line / 61.27% branch, plugin 71.36% / 64.13%, and CLI 73.93% / 64.62%.
 
 Historical correction: the `v0.5.0` tag's copy of this page still said 2,044, but that tag's verified
 release commit records the actual clean run as **2,488 tests**. The count above comes from the current
@@ -50,14 +51,25 @@ boundary rather than indicating an unnoticed partial load.
 
 ## Public-contract and policy-schema harnesses
 
-- `PublicContractSnapshotTest` pins the immutable 0.5.0 baseline (66 tool registrations and 11
+- `PublicContractSnapshotTest` pins both the immutable 0.5.0 baseline (66 tool registrations and 11
   prompt registrations); the current 85-tool runtime surface is checked against it, allowing only
-  reviewed additive drift. The tool goldens combine all MCP registration metadata and input schemas with
+  reviewed additive drift, while the complete 0.7.2 plugin baseline freezes all 85 tools and 11 prompts
+  before the 0.8 additions. `HeadlessContractSnapshotTest` separately freezes the eight-tool 0.7.2
+  stdio surface. The tool goldens combine all MCP registration metadata and input schemas with
   the manual's documented result fields; prompt goldens also render every template with deterministic
   sentinel arguments. Compatibility checks allow additive optional surface while rejecting
   removed/changed arguments, new required prompt arguments, dropped result fields, unreviewed descriptions,
   workflow text or metadata, and undocumented registrations. Published baselines cannot be overwritten;
   snapshots are canonical LF files on every platform.
+- Every tool now advertises an output schema and the shared bounded error envelope (`error`, stable
+  `code`, sanitized `message`, bounded `details`, and `retryable`). Only the exact 0.7.2 tool allowlists
+  may use the open legacy success schema; every new registration must supply a typed output schema.
+  `ToolSchemaValidatorTest` attacks the closed recursive schema dialect, and the live/headless adapters
+  validate actual structured results against their precompiled advertised schema. The adapters rebuild
+  structured and text content from one immutable canonical snapshot before returning it. Error tests cover
+  deep immutability, nesting/size limits, authorization and audit outcome codes, filesystem and secret
+  redaction, request-scoped secret canaries, and the retry-safe distinction between a queued EDT body
+  that was cancelled and one whose mutation outcome is unknown.
 - `ProjectPolicySchemaTest` validates the minimal, general-OWL, and OBO YAML examples against the packaged
   policy v1 JSON Schema. Adversarial cases cover unknown/future fields, unsafe project roots, malformed
   identities/IRIs/dates/host allowlists and types, duplicate/unknown stages, invalid timeouts, and missing

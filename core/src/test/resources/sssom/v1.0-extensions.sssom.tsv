@@ -1,0 +1,20 @@
+#curie_map:
+#  EX: https://example.org/
+#mapping_set_id: https://example.org/mapping-set/extensions
+#license: https://creativecommons.org/licenses/by/4.0/
+#extension_definitions:
+#  - slot_name: x_integer
+#    property: EX:integerProperty
+#    type_hint: xsd:integer
+#  - slot_name: x_reference
+#    property: EX:referenceProperty
+#    type_hint: linkml:Uriorcurie
+#  - slot_name: x_text
+#    property: EX:textProperty
+#    type_hint: xsd:string
+#  - slot_name: x_custom
+#    property: EX:customProperty
+#    type_hint: EX:CustomDatatype
+#x_text: 123
+subject_id	predicate_id	object_id	mapping_justification	x_integer	x_reference	x_custom	x_undefined
+EX:A	skos:closeMatch	EX:B	semapv:ManualMappingCuration	42	EX:Term	opaque	kept exactly

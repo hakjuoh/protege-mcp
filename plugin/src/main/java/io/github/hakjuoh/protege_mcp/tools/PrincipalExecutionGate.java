@@ -25,19 +25,22 @@ public final class PrincipalExecutionGate {
 
     public Lease acquire(AuthenticatedPrincipal principal) {
         if (principal == null) {
-            throw new ToolArgException("Authorization denied: authenticated principal is missing.");
+            throw new ToolArgException("authorization_denied",
+                    "Authorization denied: authenticated principal is missing.", false);
         }
         ClientState state = clients.computeIfAbsent(principal.clientId(), ignored -> new ClientState());
         if (state.clientRevocationPending || (principal.grantId() != null
                 && state.pendingGrants.contains(principal.grantId()))) {
-            throw new ToolArgException("Authorization denied: this client or grant was revoked.");
+            throw new ToolArgException("authorization_revoked",
+                    "Authorization denied: this client or grant was revoked.", false);
         }
         state.lock.readLock().lock();
         if (state.clientRevocationPending || state.clientRevoked
                 || (principal.grantId() != null && (state.pendingGrants.contains(principal.grantId())
                 || state.revokedGrants.contains(principal.grantId())))) {
             state.lock.readLock().unlock();
-            throw new ToolArgException("Authorization denied: this client or grant was revoked.");
+            throw new ToolArgException("authorization_revoked",
+                    "Authorization denied: this client or grant was revoked.", false);
         }
         state.active.incrementAndGet();
         return new Lease(state);

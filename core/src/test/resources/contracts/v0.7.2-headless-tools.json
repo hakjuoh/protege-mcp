@@ -1,0 +1,163 @@
+{
+  "product_version" : "0.7.2",
+  "snapshot_version" : 1,
+  "tools" : [ {
+    "description" : "Describe the project-confined headless stdio surface, effective capabilities, message bounds, supported tools, and live Protégé tools that are unavailable.",
+    "error_schema" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : { },
+      "type" : "object"
+    },
+    "name" : "get_headless_capabilities",
+    "output_schema" : null,
+    "required_capabilities" : [ ]
+  }, {
+    "description" : "Validate the fixed project policy supplied when this stdio server started. Returns structured schema, semantic, and project-containment findings and writes nothing.",
+    "error_schema" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : { },
+      "type" : "object"
+    },
+    "name" : "validate_project_policy",
+    "output_schema" : null,
+    "required_capabilities" : [ "filesystem:project:read", "ontology:read" ]
+  }, {
+    "description" : "Run the complete offline project QC gate against one captured, checksum-verified workspace snapshot using the bundled headless reasoner.",
+    "error_schema" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "limit" : {
+          "description" : "Maximum findings per stage (default 25).",
+          "maximum" : 1000,
+          "minimum" : 0,
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "name" : "run_project_qc",
+    "output_schema" : null,
+    "required_capabilities" : [ "filesystem:project:read", "ontology:read" ]
+  }, {
+    "description" : "Verify the policy-declared locked import closure offline against captured local files and checksums. Non-locked policies report verified=false and write nothing.",
+    "error_schema" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : { },
+      "type" : "object"
+    },
+    "name" : "verify_import_lock",
+    "output_schema" : null,
+    "required_capabilities" : [ "filesystem:project:read", "ontology:read" ]
+  }, {
+    "description" : "Generate the deterministic project import lock from captured local imports. Dry-run is the default; a write uses checksum-guarded atomic replacement with backup.",
+    "error_schema" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "dry_run" : {
+          "description" : "When true (default), return the candidate without writing.",
+          "type" : "boolean"
+        },
+        "output" : {
+          "description" : "Optional project-relative output file.",
+          "maxLength" : 4096,
+          "minLength" : 1,
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "name" : "write_import_lock",
+    "output_schema" : null,
+    "required_capabilities" : [ "filesystem:project:read", "filesystem:project:write", "ontology:admin" ]
+  }, {
+    "description" : "Run the complete offline release gate and build a bounded preview without writing. Any baseline manifest must resolve inside the fixed project root.",
+    "error_schema" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "baseline_manifest" : {
+          "description" : "Optional project-confined baseline manifest.",
+          "maxLength" : 4096,
+          "minLength" : 1,
+          "type" : "string"
+        },
+        "limit" : {
+          "description" : "Maximum findings and report samples (default 50).",
+          "maximum" : 1000,
+          "minimum" : 0,
+          "type" : "integer"
+        }
+      },
+      "type" : "object"
+    },
+    "name" : "run_release_gate",
+    "output_schema" : null,
+    "required_capabilities" : [ "filesystem:project:read", "ontology:release" ]
+  }, {
+    "description" : "Build the verified release bundle. Dry-run is the default; a write publishes the whole project-confined directory failure-atomically after the release gate passes.",
+    "error_schema" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "baseline_manifest" : {
+          "description" : "Optional project-confined baseline manifest.",
+          "maxLength" : 4096,
+          "minLength" : 1,
+          "type" : "string"
+        },
+        "created_at" : {
+          "description" : "Optional ISO-8601 UTC release timestamp.",
+          "maxLength" : 128,
+          "type" : "string"
+        },
+        "dry_run" : {
+          "description" : "When true (default), compute the bundle without writing.",
+          "type" : "boolean"
+        },
+        "limit" : {
+          "description" : "Maximum findings and report samples (default 50).",
+          "maximum" : 1000,
+          "minimum" : 0,
+          "type" : "integer"
+        },
+        "output_dir" : {
+          "description" : "Optional project-relative release directory.",
+          "maxLength" : 4096,
+          "minLength" : 1,
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "name" : "prepare_release",
+    "output_schema" : null,
+    "required_capabilities" : [ "filesystem:project:read", "filesystem:project:write", "ontology:release" ]
+  }, {
+    "description" : "Explicitly merge the redacted owner-only project audit streams into one deterministic, bounded JSON Lines artifact. Dry-run is the default.",
+    "error_schema" : null,
+    "input_schema" : {
+      "additionalProperties" : false,
+      "properties" : {
+        "dry_run" : {
+          "description" : "When true (default), report the target without writing.",
+          "type" : "boolean"
+        },
+        "output" : {
+          "description" : "Optional project-relative output file.",
+          "maxLength" : 4096,
+          "minLength" : 1,
+          "type" : "string"
+        }
+      },
+      "type" : "object"
+    },
+    "name" : "export_audit_log",
+    "output_schema" : null,
+    "required_capabilities" : [ "filesystem:project:read", "filesystem:project:write", "server:admin" ]
+  } ]
+}

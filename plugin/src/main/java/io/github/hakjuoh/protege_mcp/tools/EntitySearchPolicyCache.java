@@ -1,8 +1,8 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -14,40 +14,42 @@ import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 /** Content-keyed, model-thread-free resolver for {@code entity_search} policy settings. */
 final class EntitySearchPolicyCache {
 
+    private final CaptureInterlock beforeCapture;
     private Key cachedKey;
     private EntitySearch.Settings cachedSettings = EntitySearch.Settings.defaults();
     private int loads;
 
+    EntitySearchPolicyCache() {
+        this(() -> { });
+    }
+
+    EntitySearchPolicyCache(CaptureInterlock beforeCapture) {
+        this.beforeCapture = java.util.Objects.requireNonNull(beforeCapture, "beforeCapture");
+    }
+
     synchronized EntitySearch.Settings resolve(ProjectPolicyTools.PolicyContext live) {
-        Path policyPath = discover(live.documentPath());
-        if (policyPath == null) {
+        DiscoveredPolicy discovered = discoverSafely(live.documentPath());
+        if (discovered == null) {
             clear();
             return EntitySearch.Settings.defaults();
         }
+        ProjectPolicyLoader.PolicySourcePin sourcePin = discovered.sourcePin();
+        Path policyPath = sourcePin.source();
+        ProjectPolicyLoader.CapturedPolicy captured;
         byte[] bytes;
         try {
-            long size = Files.size(policyPath);
-            if (size > ProjectPolicyLoader.MAX_POLICY_BYTES) {
-                clear();
-                return EntitySearch.Settings.defaults();
-            }
-            try (InputStream input = Files.newInputStream(policyPath)) {
-                bytes = input.readNBytes(Math.toIntExact(ProjectPolicyLoader.MAX_POLICY_BYTES + 1));
-            }
-            if (bytes.length > ProjectPolicyLoader.MAX_POLICY_BYTES) {
-                clear();
-                return EntitySearch.Settings.defaults();
-            }
-        } catch (IOException | RuntimeException unreadable) {
+            beforeCapture.run();
+            captured = ProjectPolicyLoader.captureStablePolicy(sourcePin);
+            bytes = captured.bytes();
+        } catch (IOException | RuntimeException unsafeOrUnreadable) {
             clear();
             return EntitySearch.Settings.defaults();
         }
-
-        Key key = new Key(policyPath.toAbsolutePath().normalize(), sha256(bytes),
+        Key key = new Key(policyPath, sha256(bytes),
                 live.activeOntologyIri(), List.copyOf(live.installedReasoners()));
-        if (key.equals(cachedKey)) return cachedSettings;
+        if (key.equals(cachedKey) && captured.isCurrent()) return cachedSettings;
 
-        ProjectPolicy policy = ProjectPolicyLoader.loadCaptured(policyPath, bytes,
+        ProjectPolicy policy = ProjectPolicyLoader.loadCaptured(captured,
                 live.activeOntologyIri(), live.installedReasoners(), false);
         cachedSettings = EntitySearch.Settings.from(policy);
         cachedKey = key;
@@ -64,13 +66,24 @@ final class EntitySearchPolicyCache {
         return loads;
     }
 
-    private static Path discover(Path ontologyDocument) {
+    private static DiscoveredPolicy discoverSafely(Path ontologyDocument) {
         if (ontologyDocument == null) return null;
         Path start = Files.isDirectory(ontologyDocument) ? ontologyDocument
                 : ontologyDocument.toAbsolutePath().normalize().getParent();
         for (Path current = start; current != null; current = current.getParent()) {
             Path candidate = current.resolve(ProjectPolicyLoader.DEFAULT_RELATIVE_PATH);
-            if (Files.isRegularFile(candidate)) return candidate;
+            if (Files.isSymbolicLink(candidate)) return null;
+            if (Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    Path trustedRoot = current.toRealPath();
+                    Path real = candidate.toRealPath();
+                    return real.startsWith(trustedRoot)
+                            ? new DiscoveredPolicy(ProjectPolicyLoader.pinCanonicalPolicy(
+                                    real, trustedRoot)) : null;
+                } catch (IOException unresolved) {
+                    return null;
+                }
+            }
         }
         return null;
     }
@@ -91,4 +104,11 @@ final class EntitySearchPolicyCache {
 
     private record Key(Path source, String sha256, String activeOntologyIri,
             List<String> installedReasoners) { }
+
+    private record DiscoveredPolicy(ProjectPolicyLoader.PolicySourcePin sourcePin) { }
+
+    @FunctionalInterface
+    interface CaptureInterlock {
+        void run() throws IOException;
+    }
 }

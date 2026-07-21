@@ -118,7 +118,7 @@ public final class WorkspaceBundleTransaction implements AutoCloseable {
             return new Stage(target, bundle.artifacts().size(), total,
                     stagedIdentity.sha256());
         } catch (IOException | RuntimeException error) {
-            deleteTree(candidate);
+            if (snapshot.policySourceCurrent()) deleteTree(candidate);
             throw error;
         }
     }
@@ -194,9 +194,11 @@ public final class WorkspaceBundleTransaction implements AutoCloseable {
     /** Restore the exact prior release, or remove a newly-created release, after identity checks. */
     public synchronized Recovery recover() throws IOException {
         requireState(State.COMMITTED);
+        requirePolicySourceCurrent("before release recovery");
         Path trash = createSiblingPath("recovery");
         try (WorkspaceProjectLock.Handle ignored = WorkspaceProjectLock.acquire(
                 workspace.stateRoot(), projectRoot)) {
+            requirePolicySourceCurrent("after acquiring the release recovery lock");
             if (!stagedIdentity.equals(FilesystemProjectWorkspace.pinnedIdentity(target, true))) {
                 throw new IOException("published release changed after commit; recovery refused");
             }
@@ -204,15 +206,26 @@ public final class WorkspaceBundleTransaction implements AutoCloseable {
                     && !baseline.equals(FilesystemProjectWorkspace.pinnedIdentity(backup, true))) {
                 throw new IOException("release backup changed after commit; recovery refused");
             }
+            requirePolicySourceCurrent("before moving the published release for recovery");
             try {
                 mover.move(target, trash);
             } catch (IOException | RuntimeException firstMoveFailure) {
                 if (!installedAtTrashAndTargetAbsent(trash)) throw firstMoveFailure;
             }
             try {
-                if (targetExisted) mover.move(backup, target);
+                if (targetExisted) {
+                    requirePolicySourceCurrent("before restoring the release backup");
+                    mover.move(backup, target);
+                }
             } catch (IOException | RuntimeException failure) {
+                if (!snapshot.policySourceCurrent()
+                        || !installedAtTrashAndTargetAbsent(trash)) {
+                    throw new IOException("release recovery stopped after project identity changed; "
+                            + "the installed release is preserved for manual recovery at " + trash,
+                            failure);
+                }
                 try {
+                    requirePolicySourceCurrent("before rolling back the failed release recovery");
                     mover.move(trash, target);
                 } catch (IOException | RuntimeException rollbackFailure) {
                     failure.addSuppressed(rollbackFailure);
@@ -226,6 +239,11 @@ public final class WorkspaceBundleTransaction implements AutoCloseable {
                 throw new IOException("restored release does not match the baseline; the prior "
                         + "installed release remains at " + trash);
             }
+            requirePolicySourceCurrent("before cleaning the recovered release");
+            if (!stagedIdentity.equals(FilesystemProjectWorkspace.pinnedIdentity(trash, true))) {
+                throw new IOException("recovered release trash changed; manual cleanup required at "
+                        + trash);
+            }
             deleteTree(trash);
             state = State.RECOVERED;
             forceDirectory(target.getParent());
@@ -234,6 +252,12 @@ public final class WorkspaceBundleTransaction implements AutoCloseable {
         } catch (AtomicMoveNotSupportedException unsupported) {
             throw new IOException("filesystem does not support atomic release recovery for "
                     + target, unsupported);
+        }
+    }
+
+    private void requirePolicySourceCurrent(String phase) throws IOException {
+        if (!snapshot.policySourceCurrent()) {
+            throw new IOException("project policy identity changed " + phase + "; recovery refused");
         }
     }
 
@@ -256,7 +280,7 @@ public final class WorkspaceBundleTransaction implements AutoCloseable {
     public synchronized void close() {
         if (state == State.CLOSED) return;
         if (staged != null) {
-            deleteTree(staged);
+            if (snapshot.policySourceCurrent()) deleteTree(staged);
             staged = null;
         }
         state = State.CLOSED;
@@ -353,7 +377,12 @@ public final class WorkspaceBundleTransaction implements AutoCloseable {
             return;
         }
         Path recoveryBackup = backup;
+        if (!snapshot.policySourceCurrent() || !baselineAtBackupAndTargetAbsent()) {
+            throw new IOException("release commit failed after project identity changed; the prior "
+                    + "release backup remains for manual recovery at " + recoveryBackup, original);
+        }
         try {
+            requirePolicySourceCurrent("before automatic baseline restoration");
             mover.move(recoveryBackup, target);
         } catch (IOException | RuntimeException restoreFailure) {
             if (baselineAtTargetAndBackupAbsent(recoveryBackup)) {

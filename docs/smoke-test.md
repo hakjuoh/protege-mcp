@@ -196,6 +196,15 @@ at the repository root so the project root spans all modules.
 | 85 | Bind two prefix names to one namespace, call `remove_prefix` for one name, and query using the survivor | only the requested name disappears; the same-namespace sibling and standard `rdf`/`rdfs`/`owl`/`xsd` prefixes remain usable |
 | 86 | Commit one multi-operation change set and call `undo_change` once | every committed operation is reverted together; an anomalous multi-entry history surfaces `undo_log_warning` |
 
+### 0.8.0 — governed SSSOM mapping sidecar
+
+| # | Step | Expect |
+| --- | --- | --- |
+| 87 | With a valid policy v2 mapping path, call `list_mappings` while the sidecar is absent, then `add_mapping` with that `mapping_revision` and `confirm=true` | absent state returns a stable empty revision; the add atomically creates one valid row outside the ontology Undo stack |
+| 88 | Call `validate_mappings`, then `export_sssom` with its `mapping_revision` and a new project-confined destination | validation is deterministic; export reports the same source revision, a verified artifact digest, and `lossless=true` |
+| 89 | `remove_mapping` by the listed id, then `import_sssom mode=replace` from the export using each latest revision | remove yields zero rows; import restores exactly one row and preserves its stable id/extensions |
+| 90 | Retry export/add with a stale mapping revision, overwrite without `expected_target_digest`, an escaping symlink, read-only mode, and a declined live confirmation | every call is a typed prevented error; neither sidecar nor destination changes and audit reports `effects_prevented=true` |
+
 Any unexpected error, UI freeze, or missing committed edit is a release blocker — capture the JSON error
 and the Protégé log. Steps 16–18 must never undo an unrelated edit: verified rollback now performs all
 checks on an isolated snapshot and either prevents the delta or commits it once after final revalidation.

@@ -12,6 +12,9 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 import io.github.hakjuoh.protege_mcp.prompts.PromptCatalog;
+import io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas;
+import io.github.hakjuoh.protege_mcp.contracts.Legacy072ToolContracts;
+import io.github.hakjuoh.protege_mcp.contracts.SssomToolSchemas;
 import io.github.hakjuoh.protege_mcp.tools.ToolCatalog;
 import io.github.hakjuoh.protege_mcp.tools.ToolContext;
 
@@ -26,12 +29,30 @@ class McpCatalogTest {
         Set<String> registeredPrompts = new LinkedHashSet<>();
         PromptCatalog.buildAll().forEach(spec -> registeredPrompts.add(spec.prompt().name()));
 
-        assertEquals(85, catalog.toolNames().size());
+        assertTrue(catalog.toolNames().containsAll(Legacy072ToolContracts.liveToolNames()),
+                "the current catalog must retain every frozen 0.7.2 tool");
         assertEquals(11, catalog.promptNames().size());
         assertEquals(catalog.toolNames(), registeredTools,
                 "every JSON tool definition must have exactly one handler registration");
         assertEquals(catalog.promptNames(), registeredPrompts,
                 "every JSON prompt definition must have exactly one renderer registration");
+        catalog.toolNames().forEach(name -> {
+            assertTrue(!catalog.tool(name).outputSchema().isEmpty(), name + " output schema");
+            assertEquals(ToolContractSchemas.errorSchema(), catalog.tool(name).errorSchema());
+        });
+        catalog.toolNames().stream()
+                .filter(name -> !Legacy072ToolContracts.liveToolNames().contains(name))
+                .forEach(name -> assertTrue(!catalog.tool(name).outputSchema().isEmpty(),
+                        name + " post-0.7.2 tool must declare typed output"));
+    }
+
+    @Test
+    void liveMappingInputsUseTheCrossSurfaceSchemasExactly() {
+        McpCatalog catalog = McpCatalog.get();
+        for (String name : SssomToolSchemas.NAMES) {
+            assertEquals(SssomToolSchemas.input(name, true), catalog.tool(name).inputSchema(), name);
+            assertEquals(SssomToolSchemas.output(name), catalog.tool(name).outputSchema(), name);
+        }
     }
 
     @Test
@@ -46,6 +67,10 @@ class McpCatalogTest {
                 catalog.tool("search_entities").inputSchema().get("properties");
         assertThrows(UnsupportedOperationException.class,
                 () -> properties.put("extra", java.util.Map.of()));
+        assertThrows(UnsupportedOperationException.class,
+                () -> catalog.tool("search_entities").outputSchema().put("extra", true));
+        assertThrows(UnsupportedOperationException.class,
+                () -> catalog.tool("search_entities").errorSchema().put("extra", true));
         assertThrows(UnsupportedOperationException.class,
                 () -> catalog.prompt("audit_ontology").arguments().clear());
     }
@@ -74,11 +99,23 @@ class McpCatalogTest {
     void parserRejectsDuplicateNames() {
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"tools":[
-                 {"name":"a","description":"d","input_schema":{"type":"object","additionalProperties":false}},
-                 {"name":"a","description":"d","input_schema":{"type":"object","additionalProperties":false}}],
+                 {"name":"a","description":"d","input_schema":{"type":"object","additionalProperties":false},
+                  "output_schema":{"type":"object","properties":{"ok":{"type":"boolean"}},"additionalProperties":false}},
+                 {"name":"a","description":"d","input_schema":{"type":"object","additionalProperties":false},
+                  "output_schema":{"type":"object","properties":{"ok":{"type":"boolean"}},"additionalProperties":false}}],
                  "prompts":[{"name":"p","description":"d","arguments":[]}]}
                 """));
         assertTrue(error.getMessage().contains("duplicate tool name 'a'"));
+    }
+
+    @Test
+    void parserRequiresExplicitTypedOutputForPost072Tools() {
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
+                {"version":1,"tools":[{"name":"brand_new_tool","description":"d",
+                 "input_schema":{"type":"object","additionalProperties":false}}],
+                 "prompts":[{"name":"p","description":"d","arguments":[]}]}
+                """));
+        assertTrue(error.getMessage().contains("output_schema is required"));
     }
 
     @Test
@@ -86,6 +123,28 @@ class McpCatalogTest {
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"tools":[{"name":"a","description":"d",
                  "input_schema":{"type":"object","required":["missing"],"additionalProperties":false}}],
+                 "prompts":[{"name":"p","description":"d","arguments":[]}]}
+                """));
+        assertTrue(error.getMessage().contains("missing property 'missing'"));
+    }
+
+    @Test
+    void parserAcceptsTypedOutputAndRejectsInvalidNestedSchemas() {
+        McpCatalog parsed = parse("""
+                {"version":1,"tools":[{"name":"a","description":"d",
+                 "input_schema":{"type":"object","additionalProperties":false},
+                 "output_schema":{"type":"object","properties":{"items":{"type":"array",
+                   "items":{"type":"string"}}},"required":["items"],"additionalProperties":false}}],
+                 "prompts":[{"name":"p","description":"d","arguments":[]}]}
+                """);
+        assertEquals("array", ((java.util.Map<?, ?>) parsed.tool("a").outputSchema()
+                .get("properties")).get("items") instanceof java.util.Map<?, ?> item
+                ? item.get("type") : null);
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
+                {"version":1,"tools":[{"name":"a","description":"d",
+                 "input_schema":{"type":"object","properties":{"nested":{"type":"object",
+                   "required":["missing"],"properties":{}}},"additionalProperties":false}}],
                  "prompts":[{"name":"p","description":"d","arguments":[]}]}
                 """));
         assertTrue(error.getMessage().contains("missing property 'missing'"));

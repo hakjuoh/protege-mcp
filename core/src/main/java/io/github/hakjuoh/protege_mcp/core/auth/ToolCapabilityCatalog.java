@@ -52,6 +52,10 @@ public final class ToolCapabilityCatalog {
                 Capability.FILESYSTEM_PROJECT_WRITE);
         Set<String> adminProjectReadWrite = access(Capability.ONTOLOGY_ADMIN,
                 Capability.FILESYSTEM_PROJECT_READ, Capability.FILESYSTEM_PROJECT_WRITE);
+        Set<String> curateProjectReadWrite = access(Capability.ONTOLOGY_CURATE,
+                Capability.FILESYSTEM_PROJECT_READ, Capability.FILESYSTEM_PROJECT_WRITE);
+        Set<String> readProjectWrite = access(Capability.ONTOLOGY_READ,
+                Capability.FILESYSTEM_PROJECT_READ, Capability.FILESYSTEM_PROJECT_WRITE);
         Set<String> releaseRead = access(Capability.ONTOLOGY_RELEASE,
                 Capability.FILESYSTEM_PROJECT_READ);
         Set<String> releaseWrite = access(Capability.ONTOLOGY_RELEASE,
@@ -71,7 +75,8 @@ public final class ToolCapabilityCatalog {
                 "list_competency_questions", "run_competency_questions", "verify_ontology",
                 "shacl_validate", "run_qc_suite");
         declare(map, readProject, "get_model_revision", "verify_import_lock", "validate_catalog",
-                "get_project_policy", "validate_project_policy", "run_project_qc");
+                "get_project_policy", "validate_project_policy", "run_project_qc",
+                "list_mappings", "validate_mappings");
         declare(map, curate,
                 "create_class", "create_entity", "add_subclass_of", "add_annotation", "add_axiom",
                 "remove_axiom", "apply_changes", "set_label", "undo_change", "redo_change",
@@ -87,6 +92,8 @@ public final class ToolCapabilityCatalog {
         declare(map, adminProjectWrite, "save_ontology", "write_catalog",
                 "write_project_policy_template");
         declare(map, adminProjectReadWrite, "write_import_lock");
+        declare(map, curateProjectReadWrite, "add_mapping", "remove_mapping", "import_sssom");
+        declare(map, readProjectWrite, "export_sssom");
         declare(map, releaseRead, "run_release_gate");
         declare(map, releaseWrite, "prepare_release");
         declare(map, auditExport, "export_audit_log");

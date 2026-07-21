@@ -14,9 +14,12 @@ import java.util.regex.Pattern;
 /** Immutable inputs shared by legacy and project-policy QC execution. */
 final class QcRunConfig {
     private static final String INVARIANTS = "invariants";
-    private static final List<String> ALL_STAGES = Arrays.asList(
+    private static final List<String> LEGACY_STAGES = Arrays.asList(
             "interoperability", "reasoner", "profile", "governance", "structural",
             INVARIANTS, "cqs", "shacl");
+    private static final List<String> POLICY_STAGES = Arrays.asList(
+            "interoperability", "reasoner", "profile", "governance", "structural",
+            INVARIANTS, "cqs", "shacl", "provider_evidence");
     private static final List<String> DEFAULT_STAGES = Arrays.asList(
             "reasoner", "profile", "structural");
 
@@ -181,9 +184,9 @@ final class QcRunConfig {
         Set<String> out = new LinkedHashSet<>();
         for (String stage : requested) {
             String normalized = stage.trim().toLowerCase(Locale.ROOT);
-            if (!ALL_STAGES.contains(normalized)) {
+            if (!LEGACY_STAGES.contains(normalized)) {
                 throw new ToolArgException("Unknown stage '" + stage + "'. Use any of: "
-                        + String.join(", ", ALL_STAGES) + ".");
+                        + String.join(", ", LEGACY_STAGES) + ".");
             }
             out.add(normalized);
         }
@@ -197,9 +200,22 @@ final class QcRunConfig {
         Set<String> out = new LinkedHashSet<>();
         for (String stage : requested) {
             String normalized = stage.trim().toLowerCase(Locale.ROOT);
-            if (!ALL_STAGES.contains(normalized)) {
+            if (!LEGACY_STAGES.contains(normalized)) {
                 throw new ToolArgException("Unknown required stage '" + stage + "'. Use any of: "
-                        + String.join(", ", ALL_STAGES) + ".");
+                        + String.join(", ", LEGACY_STAGES) + ".");
+            }
+            out.add(normalized);
+        }
+        return out;
+    }
+
+    static Set<String> normalizePolicyStages(List<String> requested) {
+        Set<String> out = new LinkedHashSet<>();
+        for (String stage : requested) {
+            String normalized = stage.trim().toLowerCase(Locale.ROOT);
+            if (!POLICY_STAGES.contains(normalized)) {
+                throw new ToolArgException("Unknown policy stage '" + stage + "'. Use any of: "
+                        + String.join(", ", POLICY_STAGES) + ".");
             }
             out.add(normalized);
         }

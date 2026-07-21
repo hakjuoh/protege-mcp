@@ -36,7 +36,8 @@ final class WorkspaceProjectLock {
             }
             if (lock == null) {
                 channel.close();
-                throw new IOException("workspace transaction lock is already held");
+                throw new ProjectFileLock.UnavailableException(
+                        "workspace transaction lock is already held");
             }
             return new Handle(channel, lock);
         } catch (IOException | RuntimeException error) {

@@ -90,7 +90,8 @@ final class ProjectQcTools {
             ProjectPolicyTools.PolicyContext live, Map<String, Object> arguments) {
         Map<String, Object> root = policy.effective();
         Map<String, Object> validation = object(root, "validation");
-        Set<String> required = QcSuiteTools.normalizeOptionalStages(strings(validation.get("required_stages")));
+        Set<String> required = QcRunConfig.normalizePolicyStages(
+                strings(validation.get("required_stages")));
         Map<String, Object> reasoning = object(root, "reasoning");
         if (Boolean.TRUE.equals(reasoning.get("required"))) {
             // Defense in depth: the policy loader canonicalizes this into required_stages, but a

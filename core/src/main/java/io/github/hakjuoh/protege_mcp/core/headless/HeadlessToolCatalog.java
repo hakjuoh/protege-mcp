@@ -9,6 +9,11 @@ import java.util.Map;
 import java.util.Set;
 
 import io.github.hakjuoh.protege_mcp.core.auth.ToolCapabilityCatalog;
+import io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas;
+import io.github.hakjuoh.protege_mcp.contracts.Legacy072ToolContracts;
+import io.github.hakjuoh.protege_mcp.contracts.ToolSchemaValidator;
+import io.github.hakjuoh.protege_mcp.contracts.ImmutableJson;
+import io.github.hakjuoh.protege_mcp.contracts.SssomToolSchemas;
 
 /** Public MCP metadata for the deliberately small, project-confined headless subset. */
 public final class HeadlessToolCatalog {
@@ -21,17 +26,50 @@ public final class HeadlessToolCatalog {
     }
 
     public record Definition(String name, String description, Map<String, Object> inputSchema,
+            Map<String, Object> outputSchema, Map<String, Object> errorSchema,
             Set<String> requiredCapabilities) {
+        public Definition(String name, String description, Map<String, Object> inputSchema,
+                Set<String> requiredCapabilities) {
+            this(requireLegacyName(name), description, inputSchema,
+                    ToolContractSchemas.legacySuccessSchema(),
+                    ToolContractSchemas.errorSchema(), requiredCapabilities);
+        }
+
         public Definition {
             if (name == null || name.isBlank() || description == null || description.isBlank()
-                    || inputSchema == null || requiredCapabilities == null
+                    || inputSchema == null || outputSchema == null || errorSchema == null
+                    || requiredCapabilities == null
                     || requiredCapabilities.isEmpty() && !SURFACE_TOOL.equals(name)) {
                 throw new IllegalArgumentException("headless tool metadata must be complete");
             }
             inputSchema = immutableMap(inputSchema);
+            outputSchema = immutableMap(outputSchema);
+            errorSchema = immutableMap(errorSchema);
+            ToolSchemaValidator.validateInput(inputSchema, "headless tool '" + name + "' input");
+            ToolSchemaValidator.validateOutput(outputSchema, "headless tool '" + name + "' output");
+            ToolSchemaValidator.validateOutput(errorSchema, "headless tool '" + name + "' error");
+            if (!ToolContractSchemas.errorSchema().equals(errorSchema)) {
+                throw new IllegalArgumentException("headless tool '" + name
+                        + "' must use the shared error schema");
+            }
+            if (!Legacy072ToolContracts.headlessToolNames().contains(name)) {
+                requireTypedOutput(name, outputSchema);
+            }
             requiredCapabilities = Collections.unmodifiableSet(
                     new LinkedHashSet<>(requiredCapabilities));
         }
+    }
+
+    private static String requireLegacyName(String name) {
+        if (!Legacy072ToolContracts.headlessToolNames().contains(name)) {
+            throw new IllegalArgumentException("New headless tool '" + name
+                    + "' must declare an explicit typed output schema");
+        }
+        return name;
+    }
+
+    private static void requireTypedOutput(String name, Map<String, Object> schema) {
+        ToolSchemaValidator.validateTypedOutput(schema, "headless tool '" + name + "' output");
     }
 
     public static List<Definition> definitions() {
@@ -66,6 +104,18 @@ public final class HeadlessToolCatalog {
                 "Validate the fixed project policy supplied when this stdio server started. Returns "
                         + "structured schema, semantic, and project-containment findings and writes nothing.",
                 objectSchema(Map.of(), List.of())));
+        definitions.add(mappingDefinition("list_mappings",
+                "List the canonical project's SSSOM mappings with revision-bound cursor pagination."));
+        definitions.add(mappingDefinition("add_mapping",
+                "Add one SSSOM mapping using an expected mapping revision and explicit confirmation."));
+        definitions.add(mappingDefinition("remove_mapping",
+                "Remove one SSSOM mapping by stable id using an expected revision and confirmation."));
+        definitions.add(mappingDefinition("import_sssom",
+                "Validate and atomically replace or merge a project-confined SSSOM 1.0 TSV file."));
+        definitions.add(mappingDefinition("export_sssom",
+                "Atomically export the canonical mapping store with no-clobber and target-digest checks."));
+        definitions.add(mappingDefinition("validate_mappings",
+                "Validate the canonical mapping store and page through deterministic findings."));
         definitions.add(definition("run_project_qc",
                 "Run the complete offline project QC gate against one captured, checksum-verified "
                         + "workspace snapshot using the bundled headless reasoner.",
@@ -113,6 +163,12 @@ public final class HeadlessToolCatalog {
         return new Definition(name, description, schema, ToolCapabilityCatalog.required(name));
     }
 
+    private static Definition mappingDefinition(String name, String description) {
+        return new Definition(name, description, SssomToolSchemas.input(name, false),
+                SssomToolSchemas.output(name), ToolContractSchemas.errorSchema(),
+                ToolCapabilityCatalog.required(name));
+    }
+
     private static Map<String, Definition> byName() {
         Map<String, Definition> definitions = new LinkedHashMap<>();
         for (Definition definition : DEFINITIONS) {
@@ -147,18 +203,7 @@ public final class HeadlessToolCatalog {
                 "description", description);
     }
 
-    @SuppressWarnings("unchecked")
     private static Map<String, Object> immutableMap(Map<String, Object> source) {
-        Map<String, Object> copy = new LinkedHashMap<>();
-        source.forEach((key, value) -> {
-            if (value instanceof Map<?, ?> map) {
-                copy.put(key, immutableMap((Map<String, Object>) map));
-            } else if (value instanceof List<?> list) {
-                copy.put(key, List.copyOf(list));
-            } else {
-                copy.put(key, value);
-            }
-        });
-        return Collections.unmodifiableMap(copy);
+        return ImmutableJson.map(source);
     }
 }

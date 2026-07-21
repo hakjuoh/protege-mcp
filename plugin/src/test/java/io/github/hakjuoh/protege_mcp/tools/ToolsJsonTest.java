@@ -44,7 +44,11 @@ class ToolsJsonTest {
     void errorResultIsFlaggedAndStructured() throws Exception {
         CallToolResult r = Tools.error("boom");
         assertTrue(r.isError());
-        assertEquals("boom", textJson(r).get("error").asText());
+        JsonNode error = textJson(r);
+        assertEquals("boom", error.get("error").asText());
+        assertEquals("operation_failed", error.get("code").asText());
+        assertEquals("boom", error.get("message").asText());
+        assertFalse(error.get("retryable").asBoolean());
     }
 
     @Test

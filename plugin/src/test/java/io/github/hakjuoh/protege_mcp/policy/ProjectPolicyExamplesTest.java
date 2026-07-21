@@ -30,7 +30,7 @@ class ProjectPolicyExamplesTest {
             shipped = files.filter(p -> p.getFileName().toString().endsWith(".yaml"))
                     .sorted().toList();
         }
-        assertEquals(3, shipped.size(), () -> "unexpected example set: " + shipped);
+        assertEquals(4, shipped.size(), () -> "unexpected example set: " + shipped);
         for (Path example : shipped) {
             String name = example.getFileName().toString().replace(".yaml", "");
             Path project = temp.resolve(name);

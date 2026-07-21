@@ -64,6 +64,7 @@ public final class QcSuiteTools {
     private static final String INVARIANTS = "invariants";
     private static final String CQS = "cqs";
     private static final String SHACL = "shacl";
+    private static final String PROVIDER_EVIDENCE = "provider_evidence";
 
     static final String PASS = "pass";
     static final String INFO = "info";
@@ -209,6 +210,11 @@ public final class QcSuiteTools {
                             config.shaclShapesPath, rowLimit, config.timeout)
                     : shaclStage(p1.validationSnapshot.assertedTurtle(), config.shaclPaths,
                             rowLimit, config.timeout));
+        }
+        if (config.stages.contains(PROVIDER_EVIDENCE)) {
+            results.add(QcStageResult.errored(PROVIDER_EVIDENCE,
+                    "provider_evidence_unavailable: the provider executor is not available on this "
+                            + "execution surface", "provider_evidence_unavailable"));
         }
         List<String> isolatedStages = results.stream()
                 .filter(result -> result.ran && !result.executionError)

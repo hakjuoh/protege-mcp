@@ -87,6 +87,9 @@ class MainTest {
         assertEquals(0, Main.run(new String[] {"validate-policy", "--project", policy.toString()},
                 new PrintStream(policyOut), new PrintStream(new ByteArrayOutputStream())));
         assertTrue(policyOut.toString().contains("\"valid\" : true"));
+        assertTrue(policyOut.toString().contains("\"schema_version\" : 1"));
+        assertTrue(policyOut.toString().contains("\"migration\""));
+        assertTrue(policyOut.toString().contains("\"to_version\" : 2"));
 
         Path left = temp.resolve("left.ofn");
         Path right = temp.resolve("right.ofn");
@@ -96,6 +99,32 @@ class MainTest {
         assertEquals(0, Main.run(new String[] {"diff", "--left", left.toString(), "--right", right.toString()},
                 new PrintStream(diffOut), new PrintStream(new ByteArrayOutputStream())));
         assertTrue(diffOut.toString().contains("\"entities\""));
+    }
+
+    @Test
+    void validatePolicyReportsV2SchemaWithoutMigrationRecommendation() throws Exception {
+        Path policy = temp.resolve("project-v2.yaml");
+        Files.writeString(policy, """
+                version: 2
+                project_id: cli-v2
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [profile, governance, structural]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(policy, "cli-v2");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        assertEquals(0, Main.run(new String[] {"validate-policy", "--project", policy.toString()},
+                new PrintStream(out), new PrintStream(new ByteArrayOutputStream())));
+
+        String json = out.toString(StandardCharsets.UTF_8);
+        assertTrue(json.contains("\"schema_version\" : 2"), json);
+        assertFalse(json.contains("\"migration\""), json);
     }
 
     @Test

@@ -1,14 +1,17 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.Supplier;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.github.hakjuoh.protege_mcp.contracts.ToolError;
+import io.github.hakjuoh.protege_mcp.contracts.ContractRedactor;
+import io.github.hakjuoh.protege_mcp.contracts.ImmutableJson;
 import io.github.hakjuoh.protege_mcp.server.McpAccessException;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
@@ -33,7 +36,7 @@ public final class ToolResults {
 
     /** Build a {@link CallToolResult} from a result object (success). */
     public static CallToolResult ok(Map<String, Object> data) {
-        Map<String, Object> body = data == null ? new LinkedHashMap<>() : data;
+        Map<String, Object> body = immutableBody(data == null ? Map.of() : data);
         return CallToolResult.builder()
                 .structuredContent(body)
                 .addTextContent(serialize(body))
@@ -49,15 +52,33 @@ public final class ToolResults {
         return Tools.json().put("message", s == null ? "" : s).result();
     }
 
-    /** An error result: {@code {"error": message}} with {@code isError=true}. */
+    /** A stable structured error result retaining the legacy {@code error} alias. */
     public static CallToolResult error(String message) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("error", message == null ? "error" : message);
+        return error(ToolError.of("operation_failed",
+                message == null || message.isBlank() ? "error" : message, false));
+    }
+
+    public static CallToolResult error(ToolError failure) {
+        Map<String, Object> body = immutableBody(failure.toJson());
         return CallToolResult.builder()
                 .structuredContent(body)
                 .addTextContent(serialize(body))
                 .isError(true)
                 .build();
+    }
+
+    /** Canonicalize both MCP representations around one immutable JSON snapshot. */
+    static CallToolResult immutableSnapshot(CallToolResult result) {
+        if (result == null || !(result.structuredContent() instanceof Map<?, ?> raw)) return result;
+        Map<String, Object> body = immutableBody(raw);
+        return CallToolResult.builder().structuredContent(body)
+                .addTextContent(serialize(body)).isError(result.isError()).build();
+    }
+
+    private static Map<String, Object> immutableBody(Map<?, ?> data) {
+        Map<String, Object> normalized = JSON.convertValue(data,
+                new TypeReference<Map<String, Object>>() { });
+        return ImmutableJson.resultMap(normalized);
     }
 
     /** Serialize a result object to pretty JSON; never throws (falls back to {@code toString}). */
@@ -74,16 +95,28 @@ public final class ToolResults {
         try {
             return body.get();
         } catch (ToolArgException e) {
-            return error(e.getMessage());
+            try {
+                return error(ToolError.of(e.code(), e.getMessage(), e.details(), e.retryable(),
+                        e.secretCanaries()));
+            } catch (RuntimeException invalidTypedError) {
+                log.warn("protege-mcp: invalid typed error at tool boundary; type={}",
+                        invalidTypedError.getClass().getName());
+                return error(ToolError.of("internal_error", "Unexpected tool failure.", false));
+            }
         } catch (McpAccessException e) {
-            return error(e.getMessage());
+            boolean prevented = e.effectsPrevented();
+            return error(ToolError.of(prevented ? "model_access_prevented"
+                    : "model_access_outcome_unknown",
+                    e.getMessage() == null ? "Model access failed." : e.getMessage(),
+                    Map.of("effects_prevented", prevented, "outcome_unknown", !prevented),
+                    prevented));
         } catch (RuntimeException e) {
-            // Unexpected (not a typed ToolArg/McpAccess) failure — a handler bug. Leave a server-side
-            // stack trace so it can be diagnosed from a field report, while still returning the terse
-            // client message (the tools/ layer otherwise logs nothing).
-            log.warn("protege-mcp: unexpected error in tool handler", e);
-            String msg = e.getMessage();
-            return error(e.getClass().getSimpleName() + (msg == null ? "" : ": " + msg));
+            // Unexpected (not a typed ToolArg/McpAccess) failure — a handler bug. Record only its
+            // class server-side so exception messages, paths, and provider payloads cannot cross the
+            // redaction boundary; the client receives the stable terse error below.
+            log.warn("protege-mcp: unexpected error in tool handler; type={}",
+                    ContractRedactor.sanitize(e.getClass().getName()));
+            return error(ToolError.of("internal_error", "Unexpected tool failure.", false));
         }
     }
 }

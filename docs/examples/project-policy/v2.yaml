@@ -1,0 +1,91 @@
+version: 2
+project_id: example-ontology-v2
+root_ontology: https://example.org/ontology
+project_root: .
+
+interoperability:
+  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+  additional_profiles: []
+  root_artifact: ontology.ttl
+  metadata:
+    path: ro-crate-metadata.json
+    format: ro-crate-1.1
+  canonicalization:
+    algorithm: RDFC-1.0
+    hash: SHA-256
+    scope: root-ontology
+    timeout_ms: 120000
+
+prefixes:
+  skos: http://www.w3.org/2004/02/skos/core#
+
+filesystem:
+  allow_external_paths: false
+audit:
+  retention_days: 90
+  max_file_bytes: 10485760
+  max_files: 10
+network:
+  default: deny
+  allowed_hosts: []
+
+# Endpoints and credential bindings for this alias stay in owner-local configuration.
+external_terms:
+  providers:
+    - id: ebi-ols
+      profile: ols4
+      enabled: false
+      origin_alias: ebi-ols
+      ontologies: [efo]
+      languages: [en]
+      ttl_seconds: 900
+      freshness: cache_ok
+      required_evidence_for: [reuse]
+      max_results: 25
+
+mappings:
+  path: .protege-mcp/mappings.sssom.tsv
+  allowed_predicates: [skos:exactMatch, skos:broadMatch, skos:narrowMatch]
+  allowed_sources: [ebi-ols]
+  allowed_licenses: [CC-BY-4.0]
+  require_license: true
+  required_findings: [missing_source, missing_target, predicate_not_allowed, license_not_allowed]
+  directional_cycle_policy:
+    skos:broadMatch: error
+    skos:narrowMatch: error
+  many_to_one_rules: []
+
+jobs:
+  allowed_types: [classification, project_qc, semantic_diff, inference_materialization]
+  workers: 2
+  queue_capacity: 32
+  active_per_principal: 8
+  retained_per_principal: 32
+  retained_per_backend: 128
+  retention_seconds: 3600
+
+materialization:
+  allowed_reasoners: [HermiT]
+  allowed_categories: [subclass_axioms, equivalent_class_axioms, class_assertions,
+    property_hierarchy_axioms, object_property_assertions, data_property_assertions]
+  allowed_destinations: [new_ontology, project_file]
+  allow_source_write: false
+  max_axioms_per_category: 50000
+  max_axioms_total: 50000
+  max_bytes: 67108864
+  timeout_ms: 120000
+
+imports:
+  mode: unlocked
+  fail_on_missing: true
+  network: deny
+
+reasoning:
+  reasoner: HermiT
+  owl_profile: DL
+  required: true
+  timeout_ms: 120000
+
+validation:
+  required_stages: [interoperability, reasoner, profile, governance, structural]
+  fail_on: warning

@@ -3551,7 +3551,7 @@
     }
   }, {
     "name" : "get_project_policy",
-    "description" : "Discover and return the effective version-controlled ontology project policy. Discovery order is an explicit local policy_path, then .protege-mcp/project.yaml walking from the active ontology document toward its parent roots. YAML is parsed strictly, validated against policy schema v1, defaulted deterministically, and checked for missing/escaping assets, invalid CURIEs/regexes, active-ontology mismatch, and unavailable required reasoners. With no policy, interactive legacy behavior is unchanged and policy_loaded=false is explicit.",
+    "description" : "Discover and return the effective version-controlled ontology project policy. Discovery order is an explicit local policy_path, then .protege-mcp/project.yaml walking from the active ontology document toward its parent roots. YAML is parsed strictly, dispatched to policy schema v1 or v2, defaulted deterministically, and checked for missing/escaping assets, invalid CURIEs/regexes, active-ontology mismatch, and unavailable required reasoners. With no policy, interactive legacy behavior is unchanged and policy_loaded=false is explicit.",
     "input_schema" : {
       "type" : "object",
       "properties" : {
@@ -3577,7 +3577,7 @@
     }
   }, {
     "name" : "run_project_qc",
-    "description" : "Run the effective project policy as a strict reproducible QC gate. Every configured required stage (reasoner, profile, governance, structural, persisted invariants, policy-selected competency questions, and one or more SHACL files) must execute against one captured ontology revision. A policy violation returns gate=fail; an invalid policy, missing asset, unavailable/wrong reasoner, malformed query/shapes, or skipped/errored required stage returns gate=error and can never pass vacuously.",
+    "description" : "Run the effective project policy as a strict reproducible QC gate. Every configured required stage (reasoner, profile, governance, structural, persisted invariants, policy-selected competency questions, one or more SHACL files, and v2 provider evidence) must execute against one captured ontology revision. Provider evidence currently fails closed with provider_evidence_unavailable until its plugin executor is configured. A policy violation returns gate=fail; an invalid policy, missing asset, unavailable/wrong reasoner, malformed query/shapes, or skipped/errored required stage returns gate=error and can never pass vacuously.",
     "input_schema" : {
       "type" : "object",
       "properties" : {
@@ -3615,6 +3615,11 @@
           "type" : "string",
           "description" : "Which example-shaped starter to emit: general (OWL/Turtle, HermiT/DL) or obo (OBO edit file, ELK/EL). Default general.",
           "enum" : [ "general", "obo" ]
+        },
+        "version" : {
+          "type" : "integer",
+          "description" : "Policy schema version to emit: 1 (compatibility default) or 2 (external terms, mappings, jobs, and materialization). No existing file is migrated automatically.",
+          "enum" : [ 1, 2 ]
         },
         "overwrite" : {
           "type" : "boolean",
@@ -3807,6 +3812,107 @@
           "type" : "integer",
           "description" : "Maximum samples/findings per stage and in the report excerpt (default 50)."
         }
+      },
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "list_mappings",
+    "description" : "List canonical SSSOM mappings from the project-confined sidecar. Results use deterministic mapping-id order and revision-bound opaque cursor pagination; the ontology is never changed.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "policy_path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "limit" : { "type" : "integer", "minimum" : 1, "maximum" : 200 },
+        "cursor" : { "type" : "string", "minLength" : 1, "maxLength" : 512 }
+      },
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "add_mapping",
+    "description" : "Add one SSSOM mapping to the project-confined sidecar using an exact expected mapping revision. Requires explicit confirmation, project filesystem read/write authority, and the normal live write gates; it never creates an OWL axiom.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "policy_path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "expected_mapping_revision" : { "type" : "string", "pattern" : "^sha256:[0-9a-f]{64}$" },
+        "mapping" : {
+          "type" : "object",
+          "maxProperties" : 128,
+          "additionalProperties" : { "type" : "string", "maxLength" : 65536 }
+        },
+        "mapping_set_id" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "license" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "prefix_map" : {
+          "type" : "object",
+          "maxProperties" : 128,
+          "additionalProperties" : { "type" : "string", "maxLength" : 65536 }
+        },
+        "confirm" : { "type" : "boolean", "const" : true }
+      },
+      "required" : [ "expected_mapping_revision", "mapping", "confirm" ],
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "remove_mapping",
+    "description" : "Remove one SSSOM mapping by stable mapping id using an exact expected mapping revision. Requires explicit confirmation and the normal project filesystem write gates; it never changes the ontology or Undo history.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "policy_path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "expected_mapping_revision" : { "type" : "string", "pattern" : "^sha256:[0-9a-f]{64}$" },
+        "mapping_id" : { "type" : "string", "minLength" : 1, "maxLength" : 65536 },
+        "confirm" : { "type" : "boolean", "const" : true }
+      },
+      "required" : [ "expected_mapping_revision", "mapping_id", "confirm" ],
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "import_sssom",
+    "description" : "Validate and atomically replace or merge the canonical sidecar from a project-confined SSSOM 1.0 TSV file. The operation is all-or-nothing, revision-pinned, explicitly confirmed, and never converts mappings to OWL axioms.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "policy_path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "expected_mapping_revision" : { "type" : "string", "pattern" : "^sha256:[0-9a-f]{64}$" },
+        "source" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "mode" : { "type" : "string", "enum" : [ "replace", "merge" ] },
+        "confirm" : { "type" : "boolean", "const" : true }
+      },
+      "required" : [ "expected_mapping_revision", "source", "mode", "confirm" ],
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "export_sssom",
+    "description" : "Export the canonical SSSOM sidecar to a project-confined destination. The write is explicitly confirmed, no-clobber by default, target-digest guarded on overwrite, verified, backed up, and atomically replaced.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "policy_path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "expected_mapping_revision" : { "type" : "string", "pattern" : "^sha256:[0-9a-f]{64}$" },
+        "destination" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "overwrite" : { "type" : "boolean" },
+        "expected_target_digest" : { "type" : "string", "pattern" : "^sha256:[0-9a-f]{64}$" },
+        "spreadsheet_safe" : { "type" : "boolean" },
+        "confirm" : { "type" : "boolean", "const" : true }
+      },
+      "required" : [ "expected_mapping_revision", "destination", "confirm" ],
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "validate_mappings",
+    "description" : "Validate the canonical SSSOM mapping sidecar against structural and effective project-governance rules. Findings are deterministic and revision-bound; the operation writes nothing.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "policy_path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 },
+        "limit" : { "type" : "integer", "minimum" : 1, "maximum" : 200 },
+        "cursor" : { "type" : "string", "minLength" : 1, "maxLength" : 512 }
       },
       "additionalProperties" : false
     }

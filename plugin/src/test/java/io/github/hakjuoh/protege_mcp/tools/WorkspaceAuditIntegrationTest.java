@@ -100,6 +100,9 @@ class WorkspaceAuditIntegrationTest {
             assertTrue(error.contains("Audit attribution failed after 'list_ontologies' completed"),
                     error);
             assertTrue(error.contains("NOT rolled back"), error);
+            assertEquals("audit_failed_after_completion",
+                    ((Map<?, ?>) result.structuredContent()).get("code"));
+            assertEquals(false, ((Map<?, ?>) result.structuredContent()).get("retryable"));
         } finally {
             if (previousHome == null) System.clearProperty("user.home");
             else System.setProperty("user.home", previousHome);
@@ -123,10 +126,12 @@ class WorkspaceAuditIntegrationTest {
                             "reader-1", "Reader One", "grant-1", "read")), null);
 
             assertEquals(Boolean.TRUE, result.isError());
-            String error = String.valueOf(result.structuredContent());
-            assertTrue(error.contains("the-handlers-own-error"), error);
-            assertFalse(error.contains("audit project lock"),
-                    "the audit failure must stay suppressed behind the handler error: " + error);
+            Map<?, ?> error = (Map<?, ?>) result.structuredContent();
+            assertEquals("audit_failed_while_recording_failure", error.get("code"));
+            assertEquals("invalid_request", ((Map<?, ?>) error.get("details"))
+                    .get("tool_error_code"));
+            assertFalse(error.toString().contains("audit project lock"),
+                    "raw audit storage failures must remain private: " + error);
         } finally {
             if (previousHome == null) System.clearProperty("user.home");
             else System.setProperty("user.home", previousHome);
@@ -156,6 +161,51 @@ class WorkspaceAuditIntegrationTest {
             assertTrue(error.contains("the-handlers-own-error-result"), error);
             assertFalse(error.contains("NOT rolled back"),
                     "a failed tool result must never be reported as a completed outcome: " + error);
+            assertEquals("audit_failed_while_recording_failure",
+                    ((Map<?, ?>) result.structuredContent()).get("code"));
+        } finally {
+            if (previousHome == null) System.clearProperty("user.home");
+            else System.setProperty("user.home", previousHome);
+        }
+    }
+
+    @Test
+    void auditDistinguishesUnknownMutationOutcomeFromPreventedEffects(@TempDir Path temp)
+            throws Exception {
+        String previousHome = System.getProperty("user.home");
+        System.setProperty("user.home", temp.toString());
+        try {
+            ToolRegistry registry = new ToolRegistry(context(temp).audit());
+            registry.tool("create_class", (exchange, request) -> {
+                throw new io.github.hakjuoh.protege_mcp.server.McpAccessException(
+                        "model body started");
+            });
+            registry.tool("create_entity", (exchange, request) -> {
+                throw io.github.hakjuoh.protege_mcp.server.McpAccessException
+                        .effectsPrevented("queued body cancelled");
+            });
+            var admin = exchange(AuthenticatedPrincipal.oauthAdmin(
+                    "admin-1", "Admin One", "grant-a"));
+            assertEquals("mutation_outcome_unknown", ((Map<?, ?>) registry.build().get(0)
+                    .callHandler().apply(admin, null).structuredContent()).get("code"));
+            assertEquals("model_access_prevented", ((Map<?, ?>) registry.build().get(1)
+                    .callHandler().apply(admin, null).structuredContent()).get("code"));
+
+            List<Path> streams;
+            try (var paths = Files.walk(temp.resolve(".protege-mcp/audit"))) {
+                streams = paths.filter(path -> path.getFileName().toString().endsWith(".jsonl"))
+                        .toList();
+            }
+            List<Map<String, Object>> events = Files.readAllLines(streams.get(0)).stream()
+                    .map(WorkspaceAuditIntegrationTest::parse).toList();
+            Map<?, ?> unknownResult = (Map<?, ?>) events.get(1).get("result");
+            Map<?, ?> preventedResult = (Map<?, ?>) events.get(3).get("result");
+            assertEquals(null, unknownResult.get("committed"));
+            assertEquals(true, ((Map<?, ?>) events.get(1).get("summary"))
+                    .get("outcome_unknown"));
+            assertEquals(false, preventedResult.get("committed"));
+            assertEquals(true, ((Map<?, ?>) events.get(3).get("summary"))
+                    .get("effects_prevented"));
         } finally {
             if (previousHome == null) System.clearProperty("user.home");
             else System.setProperty("user.home", previousHome);

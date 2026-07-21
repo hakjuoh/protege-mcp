@@ -6,21 +6,37 @@ nav_order: 7
 # Project policy contracts
 {: .no_toc }
 
-Version 0.7.2 retains the complete headless QC, import-lock, release, audit-export, and bounded stdio
-execution introduced in 0.7.1, with cross-surface conformance and the same filesystem, network,
-module-governance, and isolated-preflight boundaries. The public surface is 85 tools and 11 prompts.
+Version 0.8.0 retains valid regular-file v1 normalization and digests byte for byte, and adds an explicitly
+selected policy v2 for external term providers, SSSOM mappings, bounded asynchronous jobs, and inference
+materialization. Rejected-input diagnostics are now bounded, redacted, and fail closed on policy-source
+symlinks. Both versions use the same filesystem, network, module-governance, and isolated-preflight boundaries.
 {: .fs-6 .fw-300 }
 
 For a user-focused setup guide, including a complete crate example and an explanation of the two
 fingerprints, see [RO-Crate and RDFC interoperability](interoperability/).
 {: .tip }
 
-## Policy v1 authoring format
+## Policy versions and authoring format
 
 The authoring file is `.protege-mcp/project.yaml`. Its canonical JSON Schema is
 [`project-policy-v1.schema.json`](https://github.com/hakjuoh/protege-mcp/blob/main/core/src/main/resources/schema/project-policy-v1.schema.json).
 The schema requires `version: 1`, a project id, an absolute root-ontology IRI, and an
 `interoperability` contract. It rejects unknown fields rather than silently assigning them a future meaning.
+
+Policy v1 remains supported without normalization or digest changes. A valid v1 result includes a
+non-mutating `migration` recommendation for v2, but that diagnostic is outside the effective policy and
+does not affect `policy_digest`. There is no automatic migration or in-place rewrite. Select v2 explicitly
+with `version: 2`, or generate a new reviewed scaffold with
+`write_project_policy_template version=2`. The canonical v2 schema is
+[`project-policy-v2.schema.json`](https://github.com/hakjuoh/protege-mcp/blob/main/core/src/main/resources/schema/project-policy-v2.schema.json).
+Plugin, headless MCP, and one-shot CLI policy-validation JSON all report `schema_version`; valid v1
+results also carry the same structured `migration` recommendation.
+
+Policy parsing is fail-closed and bounded. YAML aliases are rejected, authored policy bytes and expanded
+scalar content are capped at 1 MiB, v2 parsed structure is capped at 10,000 nodes, and all configured asset
+globs share one cumulative 10,000-entry scan budget. A policy-declared module larger than 64 MiB is rejected
+with `module_document_too_large` before OWLAPI parsing. These pathological-input security limits apply to
+both policy versions without changing the normalization or digest of an ordinary valid v1 policy.
 
 Start from the example closest to the project:
 
@@ -30,6 +46,32 @@ Start from the example closest to the project:
   policy, locked imports, persisted invariants/CQs/SHACL, waivers, and release output.
 - [OBO-oriented policy](examples/project-policy/obo.yaml) — OBO IRIs and definition properties, HermiT
   with an EL profile, ROBOT-compatible query directories, and OBO release format.
+- [Policy v2](examples/project-policy/v2.yaml) — the portable provider identity, SSSOM governance,
+  job quotas, and materialization bounds added in 0.8.0.
+
+### Policy v2 additions
+
+Version 2 retains every v1 field and adds four fail-closed blocks:
+
+- `external_terms.providers` names the supported `ols4` profile, a stable provider id, and an
+  owner-local `origin_alias`. Endpoint URLs and secret values are rejected. `credential_id` is an opaque
+  reference only; its binding and generation stay in owner-local configuration. A provider may require
+  evidence for `reuse`, `mint`, or the explicitly scoped `provider_evidence` validation stage; that stage
+  names declared provider ids under `validation.provider_evidence.providers` and defaults to fresh evidence.
+- `mappings` declares the project-confined SSSOM 1.0 TSV sidecar, predicate/source/license allowlists,
+  required validation findings, directional-cycle severity, and explicitly scoped many-to-one rules.
+- `jobs` can only tighten the four public job types and product maxima: two workers, 32 queued jobs,
+  eight active jobs per principal, 32 retained per principal, 128 retained per backend, and one hour.
+- `materialization` limits reasoners, the closed inference-category set, destinations, axiom/byte totals,
+  and timeout. Writing into the active source requires both `active_source` and
+  `allow_source_write: true`; the default destinations are a new ontology or project file.
+
+Omitted v2 blocks receive deterministic safe defaults and therefore participate in the v2 digest. V2
+also materializes the existing `audit` block's ordinary 90-day/10-file defaults into its digest; this
+does not alter v1 normalization. A
+mapping sidecar may be absent until a confirmed mapping mutation creates it, but its destination cannot
+collide with the policy or another captured project asset. All relative paths remain confined to
+`project_root`.
 
 ### Standards interoperability contract
 
@@ -70,9 +112,14 @@ The runtime loader adds checks JSON Schema cannot perform: referenced-file exist
 project-root containment (including symlink resolution), CURIE prefix resolution, Java-regex compilation,
 duplicate module coordinates, each module file's actual ontology IRI, active/root ontology agreement, and
 installed required-reasoner availability.
-It rejects duplicate YAML keys, trailing YAML documents, inputs over 1 MiB, URL-shaped asset paths, missing
-glob matches, and assets escaping `project_root` unless the policy explicitly enables the local-admin
-external-path compatibility profile.
+It rejects duplicate YAML keys, trailing YAML documents, inputs over 1 MiB, policy-source symlinks,
+URL-shaped asset paths, missing glob matches, and assets escaping `project_root` unless the policy
+explicitly enables the local-admin external-path compatibility profile. New v2 policy structures are
+limited to 10,000 nodes and their collection fields use schema-specific bounds. Both versions keep the 1 MiB
+input boundary, reject YAML aliases, and reject expanded scalar content over 1 MiB; these pathological
+resource limits are the only valid-v1 parsing exception. Public validation output is capped at 128 issues with
+2,048-character diagnostics. Schema-invalid authored content is never returned as the effective policy,
+preventing accidental reflection of credentials or other rejected values.
 
 Discovery order is:
 
@@ -384,8 +431,10 @@ import-lock/catalog tools; existing required arguments and interactive defaults 
 
 Version 0.7.0 adds five tools for deterministic rebasing, change-impact analysis, policy scaffolding,
 release gating, and release preparation, bringing that surface to 83 tools + 11 prompts. Version 0.7.1
-adds the explicit redacted audit export, bringing the current surface to 84 tools + 11 prompts. The 0.5.0
-snapshots continue to enforce backward compatibility for the original contracts.
+adds the explicit redacted audit export, bringing that surface to 84 tools + 11 prompts. Version 0.7.2
+adds exact prefix removal, bringing the current surface to 85 tools + 11 prompts. Immutable 0.7.2 plugin
+and headless snapshots now protect the complete pre-0.8 boundary in addition to the 0.5.0 compatibility
+checks.
 
 Maintainers can generate a new historical baseline with:
 
@@ -395,6 +444,6 @@ mvn -pl plugin -am -Dtest=PublicContractSnapshotTest \
   -Dprotege.contract.snapshot.update=X.Y.Z test
 ```
 
-Normal test runs never rewrite the goldens, and the published 0.5.0 baseline cannot be selected as an
+Normal test runs never rewrite the goldens, and the published 0.5.0 and 0.7.2 baselines cannot be selected as an
 update target. Canonical output always uses LF line endings; runtime prompts and tools must each have
 exactly one matching documentation section.

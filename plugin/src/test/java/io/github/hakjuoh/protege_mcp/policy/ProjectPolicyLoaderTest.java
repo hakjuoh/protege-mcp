@@ -4,16 +4,24 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.github.hakjuoh.protege_mcp.core.audit.AuditSettings;
@@ -77,6 +85,109 @@ class ProjectPolicyLoaderTest {
                 object(policy.effective(), "validation").get("required_stages"));
         assertFalse(policy.effective().containsKey("entity_search"),
                 "new runtime search defaults must not rewrite an older policy's effective digest");
+    }
+
+    @Test
+    void pinnedDiscoveryAnchorRejectsDirectorySwapBeforeSemanticValidation(@TempDir Path temp)
+            throws Exception {
+        Path project = Files.createDirectories(temp.resolve("project"));
+        Path policyDirectory = project.resolve(".protege-mcp");
+        Path policyPath = policyDirectory.resolve("project.yaml");
+        write(policyPath, minimal("trusted-before-race"));
+        Path savedDirectory = project.resolve(".protege-mcp-before-swap");
+        Path outside = Files.createDirectories(temp.resolve("outside"));
+        write(outside.resolve("project.yaml"), minimal("outside-after-race"));
+
+        try {
+            ProjectPolicy policy = ProjectPolicyLoader.load(null,
+                    project.resolve("ontology.ttl"), null, null, false, () -> {
+                        Files.move(policyDirectory, savedDirectory);
+                        Files.createSymbolicLink(policyDirectory, outside);
+                    });
+
+            assertFalse(policy.valid());
+            assertCode(policy, "policy_changed_during_validation");
+            assertEquals(project.toRealPath(), policy.projectRoot(),
+                    "validation must retain the pinned discovery root, never the symlink target");
+            assertTrue(policy.assets().isEmpty());
+        } catch (UnsupportedOperationException unsupported) {
+            Assumptions.abort("symbolic links are unavailable: " + unsupported);
+        } finally {
+            if (Files.isSymbolicLink(policyDirectory)) Files.deleteIfExists(policyDirectory);
+            if (Files.exists(savedDirectory)) Files.move(savedDirectory, policyDirectory);
+        }
+    }
+
+    @Test
+    void pinnedDiscoveryIdentityRejectsSamePathOrdinaryDirectoryReplacement(@TempDir Path temp)
+            throws Exception {
+        Path project = temp.resolve("project");
+        Path policyPath = project.resolve(".protege-mcp/project.yaml");
+        write(policyPath, minimal("trusted-identity"));
+        Path saved = temp.resolve("project-before-replacement");
+
+        try {
+            ProjectPolicy policy = ProjectPolicyLoader.load(null,
+                    project.resolve("ontology.ttl"), null, null, false, () -> {
+                        Files.move(project, saved);
+                        Files.createDirectories(policyPath.getParent());
+                        Files.createLink(policyPath,
+                                saved.resolve(".protege-mcp/project.yaml"));
+                    });
+
+            assertFalse(policy.valid());
+            assertCode(policy, "policy_changed_during_validation");
+            assertTrue(policy.assets().isEmpty(),
+                    "captured policy bytes cannot validate against a replacement project tree");
+        } catch (UnsupportedOperationException unsupported) {
+            Assumptions.abort("hard links or atomic directory replacement unavailable: "
+                    + unsupported);
+        }
+    }
+
+    @Test
+    void pinnedDiscoveryIdentityRejectsSamePathPolicyFileReplacement(@TempDir Path temp)
+            throws Exception {
+        Path project = temp.resolve("project");
+        Path policyPath = project.resolve(".protege-mcp/project.yaml");
+        write(policyPath, minimal("trusted-source-identity"));
+        Path savedPolicy = policyPath.resolveSibling("project-before-replacement.yaml");
+        var originalTime = Files.getLastModifiedTime(policyPath);
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(null,
+                project.resolve("ontology.ttl"), null, null, false, () -> {
+                    Files.move(policyPath, savedPolicy);
+                    Files.copy(savedPolicy, policyPath);
+                    Files.setLastModifiedTime(policyPath, originalTime);
+                });
+
+        assertFalse(policy.valid());
+        assertCode(policy, "policy_changed_during_validation");
+        assertTrue(policy.assets().isEmpty());
+    }
+
+    @Test
+    void finalIdentityCheckRejectsOrdinaryProjectReplacementAfterAssetValidation(
+            @TempDir Path temp) throws Exception {
+        Path project = temp.resolve("project");
+        Path policyPath = project.resolve(".protege-mcp/project.yaml");
+        write(policyPath, minimal("trusted-final-identity"));
+        Path saved = temp.resolve("project-before-final-replacement");
+
+        try {
+            ProjectPolicy policy = ProjectPolicyLoader.load(null,
+                    project.resolve("ontology.ttl"), null, null, false, () -> { }, () -> {
+                        Files.move(project, saved);
+                        mirrorWithHardLinks(saved, project);
+                    });
+
+            assertFalse(policy.valid());
+            assertCode(policy, "policy_changed_during_validation");
+            assertTrue(policy.assets().isEmpty(),
+                    "assets from a replacement tree must never escape final pin validation");
+        } catch (UnsupportedOperationException unsupported) {
+            Assumptions.abort("hard links are unavailable: " + unsupported);
+        }
     }
 
     @Test
@@ -424,6 +535,85 @@ class ProjectPolicyLoaderTest {
     }
 
     @Test
+    void discoveredPolicySymlinkIsLoadedInvalidInsteadOfFollowingOrFallingBack(@TempDir Path temp)
+            throws Exception {
+        Path external = temp.resolve("external-policy.yaml");
+        write(external, "version: 1\n");
+        Path project = temp.resolve("project");
+        Path policyLink = project.resolve(".protege-mcp/project.yaml");
+        Files.createDirectories(policyLink.getParent());
+        try {
+            Files.createSymbolicLink(policyLink, external);
+        } catch (UnsupportedOperationException | IOException unsupported) {
+            Assumptions.abort("symbolic links are unavailable: " + unsupported);
+        }
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(null, project.resolve("ontology.ttl"));
+
+        assertTrue(policy.loaded(), "a hostile discovered link must not trigger no-policy fallback");
+        assertFalse(policy.valid());
+        assertCode(policy, "policy_symlink_forbidden");
+        assertTrue(policy.effective().isEmpty());
+    }
+
+    @Test
+    void discoveredPolicyDirectorySymlinkCannotMoveTheProjectAnchor(@TempDir Path temp)
+            throws Exception {
+        Path externalDirectory = temp.resolve("external/.protege-mcp");
+        Files.createDirectories(externalDirectory);
+        write(externalDirectory.resolve("project.yaml"), "version: 1\n");
+        Path project = temp.resolve("project");
+        Files.createDirectories(project);
+        try {
+            Files.createSymbolicLink(project.resolve(".protege-mcp"), externalDirectory);
+        } catch (UnsupportedOperationException | IOException unsupported) {
+            Assumptions.abort("symbolic links are unavailable: " + unsupported);
+        }
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(null, project.resolve("ontology.ttl"));
+
+        assertTrue(policy.loaded());
+        assertFalse(policy.valid());
+        assertCode(policy, "policy_symlink_escape");
+    }
+
+    @Test
+    void explicitPolicyDirectorySymlinkCannotMoveTheProjectAnchor(@TempDir Path temp)
+            throws Exception {
+        Path externalDirectory = temp.resolve("external/.protege-mcp");
+        Files.createDirectories(externalDirectory);
+        write(externalDirectory.resolve("project.yaml"), "version: 1\n");
+        Path project = temp.resolve("project");
+        Files.createDirectories(project);
+        try {
+            Files.createSymbolicLink(project.resolve(".protege-mcp"), externalDirectory);
+        } catch (UnsupportedOperationException | IOException unsupported) {
+            Assumptions.abort("symbolic links are unavailable: " + unsupported);
+        }
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(
+                project.resolve(".protege-mcp/project.yaml"), null);
+
+        assertTrue(policy.loaded());
+        assertFalse(policy.valid());
+        assertCode(policy, "policy_symlink_escape");
+    }
+
+    @Test
+    void aPolicyContentSwapBetweenVerificationReadsFailsClosed(@TempDir Path temp)
+            throws Exception {
+        Path path = temp.resolve("project.yaml");
+        Files.writeString(path, "version: 1\nproject_id: first\n");
+        Set<OpenOption> options = Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+
+        IOException changed = assertThrows(IOException.class,
+                () -> ProjectPolicyLoader.readStablePolicyBytes(path, options,
+                        () -> Files.writeString(path, "version: 1\nproject_id: other\n")));
+
+        assertTrue(changed.getMessage().contains("changed while it was being read"));
+    }
+
+    @Test
     void duplicateModuleOwnershipAndPathsAreRejected(@TempDir Path temp) throws Exception {
         Path module = temp.resolve("module.ttl");
         write(module, "@prefix owl: <http://www.w3.org/2002/07/owl#> .\n");
@@ -508,6 +698,30 @@ class ProjectPolicyLoaderTest {
     }
 
     @Test
+    void oversizedModuleProducesStructuredBoundedPolicyIssue(@TempDir Path temp) throws Exception {
+        Path module = temp.resolve("oversized-module.ofn");
+        try (FileChannel channel = FileChannel.open(module, StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE)) {
+            channel.position(ModuleDocumentInspector.MAX_DOCUMENT_BYTES);
+            channel.write(ByteBuffer.wrap(new byte[] {0}));
+        }
+        Path policyPath = temp.resolve("policy.yaml");
+        write(policyPath, minimal("oversized-module")
+                + "modules:\n"
+                + "  - ontology_iri: https://example.org/module\n"
+                + "    path: oversized-module.ofn\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+
+        assertFalse(policy.valid());
+        assertCode(policy, "module_document_too_large");
+        PolicyIssue issue = policy.issues().stream()
+                .filter(item -> "module_document_too_large".equals(item.code()))
+                .findFirst().orElseThrow();
+        assertTrue(issue.message().length() < 256);
+    }
+
+    @Test
     void discoveredPolicyAssetsAndSymlinksOutsideTheAnchorStillFailClosed(@TempDir Path temp)
             throws Exception {
         Path outside = temp.resolve("outside.rq");
@@ -550,6 +764,30 @@ class ProjectPolicyLoaderTest {
         ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
         assertTrue(policy.valid(), () -> policy.issues().toString());
         assertEquals(List.of(quality.resolve("a.rq").toRealPath()), policy.assets().get("invariants"));
+    }
+
+    @Test
+    void assetScanBudgetIsCumulativeAcrossConfiguredGlobs(@TempDir Path temp) throws Exception {
+        Path first = temp.resolve("first");
+        Path second = temp.resolve("second");
+        Files.createDirectories(first);
+        Files.createDirectories(second);
+        for (int i = 0; i < 5_100; i++) {
+            Files.createFile(first.resolve("a" + i + ".rq"));
+            Files.createFile(second.resolve("b" + i + ".rq"));
+        }
+        Path policyPath = temp.resolve("policy.yaml");
+        write(policyPath, minimal("cumulative-globs")
+                + "validation:\n"
+                + "  required_stages: [invariants]\n"
+                + "  invariants:\n"
+                + "    paths: ['first/*.rq', 'second/*.rq']\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+
+        assertFalse(policy.valid());
+        assertEquals(1, policy.issues().stream()
+                .filter(issue -> "asset_scan_limit".equals(issue.code())).count());
     }
 
     @Test
@@ -809,6 +1047,16 @@ class ProjectPolicyLoaderTest {
         Files.createDirectories(path.getParent());
         Files.writeString(path, value, StandardCharsets.UTF_8);
         ProjectPolicyFixtures.materialize(path, value);
+    }
+
+    private static void mirrorWithHardLinks(Path source, Path target) throws IOException {
+        try (var walk = Files.walk(source)) {
+            for (Path path : walk.sorted().toList()) {
+                Path destination = target.resolve(source.relativize(path));
+                if (Files.isDirectory(path)) Files.createDirectories(destination);
+                else Files.createLink(destination, path);
+            }
+        }
     }
 
     private static void assertCode(ProjectPolicy policy, String code) {

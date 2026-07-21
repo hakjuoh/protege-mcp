@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -67,6 +68,43 @@ class FilesystemProjectWorkspaceTest {
             assertEquals(2, snapshot.closure().size(), "captured OWL state remains immutable");
         }
         assertFalse(Files.exists(capturedPath), "closing a snapshot removes its private temp tree");
+    }
+
+    @Test
+    void versionTwoCaptureDoesNotTreatAnAbsentMappingOutputAsAnInputAsset() throws Exception {
+        writeRoot(IMPORT_IRI);
+        writeImport("Imported");
+        Path policy = writePolicy("modules:\n"
+                + "  - ontology_iri: " + IMPORT_IRI + "\n"
+                + "    path: import.ttl\n");
+        Files.writeString(policy, Files.readString(policy).replace("version: 1", "version: 2"));
+        assertFalse(Files.exists(temp.resolve(".protege-mcp/mappings.sssom.tsv")));
+
+        try (WorkspaceSnapshot snapshot = new FilesystemProjectWorkspace(policy).capture()) {
+            assertEquals(2, snapshot.closure().size());
+            assertFalse(snapshot.capturedAssets().containsKey("mapping_store"));
+        }
+    }
+
+    @Test
+    void versionTwoCaptureKeepsPresentMappingStoreOutOfGenericOntologySnapshot()
+            throws Exception {
+        writeRoot(IMPORT_IRI);
+        writeImport("Imported");
+        Path policy = writePolicy("modules:\n"
+                + "  - ontology_iri: " + IMPORT_IRI + "\n"
+                + "    path: import.ttl\n");
+        Files.writeString(policy, Files.readString(policy).replace("version: 1", "version: 2"));
+        Path mappings = policy.getParent().resolve(".protege-mcp/mappings.sssom.tsv");
+        Files.createDirectories(mappings.getParent());
+        Files.writeString(mappings, "subject_id\tpredicate_id\tobject_id\n");
+
+        try (WorkspaceSnapshot snapshot = new FilesystemProjectWorkspace(policy).capture()) {
+            assertEquals(List.of(mappings.toRealPath()),
+                    snapshot.policy().assets().get("mapping_store"));
+            assertFalse(snapshot.capturedAssets().containsKey("mapping_store"),
+                    "SSSOM state is guarded by mapping_revision only when a mapping-aware flow uses it");
+        }
     }
 
     @Test
@@ -196,7 +234,8 @@ class FilesystemProjectWorkspaceTest {
     }
 
     @Test
-    void parsesPreviouslyCapturedPolicyBytesWithoutRereadingTheSource() throws Exception {
+    void compatibilityLoaderRejectsPreviouslyCapturedBytesAfterSourceReplacement()
+            throws Exception {
         writeRoot(IMPORT_IRI);
         writeImport("Imported");
         Path policy = writePolicy("modules:\n"
@@ -208,8 +247,290 @@ class FilesystemProjectWorkspaceTest {
         ProjectPolicy loaded = ProjectPolicyLoader.loadCaptured(
                 policy.toRealPath(), captured, null, null, true);
 
-        assertTrue(loaded.valid(), () -> loaded.issues().toString());
-        assertEquals(ROOT_IRI, loaded.effective().get("root_ontology"));
+        assertFalse(loaded.valid());
+        assertTrue(loaded.issues().stream()
+                .anyMatch(issue -> "policy_changed_during_read".equals(issue.code())));
+    }
+
+    @Test
+    void workspaceRejectsFinalAndEscapingDirectoryPolicySymlinks() throws Exception {
+        Path realPolicy = writePolicy("");
+        Path finalLink = temp.resolve("linked-policy.yaml");
+        try {
+            Files.createSymbolicLink(finalLink, realPolicy);
+        } catch (UnsupportedOperationException | IOException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "symbolic links are unavailable: " + unsupported);
+        }
+        IOException finalRefusal = assertThrows(IOException.class,
+                () -> new FilesystemProjectWorkspace(finalLink).capture());
+        assertTrue(finalRefusal.getMessage().contains("secure path validation"),
+                finalRefusal::getMessage);
+
+        Path outside = Files.createTempDirectory("workspace-policy-outside-");
+        try {
+            Files.writeString(outside.resolve("project.yaml"), "version: 1\n");
+            Path linkedDirectory = temp.resolve(".protege-mcp");
+            Files.createSymbolicLink(linkedDirectory, outside);
+            IOException directoryRefusal = assertThrows(IOException.class,
+                    () -> new FilesystemProjectWorkspace(
+                            linkedDirectory.resolve("project.yaml")).capture());
+            assertTrue(directoryRefusal.getMessage().contains("secure path validation"),
+                    directoryRefusal::getMessage);
+        } finally {
+            Files.deleteIfExists(outside.resolve("project.yaml"));
+            Files.deleteIfExists(outside);
+        }
+    }
+
+    @Test
+    void workspaceRejectsPolicyDirectorySwapAfterSecureDiscovery() throws Exception {
+        writeRoot(IMPORT_IRI);
+        writeImport("Imported");
+        Path originalPolicy = writePolicy("modules:\n"
+                + "  - ontology_iri: " + IMPORT_IRI + "\n"
+                + "    path: import.ttl\n");
+        Path policyDirectory = temp.resolve("project");
+        Files.createDirectory(policyDirectory);
+        for (String file : List.of("project.yaml", "root.ttl", "import.ttl",
+                "ro-crate-metadata.json")) {
+            Files.move(temp.resolve(file), policyDirectory.resolve(file));
+        }
+        Path policy = policyDirectory.resolve(originalPolicy.getFileName());
+        Path savedDirectory = temp.resolve("project-before-swap");
+        Path outside = Files.createTempDirectory("workspace-policy-race-");
+        Files.writeString(outside.resolve("project.yaml"), Files.readString(policy));
+
+        try {
+            FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(policy, () -> {
+                Files.move(policyDirectory, savedDirectory);
+                Files.createSymbolicLink(policyDirectory, outside);
+            }, () -> { });
+
+            IOException refusal = assertThrows(IOException.class, workspace::capture);
+            assertTrue(refusal.getMessage().contains("changed after secure discovery"),
+                    refusal::getMessage);
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "symbolic links are unavailable: " + unsupported);
+        } finally {
+            if (Files.isSymbolicLink(policyDirectory)) Files.deleteIfExists(policyDirectory);
+            if (Files.exists(savedDirectory)) Files.move(savedDirectory, policyDirectory);
+            Files.deleteIfExists(outside.resolve("project.yaml"));
+            Files.deleteIfExists(outside);
+        }
+    }
+
+    @Test
+    void workspaceRejectsSamePathOrdinaryProjectDirectoryReplacement() throws Exception {
+        writeRoot(IMPORT_IRI);
+        writeImport("Imported");
+        Path originalPolicy = writePolicy("modules:\n"
+                + "  - ontology_iri: " + IMPORT_IRI + "\n"
+                + "    path: import.ttl\n");
+        Path project = temp.resolve("project");
+        Files.createDirectory(project);
+        for (String file : List.of("project.yaml", "root.ttl", "import.ttl",
+                "ro-crate-metadata.json")) {
+            Files.move(temp.resolve(file), project.resolve(file));
+        }
+        Path policy = project.resolve(originalPolicy.getFileName());
+        Path saved = temp.resolve("project-before-replacement");
+
+        try {
+            FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(policy, () -> {
+                Files.move(project, saved);
+                Files.createDirectory(project);
+                Files.createLink(policy, saved.resolve("project.yaml"));
+            }, () -> { });
+
+            IOException refusal = assertThrows(IOException.class, workspace::capture);
+            assertTrue(refusal.getMessage().contains("identity changed after secure discovery"),
+                    refusal::getMessage);
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
+        }
+    }
+
+    @Test
+    void workspaceRejectsSamePathPolicyFileReplacement() throws Exception {
+        writeRoot(IMPORT_IRI);
+        writeImport("Imported");
+        Path policy = writePolicy("");
+        Path savedPolicy = policy.resolveSibling("project-before-replacement.yaml");
+        var originalTime = Files.getLastModifiedTime(policy);
+        FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(policy, () -> {
+            Files.move(policy, savedPolicy);
+            Files.copy(savedPolicy, policy);
+            Files.setLastModifiedTime(policy, originalTime);
+        }, () -> { });
+
+        IOException refusal = assertThrows(IOException.class, workspace::capture);
+        assertTrue(refusal.getMessage().contains("identity changed after secure discovery"),
+                refusal::getMessage);
+    }
+
+    @Test
+    void workspaceFinalPinRejectsHardlinkedReplacementTreeAfterAllAssetReads()
+            throws Exception {
+        writeRoot(IMPORT_IRI);
+        writeImport("Imported");
+        Path originalPolicy = writePolicy("modules:\n"
+                + "  - ontology_iri: " + IMPORT_IRI + "\n"
+                + "    path: import.ttl\n");
+        Path project = temp.resolve("project");
+        Files.createDirectory(project);
+        for (String file : List.of("project.yaml", "root.ttl", "import.ttl",
+                "ro-crate-metadata.json")) {
+            Files.move(temp.resolve(file), project.resolve(file));
+        }
+        Path policy = project.resolve(originalPolicy.getFileName());
+        Path saved = temp.resolve("project-before-final-replacement");
+
+        try {
+            FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(
+                    policy, () -> { }, () -> {
+                        Files.move(project, saved);
+                        mirrorWithHardLinks(saved, project);
+                    });
+
+            IOException refusal = assertThrows(IOException.class, workspace::capture);
+            assertTrue(refusal.getMessage().contains("before snapshot publication"),
+                    refusal::getMessage);
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
+        }
+    }
+
+    @Test
+    void publishedSnapshotRetainsProjectAnchorIdentity() throws Exception {
+        writeRoot(IMPORT_IRI);
+        writeImport("Imported");
+        Path originalPolicy = writePolicy("modules:\n"
+                + "  - ontology_iri: " + IMPORT_IRI + "\n"
+                + "    path: import.ttl\n");
+        Path project = temp.resolve("project");
+        Files.createDirectory(project);
+        for (String file : List.of("project.yaml", "root.ttl", "import.ttl",
+                "ro-crate-metadata.json")) {
+            Files.move(temp.resolve(file), project.resolve(file));
+        }
+        Path policy = project.resolve(originalPolicy.getFileName());
+        Path saved = temp.resolve("project-before-published-replacement");
+        FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(policy);
+
+        try (WorkspaceSnapshot snapshot = workspace.capture()) {
+            Files.move(project, saved);
+            mirrorWithHardLinks(saved, project);
+            assertFalse(workspace.isCurrent(snapshot),
+                    "content-identical hardlinks cannot replace the pinned project anchor");
+            IOException transactionRefusal = assertThrows(IOException.class,
+                    () -> workspace.beginTransaction(snapshot, project.resolve("root.ttl"), false));
+            assertTrue(transactionRefusal.getMessage().contains(
+                    "sources changed before transaction creation"), transactionRefusal::getMessage);
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
+        }
+    }
+
+    @Test
+    void recoveryRefusesHardlinkedProjectReplacementAfterCommit() throws Exception {
+        writeRoot(IMPORT_IRI);
+        writeImport("Imported");
+        Path originalPolicy = writePolicy("modules:\n"
+                + "  - ontology_iri: " + IMPORT_IRI + "\n"
+                + "    path: import.ttl\n");
+        Path project = temp.resolve("project");
+        Files.createDirectory(project);
+        for (String file : List.of("project.yaml", "root.ttl", "import.ttl",
+                "ro-crate-metadata.json")) {
+            Files.move(temp.resolve(file), project.resolve(file));
+        }
+        Path policy = project.resolve(originalPolicy.getFileName());
+        Path root = project.resolve("root.ttl");
+        Path saved = temp.resolve("project-before-recovery-replacement");
+        FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(
+                policy, temp.resolve("state"), () -> { });
+        byte[] replacement = (Files.readString(root)
+                + "<" + ROOT_IRI + "#Committed> a <http://www.w3.org/2002/07/owl#Class> .\n")
+                .getBytes(StandardCharsets.UTF_8);
+
+        try (WorkspaceSnapshot snapshot = workspace.capture();
+                WorkspaceTransaction transaction = workspace.beginTransaction(
+                        snapshot, root, true)) {
+            transaction.stageBytes(replacement);
+            transaction.commit();
+            Files.move(project, saved);
+            mirrorWithHardLinks(saved, project);
+
+            IOException refusal = assertThrows(IOException.class, transaction::recover);
+            assertTrue(refusal.getMessage().contains("project policy identity changed"),
+                    refusal::getMessage);
+            assertEquals(WorkspaceTransaction.State.COMMITTED, transaction.state());
+            assertEquals(ArtifactStore.sha256(replacement), ArtifactStore.sha256(root));
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
+        }
+    }
+
+    @Test
+    void recoveryCleanupDoesNotFollowAnAnchorReplacedInsideTheFinalMove()
+            throws Exception {
+        writeRoot(IMPORT_IRI);
+        writeImport("Imported");
+        Path originalPolicy = writePolicy("modules:\n"
+                + "  - ontology_iri: " + IMPORT_IRI + "\n"
+                + "    path: import.ttl\n");
+        Path project = temp.resolve("project");
+        Files.createDirectory(project);
+        for (String file : List.of("project.yaml", "root.ttl", "import.ttl",
+                "ro-crate-metadata.json")) {
+            Files.move(temp.resolve(file), project.resolve(file));
+        }
+        Path policy = project.resolve(originalPolicy.getFileName());
+        Path root = project.resolve("root.ttl");
+        Path saved = temp.resolve("project-replaced-inside-recovery");
+        FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(
+                policy, temp.resolve("state"), () -> { });
+        byte[] replacement = (Files.readString(root)
+                + "<" + ROOT_IRI + "#Committed> a <http://www.w3.org/2002/07/owl#Class> .\n")
+                .getBytes(StandardCharsets.UTF_8);
+        AtomicInteger moves = new AtomicInteger();
+
+        try (WorkspaceSnapshot snapshot = workspace.capture();
+                WorkspaceTransaction transaction = new WorkspaceTransaction(
+                        workspace, snapshot, root, true, () -> { }, (source, target) -> {
+                            if (moves.incrementAndGet() == 3) {
+                                Files.move(project, saved);
+                                mirrorWithHardLinks(saved, project);
+                                throw new IOException("injected replacement inside recovery move");
+                            }
+                            Files.move(source, target,
+                                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        })) {
+            transaction.stageBytes(replacement);
+            transaction.commit();
+
+            IOException refusal = assertThrows(IOException.class, transaction::recover);
+
+            assertTrue(refusal.getMessage().contains("injected replacement"),
+                    refusal::getMessage);
+            assertEquals(WorkspaceTransaction.State.COMMITTED, transaction.state());
+            assertEquals(ArtifactStore.sha256(replacement), ArtifactStore.sha256(root));
+            try (var entries = Files.list(project)) {
+                assertTrue(entries.anyMatch(path -> path.getFileName().toString()
+                        .startsWith(".root.ttl.protege-mcp-recovery-")),
+                        "identity loss must leave the recovery temp for manual handling");
+            }
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
+        }
     }
 
     @Test
@@ -625,5 +946,15 @@ class FilesystemProjectWorkspaceTest {
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
                 + "<catalog xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\">\n"
                 + content + "\n</catalog>\n";
+    }
+
+    private static void mirrorWithHardLinks(Path source, Path target) throws IOException {
+        try (var walk = Files.walk(source)) {
+            for (Path path : walk.sorted().toList()) {
+                Path destination = target.resolve(source.relativize(path));
+                if (Files.isDirectory(path)) Files.createDirectories(destination);
+                else Files.createLink(destination, path);
+            }
+        }
     }
 }

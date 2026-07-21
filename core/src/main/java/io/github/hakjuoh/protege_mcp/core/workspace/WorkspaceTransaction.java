@@ -110,7 +110,7 @@ public final class WorkspaceTransaction implements AutoCloseable {
             state = State.STAGED;
             return new Stage(target, identity.sha256(), identity.bytes());
         } catch (IOException | RuntimeException error) {
-            Files.deleteIfExists(candidate);
+            if (snapshot.policySourceCurrent()) Files.deleteIfExists(candidate);
             throw error;
         }
     }
@@ -180,7 +180,7 @@ public final class WorkspaceTransaction implements AutoCloseable {
             }
             throw failure;
         } finally {
-            if (backupTemp != null) {
+            if (backupTemp != null && snapshot.policySourceCurrent()) {
                 Files.deleteIfExists(backupTemp);
             }
         }
@@ -195,14 +195,17 @@ public final class WorkspaceTransaction implements AutoCloseable {
         if (!backupRequested) {
             throw new IllegalStateException("transaction did not request a recovery backup");
         }
+        requirePolicySourceCurrent("before recovery");
         Path recoveryTemp = null;
         try (WorkspaceProjectLock.Handle ignored = acquireLock()) {
+            requirePolicySourceCurrent("after acquiring the recovery lock");
             FilesystemProjectWorkspace.FileIdentity current =
                     FilesystemProjectWorkspace.pinnedIdentity(target, false);
             if (!commit.installedSha256().equals(current.sha256())) {
                 throw new IOException("target changed after commit; recovery refused");
             }
             if (!targetExisted) {
+                requirePolicySourceCurrent("before removing the recovered target");
                 Files.delete(target);
                 forceDirectory(target.getParent());
                 state = State.RECOVERED;
@@ -229,6 +232,7 @@ public final class WorkspaceTransaction implements AutoCloseable {
             if (!commit.installedSha256().equals(current.sha256()) || !baseline.equals(backup)) {
                 throw new IOException("target or backup changed during recovery");
             }
+            requirePolicySourceCurrent("before restoring the recovery backup");
             mover.move(recoveryTemp, target);
             recoveryTemp = null;
             FilesystemProjectWorkspace.FileIdentity restored =
@@ -243,9 +247,15 @@ public final class WorkspaceTransaction implements AutoCloseable {
             throw new IOException("filesystem does not support atomic recovery for " + target,
                     unsupported);
         } finally {
-            if (recoveryTemp != null) {
+            if (recoveryTemp != null && snapshot.policySourceCurrent()) {
                 Files.deleteIfExists(recoveryTemp);
             }
+        }
+    }
+
+    private void requirePolicySourceCurrent(String phase) throws IOException {
+        if (!snapshot.policySourceCurrent()) {
+            throw new IOException("project policy identity changed " + phase + "; recovery refused");
         }
     }
 
@@ -260,7 +270,7 @@ public final class WorkspaceTransaction implements AutoCloseable {
         }
         if (staged != null) {
             try {
-                Files.deleteIfExists(staged);
+                if (snapshot.policySourceCurrent()) Files.deleteIfExists(staged);
             } catch (IOException ignored) {
                 // Best effort for an owner-only uncommitted staging file.
             }

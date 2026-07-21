@@ -5,6 +5,40 @@ All notable changes to **Protégé MCP** are documented here. The format is base
 [Semantic Versioning](https://semver.org/). Each release's section is published verbatim as the body of
 its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the release workflow.
 
+## [Unreleased]
+
+### Added
+- Froze the complete 0.7.2 plugin and headless MCP contracts before expanding the 0.8 surface. Every
+  tool now advertises an output schema and a common bounded, recursively sanitized typed-error schema;
+  new tools must declare a narrow recursive output contract and both adapters validate and snapshot
+  returned structured data before rebuilding its canonical text representation.
+- Distinguished model-thread work cancelled before execution from an already-started operation whose
+  mutation outcome is unknown, so only the former is marked retryable. Authorization revocation and
+  audit failures now retain stable phase/outcome codes without leaking secrets or local paths.
+- Added the strict project-policy v2 contract for owner-local OLS4 provider identities, project-confined
+  SSSOM mapping governance, bounded public jobs, and inference materialization. Valid regular-file v1
+  normalization and digests remain byte-for-byte compatible and report an out-of-band, non-writing migration
+  recommendation; rejected-input diagnostics are now bounded/redacted and symlinks fail closed. V2 templates
+  are opt-in.
+- Policy capture now inseparably pairs bytes with the canonical source and filesystem identities of its
+  project anchor, rechecks both after semantic asset validation and before snapshot publication, and retains
+  the anchor pin for snapshot currency plus single-file/bundle transaction creation, commit, and recovery
+  across parser, cache, and headless boundaries. Bounded RO-Crate
+  capture pins its source and parent directory and shares one byte snapshot between version inference and
+  validation; bounded module reads likewise prevent declared assets from exhausting memory. SSSOM sidecars
+  use their own revision instead of perturbing ordinary ontology preflight.
+
+### Tests
+- Added immutable 0.7.2 plugin/headless goldens, recursive schema-dialect attacks, result-validation
+  mutants, redaction/canary/immutability cases, and execution/audit outcome tests.
+- Pinned both policy-schema hashes and a fixed v1 normalized digest; added v2 schema/default/semantic,
+  mutation, template, immutability, public migration-result, input-amplification, symlink-escape,
+  symlink, same-path source/ordinary-directory replacement before and after asset validation, transaction
+  creation/recovery before and during a hardlinked project replacement (including rollback/cleanup), parent-pinned
+  RO-Crate capture, mutation-sensitive post-size-check RO-Crate growth, oversized
+  sparse-module, output-collision, rejected-secret non-reflection, and
+  shaded-distribution smoke coverage.
+
 ## [0.7.2] - 2026-07-20
 
 **Prefix maintenance and executable release evidence complete the 0.7.2 hardening pass.** This patch

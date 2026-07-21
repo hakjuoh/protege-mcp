@@ -12,6 +12,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 import io.github.hakjuoh.protege_mcp.core.headless.HeadlessToolService;
+import io.github.hakjuoh.protege_mcp.core.headless.HeadlessExecutionException;
 
 class HeadlessToolServiceTest {
 
@@ -51,27 +52,34 @@ class HeadlessToolServiceTest {
 
     @Test
     void callerPathsRemainProjectConfinedEvenWithTheFullHeadlessProfile() {
-        IllegalArgumentException lockEscape = assertThrows(IllegalArgumentException.class,
+        HeadlessExecutionException lockEscape = assertThrows(HeadlessExecutionException.class,
                 () -> execute("write_import_lock",
                         Map.of("dry_run", false, "output", "../escaped-lock.json")));
-        assertTrue(lockEscape.getMessage().contains("project root"), lockEscape::getMessage);
+        assertUnknownMutation(lockEscape, "project root");
 
-        IllegalArgumentException releaseEscape = assertThrows(IllegalArgumentException.class,
+        HeadlessExecutionException releaseEscape = assertThrows(HeadlessExecutionException.class,
                 () -> execute("prepare_release",
                         Map.of("output_dir", "../escaped-release")));
-        assertTrue(releaseEscape.getMessage().contains("release output"),
-                releaseEscape::getMessage);
+        assertUnknownMutation(releaseEscape, "release output");
 
-        IllegalArgumentException auditClobber = assertThrows(IllegalArgumentException.class,
+        HeadlessExecutionException auditClobber = assertThrows(HeadlessExecutionException.class,
                 () -> execute("export_audit_log",
                         Map.of("output", ".protege-mcp/project.yaml")));
-        assertTrue(auditClobber.getMessage().contains("audit-export"),
-                auditClobber::getMessage);
+        assertUnknownMutation(auditClobber, "audit-export");
     }
 
     private Map<String, Object> execute(String tool, Map<String, Object> arguments) throws Exception {
         return service.execute(tool, arguments, HeadlessToolService.DEFAULT_CAPABILITIES,
                 HeadlessStdioServer.MAX_INBOUND_MESSAGE_BYTES,
                 HeadlessStdioServer.MAX_OUTBOUND_MESSAGE_BYTES);
+    }
+
+    private static void assertUnknownMutation(HeadlessExecutionException failure,
+            String internalCauseText) {
+        assertEquals("mutation_outcome_unknown", failure.code());
+        assertEquals(true, failure.details().get("outcome_unknown"));
+        assertEquals(true, failure.details().get("retry_requires_state_check"));
+        assertFalse(failure.getMessage().contains(internalCauseText));
+        assertTrue(failure.getCause().getMessage().contains(internalCauseText));
     }
 }

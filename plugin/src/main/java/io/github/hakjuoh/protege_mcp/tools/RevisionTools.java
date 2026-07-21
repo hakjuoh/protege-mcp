@@ -159,7 +159,9 @@ public final class RevisionTools {
             // release_output is an OUTPUT location (release.output_dir), not a QC input. It may not exist
             // yet and its contents are release artifacts, so hashing it would break or destabilize the
             // preflight digest. Digest only the assets the QC/preflight actually reads.
-            if ("release_output".equals(key)) {
+            // mapping_store has its own mapping_revision contract. Ordinary ontology edit/QC
+            // preflight must not be invalidated by an unrelated SSSOM sidecar update.
+            if ("release_output".equals(key) || "mapping_store".equals(key)) {
                 return;
             }
             for (Path path : paths) {

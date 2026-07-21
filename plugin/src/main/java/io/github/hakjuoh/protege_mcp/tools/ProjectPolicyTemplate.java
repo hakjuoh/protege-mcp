@@ -34,7 +34,8 @@ final class ProjectPolicyTemplate {
 
     /** The generated template plus the derived coordinates the caller reports and hints on. */
     record Template(String yaml, String projectId, String rootOntology, String rootArtifact,
-            String metadataPath, String reasoner, boolean rootOntologyPlaceholder, String profile) {
+            String metadataPath, String reasoner, boolean rootOntologyPlaceholder, String profile,
+            int version) {
     }
 
     /** {@code general} or {@code obo}; null signals an invalid value (caller returns an arg error). */
@@ -72,19 +73,27 @@ final class ProjectPolicyTemplate {
     }
 
     static Template render(String profile, String projectId, String rootOntologyIri) {
+        return render(profile, projectId, rootOntologyIri, 1);
+    }
+
+    static Template render(String profile, String projectId, String rootOntologyIri, int version) {
+        if (version != 1 && version != 2) {
+            throw new IllegalArgumentException("policy template version must be 1 or 2");
+        }
         boolean placeholder = rootOntologyIri == null;
         String rootOntology = placeholder ? PLACEHOLDER_IRI : rootOntologyIri;
         boolean obo = OBO.equals(profile);
         String rootArtifact = obo ? "ontology-edit.owl" : "ontology.ttl";
         String reasoner = "HermiT";
         String owlProfile = obo ? "EL" : "DL";
-        String yaml = header()
-                + required(yamlScalar(projectId), yamlScalar(rootOntology), rootArtifact,
+        String yaml = header(version)
+                + required(version, yamlScalar(projectId), yamlScalar(rootOntology), rootArtifact,
                         reasoner, owlProfile)
                 + validationBlock()
+                + (version == 2 ? v2Blocks() : "")
                 + optionalBlocks(obo, rootOntology);
         return new Template(yaml, projectId, rootOntology, rootArtifact,
-                "ro-crate-metadata.json", reasoner, placeholder, profile);
+                "ro-crate-metadata.json", reasoner, placeholder, profile, version);
     }
 
     /** What the user must still create/edit before the generated policy validates. */
@@ -106,6 +115,11 @@ final class ProjectPolicyTemplate {
         hint.add("Uncomment and edit any optional blocks you need (prefixes, modules, entity_search, "
                 + "annotations, iri_policy, lifecycle, validation invariants/shacl/competency_questions, "
                 + "the imports lockfile, release) and create the files they reference.");
+        if (t.version() == 2) {
+            hint.add("Review the version 2 external_terms, mappings, jobs, and materialization bounds. "
+                    + "Provider origin aliases and credential bindings must be configured owner-locally; "
+                    + "never put endpoint URLs or secret values in this policy.");
+        }
         hint.add("Runtime audit streams stay owner-only outside the project. Add "
                 + "'.protege-mcp/audit-export*.jsonl' to VCS ignore rules unless an explicitly exported "
                 + "review artifact is meant to be committed.");
@@ -116,9 +130,9 @@ final class ProjectPolicyTemplate {
 
     // ------------------------------------------------------------------ template sections
 
-    private static String header() {
-        return """
-                # Protégé MCP project policy (v1) — starter template.
+    private static String header(int version) {
+        return ("""
+                # Protégé MCP project policy (v%VERSION%) — starter template.
                 #
                 # This file is SOURCE CODE: review it, complete it, and commit it with your ontology.
                 # Protégé MCP discovers it at <project>/.protege-mcp/project.yaml by walking up from the
@@ -126,13 +140,13 @@ final class ProjectPolicyTemplate {
                 # exactly as below. Run validate_project_policy after editing; the commented blocks near
                 # the end stay inert until you uncomment and complete them.
 
-                """;
+                """).replace("%VERSION%", Integer.toString(version));
     }
 
-    private static String required(String projectId, String rootOntology, String rootArtifact,
+    private static String required(int version, String projectId, String rootOntology, String rootArtifact,
             String reasoner, String owlProfile) {
         return ("""
-                version: 1
+                version: %VERSION%
 
                 # A stable identifier for this ontology project (any non-empty string).
                 project_id: %PROJECT_ID%
@@ -193,12 +207,58 @@ final class ProjectPolicyTemplate {
                   timeout_ms: 120000
 
                 """)
+                .replace("%VERSION%", Integer.toString(version))
                 .replace("%PROJECT_ID%", projectId)
                 .replace("%ROOT_ONTOLOGY%", rootOntology)
                 .replace("%PROFILE_IRI%", ProjectInteroperability.PROFILE_IRI)
                 .replace("%ROOT_ARTIFACT%", rootArtifact)
                 .replace("%REASONER%", reasoner)
                 .replace("%OWL_PROFILE%", owlProfile);
+    }
+
+    private static String v2Blocks() {
+        return """
+                # Version 2 feature policy. Network endpoints and credential bindings are owner-local;
+                # the project names only a reviewed provider profile and origin alias.
+                external_terms:
+                  providers: []
+
+                # Canonical SSSOM 1.0 sidecar and mapping-governance defaults. An absent store is valid
+                # until a mapping operation creates it with confirmation and an expected revision.
+                mappings:
+                  path: .protege-mcp/mappings.sssom.tsv
+                  allowed_predicates: []
+                  allowed_sources: []
+                  allowed_licenses: []
+                  require_license: false
+                  required_findings: []
+                  directional_cycle_policy:
+                    skos:broadMatch: error
+                    skos:narrowMatch: error
+                  many_to_one_rules: []
+
+                # These values are product maxima; a project may only tighten them.
+                jobs:
+                  allowed_types: [classification, project_qc, semantic_diff, inference_materialization]
+                  workers: 2
+                  queue_capacity: 32
+                  active_per_principal: 8
+                  retained_per_principal: 32
+                  retained_per_backend: 128
+                  retention_seconds: 3600
+
+                materialization:
+                  allowed_reasoners: []
+                  allowed_categories: [subclass_axioms, equivalent_class_axioms, class_assertions,
+                    property_hierarchy_axioms, object_property_assertions, data_property_assertions]
+                  allowed_destinations: [new_ontology, project_file]
+                  allow_source_write: false
+                  max_axioms_per_category: 50000
+                  max_axioms_total: 50000
+                  max_bytes: 67108864
+                  timeout_ms: 120000
+
+                """;
     }
 
     private static String validationBlock() {

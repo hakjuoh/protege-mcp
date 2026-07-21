@@ -43,6 +43,7 @@ public final class ToolCatalog {
             VerifyOntologyTools::register,
             ShaclTools::register,
             ProjectPolicyTools::register,
+            MappingTools::register,
             QcSuiteTools::register,
             ReleaseTools::register,
             AuditTools::register);

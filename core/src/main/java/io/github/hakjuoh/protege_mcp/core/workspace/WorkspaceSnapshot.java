@@ -19,6 +19,7 @@ import io.github.hakjuoh.protege_mcp.contracts.ModelRevision;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprints;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 
 /** Point-in-time, lifecycle-owned headless ontology snapshot with explicit drift detection. */
 public final class WorkspaceSnapshot implements AutoCloseable {
@@ -33,12 +34,13 @@ public final class WorkspaceSnapshot implements AutoCloseable {
     private final String closureFingerprint;
     private final String importLockDigest;
     private final Path temporaryRoot;
+    private final ProjectPolicyLoader.PolicySourcePin policySourcePin;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     WorkspaceSnapshot(ProjectPolicy policy, OWLOntologyManager manager, OWLOntology root,
             List<WorkspaceSource> sources, Map<String, List<Path>> capturedAssets,
             ModelRevision revision, String closureFingerprint, String importLockDigest,
-            Path temporaryRoot) {
+            Path temporaryRoot, ProjectPolicyLoader.PolicySourcePin policySourcePin) {
         this.policy = java.util.Objects.requireNonNull(policy, "policy");
         this.manager = java.util.Objects.requireNonNull(manager, "manager");
         this.root = java.util.Objects.requireNonNull(root, "root");
@@ -53,6 +55,8 @@ public final class WorkspaceSnapshot implements AutoCloseable {
                 closureFingerprint, "closureFingerprint");
         this.importLockDigest = importLockDigest;
         this.temporaryRoot = temporaryRoot.toAbsolutePath().normalize();
+        this.policySourcePin = java.util.Objects.requireNonNull(
+                policySourcePin, "policySourcePin");
     }
 
     public ProjectPolicy policy() {
@@ -99,6 +103,10 @@ public final class WorkspaceSnapshot implements AutoCloseable {
 
     public boolean closed() {
         return closed.get();
+    }
+
+    boolean policySourceCurrent() {
+        return policySourcePin.isCurrent();
     }
 
     @Override

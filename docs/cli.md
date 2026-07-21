@@ -25,16 +25,18 @@ java -jar protege-mcp-cli-{{ site.version }}-all.jar diff --left previous.ttl --
 java -jar protege-mcp-cli-{{ site.version }}-all.jar serve --transport stdio --project .protege-mcp/project.yaml [--capabilities CAP,...]
 ```
 
-`validate-policy` prints the resolved path/root, canonical policy digest, and structured validation
-issues as JSON. It validates syntax, semantic references, and local assets; installed Protégé reasoner
+`validate-policy` prints the resolved path/root, canonical policy digest, `schema_version`, the
+non-writing v1 `migration` recommendation when applicable, and structured validation issues as JSON.
+It validates syntax, semantic references, and local assets; installed Protégé reasoner
 availability is deliberately deferred to the adapter that executes project QC. `--no-external` refuses
 even a policy that would otherwise grant external paths, and `--no-network` records the headless runtime's
 fixed offline posture in the result.
 
 `validate` captures the policy, root ontology, complete local import closure, and validation assets in an
-offline snapshot, then runs the policy's required subset of the same eight ordered project-QC stages used
+offline snapshot, then runs the policy's required subset of the same ordered project-QC stages used
 by the plugin: interoperability, reasoner, profile, governance, structural, invariants, competency
-questions, and SHACL. The
+questions, SHACL, and the v2 `provider_evidence` stage. Provider networking is intentionally unavailable
+headlessly, so requiring that stage returns `provider_evidence_unavailable` and `gate=error`. The
 shaded executable includes HermiT; its legacy JAutomata runtime is replaced by maintained AutomataLib.
 One classification is shared across inference-dependent stages, required missing/malformed assets fail
 closed, source drift is rejected, and reports contain project-relative paths. JSON is the default;
@@ -95,6 +97,12 @@ only the project-confined headless operations that share completed core services
 
 - `get_headless_capabilities`
 - `validate_project_policy`
+- `list_mappings`
+- `add_mapping`
+- `remove_mapping`
+- `import_sssom`
+- `export_sssom`
+- `validate_mappings`
 - `run_project_qc`
 - `verify_import_lock`
 - `write_import_lock`
@@ -115,7 +123,7 @@ workspace operations within one session, rejects inbound JSON-RPC lines over 1 M
 configuration, and transport failures go to stderr.
 
 Stdio authentication is the operating system's child-process boundary. The default local profile contains
-the exact capabilities needed by the eight supported tools, including `server:admin` for the fixed
+the exact capabilities needed by the fourteen supported tools, including `server:admin` for the fixed
 `export_audit_log` operation, but it has no network or external-filesystem authority. `--capabilities`
 can narrow it further with a comma- or whitespace-separated list of
 exact public scopes, for example:

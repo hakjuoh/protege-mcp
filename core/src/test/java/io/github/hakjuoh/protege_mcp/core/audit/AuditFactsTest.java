@@ -40,12 +40,30 @@ class AuditFactsTest {
         assertNull(AuditFacts.committed(Map.of("message", "success"), true));
         assertNull(AuditFacts.committed(Map.of("gate", "fail"), false));
         String digest = "sha256:" + "a".repeat(64);
-        assertEquals(List.of("change_set:cs-1", "policy_digest:" + digest),
+        assertEquals(List.of("change_set:cs-1", "policy_digest:" + digest,
+                        "mapping_revision:" + digest, "target_digest:" + digest),
                 AuditFacts.confirmationReferences(Map.of(
                         "change_set_id", "cs-1", "confirm_policy_digest", digest,
+                        "expected_mapping_revision", digest, "expected_target_digest", digest,
                         "body", "must never be retained")));
         assertTrue(AuditFacts.confirmationReferences(Map.of(
                 "change_set_id", "ontology content with spaces")).isEmpty());
+    }
+
+    @Test
+    void mappingProjectionKeepsRevisionEvidenceWithoutMappingBodies() {
+        String previous = "sha256:" + "a".repeat(64);
+        String current = "sha256:" + "b".repeat(64);
+        Map<String, Object> projected = AuditFacts.summary(Map.of(
+                "committed", true, "previous_mapping_revision", previous,
+                "mapping_revision", current, "record_count", 7,
+                "spreadsheet_safe", false, "lossless", true,
+                "items", List.of(Map.of("subject_id", "private-term"))));
+
+        assertEquals(previous, projected.get("previous_mapping_revision"));
+        assertEquals(current, projected.get("mapping_revision"));
+        assertEquals(7, projected.get("record_count"));
+        assertFalse(projected.toString().contains("private-term"));
     }
 
     @Test

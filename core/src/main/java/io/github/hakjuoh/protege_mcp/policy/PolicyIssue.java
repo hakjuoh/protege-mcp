@@ -3,10 +3,14 @@ package io.github.hakjuoh.protege_mcp.policy;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import io.github.hakjuoh.protege_mcp.contracts.ContractRedactor;
+
 /** One actionable project-policy validation issue. */
 public record PolicyIssue(String severity, String code, String path, String message) {
 
     public PolicyIssue {
+        String safeMessage = ContractRedactor.sanitize(message == null ? "" : message);
+        message = safeMessage.length() <= 2_048 ? safeMessage : safeMessage.substring(0, 2_048);
         if (!"error".equals(severity) && !"warning".equals(severity)) {
             throw new IllegalArgumentException("severity must be error or warning");
         }

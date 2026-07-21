@@ -91,6 +91,27 @@ class HeadlessProjectQcServiceTest {
     }
 
     @Test
+    void providerEvidenceIsAKnownButUnavailableHeadlessStage() throws Exception {
+        writeRoot();
+        Path policy = writePolicy("[provider_evidence]",
+                "  provider_evidence:\n    providers: [ols]\n");
+        Files.writeString(policy, Files.readString(policy).replace("version: 1", "version: 2")
+                + "external_terms:\n"
+                + "  providers:\n"
+                + "    - {id: ols, profile: ols4, enabled: true, origin_alias: ebi, "
+                + "required_evidence_for: [provider_evidence]}\n");
+
+        HeadlessProjectQcService.Result result = HeadlessProjectQcService.run(
+                new FilesystemProjectWorkspace(policy), new StructuralReasonerFactory(),
+                25, LocalDate.of(2026, 7, 19));
+
+        assertEquals(GateStatus.ERROR, result.report().gate());
+        QcStageExecution execution = stage(result, "provider_evidence");
+        assertEquals(QcStageVerdict.ERROR, execution.verdict());
+        assertEquals("provider_evidence_unavailable", execution.details().get("error_code"));
+    }
+
+    @Test
     void sourceDriftAfterCaptureFailsTheAggregateGateClosed() throws Exception {
         writeRoot();
         Path policy = writePolicy("[structural]", "");

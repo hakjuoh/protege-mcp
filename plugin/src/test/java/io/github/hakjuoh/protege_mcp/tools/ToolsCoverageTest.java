@@ -135,30 +135,66 @@ class ToolsCoverageTest {
     }
 
     @Test
+    void guardRedactsSecretsAndAbsolutePathsFromExpectedFailures() {
+        CallToolResult r = Tools.guard(() -> {
+            throw new ToolArgException("Provider rejected Bearer opaque-secret at "
+                    + "/private/project.owl?api_key=also-secret");
+        });
+        String publicResult = String.valueOf(r.structuredContent());
+        assertFalse(publicResult.contains("opaque-secret"));
+        assertFalse(publicResult.contains("also-secret"));
+        assertFalse(publicResult.contains("/private"));
+    }
+
+    @Test
+    void guardAppliesRequestScopedSecretCanariesAtTheActualErrorBoundary() {
+        CallToolResult r = Tools.guard(() -> {
+            throw new ToolArgException("provider_failed", "echoed opaque-provider-value",
+                    Map.of("provider_response", "opaque-provider-value"), false,
+                    java.util.List.of("opaque-provider-value"));
+        });
+        assertFalse(String.valueOf(r.structuredContent()).contains("opaque-provider-value"));
+    }
+
+    @Test
     void guardConvertsMcpAccessExceptionToErrorMessage() {
         CallToolResult r = Tools.guard(() -> {
             throw new McpAccessException("edt busy");
         });
         assertTrue(r.isError());
         assertEquals("edt busy", errorText(r));
+        assertEquals("model_access_outcome_unknown",
+                ((Map<?, ?>) r.structuredContent()).get("code"));
+        assertEquals(false, ((Map<?, ?>) r.structuredContent()).get("retryable"));
     }
 
     @Test
-    void guardWrapsGenericRuntimeExceptionWithSimpleNameAndMessage() {
+    void guardOnlyMarksModelAccessRetryableWhenEffectsWerePrevented() {
+        CallToolResult r = Tools.guard(() -> {
+            throw McpAccessException.effectsPrevented("queued body cancelled");
+        });
+        assertEquals("model_access_prevented",
+                ((Map<?, ?>) r.structuredContent()).get("code"));
+        assertEquals(true, ((Map<?, ?>) r.structuredContent()).get("retryable"));
+    }
+
+    @Test
+    void guardHidesGenericRuntimeExceptionDetailsBehindAStableError() {
         CallToolResult r = Tools.guard(() -> {
             throw new IllegalStateException("kaboom");
         });
         assertTrue(r.isError());
-        assertEquals("IllegalStateException: kaboom", errorText(r));
+        assertEquals("Unexpected tool failure.", errorText(r));
+        assertEquals("internal_error", ((Map<?, ?>) r.structuredContent()).get("code"));
     }
 
     @Test
-    void guardWrapsRuntimeExceptionWithoutMessageAsSimpleNameOnly() {
+    void guardUsesTheSameStableErrorWhenRuntimeMessageIsAbsent() {
         CallToolResult r = Tools.guard(() -> {
             throw new IllegalStateException();
         });
         assertTrue(r.isError());
-        assertEquals("IllegalStateException", errorText(r));
+        assertEquals("Unexpected tool failure.", errorText(r));
     }
 
     private String errorText(CallToolResult r) {

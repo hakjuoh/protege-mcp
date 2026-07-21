@@ -42,6 +42,42 @@ class RevisionToolsTest {
         assertEquals(10_000, RevisionTools.MAX_PREFLIGHT_ASSET_ENTRIES);
     }
 
+    @Test
+    void versionTwoPreflightDoesNotHashAnAbsentMappingOutput(@TempDir Path temp) throws Exception {
+        Path policyFile = temp.resolve("policy.yaml");
+        ProjectPolicyFixtures.writePolicy(policyFile,
+                ProjectPolicyFixtures.minimalPolicy("v2-preflight", ONTOLOGY_IRI)
+                        .replace("version: 1", "version: 2")
+                        + "validation:\n  required_stages: [structural]\n");
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyFile, null, ONTOLOGY_IRI, List.of());
+
+        assertTrue(policy.valid(), () -> String.valueOf(policy.issues()));
+        assertTrue(!policy.assets().containsKey("mapping_store"));
+        assertNotNull(RevisionTools.preflightDigest(policy));
+    }
+
+    @Test
+    void versionTwoPreflightDoesNotHashPresentMappingStore(@TempDir Path temp) throws Exception {
+        Path mappings = temp.resolve(".protege-mcp/mappings.sssom.tsv");
+        Files.createDirectories(mappings.getParent());
+        Files.writeString(mappings, "subject_id\tpredicate_id\tobject_id\n");
+        Path policyFile = temp.resolve("policy.yaml");
+        ProjectPolicyFixtures.writePolicy(policyFile,
+                ProjectPolicyFixtures.minimalPolicy("v2-mapping-revision", ONTOLOGY_IRI)
+                        .replace("version: 1", "version: 2")
+                        + "validation:\n  required_stages: [structural]\n");
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyFile, null, ONTOLOGY_IRI, List.of());
+        assertTrue(policy.valid(), () -> String.valueOf(policy.issues()));
+        assertEquals(List.of(mappings.toRealPath()), policy.assets().get("mapping_store"));
+        String before = RevisionTools.preflightDigest(policy);
+
+        Files.writeString(mappings,
+                "subject_id\tpredicate_id\tobject_id\nex:A\tskos:exactMatch\tex:B\n");
+
+        assertEquals(before, RevisionTools.preflightDigest(policy),
+                "mapping-aware operations use mapping_revision instead of ontology preflight");
+    }
+
     /** A valid explicit policy whose only resolved asset is a robot-sparql-dir CQ directory. */
     private static ProjectPolicy policyWithCqDirectory(Path temp, int files) throws Exception {
         Path cqs = Files.createDirectories(temp.resolve("cqs"));

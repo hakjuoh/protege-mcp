@@ -87,7 +87,7 @@ class ModuleGovernanceServiceTest {
                 "sha256:test", Map.of("modules", modules),
                 Map.of("modules", modules.stream()
                         .map(module -> root.resolve(String.valueOf(module.get("path")))).toList()),
-                List.of());
+                List.of(), null);
     }
 
     private static Map<String, Object> module(String iri, String path, String namespace) {

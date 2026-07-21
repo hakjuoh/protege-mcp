@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **85 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **91 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -20,6 +20,14 @@ preview, impact, release, project-boundary, audit, and isolated-preflight guaran
 
 1. TOC
 {:toc}
+
+---
+
+## New tools in 0.8.0
+
+| Task | New tools | What they add |
+| --- | --- | --- |
+| SSSOM mappings | [`list_mappings`](mappings.html#list_mappings), [`add_mapping`](mappings.html#add_mapping), [`remove_mapping`](mappings.html#remove_mapping), [`import_sssom`](mappings.html#import_sssom), [`export_sssom`](mappings.html#export_sssom), [`validate_mappings`](mappings.html#validate_mappings) | Governed SSSOM 1.0 authoring with deterministic IDs, project validation, revision-bound pagination, compare-and-swap writes, and atomic import/export. |
 
 ---
 
@@ -143,6 +151,10 @@ The top-level [Prompts](../prompts/) guide packages these flows for one-click us
 
 ### [History & persistence](history.html)
 `undo_change` · `redo_change` · `save_ontology`
+
+### [SSSOM mappings](mappings.html)
+`list_mappings` · `add_mapping` · `remove_mapping` · `import_sssom` · `export_sssom` ·
+`validate_mappings`
 
 ### Cross-cutting reference
 - [**Axiom types**](axiom-types.html) — the structured `axiom_type` operand catalog used by

@@ -136,8 +136,9 @@ class DirectAccessPolicyResolveTest {
         assertTrue(errors.stream().map(issue -> (Map<?, ?>) issue).anyMatch(
                 issue -> "asset_missing".equals(issue.get("code"))
                         && "modules[0].path".equals(issue.get("path"))
-                        && String.valueOf(issue.get("message")).contains("missing.rdf")),
-                () -> "the per-issue path/message diagnostics must survive: " + errors);
+                        && String.valueOf(issue.get("message")).contains("[PATH]")
+                        && !String.valueOf(issue.get("message")).contains(temp.toString())),
+                () -> "the actionable field survives while the local path is redacted: " + errors);
 
         CallToolResult revision = call(RevisionTools::register, ctx, exchange,
                 "get_model_revision", Map.of());

@@ -7,6 +7,7 @@ import java.util.Map;
 
 import io.github.hakjuoh.protege_mcp.ro_crate.RoCrateProjectProfile;
 import io.github.hakjuoh.protege_mcp.ro_crate.RoCrateProjectProfileValidator;
+import io.github.hakjuoh.protege_mcp.ro_crate.RoCrateProjectProfileValidator.CapturedManifest;
 import io.github.hakjuoh.protege_mcp.ro_crate.RoCrateValidationIssue;
 import io.github.hakjuoh.protege_mcp.ro_crate.RoCrateValidationResult;
 import io.github.hakjuoh.protege_mcp.ro_crate.RoCrateVersion;
@@ -23,14 +24,39 @@ final class RoCrateProjectManifest {
      * the documented 1.1 default (and then fail validation loudly instead of being silently
      * adopted as a legacy version the schema's format/path pairing would have rejected).
      */
-    static void inferVersion(Path manifest, Map<String, Object> policy) {
-        RoCrateProjectProfileValidator.detectVersion(manifest)
+    static void inspect(Path manifest, Map<String, Object> policy, List<PolicyIssue> issues,
+            boolean inferVersion) {
+        final CapturedManifest captured;
+        try {
+            captured = RoCrateProjectProfileValidator.capture(manifest);
+        } catch (java.io.IOException unavailable) {
+            String message = unavailable.getMessage() == null
+                    ? unavailable.getClass().getSimpleName() : unavailable.getMessage();
+            boolean tooLarge = message.contains("exceeds "
+                    + RoCrateProjectProfileValidator.MAX_BYTES + " bytes");
+            issues.add(error(tooLarge ? "interop_manifest_too_large"
+                            : "interop_manifest_unreadable",
+                    "interoperability.metadata.path",
+                    tooLarge ? "RO-Crate metadata exceeds the maximum of "
+                            + RoCrateProjectProfileValidator.MAX_BYTES + " bytes."
+                            : "Could not read RO-Crate metadata: " + message));
+            return;
+        }
+        if (inferVersion) {
+            inferVersion(captured, policy);
+        }
+        validate(captured, policy, issues);
+    }
+
+    private static void inferVersion(CapturedManifest manifest, Map<String, Object> policy) {
+        RoCrateProjectProfileValidator.detectCapturedVersion(manifest)
                 .filter(RoCrateVersion::formalProfiles)
                 .ifPresent(version -> object(object(policy, "interoperability"), "metadata")
                         .put("format", version.format()));
     }
 
-    static void validate(Path manifest, Map<String, Object> policy, List<PolicyIssue> issues) {
+    private static void validate(CapturedManifest manifest, Map<String, Object> policy,
+            List<PolicyIssue> issues) {
         Map<String, Object> interoperability = object(policy, "interoperability");
         String format = string(object(interoperability, "metadata"), "format");
         final RoCrateVersion version;
@@ -49,7 +75,7 @@ final class RoCrateProjectManifest {
                 string(interoperability, "profile"),
                 strings(interoperability.get("additional_profiles")),
                 ProjectInteroperability.OWL2_SPEC);
-        RoCrateValidationResult result = RoCrateProjectProfileValidator.validate(
+        RoCrateValidationResult result = RoCrateProjectProfileValidator.validateCaptured(
                 manifest, version, profile);
         for (RoCrateValidationIssue issue : result.issues()) {
             String path = "metadata".equals(issue.path())

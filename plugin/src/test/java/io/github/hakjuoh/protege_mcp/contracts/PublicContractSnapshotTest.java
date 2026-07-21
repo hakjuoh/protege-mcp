@@ -39,6 +39,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import io.github.hakjuoh.protege_mcp.prompts.PromptCatalog;
+import io.github.hakjuoh.protege_mcp.core.auth.ToolCapabilityCatalog;
 import io.github.hakjuoh.protege_mcp.server.McpServerManager;
 import io.github.hakjuoh.protege_mcp.tools.ToolCatalog;
 import io.github.hakjuoh.protege_mcp.tools.ToolContext;
@@ -74,6 +75,7 @@ import io.modelcontextprotocol.spec.McpSchema.TextContent;
 class PublicContractSnapshotTest {
 
     private static final String BASELINE = "0.5.0";
+    private static final String V072_BASELINE = "0.7.2";
     private static final String UPDATE_PROPERTY = "protege.contract.snapshot.update";
     private static final String OVERWRITE_PROPERTY = "protege.contract.snapshot.overwrite";
     private static final Pattern RELEASE = Pattern.compile("[0-9]+\\.[0-9]+\\.[0-9]+");
@@ -94,6 +96,9 @@ class PublicContractSnapshotTest {
             // search_entities keeps the same arguments while documenting additive synonym,
             // explanation, collision, and review-only result fields.
             "search_entities");
+    /** Reviewed additive 0.8 guidance; the immutable 0.7.2 snapshot itself is never rewritten. */
+    private static final Set<String> INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V072 = Set.of(
+            "get_project_policy", "run_project_qc");
     /** Explicit review point for titles, output schemas, annotations, metadata, or icons. */
     private static final Set<String> INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050 = Set.of();
     /**
@@ -125,22 +130,27 @@ class PublicContractSnapshotTest {
     private static Map<String, Object> currentPrompts;
     private static Map<String, Object> baselineTools;
     private static Map<String, Object> baselinePrompts;
+    private static Map<String, Object> v072Tools;
+    private static Map<String, Object> v072Prompts;
 
     @BeforeAll
     static void captureAndOptionallyWrite() throws IOException {
-        currentTools = captureTools(McpServerManager.SERVER_VERSION);
+        currentTools = captureTools(McpServerManager.SERVER_VERSION, false);
         currentPrompts = capturePrompts(McpServerManager.SERVER_VERSION);
 
         String update = System.getProperty(UPDATE_PROPERTY);
         if (update != null && !update.isBlank()) {
             validateUpdateVersion(update);
             Files.createDirectories(CONTRACT_DIR);
-            Files.writeString(toolSnapshot(update), canonical(captureTools(update)), StandardCharsets.UTF_8);
+            Files.writeString(toolSnapshot(update), canonical(captureTools(update,
+                    V072_BASELINE.equals(update))), StandardCharsets.UTF_8);
             Files.writeString(promptSnapshot(update), canonical(capturePrompts(update)), StandardCharsets.UTF_8);
         }
 
         baselineTools = read(toolSnapshot(BASELINE));
         baselinePrompts = read(promptSnapshot(BASELINE));
+        v072Tools = read(toolSnapshot(V072_BASELINE));
+        v072Prompts = read(promptSnapshot(V072_BASELINE));
     }
 
     @Test
@@ -170,6 +180,11 @@ class PublicContractSnapshotTest {
                     () -> validateUpdateVersion(BASELINE, contractDir));
             assertTrue(baseline.getMessage().contains("immutable"),
                     "the overwrite flag must never unlock the published baseline");
+            Files.writeString(toolSnapshot(contractDir, V072_BASELINE), "{}\n");
+            IllegalArgumentException v072 = assertThrows(IllegalArgumentException.class,
+                    () -> validateUpdateVersion(V072_BASELINE, contractDir));
+            assertTrue(v072.getMessage().contains("immutable"),
+                    "the overwrite flag must never unlock the 0.7.2 baseline");
         } finally {
             if (callerFlag == null) {
                 System.clearProperty(OVERWRITE_PROPERTY);
@@ -205,7 +220,7 @@ class PublicContractSnapshotTest {
                         () -> name + " changed its public tool description without review");
             }
             if (!INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050.contains(name)) {
-                for (String field : List.of("title", "output_schema", "annotations", "meta", "icons")) {
+                for (String field : List.of("title", "annotations", "icons")) {
                     // The baseline side is parsed JSON while the live side holds SDK records;
                     // normalize both to trees so a future non-null value compares structurally.
                     assertEquals(node(oldTool.get(field)), node(now.get(field)),
@@ -218,6 +233,93 @@ class PublicContractSnapshotTest {
             assertTrue(nowFields.containsAll(oldFields), () -> name
                     + " documentation dropped result fields: " + difference(oldFields, nowFields));
         }
+    }
+
+    @Test
+    void v072GoldensFreezeTheCompletePre08Surface() throws IOException {
+        assertEquals(85, entries(v072Tools, "tools").size(), "0.7.2 published 85 tools");
+        assertEquals(11, entries(v072Prompts, "prompts").size(), "0.7.2 published 11 prompts");
+        assertEquals(Legacy072ToolContracts.liveToolNames(),
+                byName(entries(v072Tools, "tools")).keySet(),
+                "the legacy exception allowlist must be derived from the immutable 0.7.2 golden");
+        assertEquals(canonical(v072Tools), Files.readString(toolSnapshot(V072_BASELINE)));
+        assertEquals(canonical(v072Prompts), Files.readString(promptSnapshot(V072_BASELINE)));
+        assertUnique(entries(v072Tools, "tools"));
+        assertUnique(entries(v072Prompts, "prompts"));
+    }
+
+    @Test
+    void runtimeRetainsEveryV072ContractAndAddsTypedOutputAndErrors() {
+        Map<String, Map<String, Object>> current = byName(entries(currentTools, "tools"));
+        for (Map<String, Object> oldTool : entries(v072Tools, "tools")) {
+            String name = string(oldTool, "name");
+            Map<String, Object> now = current.get(name);
+            assertNotNull(now, () -> "0.7.2 tool was removed: " + name);
+            assertV072ToolCompatible(oldTool, now);
+        }
+
+        Map<String, Map<String, Object>> currentPromptRows =
+                byName(entries(currentPrompts, "prompts"));
+        for (Map<String, Object> oldPrompt : entries(v072Prompts, "prompts")) {
+            String name = string(oldPrompt, "name");
+            Map<String, Object> now = currentPromptRows.get(name);
+            assertNotNull(now, () -> "0.7.2 prompt was removed: " + name);
+            for (String field : List.of("title", "description", "arguments", "meta", "icons",
+                    "rendered_description", "rendered_messages")) {
+                assertEquals(node(oldPrompt.get(field)), node(now.get(field)),
+                        () -> name + " changed its 0.7.2 prompt field " + field);
+            }
+        }
+    }
+
+    @Test
+    void versionEightDescriptionAllowancesArePinnedToTheirNewGuidance() {
+        Map<String, Map<String, Object>> current = byName(entries(currentTools, "tools"));
+        String policy = string(current.get("get_project_policy"), "description");
+        assertTrue(policy.contains("policy schema v1 or v2"), policy);
+        String projectQc = string(current.get("run_project_qc"), "description");
+        assertTrue(projectQc.contains("v2 provider evidence"), projectQc);
+        assertTrue(projectQc.contains("provider_evidence_unavailable"), projectQc);
+    }
+
+    @Test
+    void v072CompatibilityCheckDetectsAContractMutation() {
+        Map<String, Object> oldTool = entries(v072Tools, "tools").get(0);
+        Map<String, Object> mutated = new LinkedHashMap<>(
+                byName(entries(currentTools, "tools")).get(string(oldTool, "name")));
+        mutated.put("description", "silently changed");
+        assertThrows(AssertionError.class, () -> assertV072ToolCompatible(oldTool, mutated));
+    }
+
+    @Test
+    void v072CompatibilityCheckDetectsNestedSchemaMetaAndRegistrationMutants() {
+        Map<String, Map<String, Object>> old = byName(entries(v072Tools, "tools"));
+        Map<String, Map<String, Object>> current = byName(entries(currentTools, "tools"));
+
+        Map<String, Object> nested = mutable(current.get("search_entities"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> input = (Map<String, Object>) nested.get("input_schema");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) input.get("properties");
+        properties.remove(properties.keySet().iterator().next());
+        assertThrows(AssertionError.class,
+                () -> assertV072ToolCompatible(old.get("search_entities"), nested));
+
+        Map<String, Object> errorMutant = mutable(current.get("list_ontologies"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> meta = (Map<String, Object>) errorMutant.get("meta");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> errorSchema = (Map<String, Object>) meta.get(
+                ToolContractSchemas.ERROR_SCHEMA_META_KEY);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> errorProperties = (Map<String, Object>) errorSchema.get("properties");
+        errorProperties.remove("code");
+        assertThrows(AssertionError.class,
+                () -> assertV072ToolCompatible(old.get("list_ontologies"), errorMutant));
+
+        current.remove("list_ontologies");
+        assertThrows(AssertionError.class,
+                () -> assertNotNull(current.get("list_ontologies")));
     }
 
     @Test
@@ -281,7 +383,8 @@ class PublicContractSnapshotTest {
                 + difference(runtime, documented) + ", extra=" + difference(documented, runtime));
     }
 
-    private static Map<String, Object> captureTools(String productVersion) throws IOException {
+    private static Map<String, Object> captureTools(String productVersion,
+            boolean preTypedContract) throws IOException {
         List<SyncToolSpecification> specs = ToolCatalog.buildAll(new ToolContext(null, null));
         Set<String> names = specs.stream().map(s -> s.tool().name())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
@@ -295,10 +398,12 @@ class PublicContractSnapshotTest {
             row.put("title", tool.title());
             row.put("description", tool.description());
             row.put("input_schema", tool.inputSchema());
-            row.put("output_schema", tool.outputSchema());
+            row.put("output_schema", preTypedContract ? null : tool.outputSchema());
             row.put("annotations", tool.annotations());
-            row.put("meta", tool.meta());
+            row.put("meta", preTypedContract ? null : tool.meta());
             row.put("icons", tool.icons());
+            row.put("required_capabilities",
+                    ToolCapabilityCatalog.required(tool.name()).stream().sorted().toList());
             row.put("documented_result_fields", resultFields.get(tool.name()));
             tools.add(row);
         }
@@ -439,8 +544,8 @@ class PublicContractSnapshotTest {
         if (!RELEASE.matcher(update).matches()) {
             throw new IllegalArgumentException(UPDATE_PROPERTY + " must be a major.minor.patch version");
         }
-        if (BASELINE.equals(update)) {
-            throw new IllegalArgumentException("Published baseline " + BASELINE + " is immutable");
+        if (Set.of(BASELINE, V072_BASELINE).contains(update)) {
+            throw new IllegalArgumentException("Published baseline " + update + " is immutable");
         }
         if ((Files.exists(toolSnapshot(contractDir, update)) || Files.exists(promptSnapshot(contractDir, update)))
                 && !Boolean.getBoolean(OVERWRITE_PROPERTY)) {
@@ -495,6 +600,44 @@ class PublicContractSnapshotTest {
         }
     }
 
+    private static void assertV072ToolCompatible(Map<String, Object> oldTool,
+            Map<String, Object> now) {
+        String name = string(oldTool, "name");
+        assertInputSchemaBackwardCompatible(name,
+                node(oldTool.get("input_schema")), node(now.get("input_schema")));
+        for (String field : List.of("title", "description", "annotations", "icons",
+                "required_capabilities")) {
+            if ("description".equals(field)
+                    && INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V072.contains(name)) continue;
+            assertEquals(node(oldTool.get(field)), node(now.get(field)),
+                    () -> name + " changed its 0.7.2 field " + field);
+        }
+        Set<String> oldFields = strings(oldTool.get("documented_result_fields"));
+        Set<String> currentFields = strings(now.get("documented_result_fields"));
+        assertTrue(currentFields.containsAll(oldFields), () -> name
+                + " dropped 0.7.2 documented result fields: "
+                + difference(oldFields, currentFields));
+        assertEquals(node(ToolContractSchemas.wireOutputSchema(
+                        ToolContractSchemas.legacySuccessSchema())),
+                node(now.get("output_schema")),
+                () -> name + " changed the frozen 0.7.2 result boundary");
+        JsonNode oldMeta = node(oldTool.get("meta"));
+        JsonNode currentMeta = node(now.get("meta"));
+        if (oldMeta.isObject()) {
+            oldMeta.properties().forEach(entry -> assertEquals(entry.getValue(),
+                    currentMeta.path(entry.getKey()),
+                    () -> name + " changed 0.7.2 metadata " + entry.getKey()));
+        } else {
+            assertTrue(oldMeta.isNull(), () -> name + " has an unsupported old meta shape");
+        }
+        assertEquals(node(ToolContractSchemas.errorSchema()),
+                currentMeta.path(ToolContractSchemas.ERROR_SCHEMA_META_KEY),
+                () -> name + " has no common typed error schema");
+        assertEquals(node(ToolContractSchemas.legacySuccessSchema()),
+                currentMeta.path(ToolContractSchemas.SUCCESS_SCHEMA_META_KEY),
+                () -> name + " has no frozen legacy success schema");
+    }
+
     private static JsonNode withoutDescription(JsonNode argument) {
         if (argument instanceof ObjectNode) {
             ObjectNode copy = ((ObjectNode) argument).deepCopy();
@@ -502,6 +645,10 @@ class PublicContractSnapshotTest {
             return copy;
         }
         return argument;
+    }
+
+    private static Map<String, Object> mutable(Map<String, Object> value) {
+        return JSON.convertValue(value, new TypeReference<>() { });
     }
 
     private static Path toolSnapshot(String version) {

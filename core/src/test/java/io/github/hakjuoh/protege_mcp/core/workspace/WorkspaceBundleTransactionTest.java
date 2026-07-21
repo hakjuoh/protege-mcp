@@ -86,6 +86,154 @@ class WorkspaceBundleTransactionTest {
     }
 
     @Test
+    void recoveryRefusesHardlinkedProjectReplacementAfterCommit() throws Exception {
+        writeFixture();
+        Path project = Files.createDirectory(temp.resolve("project"));
+        for (String file : List.of("project.yaml", "root.ttl", "ro-crate-metadata.json")) {
+            Files.move(temp.resolve(file), project.resolve(file));
+        }
+        Path policy = project.resolve("project.yaml");
+        Path output = project.resolve("dist");
+        Path saved = temp.resolve("project-before-recovery-replacement");
+        FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(
+                policy, temp.resolve("state"), () -> { });
+
+        try (WorkspaceSnapshot snapshot = workspace.capture();
+                WorkspaceBundleTransaction transaction = workspace.beginBundleTransaction(
+                        snapshot, output, null)) {
+            transaction.stage(bundle(snapshot));
+            transaction.commit();
+            Files.move(project, saved);
+            mirrorWithHardLinks(saved, project);
+
+            IOException refusal = assertThrows(IOException.class, transaction::recover);
+            assertTrue(refusal.getMessage().contains("project policy identity changed"),
+                    refusal::getMessage);
+            assertEquals(WorkspaceBundleTransaction.State.COMMITTED, transaction.state());
+            assertTrue(Files.isRegularFile(output.resolve("manifest.json")));
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
+        }
+    }
+
+    @Test
+    void commitFailureRollbackDoesNotFollowAnAnchorReplacedInsideTheMove()
+            throws Exception {
+        Path project = nestedFixture("project-commit-race");
+        Path output = Files.createDirectory(project.resolve("dist"));
+        Files.writeString(output.resolve("previous.txt"), "previous release");
+        Path saved = temp.resolve("project-replaced-inside-commit");
+        FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(
+                project.resolve("project.yaml"), temp.resolve("state-commit-race"), () -> { });
+        AtomicInteger moves = new AtomicInteger();
+
+        try (WorkspaceSnapshot snapshot = workspace.capture();
+                WorkspaceBundleTransaction transaction = new WorkspaceBundleTransaction(
+                        workspace, snapshot, output, null, () -> { }, (source, target) -> {
+                            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+                            if (moves.incrementAndGet() == 1) {
+                                Files.move(project, saved);
+                                mirrorWithHardLinks(saved, project);
+                                throw new IOException("injected anchor replacement after backup move");
+                            }
+                        })) {
+            transaction.stage(bundle(snapshot));
+
+            IOException refusal = assertThrows(IOException.class, transaction::commit);
+
+            assertTrue(refusal.getMessage().contains("project identity changed"),
+                    refusal::getMessage);
+            assertEquals(1, moves.get(), "automatic rollback must not enter the replacement tree");
+            assertFalse(Files.exists(output));
+            try (var entries = Files.list(project)) {
+                assertTrue(entries.anyMatch(path -> path.getFileName().toString()
+                        .startsWith(".protege-mcp-backup-")));
+            }
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
+        }
+    }
+
+    @Test
+    void recoveryFailureRollbackDoesNotFollowAnAnchorReplacedBeforeRestore()
+            throws Exception {
+        Path project = nestedFixture("project-recovery-rollback-race");
+        Path output = Files.createDirectory(project.resolve("dist"));
+        Files.writeString(output.resolve("previous.txt"), "previous release");
+        Path saved = temp.resolve("project-replaced-before-recovery-restore");
+        FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(
+                project.resolve("project.yaml"), temp.resolve("state-recovery-race"), () -> { });
+        AtomicInteger moves = new AtomicInteger();
+
+        try (WorkspaceSnapshot snapshot = workspace.capture();
+                WorkspaceBundleTransaction transaction = new WorkspaceBundleTransaction(
+                        workspace, snapshot, output, null, () -> { }, (source, target) -> {
+                            int move = moves.incrementAndGet();
+                            if (move == 4) {
+                                Files.move(project, saved);
+                                mirrorWithHardLinks(saved, project);
+                                throw new IOException("injected anchor replacement before restore");
+                            }
+                            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+                        })) {
+            transaction.stage(bundle(snapshot));
+            transaction.commit();
+
+            IOException refusal = assertThrows(IOException.class, transaction::recover);
+
+            assertTrue(refusal.getMessage().contains("project identity changed"),
+                    refusal::getMessage);
+            assertEquals(4, moves.get(), "rollback must not move trash into the replacement tree");
+            assertFalse(Files.exists(output));
+            assertTrue(hasRecoveryDirectory(project));
+            assertEquals(WorkspaceBundleTransaction.State.COMMITTED, transaction.state());
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
+        }
+    }
+
+    @Test
+    void recoveryCleanupDoesNotFollowAnAnchorReplacedAfterRestore()
+            throws Exception {
+        Path project = nestedFixture("project-recovery-cleanup-race");
+        Path output = Files.createDirectory(project.resolve("dist"));
+        Files.writeString(output.resolve("previous.txt"), "previous release");
+        Path saved = temp.resolve("project-replaced-after-recovery-restore");
+        FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(
+                project.resolve("project.yaml"), temp.resolve("state-cleanup-race"), () -> { });
+        AtomicInteger moves = new AtomicInteger();
+
+        try (WorkspaceSnapshot snapshot = workspace.capture();
+                WorkspaceBundleTransaction transaction = new WorkspaceBundleTransaction(
+                        workspace, snapshot, output, null, () -> { }, (source, target) -> {
+                            int move = moves.incrementAndGet();
+                            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+                            if (move == 4) {
+                                Files.move(project, saved);
+                                mirrorWithHardLinks(saved, project);
+                            }
+                        })) {
+            transaction.stage(bundle(snapshot));
+            transaction.commit();
+
+            IOException refusal = assertThrows(IOException.class, transaction::recover);
+
+            assertTrue(refusal.getMessage().contains("project policy identity changed"),
+                    refusal::getMessage);
+            assertEquals("previous release", Files.readString(output.resolve("previous.txt")));
+            assertTrue(hasRecoveryDirectory(project),
+                    "identity loss must leave installed trash for manual cleanup");
+            assertEquals(WorkspaceBundleTransaction.State.COMMITTED, transaction.state());
+        } catch (UnsupportedOperationException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort(
+                    "hard links are unavailable: " + unsupported);
+        }
+    }
+
+    @Test
     void externalGuardDriftRefusesCommitWithoutTouchingTheOutput() throws Exception {
         FilesystemProjectWorkspace workspace = workspace();
         Path output = Files.createDirectories(temp.resolve("dist"));
@@ -284,6 +432,22 @@ class WorkspaceBundleTransactionTest {
                 temp.resolve("state"), () -> { });
     }
 
+    private Path nestedFixture(String name) throws IOException {
+        writeFixture();
+        Path project = Files.createDirectory(temp.resolve(name));
+        for (String file : List.of("project.yaml", "root.ttl", "ro-crate-metadata.json")) {
+            Files.move(temp.resolve(file), project.resolve(file));
+        }
+        return project;
+    }
+
+    private static boolean hasRecoveryDirectory(Path project) throws IOException {
+        try (var entries = Files.list(project)) {
+            return entries.anyMatch(path -> path.getFileName().toString()
+                    .contains(".protege-mcp-recovery-"));
+        }
+    }
+
     private static ReleaseBundleService.Bundle bundle(WorkspaceSnapshot snapshot) {
         String fingerprint = snapshot.fingerprint().semanticFingerprint();
         StageResult stage = new StageResult("release", StageStatus.PASS, null, List.of(), Map.of());
@@ -345,5 +509,15 @@ class WorkspaceBundleTransactionTest {
 
     private static Map<String, String> ref(String id) {
         return Map.of("@id", id);
+    }
+
+    private static void mirrorWithHardLinks(Path source, Path target) throws IOException {
+        try (var walk = Files.walk(source)) {
+            for (Path path : walk.sorted().toList()) {
+                Path destination = target.resolve(source.relativize(path));
+                if (Files.isDirectory(path)) Files.createDirectories(destination);
+                else Files.createLink(destination, path);
+            }
+        }
     }
 }

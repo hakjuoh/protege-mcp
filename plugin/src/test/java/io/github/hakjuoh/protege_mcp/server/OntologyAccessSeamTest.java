@@ -274,6 +274,7 @@ class OntologyAccessSeamTest {
         String msg = thrown.getMessage();
         assertTrue(msg.contains("Timed out"), "message reports a timeout: " + msg);
         assertTrue(msg.contains("25"), "message carries the wait bound (25 ms): " + msg);
+        assertTrue(thrown.effectsPrevented(), "a still-queued body was atomically cancelled");
     }
 
     @Test
@@ -430,6 +431,7 @@ class OntologyAccessSeamTest {
             assertTrue(thrown.getMessage().contains("may still complete"), thrown::getMessage);
             assertTrue(thrown.getMessage().contains("do not assume its effects were prevented"),
                     thrown::getMessage);
+            assertEquals(McpAccessException.Outcome.OUTCOME_UNKNOWN, thrown.outcome());
         } finally {
             release.countDown();
         }

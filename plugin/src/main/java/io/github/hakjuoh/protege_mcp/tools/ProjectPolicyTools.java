@@ -74,7 +74,16 @@ public final class ProjectPolicyTools {
         boolean overwrite = Tools.optBool(arguments, "overwrite", false);
         String configuredPath = Tools.optString(arguments, "path");
         String configuredProjectId = Tools.optString(arguments, "project_id");
-
+        Object rawVersion = arguments.get("version");
+        int version = 1;
+        if (rawVersion != null) {
+            if (!(rawVersion instanceof Number number)
+                    || number.doubleValue() != number.intValue()
+                    || number.intValue() != 1 && number.intValue() != 2) {
+                return Tools.error("'version' must be the integer 1 or 2.");
+            }
+            version = number.intValue();
+        }
         DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex);
         CallToolResult denied = WriteTools.checkWriteAllowed(ctx, "write a project policy template"
                 + (configuredPath == null ? "" : " to " + configuredPath));
@@ -103,7 +112,7 @@ public final class ProjectPolicyTools {
                 ? configuredProjectId.trim()
                 : ProjectPolicyTemplate.deriveProjectId(rootOntology);
         ProjectPolicyTemplate.Template template =
-                ProjectPolicyTemplate.render(profile, projectId, rootOntology);
+                ProjectPolicyTemplate.render(profile, projectId, rootOntology, version);
         byte[] bytes = template.yaml().getBytes(StandardCharsets.UTF_8);
 
         try {
@@ -124,6 +133,7 @@ public final class ProjectPolicyTools {
                 .put("path", target.toString())
                 .put("project_id", projectId)
                 .put("profile", profile)
+                .put("schema_version", version)
                 .put("bytes", bytes.length)
                 .put("sha256", sha256(bytes))
                 .put("validation_hint", ProjectPolicyTemplate.validationHint(template))
@@ -332,7 +342,7 @@ public final class ProjectPolicyTools {
         }
     }
 
-    private static Map<String, Object> toJson(ProjectPolicy policy, PolicyContext live,
+    static Map<String, Object> toJson(ProjectPolicy policy, PolicyContext live,
             boolean requirePolicy, boolean unrestrictedNoPolicyPaths) {
         Map<String, Object> json = new LinkedHashMap<>();
         json.put("policy_loaded", policy.loaded());
@@ -351,9 +361,13 @@ public final class ProjectPolicyTools {
             json.put("policy_digest", policy.digest());
         }
         if (!policy.effective().isEmpty()) {
-            Object version = policy.effective().get("version");
-            json.put("schema_version", version);
+            if (policy.version() != 0) {
+                json.put("schema_version", policy.version());
+            }
             json.put("policy", policy.effective());
+        }
+        if (policy.migration() != null) {
+            json.put("migration", policy.migration().toJson());
         }
         Map<String, List<String>> assetJson = new LinkedHashMap<>();
         policy.assets().forEach((key, paths) -> assetJson.put(key,
@@ -362,9 +376,6 @@ public final class ProjectPolicyTools {
 
         List<Map<String, Object>> errors = new ArrayList<>();
         List<Map<String, Object>> warnings = new ArrayList<>();
-        for (PolicyIssue issue : policy.issues()) {
-            ("error".equals(issue.severity()) ? errors : warnings).add(issue.toJson());
-        }
         if (requirePolicy && !policy.loaded()) {
             errors.add(new PolicyIssue("error", "policy_not_found", null,
                     "No project policy was discovered; pass policy_path or add "
@@ -377,9 +388,24 @@ public final class ProjectPolicyTools {
                     .toJson());
             json.put("valid", false);
         }
+        for (PolicyIssue issue : policy.issues()) {
+            ("error".equals(issue.severity()) ? errors : warnings).add(issue.toJson());
+        }
+        capPublicIssues(errors, warnings);
         json.put("errors", errors);
         json.put("warnings", warnings);
         return json;
+    }
+
+    private static void capPublicIssues(List<Map<String, Object>> errors,
+            List<Map<String, Object>> warnings) {
+        if (errors.size() + warnings.size() <= ProjectPolicyLoader.MAX_POLICY_ISSUES) return;
+        int retained = ProjectPolicyLoader.MAX_POLICY_ISSUES - 1;
+        while (errors.size() > retained) errors.remove(errors.size() - 1);
+        while (errors.size() + warnings.size() > retained) warnings.remove(warnings.size() - 1);
+        errors.add(new PolicyIssue("error", "policy_issues_truncated", null,
+                "Policy validation produced more than " + ProjectPolicyLoader.MAX_POLICY_ISSUES
+                        + " issues; remaining issues were omitted.").toJson());
     }
 
     private static Map<String, Object> invalidPathResult(String configured, String message) {

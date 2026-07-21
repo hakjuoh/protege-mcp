@@ -32,7 +32,7 @@ public final class HeadlessProjectQcService {
 
     private static final List<String> ALL_STAGES = List.of(
             "interoperability", "reasoner", "profile", "governance", "structural",
-            "invariants", "cqs", "shacl");
+            "invariants", "cqs", "shacl", "provider_evidence");
     private static final long DEFAULT_TIMEOUT_MS = 120_000L;
 
     private HeadlessProjectQcService() {
@@ -175,6 +175,10 @@ public final class HeadlessProjectQcService {
                 case "shacl" -> executions.add(shaclExecution(queries,
                         snapshot.capturedAssets().getOrDefault("shacl", List.of()),
                         querySnapshotError, Math.max(limit, 1000), config.timeoutMs));
+                case "provider_evidence" -> executions.add(QcStageExecution.error(stage,
+                        "provider_evidence_unavailable: provider networking is unavailable on the "
+                                + "headless execution surface",
+                        Map.of("error_code", "provider_evidence_unavailable")));
                 default -> throw new IllegalStateException("unsupported QC stage: " + stage);
             }
         }

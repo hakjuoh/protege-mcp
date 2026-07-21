@@ -13,6 +13,7 @@ import java.util.function.BiFunction;
 
 import org.junit.jupiter.api.Test;
 
+import io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
@@ -72,6 +73,17 @@ class ToolSpecsTest {
         SyncToolSpecification spec = ToolSpecs.of("t", "d", in, noopHandler());
         assertEquals(in, spec.tool().inputSchema(),
                 "tool inputSchema must equal the given schema map");
+    }
+
+    @Test
+    void ofPublishesDefaultOutputAndTypedErrorSchemas() {
+        SyncToolSpecification spec = ToolSpecs.of("t", "d", schema(), noopHandler());
+        assertEquals(ToolContractSchemas.wireOutputSchema(
+                ToolContractSchemas.legacySuccessSchema()), spec.tool().outputSchema());
+        assertEquals(ToolContractSchemas.legacySuccessSchema(),
+                spec.tool().meta().get(ToolContractSchemas.SUCCESS_SCHEMA_META_KEY));
+        assertEquals(ToolContractSchemas.errorSchema(),
+                spec.tool().meta().get(ToolContractSchemas.ERROR_SCHEMA_META_KEY));
     }
 
     @Test

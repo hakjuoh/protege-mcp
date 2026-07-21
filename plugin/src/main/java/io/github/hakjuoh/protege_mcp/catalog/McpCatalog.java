@@ -18,6 +18,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 
+import io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas;
+import io.github.hakjuoh.protege_mcp.contracts.Legacy072ToolContracts;
+import io.github.hakjuoh.protege_mcp.contracts.ToolSchemaValidator;
+import io.github.hakjuoh.protege_mcp.contracts.SssomToolSchemas;
 import io.modelcontextprotocol.spec.McpSchema.PromptArgument;
 
 /**
@@ -121,7 +125,8 @@ public final class McpCatalog {
             JsonNode node = nodes.get(index);
             String path = "catalog.tools[" + index + "]";
             requireObject(node, path);
-            requireFields(node, path, Set.of("name", "description", "input_schema"));
+            requireFields(node, path, Set.of("name", "description", "input_schema"),
+                    Set.of("output_schema"));
             String name = requireName(node, path);
             String description = requireText(node, "description", path);
             rejectInternalReference(description, path + ".description");
@@ -130,8 +135,32 @@ public final class McpCatalog {
             validateInputSchema(schemaNode, path + ".input_schema");
             @SuppressWarnings("unchecked")
             Map<String, Object> schema = (Map<String, Object>) immutableValue(schemaNode);
+            if (SssomToolSchemas.NAMES.contains(name)) {
+                // One cross-surface schema source prevents the live JSON catalog and headless
+                // registry from drifting on bounds or required fields.
+                schema = SssomToolSchemas.input(name, true);
+            }
+            Map<String, Object> outputSchema = ToolContractSchemas.legacySuccessSchema();
+            JsonNode outputNode = node.get("output_schema");
+            if (outputNode != null && !outputNode.isNull()) {
+                requireObject(outputNode, path + ".output_schema");
+                validateOutputSchema(outputNode, path + ".output_schema");
+                @SuppressWarnings("unchecked")
+                Map<String, Object> parsed = (Map<String, Object>) immutableValue(outputNode);
+                outputSchema = parsed;
+                if (!Legacy072ToolContracts.liveToolNames().contains(name)) {
+                    requireTypedOutput(outputNode, path + ".output_schema");
+                }
+            } else if (SssomToolSchemas.NAMES.contains(name)) {
+                outputSchema = SssomToolSchemas.output(name);
+                ToolSchemaValidator.validateTypedOutput(outputSchema,
+                        path + ".generated_output_schema");
+            } else if (!Legacy072ToolContracts.liveToolNames().contains(name)) {
+                throw invalid(path + ".output_schema is required for every post-0.7.2 tool");
+            }
             ToolDefinition previous = definitions.putIfAbsent(
-                    name, new ToolDefinition(name, description, schema));
+                    name, new ToolDefinition(name, description, schema, outputSchema,
+                            ToolContractSchemas.errorSchema()));
             if (previous != null) {
                 throw invalid("duplicate tool name '" + name + "'");
             }
@@ -184,35 +213,26 @@ public final class McpCatalog {
     }
 
     private static void validateInputSchema(JsonNode schema, String path) {
-        if (!"object".equals(requireText(schema, "type", path))) {
-            throw invalid(path + ".type must be 'object'");
+        try {
+            ToolSchemaValidator.validateInput(schema, path);
+        } catch (IllegalArgumentException malformed) {
+            throw invalid(malformed.getMessage());
         }
-        JsonNode additionalProperties = schema.get("additionalProperties");
-        if (additionalProperties == null || !additionalProperties.isBoolean()
-                || additionalProperties.booleanValue()) {
-            throw invalid(path + ".additionalProperties must be false");
+    }
+
+    private static void validateOutputSchema(JsonNode schema, String path) {
+        try {
+            ToolSchemaValidator.validateOutput(schema, path);
+        } catch (IllegalArgumentException malformed) {
+            throw invalid(malformed.getMessage());
         }
-        JsonNode properties = schema.get("properties");
-        if (properties != null && !properties.isObject()) {
-            throw invalid(path + ".properties must be an object");
-        }
-        JsonNode required = schema.get("required");
-        if (required != null) {
-            if (!required.isArray()) {
-                throw invalid(path + ".required must be an array");
-            }
-            Set<String> seen = new LinkedHashSet<>();
-            for (JsonNode field : required) {
-                if (!field.isTextual() || field.textValue().isBlank()) {
-                    throw invalid(path + ".required entries must be non-blank strings");
-                }
-                if (!seen.add(field.textValue())) {
-                    throw invalid(path + ".required contains duplicate '" + field.textValue() + "'");
-                }
-                if (properties == null || !properties.has(field.textValue())) {
-                    throw invalid(path + ".required names missing property '" + field.textValue() + "'");
-                }
-            }
+    }
+
+    private static void requireTypedOutput(JsonNode schema, String path) {
+        try {
+            ToolSchemaValidator.validateTypedOutput(schema, path);
+        } catch (IllegalArgumentException malformed) {
+            throw invalid(malformed.getMessage());
         }
     }
 
@@ -312,14 +332,21 @@ public final class McpCatalog {
     }
 
     private static void requireFields(JsonNode node, String path, Set<String> expected) {
+        requireFields(node, path, expected, Set.of());
+    }
+
+    private static void requireFields(JsonNode node, String path, Set<String> required,
+            Set<String> optional) {
         Set<String> actual = new LinkedHashSet<>();
         Iterator<String> names = node.fieldNames();
         names.forEachRemaining(actual::add);
-        if (!actual.equals(expected)) {
-            Set<String> missing = new LinkedHashSet<>(expected);
+        Set<String> allowed = new LinkedHashSet<>(required);
+        allowed.addAll(optional);
+        if (!actual.containsAll(required) || !allowed.containsAll(actual)) {
+            Set<String> missing = new LinkedHashSet<>(required);
             missing.removeAll(actual);
             Set<String> unknown = new LinkedHashSet<>(actual);
-            unknown.removeAll(expected);
+            unknown.removeAll(allowed);
             throw invalid(path + " fields are invalid; missing=" + missing + ", unknown=" + unknown);
         }
     }
@@ -330,7 +357,8 @@ public final class McpCatalog {
 
     /** Immutable metadata used to construct one MCP tool specification. */
     public record ToolDefinition(String name, String description,
-            Map<String, Object> inputSchema) {
+            Map<String, Object> inputSchema, Map<String, Object> outputSchema,
+            Map<String, Object> errorSchema) {
     }
 
     /** Immutable metadata used to construct one MCP prompt specification. */

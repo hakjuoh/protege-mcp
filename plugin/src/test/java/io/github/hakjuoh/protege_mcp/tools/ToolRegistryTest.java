@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 import io.github.hakjuoh.protege_mcp.catalog.McpCatalog;
 import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
+import io.github.hakjuoh.protege_mcp.server.McpAccessException;
 import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpAsyncServerExchange;
@@ -59,7 +60,177 @@ class ToolRegistryTest {
                 ToolTestExchange.localAdmin(), null);
 
         assertEquals(Boolean.TRUE, result.isError());
-        assertEquals(Map.of("error", "invalid request"), result.structuredContent());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> error = (Map<String, Object>) result.structuredContent();
+        assertEquals("invalid request", error.get("error"));
+        assertEquals("invalid_request", error.get("code"));
+        assertEquals(false, error.get("retryable"));
+    }
+
+    @Test
+    void typedResultContractRejectsHandlerOutputThatDoesNotMatch() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.tool("typed_test", "typed test",
+                Map.of("type", "object", "additionalProperties", false),
+                Map.of("type", "object", "properties",
+                        Map.of("count", Map.of("type", "integer")),
+                        "required", java.util.List.of("count"),
+                        "additionalProperties", false),
+                io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas.errorSchema(),
+                Set.of(Capability.SERVER_ADMIN.value()),
+                (exchange, request) -> Tools.json().put("count", "wrong").result());
+
+        var result = registry.build().get(0).callHandler().apply(
+                ToolTestExchange.localAdmin(), null);
+
+        assertEquals(Boolean.TRUE, result.isError());
+        assertEquals("result_contract_violation",
+                ((Map<?, ?>) result.structuredContent()).get("code"));
+        assertFalse(String.valueOf(result.structuredContent()).contains("wrong"));
+    }
+
+    @Test
+    void modelAccessOutcomeCodesRespectReadMutationAndPreventionContext() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.tool("list_ontologies", (exchange, request) -> {
+            throw new McpAccessException("read body started");
+        });
+        registry.tool("create_class", (exchange, request) -> {
+            throw new McpAccessException("write body started");
+        });
+        registry.tool("create_entity", (exchange, request) -> {
+            throw McpAccessException.effectsPrevented("queued body cancelled");
+        });
+
+        var admin = ToolTestExchange.localAdmin();
+        var read = registry.build().get(0).callHandler().apply(admin, null);
+        var mutation = registry.build().get(1).callHandler().apply(admin, null);
+        var prevented = registry.build().get(2).callHandler().apply(admin, null);
+        assertEquals("model_access_outcome_unknown",
+                ((Map<?, ?>) read.structuredContent()).get("code"));
+        assertEquals("mutation_outcome_unknown",
+                ((Map<?, ?>) mutation.structuredContent()).get("code"));
+        assertEquals("model_access_prevented",
+                ((Map<?, ?>) prevented.structuredContent()).get("code"));
+        assertEquals(false, ((Map<?, ?>) mutation.structuredContent()).get("retryable"));
+        assertEquals(true, ((Map<?, ?>) prevented.structuredContent()).get("retryable"));
+    }
+
+    @Test
+    void explicitExtensionRequiresTypedOutputAndDefensivelyCopiesIt() {
+        ToolRegistry rejected = new ToolRegistry();
+        assertThrows(IllegalArgumentException.class, () -> rejected.tool(
+                "new_extension", "extension",
+                Map.of("type", "object", "additionalProperties", false),
+                Set.of(Capability.SERVER_ADMIN.value()),
+                (exchange, request) -> Tools.ok(Map.of("value", "x"))));
+
+        Map<String, Object> property = new java.util.LinkedHashMap<>(
+                Map.of("type", "string"));
+        Map<String, Object> output = new java.util.LinkedHashMap<>();
+        output.put("type", "object");
+        output.put("properties", Map.of("value", property));
+        output.put("required", java.util.List.of("value"));
+        output.put("additionalProperties", false);
+        ToolRegistry registry = new ToolRegistry();
+        registry.tool("new_extension", "extension",
+                Map.of("type", "object", "additionalProperties", false), output,
+                io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas.errorSchema(),
+                Set.of(Capability.SERVER_ADMIN.value()),
+                (exchange, request) -> Tools.ok(Map.of("value", "x")));
+        property.put("type", "integer");
+
+        assertFalse(Boolean.TRUE.equals(registry.build().get(0).callHandler()
+                .apply(ToolTestExchange.localAdmin(), null).isError()));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> success = (Map<String, Object>) registry.build().get(0).tool().meta()
+                .get(io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas
+                        .SUCCESS_SCHEMA_META_KEY);
+        assertEquals("string", ((Map<?, ?>) ((Map<?, ?>) success.get("properties"))
+                .get("value")).get("type"));
+    }
+
+    @Test
+    void handcraftedErrorMustBeCanonicalSanitizedAndKeepAliasEquality() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.tool("list_ontologies", (exchange, request) ->
+                io.modelcontextprotocol.spec.McpSchema.CallToolResult.builder()
+                        .structuredContent(Map.of("error", "different", "code", "invalid_request",
+                                "message", "canonical", "retryable", false))
+                        .isError(true).build());
+        var result = registry.build().get(0).callHandler().apply(
+                ToolTestExchange.localAdmin(), null);
+        assertEquals("result_contract_violation",
+                ((Map<?, ?>) result.structuredContent()).get("code"));
+    }
+
+    @Test
+    void registryReturnsACanonicalImmutableSnapshotInsteadOfHandlerOwnedContent() {
+        Map<String, Object> nested = new java.util.LinkedHashMap<>(Map.of("value", "before"));
+        Map<String, Object> body = new java.util.LinkedHashMap<>(Map.of("nested", nested));
+        ToolRegistry registry = new ToolRegistry();
+        registry.tool("list_ontologies", (exchange, request) ->
+                io.modelcontextprotocol.spec.McpSchema.CallToolResult.builder()
+                        .structuredContent(body).addTextContent("mismatched secret text")
+                        .isError(false).build());
+
+        var result = registry.build().get(0).callHandler().apply(
+                ToolTestExchange.localAdmin(), null);
+        nested.put("value", "after");
+        body.put("late", true);
+
+        assertEquals("before", ((Map<?, ?>) ((Map<?, ?>) result.structuredContent())
+                .get("nested")).get("value"));
+        assertFalse(((Map<?, ?>) result.structuredContent()).containsKey("late"));
+        assertFalse(String.valueOf(result.content()).contains("mismatched secret text"));
+        assertThrows(UnsupportedOperationException.class,
+                () -> ((Map<Object, Object>) result.structuredContent()).put("x", true));
+    }
+
+    @Test
+    void genericMutationFailureRequiresAStateCheckAndInvalidTypedCodesFailSafe() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.tool("create_class", (exchange, request) -> {
+            throw new IllegalStateException("provider internals");
+        });
+        registry.tool("list_ontologies", (exchange, request) -> {
+            throw new ToolArgException("INVALID-CODE", "must not escape", false);
+        });
+
+        var unknown = registry.build().get(0).callHandler().apply(
+                ToolTestExchange.localAdmin(), null);
+        Map<?, ?> unknownBody = (Map<?, ?>) unknown.structuredContent();
+        Map<?, ?> details = (Map<?, ?>) unknownBody.get("details");
+        assertEquals("mutation_outcome_unknown", unknownBody.get("code"));
+        assertEquals(false, unknownBody.get("retryable"));
+        assertEquals(true, details.get("outcome_unknown"));
+        assertEquals(true, details.get("retry_requires_state_check"));
+        assertFalse(String.valueOf(unknownBody).contains("provider internals"));
+
+        var invalidCode = registry.build().get(1).callHandler().apply(
+                ToolTestExchange.localAdmin(), null);
+        assertEquals("internal_error", ((Map<?, ?>) invalidCode.structuredContent()).get("code"));
+    }
+
+    @Test
+    void nonFiniteTypedResultFailsAtTheCanonicalJsonBoundary() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.tool("typed_number", "typed number",
+                Map.of("type", "object", "additionalProperties", false),
+                Map.of("type", "object", "properties",
+                        Map.of("value", Map.of("type", "number")),
+                        "required", java.util.List.of("value"),
+                        "additionalProperties", false),
+                io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas.errorSchema(),
+                Set.of(Capability.SERVER_ADMIN.value()),
+                (exchange, request) -> io.modelcontextprotocol.spec.McpSchema.CallToolResult.builder()
+                        .structuredContent(Map.of("value", Double.NaN)).isError(false).build());
+
+        var result = registry.build().get(0).callHandler().apply(
+                ToolTestExchange.localAdmin(), null);
+        assertEquals(Boolean.TRUE, result.isError());
+        assertEquals("internal_error", ((Map<?, ?>) result.structuredContent()).get("code"));
+        assertFalse(String.valueOf(result.structuredContent()).contains("NaN"));
     }
 
     @Test
@@ -90,11 +261,13 @@ class ToolRegistryTest {
         String error = String.valueOf(result.structuredContent());
         assertTrue(error.contains("missing capabilities"), error);
         assertTrue(error.contains("Audit attribution also failed"), error);
+        assertEquals("audit_failed_while_denied",
+                ((Map<?, ?>) result.structuredContent()).get("code"));
     }
 
     @Test
     void everyCatalogToolHasExactlyOneNonEmptyKnownCapabilityDeclaration() {
-        assertEquals(85, McpCatalog.get().toolNames().size());
+        assertEquals(91, McpCatalog.get().toolNames().size());
         assertEquals(McpCatalog.get().toolNames(), ToolCatalog.buildAll(
                 new ToolContext(null, null)).stream()
                         .map(spec -> spec.tool().name())
@@ -177,6 +350,8 @@ class ToolRegistryTest {
             assertEquals(Boolean.TRUE, denied.isError());
             assertEquals(1, commits.get(), "no handler may commit after the revocation boundary");
             assertTrue(String.valueOf(denied.structuredContent()).contains("revoked"));
+            assertEquals("authorization_revoked",
+                    ((Map<?, ?>) denied.structuredContent()).get("code"));
         } finally {
             pool.shutdownNow();
         }

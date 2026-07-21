@@ -16,8 +16,11 @@ import java.util.UUID;
 import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.github.hakjuoh.protege_mcp.contracts.ContractJson;
+import io.github.hakjuoh.protege_mcp.contracts.ImmutableJson;
+import io.github.hakjuoh.protege_mcp.contracts.ToolSchemaValidator;
 import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.core.audit.AuditEvent;
 import io.github.hakjuoh.protege_mcp.core.audit.AuditExportService;
@@ -32,12 +35,22 @@ import io.github.hakjuoh.protege_mcp.core.workspace.ImportLockService;
 import io.github.hakjuoh.protege_mcp.core.workspace.WorkspaceSnapshot;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.github.hakjuoh.protege_mcp.sssom.SssomEntityIndex;
+import io.github.hakjuoh.protege_mcp.sssom.SssomEntityIndexes;
+import io.github.hakjuoh.protege_mcp.sssom.SssomMappingStore;
+import io.github.hakjuoh.protege_mcp.sssom.SssomPolicies;
+import io.github.hakjuoh.protege_mcp.sssom.SssomStoreException;
+import io.github.hakjuoh.protege_mcp.sssom.SssomToolService;
+import io.github.hakjuoh.protege_mcp.sssom.SssomValidationPolicy;
 
 /** Serialized application-service adapter behind the project-confined stdio tool subset. */
 public final class HeadlessToolService {
 
+    private static final ObjectMapper JSON = ContractJson.mapper();
+
     public static final Set<String> DEFAULT_CAPABILITIES = Set.of(
-            Capability.ONTOLOGY_READ.value(), Capability.ONTOLOGY_ADMIN.value(),
+            Capability.ONTOLOGY_READ.value(), Capability.ONTOLOGY_CURATE.value(),
+            Capability.ONTOLOGY_ADMIN.value(),
             Capability.ONTOLOGY_RELEASE.value(), Capability.FILESYSTEM_PROJECT_READ.value(),
             // Intentional: stdio's OS child-process boundary is the principal, and the fixed surface
             // has no generic server-admin operation. This scope enables only explicit audit export;
@@ -72,18 +85,35 @@ public final class HeadlessToolService {
         Map<String, Object> args = arguments == null ? Map.of() : arguments;
         Set<String> capabilities = effectiveCapabilities == null ? Set.of()
                 : Set.copyOf(effectiveCapabilities);
-        AuditState audit = auditState(false);
+        boolean mutation = mutationExpected(HeadlessToolCatalog.definition(tool).requiredCapabilities());
+        final AuditState audit;
+        try {
+            audit = auditState(false);
+        } catch (RuntimeException auditFailure) {
+            throw new HeadlessExecutionException("audit_failed_before_execution",
+                    "Audit attribution failed before '" + tool
+                            + "' started; the tool body was not executed.",
+                    Map.of("effects_prevented", true), true, auditFailure);
+        }
         AuditEvent.Actor actor = actor(capabilities);
         List<String> confirmations = AuditFacts.confirmationReferences(args);
-        boolean mutation = mutationExpected(HeadlessToolCatalog.definition(tool).requiredCapabilities());
-        audit.log().append(event(tool, AuditEvent.Outcome.STARTED, actor, audit.ontologyIri(),
-                null, null, Map.of(), confirmations, null));
+        try {
+            audit.log().append(event(tool, AuditEvent.Outcome.STARTED, actor, audit.ontologyIri(),
+                    null, null, Map.of(), confirmations, null));
+        } catch (RuntimeException auditFailure) {
+            throw new HeadlessExecutionException("audit_failed_before_execution",
+                    "Audit attribution failed before '" + tool
+                            + "' started; the tool body was not executed.",
+                    Map.of("effects_prevented", true), true, auditFailure);
+        }
         final Map<String, Object> result;
         try {
-            result = switch (tool) {
+            Map<String, Object> rawResult = switch (tool) {
                 case HeadlessToolCatalog.SURFACE_TOOL -> surface(capabilities,
                         maxInboundBytes, maxOutboundBytes);
                 case "validate_project_policy" -> policyResult(loadPolicy());
+                case "list_mappings", "add_mapping", "remove_mapping", "import_sssom",
+                        "export_sssom", "validate_mappings" -> mapping(tool, args);
                 case "run_project_qc" -> runProjectQc(args);
                 case "verify_import_lock" -> verifyImportLock();
                 case "write_import_lock" -> writeImportLock(args);
@@ -92,15 +122,32 @@ public final class HeadlessToolService {
                 case "export_audit_log" -> exportAudit(args);
                 default -> throw new IllegalArgumentException("Unknown headless tool: " + tool);
             };
+            result = canonicalResult(tool, rawResult, mutation);
         } catch (IOException | RuntimeException failure) {
             try {
+                boolean prevented = failure instanceof HeadlessExecutionException typed
+                        && Boolean.TRUE.equals(typed.details().get("effects_prevented"));
                 audit.log().append(event(tool, AuditEvent.Outcome.FAILED, actor, audit.ontologyIri(),
-                        mutation ? Boolean.FALSE : null, null,
-                        Map.of("failure_type", failure.getClass().getSimpleName()),
+                        mutation && prevented ? Boolean.FALSE : null, null,
+                        Map.of("failure_type", failure.getClass().getSimpleName(),
+                                "effects_prevented", prevented,
+                                "outcome_unknown", mutation && !prevented),
                         confirmations, null));
             } catch (RuntimeException auditFailure) {
-                // The tool's own error is the actionable one; keep it.
-                failure.addSuppressed(auditFailure);
+                String originalCode = failure instanceof HeadlessExecutionException typed
+                        ? typed.code() : failure.getClass().getSimpleName();
+                throw new HeadlessExecutionException(
+                        "audit_failed_while_recording_failure",
+                        "Audit attribution failed while recording the failure of '" + tool
+                                + "'; the tool's own error still stands.",
+                        Map.of("tool_error_code", originalCode,
+                                "outcome_unknown", mutation,
+                                "retry_requires_state_check", mutation),
+                        false, auditFailure);
+            }
+            if (mutation && !(failure instanceof HeadlessExecutionException typed
+                    && Boolean.TRUE.equals(typed.details().get("effects_prevented")))) {
+                throw withOutcomeEvidence(tool, failure);
             }
             throw failure;
         }
@@ -110,14 +157,59 @@ public final class HeadlessToolService {
                     AuditFacts.summary(result), confirmations,
                     AuditFacts.releaseManifest(tool, result)));
         } catch (RuntimeException auditFailure) {
-            IllegalStateException attribution = new IllegalStateException(
+            HeadlessExecutionException attribution = new HeadlessExecutionException(
+                    "audit_failed_after_completion",
                     "Audit attribution failed after '" + tool + "' completed; its outcome — "
                     + "including any committed changes — still stands and was NOT rolled back. "
-                    + "Do not retry before checking the current state. " + rootMessage(auditFailure));
-            attribution.addSuppressed(auditFailure);
+                    + "Do not retry before checking the current state. " + rootMessage(auditFailure),
+                    Map.of("tool_completed", true, "outcome_unknown", mutation,
+                            "retry_requires_state_check", mutation), false, auditFailure);
             throw attribution;
         }
         return result;
+    }
+
+    static Map<String, Object> canonicalResult(String tool, Map<String, Object> result,
+            boolean mutation) {
+        final Map<String, Object> snapshot;
+        try {
+            Map<String, Object> normalized = JSON.convertValue(
+                    result == null ? Map.of() : result,
+                    new TypeReference<Map<String, Object>>() { });
+            snapshot = ImmutableJson.resultMap(normalized);
+        } catch (RuntimeException nonJson) {
+            throw new HeadlessExecutionException("result_contract_violation",
+                    "Tool '" + tool + "' returned a result that is not canonical JSON.",
+                    Map.of("outcome_unknown", mutation), false, nonJson);
+        }
+        List<String> violations = ToolSchemaValidator
+                .compile(HeadlessToolCatalog.definition(tool).outputSchema())
+                .violations(snapshot);
+        if (!violations.isEmpty()) {
+            throw new HeadlessExecutionException("result_contract_violation",
+                    "Tool '" + tool + "' returned a result that violates its advertised "
+                            + "output schema.",
+                    Map.of("violations", violations, "outcome_unknown", mutation),
+                    false, null);
+        }
+        return snapshot;
+    }
+
+    private static HeadlessExecutionException withOutcomeEvidence(String tool, Exception failure) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        String code = "mutation_outcome_unknown";
+        String message = "Tool '" + tool + "' failed after execution began; its mutation outcome "
+                + "is unknown. Check current state before retrying.";
+        if (failure instanceof HeadlessExecutionException typed) {
+            details.putAll(typed.details());
+            code = typed.code();
+            message = typed.getMessage();
+        }
+        details.put("outcome_unknown", true);
+        details.put("mutation_outcome_unknown", true);
+        details.put("retry_requires_state_check", true);
+        details.remove("effects_prevented");
+        return new HeadlessExecutionException(code, message, details, false, failure);
     }
 
     /** Attribute an authorization refusal that never enters {@link #execute}. */
@@ -162,6 +254,206 @@ public final class HeadlessToolService {
         HeadlessProjectQcService.Result result = HeadlessProjectQcService.run(
                 workspace(), reasonerFactory, limit, LocalDate.now(clock));
         return new LinkedHashMap<>(result.output());
+    }
+
+    private Map<String, Object> mapping(String tool, Map<String, Object> args) {
+        boolean mutation = Set.of("add_mapping", "remove_mapping", "import_sssom",
+                "export_sssom").contains(tool);
+        if (mutation && !Boolean.TRUE.equals(args.get("confirm"))) {
+            throw new HeadlessExecutionException("confirmation_required",
+                    "Mapping filesystem mutations require confirm=true.",
+                    Map.of("effects_prevented", true), false, null);
+        }
+        FilesystemProjectWorkspace mappingWorkspace = workspace();
+        try (WorkspaceSnapshot snapshot = mappingWorkspace.capture()) {
+            ProjectPolicy policy = snapshot.policy();
+            if (!policy.valid() || policy.projectRoot() == null) {
+                throw new HeadlessExecutionException("invalid_project_policy",
+                        "A valid project policy is required for headless mapping operations.",
+                        Map.of("effects_prevented", true), false, null);
+            }
+            Path root = policy.projectRoot().toRealPath();
+            Path target = mappingStorePath(policy, args, root);
+            SssomMappingStore store = new SssomMappingStore(root, target);
+            SssomValidationPolicy validation = SssomPolicies.from(policy);
+            SssomEntityIndex entities = SssomEntityIndexes.fromOntologies(snapshot.closure());
+            SssomMappingStore.MutationGuard guard = mutationGuard(
+                    mappingWorkspace, snapshot, policy, target);
+            return switch (tool) {
+                case "list_mappings" -> SssomToolService.list(store, validation, entities,
+                        mappingLimit(args), string(args, "cursor"));
+                case "validate_mappings" -> SssomToolService.validate(store, validation, entities,
+                        mappingLimit(args), string(args, "cursor"));
+                case "add_mapping" -> SssomToolService.add(store,
+                        requiredString(args, "expected_mapping_revision"),
+                        stringMap(args.get("mapping"), "mapping"), initialMetadata(args),
+                        stringMap(args.get("prefix_map"), "prefix_map"), validation, entities, guard);
+                case "remove_mapping" -> SssomToolService.remove(store,
+                        requiredString(args, "expected_mapping_revision"),
+                        requiredMappingId(args), validation, entities, guard);
+                case "import_sssom" -> SssomToolService.importSssom(store,
+                        requiredString(args, "expected_mapping_revision"),
+                        confinedExistingFile(requiredString(args, "source"), root),
+                        importMode(requiredString(args, "mode")), validation, entities, guard);
+                case "export_sssom" -> SssomToolService.exportSssom(store,
+                        requiredString(args, "expected_mapping_revision"),
+                        confinedDestination(requiredString(args, "destination"), root),
+                        bool(args, "overwrite", false), string(args, "expected_target_digest"),
+                        bool(args, "spreadsheet_safe", false), validation, entities, guard);
+                default -> throw new IllegalArgumentException("Unknown mapping tool " + tool);
+            };
+        } catch (HeadlessExecutionException typed) {
+            throw typed;
+        } catch (SssomStoreException failure) {
+            throw mappingFailure(failure);
+        } catch (IOException failure) {
+            throw new HeadlessExecutionException("mapping_io_failed",
+                    "Mapping operation failed before a successful result was established.",
+                    Map.of("effects_prevented", !mutation,
+                            "outcome_unknown", mutation,
+                            "retry_requires_state_check", mutation), false, failure);
+        } catch (IllegalArgumentException failure) {
+            throw new HeadlessExecutionException("invalid_request", failure.getMessage(),
+                    Map.of("effects_prevented", true), false, failure);
+        }
+    }
+
+    private SssomMappingStore.MutationGuard mutationGuard(FilesystemProjectWorkspace workspace,
+            WorkspaceSnapshot snapshot, ProjectPolicy captured, Path target) {
+        return () -> {
+            if (!workspace.isCurrent(snapshot)) {
+                throw new IOException("ontology project sources changed during the mapping transaction");
+            }
+            ProjectPolicy current = loadPolicy();
+            boolean changed = !current.valid()
+                    || !java.util.Objects.equals(captured.digest(), current.digest())
+                    || current.projectRoot() == null
+                    || !captured.projectRoot().toRealPath().equals(current.projectRoot().toRealPath());
+            if (!changed && current.version() == 2) {
+                changed = !target.equals(mappingStorePath(current, Map.of(), current.projectRoot()));
+            }
+            if (changed) {
+                throw new IOException("mapping policy identity changed during the transaction");
+            }
+        };
+    }
+
+    private static Path mappingStorePath(ProjectPolicy policy, Map<String, Object> args, Path root)
+            throws IOException {
+        String explicit = string(args, "path");
+        if (policy.version() == 2) {
+            Object mappings = policy.effective().get("mappings");
+            if (!(mappings instanceof Map<?, ?> map) || !(map.get("path") instanceof String configured)) {
+                throw new IllegalArgumentException("policy v2 mappings.path is unavailable");
+            }
+            Path governed = confinedDestination(configured, root);
+            if (explicit != null && !governed.equals(confinedDestination(explicit, root))) {
+                throw new IllegalArgumentException("policy v2 mapping path cannot be overridden");
+            }
+            return governed;
+        }
+        if (explicit == null) {
+            throw new IllegalArgumentException("policy v1 mapping operations require explicit path");
+        }
+        return confinedDestination(explicit, root);
+    }
+
+    private static Path confinedExistingFile(String configured, Path root) throws IOException {
+        Path raw = Path.of(configured);
+        Path candidate = raw.isAbsolute() ? raw.normalize() : root.resolve(raw).normalize();
+        if (Files.isSymbolicLink(candidate)) throw new IOException("mapping source is a symbolic link");
+        Path real = candidate.toRealPath();
+        if (!real.startsWith(root.toRealPath()) || !Files.isRegularFile(real)) {
+            throw new IOException("mapping source is outside the project or not a regular file");
+        }
+        return real;
+    }
+
+    private static Path confinedDestination(String configured, Path root) throws IOException {
+        Path raw = Path.of(configured);
+        Path candidate = raw.isAbsolute() ? raw.normalize() : root.resolve(raw).normalize();
+        Path parent = candidate.getParent();
+        if (parent == null || Files.isSymbolicLink(parent)) {
+            throw new IOException("mapping destination has no safe parent");
+        }
+        Path realParent = parent.toRealPath();
+        if (!realParent.startsWith(root.toRealPath())) {
+            throw new IOException("mapping destination is outside the project");
+        }
+        return realParent.resolve(candidate.getFileName());
+    }
+
+    private static SssomMappingStore.ImportMode importMode(String value) {
+        return switch (value) {
+            case "replace" -> SssomMappingStore.ImportMode.REPLACE;
+            case "merge" -> SssomMappingStore.ImportMode.MERGE;
+            default -> throw new IllegalArgumentException("mode must be replace or merge");
+        };
+    }
+
+    private static int mappingLimit(Map<String, Object> args) {
+        Object value = args.get("limit");
+        if (value == null) return SssomToolService.DEFAULT_PAGE_SIZE;
+        if (!(value instanceof Number number) || number.doubleValue() != number.intValue()) {
+            throw new IllegalArgumentException("limit must be an integer");
+        }
+        return number.intValue();
+    }
+
+    private static Map<String, Object> initialMetadata(Map<String, Object> args) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        String set = string(args, "mapping_set_id");
+        String license = string(args, "license");
+        if (set != null) metadata.put("mapping_set_id", set);
+        if (license != null) metadata.put("license", license);
+        return metadata;
+    }
+
+    private static Map<String, String> stringMap(Object raw, String field) {
+        if (raw == null) return Map.of();
+        if (!(raw instanceof Map<?, ?> map) || map.size() > 128) {
+            throw new IllegalArgumentException(field + " must be an object with at most 128 entries");
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        map.forEach((key, value) -> {
+            if (!(key instanceof String name) || name.isBlank()
+                    || !(value instanceof String text) || text.length() > 65_536) {
+                throw new IllegalArgumentException(field + " requires bounded string keys and values");
+            }
+            result.put(name, text);
+        });
+        return result;
+    }
+
+    private static String requiredString(Map<String, Object> args, String key) {
+        String value = string(args, key);
+        if (value == null || value.isBlank()) throw new IllegalArgumentException(key + " is required");
+        return value;
+    }
+
+    private static String requiredMappingId(Map<String, Object> args) {
+        Object value = args.get("mapping_id");
+        if (!(value instanceof String text) || text.isBlank() || text.length() > 65_536) {
+            throw new IllegalArgumentException(
+                    "mapping_id must be a non-blank string of at most 65536 characters");
+        }
+        return text;
+    }
+
+    private static HeadlessExecutionException mappingFailure(SssomStoreException failure) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("effects_prevented", failure.effectsPrevented());
+        details.put("outcome_unknown", failure.outcomeUnknown());
+        if (failure.outcomeUnknown()) details.put("retry_requires_state_check", true);
+        if (!failure.findings().isEmpty()) {
+            details.put("findings", failure.findings().stream().limit(25)
+                    .map(finding -> finding.toJson()).toList());
+            details.put("findings_truncated", failure.findings().size() > 25);
+        }
+        boolean retryable = Set.of("mapping_revision_conflict", "project_lock_unavailable",
+                "cursor_revision_conflict").contains(failure.code());
+        return new HeadlessExecutionException(failure.code(), failure.getMessage(),
+                details, retryable, failure);
     }
 
     private Map<String, Object> verifyImportLock() {
@@ -313,6 +605,10 @@ public final class HeadlessToolService {
         result.put("policy_path", policy.path() == null ? null : policy.path().toString());
         result.put("project_root", policy.projectRoot() == null ? null : policy.projectRoot().toString());
         result.put("policy_digest", policy.digest());
+        result.put("schema_version", policy.version() == 0 ? null : policy.version());
+        if (policy.migration() != null) {
+            result.put("migration", policy.migration().toJson());
+        }
         result.put("errors", policy.issues().stream().filter(issue -> "error".equals(issue.severity()))
                 .map(issue -> issue.toJson()).toList());
         result.put("warnings", policy.issues().stream().filter(issue -> !"error".equals(issue.severity()))

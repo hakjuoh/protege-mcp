@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.tools;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -100,6 +101,111 @@ class WriteProjectPolicyTemplateTest {
         ProjectPolicyFixtures.materialize(policyPath, yaml);
         ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
         assertTrue(policy.valid(), () -> "obo: " + policy.issues());
+    }
+
+    @Test
+    void explicitVersionTwoTemplateLoadsWithBoundedFeatureDefaults(@TempDir Path temp)
+            throws Exception {
+        ToolContext ctx = ctx(temp, ONTOLOGY_IRI);
+
+        Map<String, Object> result = structured(call(ctx,
+                Map.of("profile", "general", "version", 2)));
+
+        assertEquals(true, result.get("written"), () -> result.toString());
+        assertEquals(2, result.get("schema_version"));
+        Path policyPath = Path.of((String) result.get("path"));
+        String yaml = Files.readString(policyPath);
+        assertTrue(yaml.contains("version: 2"), yaml);
+        assertTrue(yaml.contains("mappings.sssom.tsv"), yaml);
+        assertTrue(yaml.contains("queue_capacity: 32"), yaml);
+        assertTrue(yaml.contains("allow_source_write: false"), yaml);
+        assertFalse(yaml.contains("endpoint:"), yaml);
+        assertFalse(yaml.contains("api_key:"), yaml);
+
+        ProjectPolicyFixtures.materialize(policyPath, yaml);
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+        assertTrue(policy.valid(), () -> "v2: " + policy.issues());
+        assertEquals(2, policy.version());
+        assertNull(policy.migration());
+        assertTrue(((List<?>) result.get("validation_hint")).stream().anyMatch(
+                line -> String.valueOf(line).contains("owner-locally")));
+    }
+
+    @Test
+    void versionMustBeAnExactJsonIntegerAndInvalidValuesWriteNothing(@TempDir Path temp)
+            throws Exception {
+        ToolContext ctx = ctx(temp, ONTOLOGY_IRI);
+
+        for (Object invalid : List.of("garbage", "2", 2.9, 3, true)) {
+            CallToolResult result = call(ctx, Map.of("version", invalid));
+            assertEquals(Boolean.TRUE, result.isError(), () -> invalid + ": " + result.content());
+            assertTrue(String.valueOf(result.content()).contains("integer 1 or 2"),
+                    () -> invalid + ": " + result.content());
+            assertFalse(Files.exists(temp.resolve(POLICY_RELATIVE)),
+                    () -> "invalid version wrote a policy: " + invalid);
+        }
+    }
+
+    @Test
+    void validationReportsV1MigrationWithoutChangingItsDigest(@TempDir Path temp) throws Exception {
+        ToolContext ctx = ctx(temp, ONTOLOGY_IRI);
+        Path policyPath = temp.resolve(POLICY_RELATIVE);
+        ProjectPolicyFixtures.writePolicy(policyPath,
+                ProjectPolicyFixtures.minimalPolicy("migration-report", ONTOLOGY_IRI)
+                        + "validation:\n  required_stages: [structural]\n");
+        String digest = ProjectPolicyLoader.load(policyPath, null).digest();
+
+        Map<String, Object> report = structured(call(ctx, "validate_project_policy", Map.of()));
+
+        assertEquals(true, report.get("valid"), report::toString);
+        assertEquals(1, report.get("schema_version"));
+        assertEquals(digest, report.get("policy_digest"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> migration = (Map<String, Object>) report.get("migration");
+        assertNotNull(migration, report::toString);
+        assertEquals(1, migration.get("from_version"));
+        assertEquals(2, migration.get("to_version"));
+        assertEquals(false, migration.get("required"));
+        assertEquals(false, migration.get("automatic_write"));
+        assertEquals(false, migration.get("diagnostic_affects_digest"));
+    }
+
+    @Test
+    void validationNeverTruncatesAFractionalPolicyVersion(@TempDir Path temp) throws Exception {
+        Path policyPath = temp.resolve(POLICY_RELATIVE);
+        Files.createDirectories(policyPath.getParent());
+        Files.writeString(policyPath,
+                ProjectPolicyFixtures.minimalPolicy("fractional", ONTOLOGY_IRI)
+                        .replace("version: 1", "version: 1.5"));
+
+        Map<String, Object> report = structured(call(ctx(temp, ONTOLOGY_IRI),
+                "validate_project_policy", Map.of()));
+
+        assertEquals(false, report.get("valid"));
+        assertFalse(report.containsKey("schema_version"), report::toString);
+        assertTrue(String.valueOf(report.get("errors")).contains("schema_invalid"));
+    }
+
+    @Test
+    void schemaRejectedProviderSecretsNeverEchoInPublicDiagnostics(@TempDir Path temp)
+            throws Exception {
+        String canary = "mcp-policy-secret-Q4W8";
+        Path policyPath = temp.resolve(POLICY_RELATIVE);
+        ProjectPolicyFixtures.writePolicy(policyPath,
+                ProjectPolicyFixtures.minimalPolicy("secret-diagnostic", ONTOLOGY_IRI)
+                        .replace("version: 1", "version: 2")
+                        + "external_terms:\n"
+                        + "  providers:\n"
+                        + "    - {id: ols, profile: ols4, enabled: true, origin_alias: ebi, "
+                        + "endpoint: 'https://user:" + canary + "@example.org', api_key: '"
+                        + canary + "'}\n");
+
+        Map<String, Object> report = structured(call(ctx(temp, ONTOLOGY_IRI),
+                "validate_project_policy", Map.of()));
+
+        assertEquals(false, report.get("valid"));
+        assertFalse(report.containsKey("policy"), report::toString);
+        assertFalse(report.toString().contains(canary), report::toString);
     }
 
     @Test
@@ -226,15 +332,19 @@ class WriteProjectPolicyTemplateTest {
     }
 
     private static CallToolResult call(ToolContext ctx, Map<String, Object> args) {
+        return call(ctx, "write_project_policy_template", args);
+    }
+
+    private static CallToolResult call(ToolContext ctx, String tool, Map<String, Object> args) {
         ToolRegistry registry = new ToolRegistry();
         ProjectPolicyTools.register(registry, ctx);
         for (SyncToolSpecification spec : registry.build()) {
-            if (spec.tool().name().equals("write_project_policy_template")) {
+            if (spec.tool().name().equals(tool)) {
                 return spec.callHandler().apply(ToolTestExchange.localAdmin(),
-                        new CallToolRequest("write_project_policy_template", args));
+                        new CallToolRequest(tool, args));
             }
         }
-        throw new AssertionError("no tool named write_project_policy_template");
+        throw new AssertionError("no tool named " + tool);
     }
 
     private static String hex(byte[] bytes) {

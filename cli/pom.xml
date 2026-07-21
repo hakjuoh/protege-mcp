@@ -123,6 +123,29 @@
                 <configuration><release>${maven.compiler.release}</release></configuration>
             </plugin>
             <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.15</version>
+                <executions>
+                    <execution><id>prepare-agent</id><goals><goal>prepare-agent</goal></goals></execution>
+                    <execution><id>report</id><phase>test</phase><goals><goal>report</goal></goals></execution>
+                    <execution>
+                        <id>check-headless-registry</id><phase>verify</phase><goals><goal>check</goal></goals>
+                        <configuration>
+                            <rules><rule><element>BUNDLE</element>
+                                <includes>
+                                    <include>io.github.hakjuoh.protege_mcp.cli.HeadlessToolRegistry*</include>
+                                </includes>
+                                <limits>
+                                    <limit><counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.60</minimum></limit>
+                                    <limit><counter>BRANCH</counter><value>COVEREDRATIO</value><minimum>0.45</minimum></limit>
+                                </limits>
+                            </rule></rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.6.2</version>
@@ -236,6 +259,25 @@
                                 <argument>validate-policy</argument>
                                 <argument>--project</argument>
                                 <argument>${project.basedir}/src/smoke/policy.yaml</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- Exercise the packaged v2 schema and all four new policy blocks from the
+                             shaded distribution, not only from reactor test classpaths. -->
+                        <id>smoke-shaded-validate-policy-v2</id>
+                        <phase>verify</phase>
+                        <goals><goal>exec</goal></goals>
+                        <configuration>
+                            <executable>${java.home}/bin/java</executable>
+                            <arguments>
+                                <argument>-jar</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}-all.jar</argument>
+                                <argument>validate-policy</argument>
+                                <argument>--project</argument>
+                                <argument>${project.basedir}/src/smoke/policy-v2.yaml</argument>
+                                <argument>--no-network</argument>
+                                <argument>--no-external</argument>
                             </arguments>
                         </configuration>
                     </execution>

@@ -1,8 +1,15 @@
 package io.github.hakjuoh.protege_mcp.ro_crate;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -54,43 +61,113 @@ public final class RoCrateProjectProfileValidator {
     public static Optional<RoCrateVersion> detectVersion(Path manifest) {
         if (manifest == null) throw new IllegalArgumentException("manifest is required");
         try {
-            if (Files.size(manifest) > MAX_BYTES) return Optional.empty();
-            JsonNode document = JSON.readTree(Files.readAllBytes(manifest));
-            if (document == null || !document.isObject()) return Optional.empty();
+            return detectCapturedVersion(capture(manifest));
+        } catch (IOException | RuntimeException unavailable) {
+            return Optional.empty();
+        }
+    }
+
+    static Optional<RoCrateVersion> detectVersion(Path manifest, ReadInterlock afterSizeCheck) {
+        if (manifest == null) throw new IllegalArgumentException("manifest is required");
+        try {
+            return detectCapturedVersion(capture(manifest, afterSizeCheck));
+        } catch (IOException | RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** Detect a version from one identity-stable capture without rereading the path. */
+    public static Optional<RoCrateVersion> detectCapturedVersion(CapturedManifest captured) {
+        if (captured == null || !captured.isCurrent()) return Optional.empty();
+        try {
+            JsonNode document = JSON.readTree(captured.bytes);
+            if (document == null || !document.isObject() || !captured.isCurrent()) {
+                return Optional.empty();
+            }
             Set<String> contexts = new LinkedHashSet<>(textValues(document.get("@context")));
             List<RoCrateVersion> matches = new ArrayList<>();
             for (RoCrateVersion candidate : RoCrateVersion.values()) {
                 if (contexts.contains(candidate.context())) matches.add(candidate);
             }
             return matches.size() == 1 ? Optional.of(matches.get(0)) : Optional.empty();
-        } catch (IOException | RuntimeException e) {
+        } catch (IOException | RuntimeException invalid) {
             return Optional.empty();
         }
     }
 
+    /** Capture one manifest and its immediate parent identity through a bounded NOFOLLOW read. */
+    public static CapturedManifest capture(Path manifest) throws IOException {
+        return capture(manifest, () -> { });
+    }
+
+    static CapturedManifest capture(Path manifest, ReadInterlock afterSizeCheck)
+            throws IOException {
+        if (manifest == null) throw new IllegalArgumentException("manifest is required");
+        Path path = manifest.toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(path)) {
+            throw new IOException("RO-Crate metadata must not be a symbolic link");
+        }
+        Path real = path.toRealPath();
+        Path requestedParent = path.getParent();
+        Path parent = real.getParent();
+        if (requestedParent == null || parent == null) {
+            throw new IOException("RO-Crate metadata path has no parent directory");
+        }
+        PinnedIdentity sourceBefore = PinnedIdentity.file(real);
+        PinnedIdentity parentBefore = PinnedIdentity.directory(parent);
+        if (sourceBefore.size > MAX_BYTES) throw new ManifestTooLargeException();
+        afterSizeCheck.run();
+        byte[] bytes = readBounded(real);
+        PinnedIdentity sourceAfter = PinnedIdentity.file(real);
+        PinnedIdentity parentAfter = PinnedIdentity.directory(parent);
+        if (!path.toRealPath().equals(real) || !requestedParent.toRealPath().equals(parent)
+                || !real.toRealPath().equals(real) || !parent.toRealPath().equals(parent)
+                || !sourceBefore.equals(sourceAfter) || !parentBefore.equals(parentAfter)) {
+            throw new IOException("RO-Crate metadata identity changed while it was read");
+        }
+        return new CapturedManifest(path, requestedParent, real, parent,
+                sourceAfter, parentAfter, bytes);
+    }
+
     public static RoCrateValidationResult validate(Path manifest, RoCrateVersion version,
             RoCrateProjectProfile profile) {
+        return validate(manifest, version, profile, () -> { });
+    }
+
+    static RoCrateValidationResult validate(Path manifest, RoCrateVersion version,
+            RoCrateProjectProfile profile, ReadInterlock afterSizeCheck) {
         if (manifest == null || version == null || profile == null) {
             throw new IllegalArgumentException("manifest, version, and profile are required");
         }
         List<RoCrateValidationIssue> issues = new ArrayList<>();
-        byte[] bytes;
         try {
-            long size = Files.size(manifest);
-            if (size > MAX_BYTES) {
-                issue(issues, "manifest_too_large", "RO-Crate metadata is " + size
-                        + " bytes; the maximum is " + MAX_BYTES + ".");
-                return new RoCrateValidationResult(issues);
-            }
-            bytes = Files.readAllBytes(manifest);
+            return validateCaptured(capture(manifest, afterSizeCheck), version, profile);
+        } catch (ManifestTooLargeException tooLarge) {
+            issue(issues, "manifest_too_large", "RO-Crate metadata exceeds the maximum of "
+                    + MAX_BYTES + " bytes.");
+            return new RoCrateValidationResult(issues);
         } catch (IOException e) {
             issue(issues, "manifest_unreadable", "Could not read RO-Crate metadata: " + message(e));
+            return new RoCrateValidationResult(issues);
+        }
+    }
+
+    /** Validate the same capture used for version inference, without a second path read. */
+    public static RoCrateValidationResult validateCaptured(CapturedManifest captured,
+            RoCrateVersion version, RoCrateProjectProfile profile) {
+        if (captured == null || version == null || profile == null) {
+            throw new IllegalArgumentException("captured manifest, version, and profile are required");
+        }
+        List<RoCrateValidationIssue> issues = new ArrayList<>();
+        if (!captured.isCurrent()) {
+            issue(issues, "manifest_unreadable",
+                    "RO-Crate metadata identity changed after capture.");
             return new RoCrateValidationResult(issues);
         }
 
         JsonNode document;
         try {
-            document = JSON.readTree(bytes);
+            document = JSON.readTree(captured.bytes);
         } catch (IOException | RuntimeException e) {
             issue(issues, "manifest_invalid_json", "RO-Crate metadata is not strict JSON: "
                     + message(e));
@@ -100,7 +177,7 @@ public final class RoCrateProjectProfileValidator {
             issue(issues, "manifest_invalid", "RO-Crate metadata must be one JSON-LD object.");
             return new RoCrateValidationResult(issues);
         }
-        Path metadataFileName = manifest.getFileName();
+        Path metadataFileName = captured.path.getFileName();
         if (metadataFileName == null
                 || !version.metadataFile().equals(metadataFileName.toString())) {
             issue(issues, "metadata_filename", "RO-Crate " + version.version()
@@ -121,7 +198,97 @@ public final class RoCrateProjectProfileValidator {
         Map<String, JsonNode> entities = index(graph, issues);
         validateDescriptor(entities, version, issues);
         validateRoot(entities, version, profile, issues);
+        if (!captured.isCurrent()) {
+            issues.clear();
+            issue(issues, "manifest_unreadable",
+                    "RO-Crate metadata identity changed during validation.");
+        }
         return new RoCrateValidationResult(issues);
+    }
+
+    private static byte[] readBounded(Path manifest) throws IOException {
+        Set<OpenOption> options = Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        try (SeekableByteChannel channel = Files.newByteChannel(manifest, options);
+                InputStream input = Channels.newInputStream(channel)) {
+            byte[] bytes = input.readNBytes(Math.toIntExact(MAX_BYTES + 1));
+            if (bytes.length > MAX_BYTES) {
+                throw new ManifestTooLargeException();
+            }
+            return bytes;
+        }
+    }
+
+    /** Immutable bytes paired with exact source and parent-directory filesystem identities. */
+    public static final class CapturedManifest {
+        private final Path requestedPath;
+        private final Path requestedParent;
+        private final Path path;
+        private final Path parent;
+        private final PinnedIdentity sourceIdentity;
+        private final PinnedIdentity parentIdentity;
+        private final byte[] bytes;
+
+        private CapturedManifest(Path requestedPath, Path requestedParent, Path path, Path parent,
+                PinnedIdentity sourceIdentity, PinnedIdentity parentIdentity, byte[] bytes) {
+            this.requestedPath = requestedPath;
+            this.requestedParent = requestedParent;
+            this.path = path;
+            this.parent = parent;
+            this.sourceIdentity = sourceIdentity;
+            this.parentIdentity = parentIdentity;
+            this.bytes = bytes.clone();
+        }
+
+        public Path path() {
+            return path;
+        }
+
+        public boolean isCurrent() {
+            try {
+                return requestedPath.toRealPath().equals(path)
+                        && requestedParent.toRealPath().equals(parent)
+                        && path.equals(path.toRealPath()) && parent.equals(parent.toRealPath())
+                        && sourceIdentity.equals(PinnedIdentity.file(path))
+                        && parentIdentity.equals(PinnedIdentity.directory(parent));
+            } catch (IOException unavailableOrReplaced) {
+                return false;
+            }
+        }
+    }
+
+    private record PinnedIdentity(Object fileKey, long size,
+            java.nio.file.attribute.FileTime modifiedTime, boolean directory) {
+        static PinnedIdentity file(Path path) throws IOException {
+            BasicFileAttributes attributes = Files.readAttributes(path,
+                    BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (!attributes.isRegularFile() || attributes.fileKey() == null) {
+                throw new IOException("RO-Crate metadata file identity is unavailable");
+            }
+            return new PinnedIdentity(attributes.fileKey(), attributes.size(),
+                    attributes.lastModifiedTime(), false);
+        }
+
+        static PinnedIdentity directory(Path path) throws IOException {
+            BasicFileAttributes attributes = Files.readAttributes(path,
+                    BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (!attributes.isDirectory() || attributes.fileKey() == null) {
+                throw new IOException("RO-Crate metadata directory identity is unavailable");
+            }
+            return new PinnedIdentity(attributes.fileKey(), -1L, null, true);
+        }
+    }
+
+    @FunctionalInterface
+    interface ReadInterlock {
+        void run() throws IOException;
+    }
+
+    private static final class ManifestTooLargeException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        private ManifestTooLargeException() {
+            super("RO-Crate metadata exceeds " + MAX_BYTES + " bytes");
+        }
     }
 
     /**

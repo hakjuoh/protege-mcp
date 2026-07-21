@@ -2,9 +2,16 @@ package io.github.hakjuoh.protege_mcp.policy;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -13,6 +20,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -62,6 +70,9 @@ import org.semanticweb.owlapi.apibinding.OWLManager;
 /** Bounded-to-one-document, no-network inspection of a policy-declared module file. */
 public final class ModuleDocumentInspector {
 
+    /** Maximum module bytes parsed during policy validation. */
+    public static final long MAX_DOCUMENT_BYTES = 64L * 1024L * 1024L;
+
     /**
      * LRU of parsed inspections keyed by (document URI, SHA-256 of the document bytes). Policy
      * loads and QC re-inspect the same unchanged module files several times per tool call, and
@@ -85,19 +96,44 @@ public final class ModuleDocumentInspector {
     }
 
     public static Inspection inspect(Path document) throws IOException {
-        if (document == null || !Files.isRegularFile(document)) {
+        if (document == null) {
             throw new IOException("module is not a regular file: " + document);
         }
-        byte[] bytes = Files.readAllBytes(document);
+        Path normalized = document.toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(normalized)) {
+            throw new IOException("module files must not be symbolic links");
+        }
+        Path canonical = normalized.toRealPath();
+        BasicFileAttributes before = Files.readAttributes(canonical, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+        if (!before.isRegularFile()) {
+            throw new IOException("module is not a regular file: " + document);
+        }
+        if (before.size() > MAX_DOCUMENT_BYTES) {
+            throw new DocumentTooLargeException(before.size());
+        }
+        byte[] bytes = readBounded(canonical);
+        String contentHash = sha256(bytes);
+        if (!contentHash.equals(hashBounded(canonical))) {
+            throw new IOException("module content changed while it was being inspected");
+        }
+        BasicFileAttributes after = Files.readAttributes(canonical, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+        if (!canonical.equals(canonical.toRealPath())
+                || !Objects.equals(before.fileKey(), after.fileKey())
+                || before.size() != after.size()
+                || !before.lastModifiedTime().equals(after.lastModifiedTime())) {
+            throw new IOException("module identity changed while it was being inspected");
+        }
         // The URI below is byte-for-byte the parse base used in parse(), so a cached inspection
         // can never serve another path's relative-IRI resolution for the same content.
-        String key = document.toUri() + "\n" + sha256(bytes);
+        String key = normalized.toUri() + "\n" + contentHash;
         Inspection cached = CACHE.get(key);
         if (cached != null) {
             return cached;
         }
-        Inspection inspection = parse(document, bytes);
-        String supersededPrefix = document.toUri() + "\n";
+        Inspection inspection = parse(normalized, bytes);
+        String supersededPrefix = normalized.toUri() + "\n";
         synchronized (CACHE) {
             // A document is only ever re-inspected at its CURRENT bytes, so prior (uri, oldHash)
             // revisions of this same path are dead weight that the plain 128-entry LRU would otherwise
@@ -113,6 +149,37 @@ public final class ModuleDocumentInspector {
     /** Visible for tests: proves cache hits skip the OWLAPI parse without timing assertions. */
     static int parseCount() {
         return PARSES.get();
+    }
+
+    private static byte[] readBounded(Path document) throws IOException {
+        Set<OpenOption> options = Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        try (SeekableByteChannel channel = Files.newByteChannel(document, options);
+                InputStream input = Channels.newInputStream(channel)) {
+            byte[] bytes = input.readNBytes(Math.toIntExact(MAX_DOCUMENT_BYTES + 1));
+            if (bytes.length > MAX_DOCUMENT_BYTES) {
+                throw new DocumentTooLargeException(bytes.length);
+            }
+            return bytes;
+        }
+    }
+
+    private static String hashBounded(Path document) throws IOException {
+        MessageDigest digest = digest();
+        Set<OpenOption> options = Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        long bytes = 0;
+        try (SeekableByteChannel channel = Files.newByteChannel(document, options);
+                InputStream input = Channels.newInputStream(channel)) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                bytes += read;
+                if (bytes > MAX_DOCUMENT_BYTES) {
+                    throw new DocumentTooLargeException(bytes);
+                }
+                digest.update(buffer, 0, read);
+            }
+        }
+        return hex(digest.digest());
     }
 
     private static Inspection parse(Path document, byte[] bytes) throws IOException {
@@ -311,16 +378,32 @@ public final class ModuleDocumentInspector {
     }
 
     private static String sha256(byte[] bytes) {
+        return hex(digest().digest(bytes));
+    }
+
+    private static MessageDigest digest() {
         try {
-            byte[] hash = MessageDigest.getInstance("SHA-256").digest(bytes);
-            StringBuilder out = new StringBuilder(hash.length * 2);
-            for (byte b : hash) {
-                out.append(Character.forDigit((b >>> 4) & 0xf, 16));
-                out.append(Character.forDigit(b & 0xf, 16));
-            }
-            return out.toString();
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 unavailable", e);
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 unavailable", impossible);
+        }
+    }
+
+    private static String hex(byte[] hash) {
+        StringBuilder out = new StringBuilder(hash.length * 2);
+        for (byte b : hash) {
+            out.append(Character.forDigit((b >>> 4) & 0xf, 16));
+            out.append(Character.forDigit(b & 0xf, 16));
+        }
+        return out.toString();
+    }
+
+    static final class DocumentTooLargeException extends IOException {
+        private static final long serialVersionUID = 1L;
+
+        DocumentTooLargeException(long observedBytes) {
+            super("module exceeds " + MAX_DOCUMENT_BYTES + " bytes (observed at least "
+                    + observedBytes + ")");
         }
     }
 

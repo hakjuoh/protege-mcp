@@ -1,0 +1,39 @@
+#curie_map:
+#  EX: https://example.org/
+#mapping_set_id: https://example.org/mapping-set/full
+#mapping_set_version: "2026.07"
+#mapping_set_source:
+#  - https://example.org/source/set
+#mapping_set_title: Full independent SSSOM 1.0 fixture
+#mapping_set_description: Exercises every supported mapping-level field.
+#creator_id:
+#  - EX:Creator
+#creator_label:
+#  - Example Curator
+#license: https://creativecommons.org/licenses/by/4.0/
+#subject_type: owl class
+#subject_source: EX:SubjectOntology
+#subject_source_version: "1"
+#object_type: owl class
+#object_source: EX:ObjectOntology
+#object_source_version: "2"
+#mapping_provider: https://example.org/provider
+#mapping_tool: fixture-author
+#mapping_tool_version: "1.0"
+#mapping_date: "2026-07-21"
+#publication_date: "2026-07-22"
+#subject_match_field:
+#  - EX:preferredLabel
+#object_match_field:
+#  - EX:preferredLabel
+#subject_preprocessing:
+#  - EX:normalize
+#object_preprocessing:
+#  - EX:normalize
+#see_also:
+#  - human review note
+#issue_tracker: https://example.org/issues
+#other: source=independent
+#comment: Full fixture metadata
+subject_id	subject_label	subject_category	subject_type	predicate_id	predicate_label	predicate_modifier	object_id	object_label	object_category	object_type	mapping_justification	confidence	author_id	author_label	reviewer_id	reviewer_label	creator_id	creator_label	license	subject_source	subject_source_version	object_source	object_source_version	mapping_provider	mapping_source	mapping_cardinality	mapping_tool	mapping_tool_version	mapping_date	publication_date	curation_rule	curation_rule_text	subject_match_field	object_match_field	match_string	subject_preprocessing	object_preprocessing	similarity_score	similarity_measure	see_also	issue_tracker_item	other	comment
+EX:Subject	Subject label	EX:Category	owl class	skos:exactMatch	exact		EX:Object	Object label	EX:Category	owl class	semapv:ManualMappingCuration	0.95	EX:Author|EX:Coauthor	Alice\|A.|Bob	EX:Reviewer	Reviewer	EX:Creator	Creator	https://creativecommons.org/licenses/by/4.0/	EX:SubjectOntology	1	EX:ObjectOntology	2	https://example.org/provider	EX:MappingSource	1:1	fixture-author	1.0	2026-07-21	2026-07-22	EX:Rule	reviewed	EX:preferredLabel	EX:preferredLabel	shared label	EX:normalize	EX:normalize	0.9	cosine	human review note|relative/evidence	https://example.org/issues/1	key=value	"quoted ""comment"""

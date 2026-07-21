@@ -114,12 +114,15 @@ public final class OntologyAccess {
 
     private static McpAccessException abandoned(String message, boolean prevented,
             RuntimeException completedFailure) {
-        if (prevented) return new McpAccessException(message);
+        if (prevented) {
+            return McpAccessException.effectsPrevented(message);
+        }
         String warning = message + " The model-thread body had already started (or finished) and may "
                 + "still complete; do not assume its effects were prevented.";
         return completedFailure == null
                 ? new McpAccessException(warning)
-                : new McpAccessException(warning, completedFailure);
+                : new McpAccessException(warning, completedFailure,
+                        McpAccessException.Outcome.OUTCOME_UNKNOWN);
     }
 
     /** Convenience for side-effecting work that has no return value. */

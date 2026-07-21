@@ -42,8 +42,13 @@ final class QcStageResult {
     }
 
     static QcStageResult errored(String stage, String reason) {
+        return errored(stage, reason, null);
+    }
+
+    static QcStageResult errored(String stage, String reason, String errorCode) {
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("error", reason);
+        if (errorCode != null) summary.put("error_code", errorCode);
         return new QcStageResult(stage, true, QcSuiteTools.FAIL, summary, reason, true);
     }
 

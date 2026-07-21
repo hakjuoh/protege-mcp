@@ -57,26 +57,39 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
 
     private final Path policyPath;
     private final Path stateRoot;
+    private final CaptureHook beforePolicyCapture;
     private final CaptureHook beforeFinalVerification;
     private final String workspaceId = UUID.randomUUID().toString();
     private final AtomicLong revision = new AtomicLong();
 
     public FilesystemProjectWorkspace(Path policyPath) {
-        this(policyPath, defaultStateRoot(), () -> { });
+        this(policyPath, defaultStateRoot(), () -> { }, () -> { });
     }
 
     FilesystemProjectWorkspace(Path policyPath, CaptureHook beforeFinalVerification) {
-        this(policyPath, defaultStateRoot(), beforeFinalVerification);
+        this(policyPath, defaultStateRoot(), () -> { }, beforeFinalVerification);
+    }
+
+    FilesystemProjectWorkspace(Path policyPath, CaptureHook beforePolicyCapture,
+            CaptureHook beforeFinalVerification) {
+        this(policyPath, defaultStateRoot(), beforePolicyCapture, beforeFinalVerification);
     }
 
     FilesystemProjectWorkspace(Path policyPath, Path stateRoot,
             CaptureHook beforeFinalVerification) {
+        this(policyPath, stateRoot, () -> { }, beforeFinalVerification);
+    }
+
+    FilesystemProjectWorkspace(Path policyPath, Path stateRoot,
+            CaptureHook beforePolicyCapture, CaptureHook beforeFinalVerification) {
         if (policyPath == null) {
             throw new IllegalArgumentException("policyPath must not be null");
         }
         this.policyPath = policyPath.toAbsolutePath().normalize();
         this.stateRoot = java.util.Objects.requireNonNull(stateRoot, "stateRoot")
                 .toAbsolutePath().normalize();
+        this.beforePolicyCapture = java.util.Objects.requireNonNull(
+                beforePolicyCapture, "beforePolicyCapture");
         this.beforeFinalVerification = java.util.Objects.requireNonNull(
                 beforeFinalVerification, "beforeFinalVerification");
     }
@@ -102,11 +115,49 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
         OWLOntologyManager manager = null;
         boolean success = false;
         try {
-            Path canonicalPolicy = requireRegularFile(policyPath, null, "project policy");
+            ProjectPolicyLoader.PolicySourcePin sourcePin;
+            try {
+                Path trustedAnchor = ProjectPolicyLoader.canonicalProjectAnchor(policyPath)
+                        .toRealPath();
+                sourcePin = ProjectPolicyLoader.pinCanonicalPolicy(policyPath.toRealPath(),
+                        trustedAnchor);
+            } catch (IOException | RuntimeException unsafePath) {
+                throw new IOException("project policy source failed secure path validation",
+                        unsafePath);
+            }
+            ProjectPolicy sourcePolicy = ProjectPolicyLoader.load(policyPath, null,
+                    null, null, true);
+            boolean unsafeSource = sourcePolicy.issues().stream().anyMatch(issue ->
+                    "policy_symlink_forbidden".equals(issue.code())
+                            || "policy_symlink_escape".equals(issue.code())
+                            || "policy_changed_during_read".equals(issue.code()));
+            if (unsafeSource || sourcePolicy.path() == null) {
+                throw new IOException("project policy source failed secure path validation");
+            }
+            if (!sourcePin.source().equals(sourcePolicy.path()) || !sourcePin.isCurrent()) {
+                throw new IOException("project policy identity changed after secure discovery");
+            }
+            beforePolicyCapture.run();
+            if (!sourcePin.isCurrent()) {
+                throw new IOException("project policy identity changed after secure discovery");
+            }
+            Path canonicalPolicy = requireRegularFile(sourcePolicy.path(), null, "project policy");
+            if (!canonicalPolicy.equals(sourcePolicy.path())) {
+                throw new IOException("project policy path changed after secure discovery");
+            }
             CapturedFile policyCapture = context.capture(canonicalPolicy, "policy",
                     ProjectPolicyLoader.MAX_POLICY_BYTES);
-            ProjectPolicy policy = ProjectPolicyLoader.loadCaptured(canonicalPolicy,
-                    Files.readAllBytes(policyCapture.captured), null, null, true);
+            if (!sourcePin.isCurrent()) {
+                throw new IOException("project policy identity changed during capture");
+            }
+            ProjectPolicyLoader.CapturedPolicy capturedPolicy =
+                    ProjectPolicyLoader.captureStablePolicy(sourcePin);
+            if (!java.util.Arrays.equals(capturedPolicy.bytes(),
+                    Files.readAllBytes(policyCapture.captured))) {
+                throw new IOException("private policy snapshot differs from pinned source bytes");
+            }
+            ProjectPolicy policy = ProjectPolicyLoader.loadCaptured(capturedPolicy,
+                    null, null, true);
             if (importLockBootstrap) requireImportLockBootstrapPolicy(policy);
             else requireValidPolicy(policy);
             if (!canonicalPolicy.equals(policy.path())) {
@@ -161,13 +212,16 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
             String closureFingerprint = WorkspaceFingerprints.closure(root.getImportsClosure());
             beforeFinalVerification.run();
             context.verifyAll();
+            if (!sourcePin.isCurrent()) {
+                throw new IOException("project policy identity changed before snapshot publication");
+            }
 
             ModelRevision modelRevision = new ModelRevision(workspaceId,
                     revision.incrementAndGet(), fingerprint.semanticFingerprint(),
                     fingerprint.documentFingerprint());
             WorkspaceSnapshot snapshot = new WorkspaceSnapshot(policy, manager, root,
                     context.sources(), capturedAssets, modelRevision, closureFingerprint,
-                    lockDigest, temporaryRoot);
+                    lockDigest, temporaryRoot, sourcePin);
             success = true;
             return snapshot;
         } finally {
@@ -184,7 +238,7 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
 
     @Override
     public boolean isCurrent(WorkspaceSnapshot snapshot) {
-        if (!ownsOpenSnapshot(snapshot)) {
+        if (!ownsOpenSnapshot(snapshot) || !snapshot.policySourceCurrent()) {
             return false;
         }
         try {
@@ -226,7 +280,7 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
     }
 
     boolean sourcesCurrent(WorkspaceSnapshot snapshot) {
-        if (!ownsOpenSnapshot(snapshot)) {
+        if (!ownsOpenSnapshot(snapshot) || !snapshot.policySourceCurrent()) {
             return false;
         }
         try {
@@ -398,7 +452,8 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
             Path projectRoot, CaptureContext context) throws IOException {
         Map<String, List<Path>> result = new LinkedHashMap<>();
         for (Map.Entry<String, List<Path>> asset : policy.assets().entrySet()) {
-            if ("release_output".equals(asset.getKey())) {
+            if ("release_output".equals(asset.getKey())
+                    || "mapping_store".equals(asset.getKey())) {
                 continue;
             }
             List<Path> captured = new ArrayList<>();
@@ -783,7 +838,11 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
         }
 
         CapturedFile capture(Path source, String kind, long maxBytes) throws IOException {
-            Path original = source.toRealPath();
+            Path expected = source.toAbsolutePath().normalize();
+            Path original = expected.toRealPath();
+            if (!original.equals(expected)) {
+                throw new IOException("workspace source path changed before capture: " + source);
+            }
             CapturedFile existing = byOriginal.get(original);
             if (existing != null) {
                 return existing;
@@ -827,7 +886,11 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
         }
 
         Path captureDirectory(Path directory, String kind, Path projectRoot) throws IOException {
-            Path real = directory.toRealPath();
+            Path expected = directory.toAbsolutePath().normalize();
+            Path real = expected.toRealPath();
+            if (!real.equals(expected)) {
+                throw new IOException("asset directory path changed before capture: " + directory);
+            }
             if (!real.startsWith(projectRoot)) {
                 throw new IOException("asset directory escapes project root: " + directory);
             }

@@ -6,8 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Set;
 import java.util.UUID;
 
@@ -87,6 +90,27 @@ class ModuleDocumentInspectorTest {
         assertThrows(IOException.class, () -> ModuleDocumentInspector.inspect(garbage));
         // Failures are never cached: the same bad content fails again, not from the cache.
         assertThrows(IOException.class, () -> ModuleDocumentInspector.inspect(garbage));
+    }
+
+    @Test
+    void oversizedSparseModuleIsRejectedBeforeAllocationOrParsing(@TempDir Path temp)
+            throws Exception {
+        Path oversized = temp.resolve("oversized.ofn");
+        try (FileChannel channel = FileChannel.open(oversized, StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE)) {
+            channel.position(ModuleDocumentInspector.MAX_DOCUMENT_BYTES);
+            channel.write(ByteBuffer.wrap(new byte[] {0}));
+        }
+        int before = ModuleDocumentInspector.parseCount();
+
+        ModuleDocumentInspector.DocumentTooLargeException refusal = assertThrows(
+                ModuleDocumentInspector.DocumentTooLargeException.class,
+                () -> ModuleDocumentInspector.inspect(oversized));
+
+        assertTrue(refusal.getMessage().contains(
+                String.valueOf(ModuleDocumentInspector.MAX_DOCUMENT_BYTES)));
+        assertEquals(before, ModuleDocumentInspector.parseCount(),
+                "oversized input must be rejected before OWLAPI parsing");
     }
 
     @Test

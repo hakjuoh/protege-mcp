@@ -17,6 +17,7 @@ import io.github.hakjuoh.protege_mcp.core.audit.AuditSettings;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
+import io.github.hakjuoh.protege_mcp.server.McpAccessException;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /** Request-bound attribution for one live Protégé window, backed by owner-only JSONL streams. */
@@ -73,7 +74,8 @@ final class WorkspaceAudit {
         Object content = result == null ? null : result.structuredContent();
         final Boolean committed;
         if (failed) {
-            committed = ticket.mutationExpected() ? Boolean.FALSE : null;
+            committed = ticket.mutationExpected() && effectsPrevented(content)
+                    ? Boolean.FALSE : null;
         } else {
             committed = AuditFacts.committed(content, ticket.mutationExpected());
         }
@@ -82,17 +84,41 @@ final class WorkspaceAudit {
                 && context.controller().isConfirmWrites()) {
             references.add("interactive_write_confirmation");
         }
+        Map<String, Object> summary = new java.util.LinkedHashMap<>(AuditFacts.summary(content));
+        if (failed && ticket.mutationExpected()) {
+            boolean prevented = effectsPrevented(content);
+            summary.put("effects_prevented", prevented);
+            summary.put("outcome_unknown", !prevented);
+        }
         ticket.log().append(new AuditEvent(ticket.operation(),
                 failed ? AuditEvent.Outcome.FAILED : AuditEvent.Outcome.SUCCEEDED,
                 ticket.actor(), ticket.targetOntology(), ticket.targetModule(),
-                AuditFacts.gate(content), committed, AuditFacts.summary(content), references,
+                AuditFacts.gate(content), committed, summary, references,
                 AuditFacts.releaseManifest(ticket.operation(), content)));
     }
 
     void failed(Ticket ticket, RuntimeException failure) {
+        boolean prevented = effectsPrevented(failure);
+        boolean unknown = ticket.mutationExpected() && !prevented;
         ticket.log().append(event(ticket, AuditEvent.Outcome.FAILED,
-                ticket.mutationExpected() ? Boolean.FALSE : null, null,
-                Map.of("failure_type", failure.getClass().getSimpleName()), null));
+                ticket.mutationExpected() && prevented ? Boolean.FALSE : null, null,
+                Map.of("failure_type", failure.getClass().getSimpleName(),
+                        "effects_prevented", prevented,
+                        "outcome_unknown", unknown), null));
+    }
+
+    private static boolean effectsPrevented(Object failure) {
+        if (failure instanceof McpAccessException access) return access.effectsPrevented();
+        if (failure instanceof ToolArgException typed) {
+            return Boolean.TRUE.equals(typed.details().get("effects_prevented"));
+        }
+        if (failure instanceof CallToolResult result) return effectsPrevented(result.structuredContent());
+        if (failure instanceof Map<?, ?> body) {
+            Object details = body.get("details");
+            return details instanceof Map<?, ?> values
+                    && Boolean.TRUE.equals(values.get("effects_prevented"));
+        }
+        return false;
     }
 
     ExportResult export(String output) {

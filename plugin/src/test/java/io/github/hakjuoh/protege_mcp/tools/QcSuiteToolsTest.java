@@ -11,8 +11,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.protege.editor.owl.model.OWLModelManager;
 import org.semanticweb.owlapi.apibinding.OWLManager;
 import org.semanticweb.owlapi.model.IRI;
@@ -22,6 +24,11 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyCreationException;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.AddOntologyAnnotation;
+
+import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
 
 /** Method-level tests for the F5 aggregate gate {@link QcSuiteTools} (stages composed headless). */
 class QcSuiteToolsTest {
@@ -42,6 +49,44 @@ class QcSuiteToolsTest {
                 () -> QcRunConfig.legacy(Map.of("limit", -1)));
         assertThrows(ToolArgException.class,
                 () -> QcRunConfig.legacy(Map.of("limit", 10_001)));
+    }
+
+    @Test
+    void providerEvidenceIsAKnownPolicyStageWithAnExplicitUnavailableResult(
+            @TempDir Path temp) throws Exception {
+        Path policyPath = temp.resolve("policy.yaml");
+        ProjectPolicyFixtures.writePolicy(policyPath,
+                ProjectPolicyFixtures.minimalPolicy("provider-stage", "http://example.org/f5")
+                        .replace("version: 1", "version: 2")
+                        + "validation:\n"
+                        + "  required_stages: [provider_evidence]\n"
+                        + "  provider_evidence: {providers: [ols]}\n"
+                        + "external_terms:\n"
+                        + "  providers:\n"
+                        + "    - {id: ols, profile: ols4, enabled: true, origin_alias: ebi}\n");
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null,
+                "http://example.org/f5", List.of());
+        assertTrue(policy.valid(), () -> policy.issues().toString());
+        QcRunConfig config = ProjectQcTools.config(policy,
+                new ProjectPolicyTools.PolicyContext(null, "http://example.org/f5", List.of(), null),
+                Map.of());
+
+        assertEquals(Set.of("interoperability", "provider_evidence"), config.stages);
+        assertEquals(Set.of("interoperability", "provider_evidence"), config.requiredStages);
+        ToolContext context = new ToolContext(HeadlessAccess.over(ontology(false)), null);
+        QcSuiteExecution execution = QcSuiteTools.execute(context, config);
+        QcStageResult unavailable = execution.results.stream()
+                .filter(stage -> "provider_evidence".equals(stage.stage))
+                .findFirst().orElseThrow();
+        assertTrue(unavailable.executionError);
+        assertEquals("provider_evidence_unavailable", unavailable.summary.get("error_code"));
+        Map<String, Object> strict = QcSuiteTools.strictResult(execution,
+                config.requiredStages, config.failOn, 2, "sha256:" + "0".repeat(64), true);
+        assertEquals("error", strict.get("gate"));
+        assertTrue(String.valueOf(strict).contains("provider_evidence_unavailable"));
+        assertThrows(ToolArgException.class, () -> QcRunConfig.legacy(Map.of(
+                "stages", List.of("provider_evidence"))),
+                "the frozen legacy eight-stage input contract must not grow an always-error mode");
     }
 
     @Test

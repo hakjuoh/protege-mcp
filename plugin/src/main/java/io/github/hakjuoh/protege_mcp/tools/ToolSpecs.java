@@ -3,6 +3,8 @@ package io.github.hakjuoh.protege_mcp.tools;
 import java.util.Map;
 import java.util.function.BiFunction;
 
+import io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas;
+import io.github.hakjuoh.protege_mcp.contracts.ImmutableJson;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
@@ -22,9 +24,25 @@ public final class ToolSpecs {
     private ToolSpecs() {
     }
 
-    public static SyncToolSpecification of(String name, String description, Map<String, Object> inputSchema,
+    static SyncToolSpecification of(String name, String description, Map<String, Object> inputSchema,
             BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
-        Tool tool = Tool.builder(name, inputSchema).description(description).build();
+        return of(name, description, inputSchema, ToolContractSchemas.legacySuccessSchema(),
+                ToolContractSchemas.errorSchema(), handler);
+    }
+
+    public static SyncToolSpecification of(String name, String description,
+            Map<String, Object> inputSchema, Map<String, Object> outputSchema,
+            Map<String, Object> errorSchema,
+            BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
+        if (inputSchema == null) throw new IllegalArgumentException("input schema is required");
+        Map<String, Object> input = ImmutableJson.map(inputSchema);
+        Map<String, Object> output = ImmutableJson.map(outputSchema);
+        Map<String, Object> error = ImmutableJson.map(errorSchema);
+        Tool tool = Tool.builder(name, input).description(description)
+                .outputSchema(ToolContractSchemas.wireOutputSchema(output))
+                .meta(Map.of(ToolContractSchemas.SUCCESS_SCHEMA_META_KEY, output,
+                        ToolContractSchemas.ERROR_SCHEMA_META_KEY, error))
+                .build();
         return SyncToolSpecification.builder().tool(tool).callHandler(handler).build();
     }
 }
