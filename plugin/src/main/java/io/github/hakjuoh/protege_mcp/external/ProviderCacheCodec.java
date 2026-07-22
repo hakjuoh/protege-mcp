@@ -72,9 +72,10 @@ final class ProviderCacheCodec {
                 "source_ontology_iri", "entity_iri", "entity_type", "labels", "synonyms",
                 "descriptions", "license", "provenance", "match_explanation", "score",
                 "provider_version", "provider_timestamp", "source_url", "retries",
-                "deprecated", "replaced_by", "result_fingerprint"));
+                "deprecated", "replaced_by", "term_fingerprint", "result_fingerprint"));
         try {
-            return new ProviderResult(text(node, "provider_id", 64), text(node, "profile", 64),
+            ProviderResult result = new ProviderResult(
+                    text(node, "provider_id", 64), text(node, "profile", 64),
                     text(node, "source_ontology", 64),
                     optional(node, "source_ontology_iri", 4_096),
                     text(node, "entity_iri", 4_096), text(node, "entity_type", 64),
@@ -89,6 +90,10 @@ final class ProviderCacheCodec {
                             ProviderResponse.MAX_RETRIES * 2L)),
                     bool(node, "deprecated"), optional(node, "replaced_by", 4_096),
                     text(node, "result_fingerprint", 128));
+            String termFingerprint = optional(node, "term_fingerprint", 128);
+            if (termFingerprint != null
+                    && !termFingerprint.equals(result.termFingerprint())) throw invalid();
+            return result;
         } catch (RuntimeException invalid) {
             throw invalid();
         }

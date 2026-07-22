@@ -41,13 +41,19 @@ class AuditFactsTest {
         assertNull(AuditFacts.committed(Map.of("gate", "fail"), false));
         String digest = "sha256:" + "a".repeat(64);
         assertEquals(List.of("change_set:cs-1", "policy_digest:" + digest,
-                        "mapping_revision:" + digest, "target_digest:" + digest),
+                        "mapping_revision:" + digest, "target_digest:" + digest,
+                        "proposal_fingerprint:" + digest),
                 AuditFacts.confirmationReferences(Map.of(
                         "change_set_id", "cs-1", "confirm_policy_digest", digest,
                         "expected_mapping_revision", digest, "expected_target_digest", digest,
-                        "body", "must never be retained")));
+                        "proposal_fingerprint", digest, "body", "must never be retained")));
         assertTrue(AuditFacts.confirmationReferences(Map.of(
                 "change_set_id", "ontology content with spaces")).isEmpty());
+        assertEquals(true, AuditFacts.interactiveWriteConfirmation(
+                Map.of("interactive_confirmation", true)));
+        assertEquals(false, AuditFacts.interactiveWriteConfirmation(
+                Map.of("interactive_confirmation", false)));
+        assertNull(AuditFacts.interactiveWriteConfirmation(Map.of()));
     }
 
     @Test

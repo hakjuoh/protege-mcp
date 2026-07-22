@@ -34,8 +34,8 @@ class SssomParserTest {
                 + "#license: https://creativecommons.org/publicdomain/zero/1.0/\r\n"
                 + "#creator_id:\r\n#  - urn:orcid:0000-0000\r\n"
                 + "subject_id\tpredicate_id\tobject_id\tmapping_justification\tcomment\tx_vendor\r\n"
-                + "ex:A\tskos:exactMatch\tex:B\tsemapv:ManualMappingCuration\t\"tab\tand\nnewline\"\t한글\r\n"
-                + "ex:C\tskos:closeMatch\tex:D\tsemapv:ManualMappingCuration\tplain\t😀\r\n";
+                + "ex:A\tskos:exactMatch\tex:B\tsemapv:ManualMappingCuration\t\"tab\tand\nnewline\"\t\uD55C\uAE00\r\n"
+                + "ex:C\tskos:closeMatch\tex:D\tsemapv:ManualMappingCuration\tplain\t\uD83D\uDE00\r\n";
         byte[] body = authored.getBytes(StandardCharsets.UTF_8);
         byte[] withBom = new byte[body.length + 3];
         withBom[0] = (byte) 0xef;
@@ -49,7 +49,7 @@ class SssomParserTest {
 
         assertEquals(2, parsed.records().size());
         assertEquals("tab\tand\nnewline", parsed.records().get(0).value("comment"));
-        assertEquals("한글", parsed.records().get(0).value("x_vendor"));
+        assertEquals("\uD55C\uAE00", parsed.records().get(0).value("x_vendor"));
         assertEquals(List.of("urn:orcid:0000-0000"), parsed.metadata().get("creator_id"));
         assertTrue(parsed.canonical().records().stream().allMatch(record ->
                 record.mappingId().matches("sha256:[0-9a-f]{64}")));

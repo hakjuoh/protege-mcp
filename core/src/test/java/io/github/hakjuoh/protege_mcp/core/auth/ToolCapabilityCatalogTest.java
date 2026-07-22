@@ -12,7 +12,7 @@ class ToolCapabilityCatalogTest {
 
     @Test
     void completeCatalogUsesOnlyPublicCapabilitiesAndOneSharedImplicationRule() {
-        assertEquals(91, ToolCapabilityCatalog.names().size());
+        assertEquals(95, ToolCapabilityCatalog.names().size());
         for (String name : ToolCapabilityCatalog.names()) {
             Set<String> required = ToolCapabilityCatalog.required(name);
             assertFalse(required.isEmpty(), name);
@@ -22,5 +22,10 @@ class ToolCapabilityCatalogTest {
                 Capability.NETWORK_ACCESS.value()));
         assertFalse(CapabilityAuthorizer.allows(Set.of(Capability.ONTOLOGY_READ.value()),
                 Capability.ONTOLOGY_ADMIN.value()));
+        Set<String> providerRead = Set.of(Capability.ONTOLOGY_READ.value(),
+                Capability.FILESYSTEM_PROJECT_READ.value(), Capability.NETWORK_ACCESS.value());
+        assertEquals(providerRead, ToolCapabilityCatalog.required("search_external_terms"));
+        assertEquals(providerRead, ToolCapabilityCatalog.required("inspect_external_term"));
+        assertEquals(providerRead, ToolCapabilityCatalog.required("propose_term_reuse"));
     }
 }

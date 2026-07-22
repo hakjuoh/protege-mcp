@@ -21,31 +21,37 @@ import org.junit.jupiter.api.Test;
 import org.protege.editor.core.prefs.Preferences;
 
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
+import io.github.hakjuoh.protege_mcp.external.ExternalProviderGateway;
+import io.github.hakjuoh.protege_mcp.external.ProviderFailure;
+import io.github.hakjuoh.protege_mcp.external.ProviderInspectRequest;
+import io.github.hakjuoh.protege_mcp.external.ProviderSearchRequest;
+import io.github.hakjuoh.protege_mcp.external.ProviderSessionScope;
 import io.github.hakjuoh.protege_mcp.oauth.OAuthStore;
 import io.github.hakjuoh.protege_mcp.tools.ToolArgException;
 import io.github.hakjuoh.protege_mcp.tools.ToolContext;
+import io.github.hakjuoh.protege_mcp.tools.WriteConfirmer;
 
 /**
  * Method-level tests for {@link McpServerController}.
  *
  * <p>Scope: everything that is reachable <em>without</em> booting Jetty, the MCP SDK, or a live
- * Protégé EditorKit. {@link McpServerController#start()} and {@link McpServerController#restart()}
+ * Protege EditorKit. {@link McpServerController#start()} and {@link McpServerController#restart()}
  * bind a real loopback port and build the real MCP server / OAuth store over a live
  * {@code OWLModelManager}, so they are runtime-only and intentionally out of scope here. Because
  * {@code start()} is never called, the {@code oauthStore} field stays {@code null} throughout, so the
  * OAuth-delegating methods are exercised on their server-stopped (null-store) branch, and
  * {@link McpServerController#stop()} exercises the all-null {@code safeStopInternals} no-op path.
  *
- * <p>The controller reaches {@link McpConfig} which is backed by Protégé's
+ * <p>The controller reaches {@link McpConfig} which is backed by Protege's
  * {@code PreferencesManager}; in a headless JVM that resolves to a real java.util.prefs store shared
  * across the process. To keep tests deterministic and side-effect-free, each test snapshots and
  * restores the preference keys it touches. The {@code OntologyAccess} passed to the controller wraps
- * a {@code null} EditorKit — legal because the controller only dereferences {@code access} inside
+ * a {@code null} EditorKit - legal because the controller only dereferences {@code access} inside
  * {@code start()}, which we never call.
  */
 class McpServerControllerTest {
 
-    /** URL-safe base64 (RFC 4648) alphabet, no padding — the shape of a generated bearer token. */
+    /** URL-safe base64 (RFC 4648) alphabet, no padding - the shape of a generated bearer token. */
     private static final String TOKEN_PATTERN = "[A-Za-z0-9_-]+";
 
     private Preferences prefs;
@@ -82,7 +88,7 @@ class McpServerControllerTest {
     @Test
     void constructorSucceedsWithFakeOntologyAccess() {
         assertDoesNotThrow(this::newController,
-                "constructor must not require a live Protégé runtime when start() is not called");
+                "constructor must not require a live Protege runtime when start() is not called");
     }
 
     @Test
@@ -151,7 +157,7 @@ class McpServerControllerTest {
     @Test
     void isUserStoppedFalseInitially() {
         assertFalse(newController().isUserStopped(),
-                "a fresh controller carries no user-stop latch — auto-start must be allowed");
+                "a fresh controller carries no user-stop latch - auto-start must be allowed");
     }
 
     @Test
@@ -169,7 +175,7 @@ class McpServerControllerTest {
         // rollback also call stop() and must NOT block later auto-starts.
         McpServerController c = newController();
         c.stop();
-        assertFalse(c.isUserStopped(), "stop() itself is not a user decision — no latch");
+        assertFalse(c.isUserStopped(), "stop() itself is not a user decision - no latch");
     }
 
     @Test
@@ -185,7 +191,7 @@ class McpServerControllerTest {
     void startRefusesWhileUserStopped() {
         // The only start() call in this file: the latch refusal precedes ALL runtime machinery
         // (TCCL pinning, Jena init, Jetty), so this is headless-safe and boots nothing. It pins the
-        // latch's last line of defense — an auto-start path that raced past its own up-front check
+        // latch's last line of defense - an auto-start path that raced past its own up-front check
         // (e.g. a broker attach failing over to a standalone start) must be refused here, under the
         // same monitor stop() takes, instead of silently overriding the user's Stop.
         McpServerController c = newController();
@@ -196,7 +202,7 @@ class McpServerControllerTest {
         assertTrue(thrown.getMessage().contains("press Start"), thrown.getMessage());
         assertFalse(c.isRunning(), "a refused start must leave the server stopped");
         assertTrue(c.isUserStopped(), "the latch must survive the refusal");
-        assertNull(c.getLastError(), "a latch refusal is not a failure — lastError must stay clear");
+        assertNull(c.getLastError(), "a latch refusal is not a failure - lastError must stay clear");
     }
 
     @Test
@@ -299,7 +305,7 @@ class McpServerControllerTest {
                 "two consecutive regenerations must produce different tokens (SecureRandom)");
     }
 
-    // ---- listClients (server stopped → null store) ----------------------------------------------
+    // ---- listClients (server stopped -> null store) ----------------------------------------------
 
     @Test
     void listClientsIsEmptyWhenServerStopped() {
@@ -316,7 +322,7 @@ class McpServerControllerTest {
                 "stop() nulls the store, so listClients() stays empty");
     }
 
-    // ---- revokeClient (server stopped → null store) ---------------------------------------------
+    // ---- revokeClient (server stopped -> null store) ---------------------------------------------
 
     @Test
     void revokeClientReturnsFalseWhenServerStopped() {
@@ -341,7 +347,7 @@ class McpServerControllerTest {
                 "after stop() the store is null so revocation reports false");
     }
 
-    // ---- getStaticTokenLastSeen (server stopped → null store) -----------------------------------
+    // ---- getStaticTokenLastSeen (server stopped -> null store) -----------------------------------
 
     @Test
     void getStaticTokenLastSeenIsZeroWhenServerStopped() {
@@ -434,6 +440,28 @@ class McpServerControllerTest {
             active.close();
             pool.shutdownNow();
         }
+    }
+
+    @Test
+    void standaloneRevocationWiresClientAndGrantToExternalProviderRuntime() throws Exception {
+        McpServerController controller = newController();
+        OAuthStore store = new OAuthStore(() -> null, () -> null, ignored -> { });
+        RecordingExternalGateway gateway = new RecordingExternalGateway();
+        ToolContext context = contextWithGateway(controller, gateway);
+        setRuntimeStore(controller, store);
+        setRuntimeContext(controller, context);
+
+        OAuthStore.Client client = store.registerClient(
+                List.of("http://127.0.0.1/client"), "client");
+        store.issueTokens(client.clientId, "mcp", null);
+        assertTrue(controller.revokeClient(client.clientId));
+        assertEquals(client.clientId, gateway.clientId);
+
+        McpServerController.AssistantCredential assistant = controller.issueAssistantCredential(
+                "codex", "external-revocation", true);
+        assertTrue(controller.revokeAssistantCredential(assistant));
+        assertEquals(assistant.principal().clientId(), gateway.grantClientId);
+        assertEquals(assistant.principal().grantId(), gateway.grantId);
     }
 
     @Test
@@ -569,6 +597,53 @@ class McpServerControllerTest {
         Field contextField = McpServerController.class.getDeclaredField("toolContext");
         contextField.setAccessible(true);
         contextField.set(controller, context);
+    }
+
+    private static ToolContext contextWithGateway(McpServerController controller,
+            ExternalProviderGateway gateway) throws Exception {
+        var constructor = ToolContext.class.getDeclaredConstructor(OntologyAccess.class,
+                McpServerController.class, WriteConfirmer.class, ExternalProviderGateway.class);
+        constructor.setAccessible(true);
+        return constructor.newInstance(null, controller, null, gateway);
+    }
+
+    private static final class RecordingExternalGateway implements ExternalProviderGateway {
+        private String clientId;
+        private String grantClientId;
+        private String grantId;
+
+        @Override
+        public SearchOutcome search(ProviderSessionScope scope, ProviderSearchRequest initialRequest,
+                String cursor, InvocationResolver resolver) throws ProviderFailure {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public InspectOutcome inspect(ProviderInspectRequest request, InvocationResolver resolver)
+                throws ProviderFailure {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int revokeClient(String selectedClientId) {
+            clientId = selectedClientId;
+            return 1;
+        }
+
+        @Override
+        public int revokeGrant(String selectedClientId, String selectedGrantId) {
+            grantClientId = selectedClientId;
+            grantId = selectedGrantId;
+            return 1;
+        }
+
+        @Override
+        public int clearWorkspace(String workspaceId) {
+            return 0;
+        }
+
+        @Override
+        public void close() { }
     }
 
     @Test

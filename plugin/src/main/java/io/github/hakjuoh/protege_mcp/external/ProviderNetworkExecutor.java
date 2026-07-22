@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import io.github.hakjuoh.protege_mcp.server.McpAccessException;
+
 /** Central HTTPS-only provider transport with pinned DNS, bounded retries, and secret redaction. */
 public final class ProviderNetworkExecutor implements ProviderTransport {
 
@@ -95,6 +97,8 @@ public final class ProviderNetworkExecutor implements ProviderTransport {
                     }
                     sleep(backoff(attempt));
                     continue;
+                } catch (McpAccessException accessFailure) {
+                    throw accessFailure;
                 } catch (IOException | RuntimeException failure) {
                     if (attempt == MAX_RETRIES) {
                         throw new ProviderFailure("provider_transport_failed",
@@ -219,6 +223,8 @@ public final class ProviderNetworkExecutor implements ProviderTransport {
     private void authorizeGate(URI target) throws ProviderFailure {
         try {
             networkGate.authorize(target);
+        } catch (McpAccessException accessFailure) {
+            throw accessFailure;
         } catch (ProviderFailure | RuntimeException denied) {
             throw new ProviderFailure("provider_network_denied",
                     "Provider network authority denied the request", false);
@@ -395,7 +401,8 @@ public final class ProviderNetworkExecutor implements ProviderTransport {
         }
         try {
             String expected = new String(secret, StandardCharsets.UTF_8);
-            return ProviderJsonCanary.anyTextMatches(body, value -> value.contains(expected));
+            return ProviderJsonCanary.anyTextMatches(body,
+                    value -> ProviderCacheSafety.containsCanary(value, expected));
         } catch (ProviderJsonCanary.ScanLimitException constrained) {
             return true;
         } catch (IOException invalidJson) {

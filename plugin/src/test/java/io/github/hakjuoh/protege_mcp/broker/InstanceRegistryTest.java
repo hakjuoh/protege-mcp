@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.broker;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.List;
 import java.util.Optional;
@@ -63,6 +64,119 @@ class InstanceRegistryTest {
         assertEquals(0, registry.processCount());
     }
 
+    @Test
+    void staleButLiveProcessPreventsQuiescentCompactionUntilItsPidDies() {
+        registry.register(11, "1.0", "tok", List.of(window("w1", 5001, 1, 1)));
+        now.addAndGet(10_000);
+        assertEquals(1, registry.reap(8_000, pid -> true));
+        assertEquals(0, registry.processCount());
+        assertTrue(registry.listWindows().isEmpty());
+        assertEquals(List.of("w1"), registry.revocationWindows().stream()
+                .map(window -> window.id).toList());
+        now.addAndGet(120_000);
+        assertFalse(registry.shouldExit(0, 0));
+        assertFalse(registry.sealIfShouldExit(0, 0));
+
+        registry.reap(8_000, pid -> false);
+        assertTrue(registry.revocationWindows().isEmpty());
+        assertTrue(registry.shouldExit(0, 0));
+        assertTrue(registry.sealIfShouldExit(0, 0));
+    }
+
+    @Test
+    void unregisterQuarantinesRevocationEndpointsUntilPidDeath() {
+        String processId = registry.register(11, "1.0", "tok",
+                List.of(window("w1", 5001, 1, 1)));
+
+        registry.unregister(processId);
+
+        assertEquals(0, registry.processCount());
+        assertTrue(registry.listWindows().isEmpty());
+        assertEquals(List.of("w1"), registry.revocationWindows().stream()
+                .map(window -> window.id).toList());
+        now.addAndGet(120_000);
+        assertFalse(registry.shouldExit(0, 0));
+
+        registry.reap(8_000, pid -> false);
+        assertTrue(registry.revocationWindows().isEmpty());
+        assertTrue(registry.shouldExit(0, 0));
+    }
+
+    @Test
+    void heartbeatRetainsRemovedAndReplacedEndpointIncarnationsForRevocationOnly() {
+        String processId = registry.register(11, "1.0", "tok", List.of(
+                window("removed", 5001, 1, 1),
+                new InstanceRegistry.Window("changed", 5002, "old-secret", "old", 2, 2)));
+
+        assertTrue(registry.heartbeat(processId, "tok", List.of(
+                new InstanceRegistry.Window("changed", 5003, "new-secret", "new", 3, 3))));
+
+        assertEquals(List.of("changed"), registry.listWindows().stream()
+                .map(window -> window.id).toList());
+        assertEquals(3, registry.revocationWindows().size());
+        assertEquals(1, registry.revocationWindows().stream()
+                .filter(window -> window.port == 5001).count());
+        assertEquals(1, registry.revocationWindows().stream()
+                .filter(window -> "old-secret".equals(window.secret)).count());
+        assertEquals(1, registry.revocationWindows().stream()
+                .filter(window -> "new-secret".equals(window.secret)).count());
+    }
+
+    @Test
+    void samePidReregistrationDoesNotDiscardRetiredEndpoints() {
+        String first = registry.register(11, "1.0", "tok",
+                List.of(window("old", 5001, 1, 1)));
+        registry.unregister(first);
+
+        String second = registry.register(11, "1.0", "tok", List.of());
+
+        assertEquals(List.of("old"), registry.revocationWindows().stream()
+                .map(window -> window.id).toList());
+        assertFalse(registry.shutdownEligible());
+        registry.unregister(second);
+        registry.reap(8_000, pid -> false);
+        assertTrue(registry.revocationWindows().isEmpty());
+        assertTrue(registry.shutdownEligible());
+    }
+
+    @Test
+    void retiredEndpointCapacityFailsClosedWithoutReplacingActiveRouting() {
+        String processId = registry.register(11, "1.0", "tok", List.of());
+        for (int batch = 0; batch < InstanceRegistry.MAX_PROCESSES; batch++) {
+            List<InstanceRegistry.Window> current = new java.util.ArrayList<>();
+            for (int index = 0; index < InstanceRegistry.MAX_WINDOWS_PER_PROCESS; index++) {
+                int ordinal = batch * InstanceRegistry.MAX_WINDOWS_PER_PROCESS + index;
+                current.add(window("window-" + ordinal, 10_000 + ordinal, ordinal, ordinal));
+            }
+            assertTrue(registry.heartbeat(processId, "tok", current));
+            assertTrue(registry.heartbeat(processId, "tok", List.of()));
+        }
+        assertEquals(InstanceRegistry.MAX_QUARANTINED_WINDOWS,
+                registry.revocationWindows().size());
+        InstanceRegistry.Window retained = window("retained", 9_999, 1, 1);
+        assertTrue(registry.heartbeat(processId, "tok", List.of(retained)));
+
+        assertThrows(IllegalStateException.class,
+                () -> registry.heartbeat(processId, "tok", List.of()));
+        assertEquals(List.of("retained"), registry.listWindows().stream()
+                .map(window -> window.id).toList());
+    }
+
+    @Test
+    void totalProcessCapacityBoundsAggregateWindowsAndUncertainPids() {
+        for (int index = 0; index < InstanceRegistry.MAX_PROCESSES; index++) {
+            registry.register(1_000 + index, "1.0", "tok", List.of());
+        }
+        assertThrows(IllegalStateException.class,
+                () -> registry.register(9_999, "1.0", "tok", List.of()));
+
+        now.addAndGet(10_000);
+        registry.reap(8_000, pid -> true);
+        assertEquals(0, registry.processCount());
+        assertThrows(IllegalStateException.class,
+                () -> registry.register(9_999, "1.0", "tok", List.of()));
+    }
+
     // ---- idle exit (the broker's self-termination) ------------------------------------------------
 
     @Test
@@ -72,10 +186,11 @@ class InstanceRegistryTest {
 
         registry.unregister(p);
         assertFalse(registry.shouldExit(15_000, 60_000), "within the linger the broker waits");
+        registry.reap(8_000, pid -> false);
 
         now.addAndGet(15_001);
         assertTrue(registry.shouldExit(15_000, 60_000),
-                "no referencing instance past the linger — the broker must exit");
+                "no referencing instance past the linger - the broker must exit");
     }
 
     @Test
@@ -84,6 +199,25 @@ class InstanceRegistryTest {
         now.addAndGet(60_001);
         assertTrue(registry.shouldExit(15_000, 60_000),
                 "an orphan broker that never saw a registration must not linger forever");
+    }
+
+    @Test
+    void quiescentShutdownSealRejectsLateRegistration() {
+        now.addAndGet(60_001);
+        assertTrue(registry.sealIfShouldExit(15_000, 60_000));
+        assertThrows(IllegalStateException.class,
+                () -> registry.register(11, "1.0", "tok", List.of()));
+        assertFalse(registry.heartbeat("missing", "tok", List.of()));
+    }
+
+    @Test
+    void failedQuiescentCompactionDoesNotSealRegistration() {
+        now.addAndGet(60_001);
+        assertThrows(IllegalStateException.class,
+                () -> registry.sealIfShouldExit(15_000, 60_000,
+                        () -> { throw new IllegalStateException("journal not durable"); }));
+        assertTrue(registry.register(11, "1.0", "tok", List.of()).length() > 0,
+                "a failed compaction must leave registration open");
     }
 
     @Test
@@ -129,7 +263,8 @@ class InstanceRegistryTest {
         String p = registry.register(11, "1.0", "tok", List.of(window("w1", 5001, 1, 1)));
         registry.noteRequestedLinger(0);
         registry.unregister(p);
-        // The linger matters exactly now, after the last unregister — the reported value must
+        registry.reap(8_000, pid -> false);
+        // The linger matters exactly now, after the last unregister - the reported value must
         // still be in force even though no process remains to re-report it.
         assertTrue(registry.shouldExit(registry.effectiveLingerMs(15_000), 60_000),
                 "with a reported linger of 0 the broker exits on the first tick after emptying");
@@ -180,6 +315,39 @@ class InstanceRegistryTest {
         assertFalse(registry.sessionOwnedBy("principal-session", attacker));
         assertEquals(1, registry.dropSessionsForPrincipal("client-a"));
         assertTrue(registry.windowForSession("principal-session").isEmpty());
+        registry.pinSession("late-principal-session", "w1", owner);
+        assertTrue(registry.windowForSession("late-principal-session").isEmpty(),
+                "a response arriving after client revocation cannot recreate its pin");
+    }
+
+    @Test
+    void grantRevocationDropsOnlyMatchingSessionPins() {
+        registry.register(11, "1.0", "tok", List.of(window("w1", 5001, 1, 1)));
+        registry.pinSession("session-a", "w1",
+                AuthenticatedPrincipal.oauthAdmin("client", "Client", "grant-a"));
+        registry.pinSession("session-b", "w1",
+                AuthenticatedPrincipal.oauthAdmin("client", "Client", "grant-b"));
+
+        assertEquals(1, registry.dropSessionsForGrant("client", "grant-a"));
+        assertTrue(registry.windowForSession("session-a").isEmpty());
+        assertTrue(registry.windowForSession("session-b").isPresent());
+        registry.pinSession("late-session-a", "w1",
+                AuthenticatedPrincipal.oauthAdmin("client", "Client", "grant-a"));
+        registry.pinSession("late-session-b", "w1",
+                AuthenticatedPrincipal.oauthAdmin("client", "Client", "grant-b"));
+        assertTrue(registry.windowForSession("late-session-a").isEmpty(),
+                "a response arriving after revocation cannot recreate the exact grant pin");
+        assertTrue(registry.windowForSession("late-session-b").isPresent());
+    }
+
+    @Test
+    void sessionRevocationTombstonesHaveAFailClosedCapacityBound() {
+        for (int index = 0; index < 2_048; index++) {
+            registry.prepareGrantRevocation("client", "grant-" + index);
+        }
+        registry.prepareGrantRevocation("client", "grant-0");
+        assertThrows(IllegalStateException.class,
+                () -> registry.prepareClientRevocation("another-client"));
     }
 
     @Test

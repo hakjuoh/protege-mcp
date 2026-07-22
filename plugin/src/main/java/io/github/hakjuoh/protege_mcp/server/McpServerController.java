@@ -21,11 +21,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 
 /**
- * Owns the lifecycle and runtime state of the MCP server for one EditorKit (one Protégé window).
+ * Owns the lifecycle and runtime state of the MCP server for one EditorKit (one Protege window).
  *
  * <p>Read/write helpers ({@link #isReadOnly()}, {@link #isConfirmWrites()}) and the bearer token
- * ({@link #getToken()}) read live from the preferences, so toggling them — or regenerating the token
- * in <em>any</em> window — takes effect on every live server in the process without a restart.
+ * ({@link #getToken()}) read live from the preferences, so toggling them - or regenerating the token
+ * in <em>any</em> window - takes effect on every live server in the process without a restart.
  * {@link #start()}/{@link #stop()} touch no Swing state and must be invoked off the EDT by callers.
  */
 public final class McpServerController implements ManagedServer {
@@ -104,19 +104,19 @@ public final class McpServerController implements ManagedServer {
         // same monitor stop() takes, resolves any such race to stopped-and-latched instead of
         // silently overriding the user. Before the try, so a refusal never touches lastError.
         if (userStopped) {
-            throw new IllegalStateException("the MCP server in this window is stopped — press Start "
+            throw new IllegalStateException("the MCP server in this window is stopped - press Start "
                     + "in the MCP Server view to run it again");
         }
         // Pin the thread context classloader to this bundle while building the MCP server and
         // starting Jetty. The MCP SDK (ServiceLoader), networknt json-schema-validator (meta-schema
         // resources) and Jetty all reach for the TCCL, which under OSGi is NOT this bundle's
-        // classloader — leaving it unset causes ClassNotFound / missing-resource failures.
+        // classloader - leaving it unset causes ClassNotFound / missing-resource failures.
         ClassLoader previousTccl = Thread.currentThread().getContextClassLoader();
         Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
         try {
             // Warm the embedded Jena subsystem once, single-threaded, before Jetty accepts requests.
             // start() is synchronized and runs before the port binds, so RIOT/ARQ are fully registered
-            // before any (multi-threaded) transport thread runs sparql_query — otherwise two concurrent
+            // before any (multi-threaded) transport thread runs sparql_query - otherwise two concurrent
             // first-time queries can race on Jena's lazy init and see an unpopulated parser registry.
             org.apache.jena.sys.JenaSystem.init();
 
@@ -143,11 +143,11 @@ public final class McpServerController implements ManagedServer {
 
             ObjectMapper objectMapper = new ObjectMapper();
             // Persist OAuth clients + tokens to the preferences store so a client that connected once
-            // keeps working across Protégé restarts (instead of failing with "Unknown client").
+            // keeps working across Protege restarts (instead of failing with "Unknown client").
             // The store starts EMPTY and is hydrated from the user-global persisted blob only after
             // the bind proves this server holds the configured port: a fallback-port server must
             // neither accept grants the configured-port owner may later revoke (revocation would
-            // never reach this server's memory) nor persist its own — it serves the static bearer
+            // never reach this server's memory) nor persist its own - it serves the static bearer
             // token and clients registered live with it, in memory only.
             this.oauthStore = new OAuthStore(this::getToken,
                     () -> McpConfig.prefs().getString(McpConfig.KEY_OAUTH_STATE, null),
@@ -161,10 +161,16 @@ public final class McpServerController implements ManagedServer {
             httpServer.addFilter(new AccessTokenFilter(oauthStore, this::getBrokerSecret), "/mcp/*");
             httpServer.addServlet(serverManager.getTransportServlet(), "/mcp/*", true);
             httpServer.addServlet(new BrokerControlServlet(this::getBrokerSecret,
-                    context.executions()), BrokerControlServlet.PATH + "/*", false);
+                    context.executions(), context::revokeExternalClient,
+                    context::revokeExternalGrant),
+                    BrokerControlServlet.PATH + "/*", false);
             httpServer.addServlet(new OAuthMetadataServlet(objectMapper), "/.well-known/*", false);
-            httpServer.addServlet(new OAuthServlet(oauthStore, objectMapper), "/oauth/*", false);
-            // The configured port is process-exclusive: another Protégé window or a second Protégé
+            httpServer.addServlet(new OAuthServlet(oauthStore, objectMapper,
+                    (clientId, grantId) -> {
+                        context.executions().revokeGrant(clientId, grantId);
+                        context.revokeExternalGrant(clientId, grantId);
+                    }), "/oauth/*", false);
+            // The configured port is process-exclusive: another Protege window or a second Protege
             // instance may already hold it. Chat and the tools need a server bound to THIS window's
             // ontologies, so fall back to an ephemeral port instead of failing the whole start.
             boundPort = httpServer.startWithFallback(configuredPort);
@@ -178,8 +184,8 @@ public final class McpServerController implements ManagedServer {
             running = true;
             lastError = null;
             if (isPortFallback()) {
-                log.warn("protege-mcp: configured port {} is already in use (another Protégé window or "
-                        + "instance, or another app) — this window's MCP server bound ephemeral port {} "
+                log.warn("protege-mcp: configured port {} is already in use (another Protege window or "
+                        + "instance, or another app) - this window's MCP server bound ephemeral port {} "
                         + "instead", configuredPort, boundPort);
             }
             log.info("protege-mcp: MCP server listening on {}", getEndpointUrl());
@@ -258,8 +264,8 @@ public final class McpServerController implements ManagedServer {
 
     /**
      * True while this server runs on an ephemeral fallback port because the configured port was
-     * already in use when it started (typically held by another Protégé window or instance). Always
-     * false when the configured port is {@code 0} — that is ephemeral by choice, not a fallback.
+     * already in use when it started (typically held by another Protege window or instance). Always
+     * false when the configured port is {@code 0} - that is ephemeral by choice, not a fallback.
      */
     public boolean isPortFallback() {
         return boundPort != 0 && configuredPort != 0 && boundPort != configuredPort;
@@ -292,10 +298,10 @@ public final class McpServerController implements ManagedServer {
 
     /**
      * Save hook for the {@link OAuthStore}. KEY_OAUTH_STATE is a single user-global blob shared by
-     * every Protégé window and process, so only a store known to hold the full persisted state may
+     * every Protege window and process, so only a store known to hold the full persisted state may
      * write it back. The gate is a fact latched in {@code start()} exactly when
-     * {@link OAuthStore#loadPersisted()} has hydrated this store — i.e. only on the configured-port
-     * owner, only after hydration — and closed again on stop. Gating on the latch rather than on
+     * {@link OAuthStore#loadPersisted()} has hydrated this store - i.e. only on the configured-port
+     * owner, only after hydration - and closed again on stop. Gating on the latch rather than on
      * live port state means neither a mutation racing the post-bind hydration nor an in-flight
      * request outliving {@code stop()} can clobber the blob with a partial snapshot; a fallback-port
      * server is never hydrated, so it never persists at all (its OAuth state stays in memory).
@@ -309,7 +315,7 @@ public final class McpServerController implements ManagedServer {
 
     /**
      * This server's own MCP URL. The host is derived from the bind address of the last start
-     * (wildcard binds advertise loopback — locally always correct; remote clients substitute the
+     * (wildcard binds advertise loopback - locally always correct; remote clients substitute the
      * machine's address); before any start it is the loopback default.
      */
     public String getEndpointUrl() {
@@ -317,7 +323,7 @@ public final class McpServerController implements ManagedServer {
     }
 
     /**
-     * Live read — a token regenerated in any window immediately applies to every live server in the
+     * Live read - a token regenerated in any window immediately applies to every live server in the
      * process (each {@link AccessTokenFilter} authenticates through this supplier per request), so a
      * leaked token cannot stay valid on a concurrently running fallback-port server.
      */
@@ -354,6 +360,7 @@ public final class McpServerController implements ManagedServer {
         if (revoked) {
             if (context != null) {
                 context.executions().revokeClient(clientId);
+                context.revokeExternalClient(clientId);
             }
             log.info("protege-mcp: revoked OAuth client {}", clientId);
         }
@@ -422,6 +429,7 @@ public final class McpServerController implements ManagedServer {
         // removal race. This wait is outside the controller monitor so Stop/restart stays responsive.
         if (principal != null && principal.grantId() != null && context != null) {
             context.executions().revokeGrant(principal.clientId(), principal.grantId());
+            context.revokeExternalGrant(principal.clientId(), principal.grantId());
         }
         return revoked;
     }
@@ -437,12 +445,12 @@ public final class McpServerController implements ManagedServer {
             AuthenticatedPrincipal principal) {
     }
 
-    /** Live read — reflects preference changes without a restart. */
+    /** Live read - reflects preference changes without a restart. */
     public boolean isReadOnly() {
         return McpConfig.prefs().getBoolean(McpConfig.KEY_READ_ONLY, false);
     }
 
-    /** Live read — reflects preference changes without a restart. */
+    /** Live read - reflects preference changes without a restart. */
     public boolean isConfirmWrites() {
         return McpConfig.prefs().getBoolean(McpConfig.KEY_CONFIRM_WRITES, false);
     }

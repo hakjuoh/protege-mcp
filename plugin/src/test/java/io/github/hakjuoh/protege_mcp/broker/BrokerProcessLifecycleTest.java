@@ -15,9 +15,17 @@ import org.junit.jupiter.api.io.TempDir;
  * The broker as a real operating-system process: spawned with {@code java -cp} exactly like the
  * plugin does (the test uses the surefire classpath in place of the bundle jar), discovered through
  * {@code broker.json}, reference-counted, and gone from the OS once the last instance unregisters.
- * This pins the user-specified lifecycle end to end: spawn → register → unregister → self-exit.
+ * This pins the user-specified lifecycle end to end: spawn -> register -> unregister -> self-exit.
  */
 class BrokerProcessLifecycleTest {
+
+    public static final class PidHolder {
+        private PidHolder() { }
+
+        public static void main(String[] args) throws InterruptedException {
+            Thread.sleep(60_000);
+        }
+    }
 
     @TempDir
     Path tmp;
@@ -40,6 +48,8 @@ class BrokerProcessLifecycleTest {
                 .redirectOutput(ProcessBuilder.Redirect.appendTo(home.logFile().toFile()))
                 .start();
 
+        Process registeredOwner = new ProcessBuilder(javaBin, "-cp",
+                System.getProperty("java.class.path"), PidHolder.class.getName()).start();
         try {
             // Discovery: the broker writes broker.json once bound and answers the secret probe.
             Optional<BrokerState> live = Optional.empty();
@@ -50,15 +60,20 @@ class BrokerProcessLifecycleTest {
             assertTrue(live.isPresent(), "spawned broker must become discoverable via broker.json");
 
             BrokerClient client = new BrokerClient(live.get().baseUrl(), dirSecret);
-            String processId = client.register(ProcessHandle.current().pid(), "it", "tok", -1, List.of());
+            String processId = client.register(registeredOwner.pid(), "it", "tok", -1, List.of());
             assertTrue(broker.isAlive(), "a registered instance keeps the broker alive");
 
             client.unregister(processId);
+            assertFalse(broker.waitFor(1, TimeUnit.SECONDS),
+                    "unregister alone must not discard a live PID quarantine");
+            registeredOwner.destroy();
+            assertTrue(registeredOwner.waitFor(5, TimeUnit.SECONDS));
             assertTrue(broker.waitFor(15, TimeUnit.SECONDS),
-                    "refcount 0 must end the broker PROCESS, not just its server");
+                    "PID death must release quarantine and end the broker process");
             assertFalse(BrokerMain.findLiveBroker(home, dirSecret).isPresent(),
                     "a dead broker must not remain discoverable (state cleaned or probe fails)");
         } finally {
+            registeredOwner.destroyForcibly();
             broker.destroyForcibly();
         }
     }
@@ -101,7 +116,7 @@ class BrokerProcessLifecycleTest {
     @Test
     void simultaneousEphemeralSpawnsLeaveExactlyOneBroker() throws Exception {
         // With the ephemeral-port preference (--port 0) every sibling BINDS successfully, so the
-        // strict-bind mutex that dedupes fixed-port brokers never fires — the broker.lock file
+        // strict-bind mutex that dedupes fixed-port brokers never fires - the broker.lock file
         // lock is the only thing standing between a spawn race and two live brokers.
         BrokerHome home = new BrokerHome(tmp.resolve("home3"));
         home.ensureDir();
@@ -112,7 +127,7 @@ class BrokerProcessLifecycleTest {
         Process b = null;
         try {
             // Launch both before either can publish broker.json: a pure discovery check cannot
-            // dedupe them — only the singleton lock decides.
+            // dedupe them - only the singleton lock decides.
             a = new ProcessBuilder(javaBin, "-cp", System.getProperty("java.class.path"),
                     BrokerMain.class.getName(), "--home", home.dir().toString(), "--port", "0",
                     "--boot-grace-ms", "60000")
@@ -204,7 +219,7 @@ class BrokerProcessLifecycleTest {
     void successorGivesUpWhenTheLockStaysHeldAndNothingPublishes() throws Exception {
         // The safety side of the lock retry: against a holder that neither dies nor publishes
         // (genuinely wedged), the successor must still exit with the give-up line instead of ever
-        // serving next to it — the retry must not have weakened the anti-split-brain guarantee.
+        // serving next to it - the retry must not have weakened the anti-split-brain guarantee.
         BrokerHome home = new BrokerHome(tmp.resolve("home7"));
         home.ensureDir();
         String dirSecret = home.ensureDirSecret();
@@ -239,7 +254,7 @@ class BrokerProcessLifecycleTest {
     void versionTakeoverHandsTheLockToTheReplacementBroker() throws Exception {
         // End-to-end regression for the takeover race: retire an idle broker exactly the way
         // BrokerLink.maybeRetireForUpgrade does (shutdown request, then wait only for the probe to
-        // fail — NOT for the process to die), then immediately spawn the replacement. The retired
+        // fail - NOT for the process to die), then immediately spawn the replacement. The retired
         // broker must release its lock as it stops serving, and the replacement must win the lock
         // even when its first attempt lands while the old process is still dying.
         BrokerHome home = new BrokerHome(tmp.resolve("home6"));
@@ -310,7 +325,7 @@ class BrokerProcessLifecycleTest {
     @Test
     void unbindableBindAddressExitsCleanlyInsteadOfCrashLooping() throws Exception {
         // 203.0.113.7 (TEST-NET-3) is never assigned to a local interface, so binding it fails
-        // with EADDRNOTAVAIL — which is a BindException just like a port conflict. The broker
+        // with EADDRNOTAVAIL - which is a BindException just like a port conflict. The broker
         // must recognise that the ADDRESS (not the port) is the problem and exit with a clear
         // message rather than dying on an uncaught exception every respawn.
         BrokerHome home = new BrokerHome(tmp.resolve("home4"));

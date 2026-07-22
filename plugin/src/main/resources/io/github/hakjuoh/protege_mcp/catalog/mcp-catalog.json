@@ -3917,6 +3917,34 @@
       "additionalProperties" : false
     }
   }, {
+    "name" : "search_external_terms",
+    "description" : "Search one project-enabled external terminology provider. Results are bounded evidence only and never cause automatic reuse or ontology mutation. Continue with the opaque next_cursor without resubmitting search fields.",
+    "input_schema" : {
+      "type" : "object",
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "inspect_external_term",
+    "description" : "Fetch bounded direct evidence for one external term from a project-enabled provider. Set fresh=true to bypass both cache reads and writes before proposing reuse. The current project policy, owner endpoint binding, credentials, and network authority are rechecked before use.",
+    "input_schema" : {
+      "type" : "object",
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "propose_term_reuse",
+    "description" : "Create a read-only, memory-only reuse proposal bound to a forced-fresh direct provider inspection, the current model and mapping revisions, opaque canonical project/policy/mapping target identities, mapping-store existence, project policy, principal, grant, and workspace. Pass term_fingerprint from inspect_external_term; request-time timestamp and retry changes do not destabilize this content identity. The proposal expires after 15 minutes and never edits ontology or mapping state.",
+    "input_schema" : {
+      "type" : "object",
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "accept_reuse_proposal",
+    "description" : "Explicitly accept one scoped reuse proposal after rechecking expiry, fingerprint, model and mapping revisions, canonical target identities, project policy, authorization, and confirmation. Reuse is a receipt, mapping is one CAS, and mint-plus-mapping joins a started ontology commit through receipt recording before reporting a bounded resumable partial result if the mapping step does not complete.",
+    "input_schema" : {
+      "type" : "object",
+      "additionalProperties" : false
+    }
+  }, {
     "name" : "export_audit_log",
     "description" : "Explicitly export the active project's redacted, owner-only audit streams as one deterministically ordered JSON Lines artifact. Dry-run is the default and writes nothing. A committed export requires a valid discovered project policy, server administration plus project read/write capabilities, the live read-only/confirmation gates, and a project-contained output path. The export is bounded, re-redacted, and contains caller attribution, capability sets, operations, targets, gate/change summaries, confirmation references, and release-manifest links; it never includes bearer tokens, prompts, attached bodies, or ontology content.",
     "input_schema" : {

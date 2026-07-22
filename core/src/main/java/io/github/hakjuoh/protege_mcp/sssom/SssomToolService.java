@@ -99,9 +99,19 @@ public final class SssomToolService {
             Map<String, String> cells, Map<String, Object> initialMetadata,
             Map<String, String> initialPrefixes, SssomValidationPolicy policy,
             SssomEntityIndex entities, SssomMappingStore.MutationGuard guard) throws IOException {
+        return add(store, expectedRevision, cells, initialMetadata, initialPrefixes,
+                policy, entities, guard, null);
+    }
+
+    /** Add with an optional locked-baseline existence precondition. */
+    public static Map<String, Object> add(SssomMappingStore store, String expectedRevision,
+            Map<String, String> cells, Map<String, Object> initialMetadata,
+            Map<String, String> initialPrefixes, SssomValidationPolicy policy,
+            SssomEntityIndex entities, SssomMappingStore.MutationGuard guard,
+            Boolean expectedExists) throws IOException {
         SssomMappingStore.Mutation mutation = store.add(expectedRevision,
                 new MappingRecord(cells), initialMetadata, initialPrefixes,
-                policy, entities, guard);
+                policy, entities, guard, expectedExists);
         return mutationJson(mutation);
     }
 

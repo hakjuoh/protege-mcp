@@ -143,6 +143,17 @@ and a client silent for 60 days is removed, tokens and all. Revoke a client from
 view — in standalone mode and, since 0.7.1, when the shared broker owns the endpoint — to force
 re-authorization at any time; broker-mode revocation also drops the client's pinned sessions, cuts
 its in-flight proxied requests, and fences every window against further revoked work. The
+broker persists unacknowledged backend fences in owner-only `revocations.json` and retries them
+against unavailable or later-registering windows. Token refresh and RFC 7009 grant revocation are
+serialized so refresh cannot recreate a revoked grant. The write-ahead journal is capped at 1,024
+entries and 2 MiB; exhaustion or persistence failure leaves the token live and returns a service
+failure instead of claiming revocation. Once the empty-registry linger expires, registration is
+sealed, OAuth deletion is durably replayed, and the journal is compacted before broker shutdown.
+A heartbeat-stale or unregistered process whose OS PID is still alive, and any endpoint removed or replaced
+by a heartbeat, stays in a revocation-only quarantine and prevents compaction until the PID exits.
+Quarantined endpoints are never eligible for MCP routing, and an internal version-takeover shutdown is
+refused while any remain. Aggregate broker registration is capped at 32 processes with 128 windows each;
+retired endpoints have a separate 4,096-entry fail-closed bound. The
 **browser consent step works from
 this machine only** — a remote peer gets a `403` pointing at the static bearer token — whatever the
 bind address. Endpoints are plain HTTP on loopback

@@ -183,6 +183,11 @@ public final class MappingRecord {
         }
     }
 
+    /** Canonicalize one SSSOM reference using the required built-in prefix map. */
+    public static String canonicalReference(String raw) {
+        return reference(raw, SssomParser.BUILTIN_PREFIXES);
+    }
+
     private static byte[] intBytes(int value) {
         return new byte[] {(byte) (value >>> 24), (byte) (value >>> 16),
                 (byte) (value >>> 8), (byte) value};

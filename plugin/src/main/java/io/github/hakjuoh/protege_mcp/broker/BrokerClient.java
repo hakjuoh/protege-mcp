@@ -18,9 +18,9 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 /**
- * HTTP client for the broker's {@code /internal} control plane, used by Protégé instances to
+ * HTTP client for the broker's {@code /internal} control plane, used by Protege instances to
  * register/heartbeat/unregister and by a booting broker to detect a live sibling. All calls carry
- * the directory secret; all timeouts are short — the broker is on the loopback, so anything slower
+ * the directory secret; all timeouts are short - the broker is on the loopback, so anything slower
  * than a couple of seconds means it is gone and the caller should re-discover/re-spawn.
  */
 public final class BrokerClient {
@@ -98,7 +98,7 @@ public final class BrokerClient {
         return processId;
     }
 
-    /** @return false when the broker does not know the process (restarted) — re-register then. */
+    /** @return false when the broker does not know the process (restarted) - re-register then. */
     public boolean heartbeat(String processId, String token, long lingerMs,
             List<InstanceRegistry.Window> windows) throws IOException, InterruptedException {
         ObjectNode body = MAPPER.createObjectNode();
@@ -121,14 +121,20 @@ public final class BrokerClient {
     public void unregister(String processId) throws IOException, InterruptedException {
         ObjectNode body = MAPPER.createObjectNode();
         body.put("processId", processId);
-        send("POST", "/internal/unregister", body.toString());
+        HttpResponse<String> resp = send("POST", "/internal/unregister", body.toString());
+        if (resp.statusCode() != 200) {
+            throw new IOException("broker unregister failed: HTTP " + resp.statusCode());
+        }
     }
 
     public void requestShutdown() throws IOException, InterruptedException {
-        send("POST", "/internal/shutdown", "{}");
+        HttpResponse<String> resp = send("POST", "/internal/shutdown", "{}");
+        if (resp.statusCode() != 200) {
+            throw new IOException("broker shutdown refused: HTTP " + resp.statusCode());
+        }
     }
 
-    /** Secret-free client snapshots for the Protégé management view. */
+    /** Secret-free client snapshots for the Protege management view. */
     public List<ClientInfo> listClients() throws IOException, InterruptedException {
         HttpResponse<String> resp = send("GET", "/internal/clients", null);
         if (resp.statusCode() != 200) {

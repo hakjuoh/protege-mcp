@@ -34,14 +34,17 @@ public record ProviderResult(String providerId, String profile, String sourceOnt
         descriptions = strings(descriptions, 16, 8_192);
         license = optional(license, 4_096);
         provenance = optional(provenance, 4_096);
-        matchExplanation = ProviderFailure.requireText(matchExplanation,
-                "match_explanation", 1_024);
+        matchExplanation = ProviderValues.wellFormed(ProviderFailure.requireText(matchExplanation,
+                "match_explanation", 1_024), "match_explanation");
         if (!Double.isFinite(score) || score < 0 || score > 1) {
             throw new IllegalArgumentException("provider score must be between 0 and 1");
         }
         providerVersion = optional(providerVersion, 512);
-        if (providerTimestamp == null || sourceUrl == null
-                || !"https".equalsIgnoreCase(sourceUrl.getScheme())
+        if (sourceUrl == null) {
+            throw new IllegalArgumentException("provider evidence metadata is invalid");
+        }
+        ProviderValues.wellFormed(sourceUrl.toString(), "source_url");
+        if (providerTimestamp == null || !"https".equalsIgnoreCase(sourceUrl.getScheme())
                 || sourceUrl.isOpaque() || sourceUrl.getHost() == null
                 || sourceUrl.getUserInfo() != null || sourceUrl.getRawQuery() != null
                 || sourceUrl.getRawFragment() != null
@@ -74,10 +77,18 @@ public record ProviderResult(String providerId, String profile, String sourceOnt
 
     public record LocalizedText(String value, String language) {
         public LocalizedText {
-            value = ProviderFailure.requireText(value, "localized text", 4_096);
-            language = language == null || language.isBlank() ? "und"
-                    : ProviderSearchRequest.identifier(language, "language");
+            value = ProviderValues.wellFormed(
+                    ProviderFailure.requireText(value, "localized text", 4_096), "localized text");
+            language = ProviderSearchRequest.language(
+                    language == null || language.isBlank() ? "und" : language);
         }
+    }
+
+    /** Stable term-content identity that excludes request-time ranking and acquisition metadata. */
+    public String termFingerprint() {
+        return fingerprint(providerId, profile, sourceOntology, sourceOntologyIri,
+                entityIri, entityType, labels, synonyms, descriptions, license, provenance,
+                providerVersion, deprecated, replacedBy);
     }
 
     private static List<LocalizedText> texts(List<LocalizedText> values, int maximum) {
@@ -93,21 +104,23 @@ public record ProviderResult(String providerId, String profile, String sourceOnt
         if (values == null) return List.of();
         if (values.size() > maximum) throw new IllegalArgumentException("too many provider strings");
         List<String> copy = new ArrayList<>();
-        for (String value : values) copy.add(ProviderFailure.requireText(value, "provider text", maxLength));
+        for (String value : values) {
+            copy.add(ProviderValues.wellFormed(
+                    ProviderFailure.requireText(value, "provider text", maxLength), "provider text"));
+        }
         return copy.stream().distinct().sorted().toList();
     }
 
     private static String optional(String value, int maximum) {
         if (value == null || value.isBlank()) return null;
-        if (value.length() > maximum) throw new IllegalArgumentException("provider field exceeds bound");
-        return value;
+        if (value.codePointCount(0, value.length()) > maximum) {
+            throw new IllegalArgumentException("provider field exceeds bound");
+        }
+        return ProviderValues.wellFormed(value, "provider field");
     }
 
     private static String absolute(String value, String field) {
-        ProviderFailure.requireText(value, field, 4_096);
-        URI iri = URI.create(value);
-        if (!iri.isAbsolute()) throw new IllegalArgumentException(field + " must be absolute");
-        return value;
+        return ProviderValues.absoluteIri(value, field, 4_096);
     }
 
     private static String optionalAbsolute(String value, String field) {
@@ -178,6 +191,7 @@ public record ProviderResult(String providerId, String profile, String sourceOnt
         result.put("retries", retries);
         result.put("deprecated", deprecated);
         if (replacedBy != null) result.put("replaced_by", replacedBy);
+        result.put("term_fingerprint", termFingerprint());
         result.put("result_fingerprint", resultFingerprint);
         return Collections.unmodifiableMap(result);
     }

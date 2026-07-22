@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.broker;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,16 +18,16 @@ import io.github.hakjuoh.protege_mcp.server.AccessTokenFilter;
 import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
 
 /**
- * The shared broker's HTTP host: the one fixed, always-alive MCP entry point that every Protégé
- * process (and its windows) registers with. Reuses the plugin's own building blocks — the loopback
- * Jetty host, the bearer/OAuth access filter and the OAuth authorization server — but persists OAuth
- * state to {@code ~/.protege-mcp/oauth.json} instead of Protégé preferences (the broker process has
- * no Protégé runtime, and the file store has no 8k preference-value limit).
+ * The shared broker's HTTP host: the one fixed, always-alive MCP entry point that every Protege
+ * process (and its windows) registers with. Reuses the plugin's own building blocks - the loopback
+ * Jetty host, the bearer/OAuth access filter and the OAuth authorization server - but persists OAuth
+ * state to {@code ~/.protege-mcp/oauth.json} instead of Protege preferences (the broker process has
+ * no Protege runtime, and the file store has no 8k preference-value limit).
  *
  * <p>Lifetime: a maintenance loop reaps instances whose heartbeats stopped or whose OS process died,
  * and invokes the shutdown callback once the registry has been empty past its linger (the reference
- * count the user asked for: no registered instances → the broker exits). The static bearer token is
- * whatever the most recently seen instance reported, so a token regenerated in Protégé propagates
+ * count the user asked for: no registered instances -> the broker exits). The static bearer token is
+ * whatever the most recently seen instance reported, so a token regenerated in Protege propagates
  * within one heartbeat.
  */
 public final class BrokerServer {
@@ -52,6 +53,7 @@ public final class BrokerServer {
     private volatile BrokerState identity;
     private volatile OAuthStore oauthStore;
     private final ActiveProxyRequests activeRequests = new ActiveProxyRequests();
+    private final BackendRevocationFanout backendRevocations;
 
     public BrokerServer(BrokerHome home, String dirSecret, String version, Runnable shutdown) {
         this(home, dirSecret, version, shutdown, HEARTBEAT_STALE_MS, IDLE_LINGER_MS, BOOT_GRACE_MS);
@@ -67,6 +69,8 @@ public final class BrokerServer {
         this.staleMs = staleMs;
         this.lingerMs = lingerMs;
         this.bootGraceMs = bootGraceMs;
+        this.backendRevocations = new BackendRevocationFanout(registry,
+                this::readRevocationState, this::writeRevocationState);
     }
 
     public InstanceRegistry registry() {
@@ -90,10 +94,10 @@ public final class BrokerServer {
     }
 
     /**
-     * Bind (strictly — no ephemeral fallback here; {@link BrokerMain} decides what a bind conflict
+     * Bind (strictly - no ephemeral fallback here; {@link BrokerMain} decides what a bind conflict
      * means for a singleton broker), publish {@code broker.json}, and start the maintenance loop.
      *
-     * @param bindAddress address to bind — the user's bind preference travels here via the
+     * @param bindAddress address to bind - the user's bind preference travels here via the
      *     spawner's {@code --bind}; {@code broker.json} advertises its connect form so instances
      *     and clients can reach a non-loopback or wildcard bind.
      * @return the bound port.
@@ -104,10 +108,11 @@ public final class BrokerServer {
         OAuthStore oauthStore = new OAuthStore(registry::latestToken, this::readOauthState,
                 this::writeOauthState, true, 0);
         this.oauthStore = oauthStore;
+        backendRevocations.replayOAuthRevocations(oauthStore);
 
         http = new EmbeddedHttpServer();
         http.bindTo(bindAddress);
-        // Same auth gate as a window server — OAuth access token or a static bearer token — except
+        // Same auth gate as a window server - OAuth access token or a static bearer token - except
         // the static check accepts ANY registered process's current token (regeneration propagates
         // per heartbeat). /internal is deliberately NOT behind it: its auth is the directory secret.
         http.addFilter(new BrokerTokenFilter(registry, new AccessTokenFilter(oauthStore)), "/mcp/*");
@@ -115,9 +120,23 @@ public final class BrokerServer {
         http.addServlet(new McpProxyServlet(registry, activeRequests), "/mcp/*", true);
         http.addServlet(new McpProxyServlet(registry, activeRequests), "/instances/*", true);
         http.addServlet(new OAuthMetadataServlet(mapper), "/.well-known/*", false);
-        http.addServlet(new OAuthServlet(oauthStore, mapper), "/oauth/*", false);
+        http.addServlet(new OAuthServlet(oauthStore, mapper, new OAuthServlet.GrantRevoker() {
+            @Override
+            public void prepare(String clientId, String grantId) {
+                backendRevocations.prepareGrant(clientId, grantId);
+                activeRequests.prepareGrant(clientId, grantId);
+                registry.prepareGrantRevocation(clientId, grantId);
+            }
+
+            @Override
+            public void revoke(String clientId, String grantId) {
+                activeRequests.terminateGrant(clientId, grantId);
+                registry.dropSessionsForGrant(clientId, grantId);
+                backendRevocations.executeGrant(clientId, grantId);
+            }
+        }), "/oauth/*", false);
         http.addServlet(new InternalApiServlet(dirSecret, registry, this::identity, this::shutdownAsync,
-                oauthStore, activeRequests),
+                oauthStore, activeRequests, backendRevocations),
                 "/internal/*", false);
 
         int bound = http.start(port);
@@ -159,11 +178,14 @@ public final class BrokerServer {
                 // The broker has no clients view; time-based cleanup of dead OAuth registrations
                 // (abandoned re-connects, long-gone clients) happens here instead.
                 store.sweepInactiveClients();
+                backendRevocations.replayOAuthRevocations(store);
             }
-            // The linger is the user's preference, delivered with every register/heartbeat — the
+            backendRevocations.retryPending();
+            // The linger is the user's preference, delivered with every register/heartbeat - the
             // spawn-time value only covers the window before the first registration.
-            if (registry.shouldExit(registry.effectiveLingerMs(lingerMs), bootGraceMs)) {
-                System.out.println("protege-mcp-broker: no registered instances — exiting");
+            if (registry.sealIfShouldExit(registry.effectiveLingerMs(lingerMs), bootGraceMs,
+                    backendRevocations::clearForQuiescentShutdown)) {
+                System.out.println("protege-mcp-broker: no registered instances - exiting");
                 shutdown.run();
             }
         } catch (RuntimeException e) {
@@ -173,7 +195,7 @@ public final class BrokerServer {
     }
 
     private void shutdownAsync() {
-        // Never stop Jetty from one of its own request threads — hand the exit to the shutdown
+        // Never stop Jetty from one of its own request threads - hand the exit to the shutdown
         // callback on a fresh thread so the acknowledging response can complete.
         Thread t = new Thread(shutdown, "protege-mcp-broker-shutdown");
         t.setDaemon(true);
@@ -189,13 +211,33 @@ public final class BrokerServer {
         }
     }
 
+    private String readRevocationState() {
+        try {
+            Path file = home.revocationsFile();
+            if (!Files.exists(file)) return null;
+            if (Files.size(file) > BackendRevocationFanout.MAX_JOURNAL_BYTES) {
+                throw new IOException("revocation state exceeds its byte bound");
+            }
+            return Files.readString(file, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to read broker revocation state", e);
+        }
+    }
+
     private void writeOauthState(String json) {
         try {
             // Owner-only + atomic, same discipline as broker.json (tokens live in this file).
             home.writeOauthState(json);
         } catch (IOException e) {
-            // OAuthStore treats a failed persist as non-fatal (it retries on the next mutation)
-            System.err.println("protege-mcp-broker: failed to persist oauth state: " + e);
+            throw new UncheckedIOException("failed to persist broker OAuth state", e);
+        }
+    }
+
+    private void writeRevocationState(String json) {
+        try {
+            home.writeRevocationState(json);
+        } catch (IOException e) {
+            throw new UncheckedIOException("failed to persist broker revocation state", e);
         }
     }
 }

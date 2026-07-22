@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -37,6 +38,8 @@ class BrokerHomeTest {
         BrokerHome home = home();
         home.ensureDirSecret();
         home.writeState(new BrokerState(123, 5001, "1.0", 42));
+        home.writeOauthState("{}");
+        home.writeRevocationState("{\"version\":1,\"revocations\":[]}");
         if (!Files.getFileStore(home.dir()).supportsFileAttributeView("posix")) {
             return; // permission assertions are POSIX-only
         }
@@ -44,10 +47,13 @@ class BrokerHomeTest {
         assertFalse(dirPerms.stream().anyMatch(p -> p.name().startsWith("GROUP")
                         || p.name().startsWith("OTHERS")),
                 "the broker home must be private to the user: " + dirPerms);
-        Set<PosixFilePermission> filePerms = Files.getPosixFilePermissions(home.secretFile());
-        assertFalse(filePerms.stream().anyMatch(p -> p.name().startsWith("GROUP")
-                        || p.name().startsWith("OTHERS")),
-                "the secret is the same-user trust anchor and must be 0600: " + filePerms);
+        for (Path file : List.of(home.secretFile(), home.stateFile(), home.oauthFile(),
+                home.revocationsFile())) {
+            Set<PosixFilePermission> filePerms = Files.getPosixFilePermissions(file);
+            assertFalse(filePerms.stream().anyMatch(p -> p.name().startsWith("GROUP")
+                            || p.name().startsWith("OTHERS")),
+                    "broker security state must be owner-only: " + file + " " + filePerms);
+        }
     }
 
     @Test
@@ -70,7 +76,7 @@ class BrokerHomeTest {
         Files.writeString(home.stateFile(), "{not json");
         assertTrue(home.readState().isEmpty(), "corrupt state reads as no-broker, not an exception");
         Files.writeString(home.stateFile(), "{\"pid\":1}");
-        assertTrue(home.readState().isEmpty(), "a state without a port is unusable → treated as absent");
+        assertTrue(home.readState().isEmpty(), "a state without a port is unusable -> treated as absent");
     }
 
     @Test

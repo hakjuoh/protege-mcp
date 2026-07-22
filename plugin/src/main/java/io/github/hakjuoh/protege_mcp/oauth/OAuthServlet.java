@@ -20,12 +20,12 @@ import jakarta.servlet.http.HttpServletResponse;
 /**
  * The embedded OAuth 2.1 authorization-server endpoints (mapped at {@code /oauth/*}):
  * <ul>
- *   <li>{@code POST /oauth/register} — Dynamic Client Registration (RFC 7591), public client.
- *   <li>{@code GET  /oauth/authorize} — renders a consent page; {@code POST} records the decision
+ *   <li>{@code POST /oauth/register} - Dynamic Client Registration (RFC 7591), public client.
+ *   <li>{@code GET  /oauth/authorize} - renders a consent page; {@code POST} records the decision
  *       and redirects to the client's loopback callback with an authorization code (PKCE required).
- *   <li>{@code POST /oauth/token} — {@code authorization_code} (with PKCE verification) and
+ *   <li>{@code POST /oauth/token} - {@code authorization_code} (with PKCE verification) and
  *       {@code refresh_token} grants.
- *   <li>{@code POST /oauth/revoke} — Token Revocation (RFC 7009); drops a single access/refresh token.
+ *   <li>{@code POST /oauth/revoke} - Token Revocation (RFC 7009); drops a single access/refresh token.
  * </ul>
  */
 public class OAuthServlet extends HttpServlet {
@@ -34,10 +34,12 @@ public class OAuthServlet extends HttpServlet {
 
     private final transient OAuthStore store;
     private final transient ObjectMapper mapper;
+    private final transient GrantRevoker grantRevoker;
 
-    public OAuthServlet(OAuthStore store, ObjectMapper mapper) {
-        this.store = store;
-        this.mapper = mapper;
+    public OAuthServlet(OAuthStore store, ObjectMapper mapper, GrantRevoker grantRevoker) {
+        this.store = java.util.Objects.requireNonNull(store, "store");
+        this.mapper = java.util.Objects.requireNonNull(mapper, "mapper");
+        this.grantRevoker = java.util.Objects.requireNonNull(grantRevoker, "grantRevoker");
     }
 
     @Override
@@ -122,7 +124,7 @@ public class OAuthServlet extends HttpServlet {
 
         OAuthStore.Client client = clientId == null ? null : store.client(clientId);
         if (client == null || !client.allowsRedirect(redirectUri)) {
-            // Never redirect to an unverified URI — show an error page instead.
+            // Never redirect to an unverified URI - show an error page instead.
             errorPage(resp, "Unknown client or unregistered redirect URI.");
             return;
         }
@@ -218,9 +220,25 @@ public class OAuthServlet extends HttpServlet {
     private void handleRevoke(HttpServletRequest req, HttpServletResponse resp) {
         // Public client, single user: accept the token and drop it. RFC 7009 mandates a 200 response
         // whether or not the token was recognised, so unknown/expired tokens are not distinguished.
-        store.revokeToken(req.getParameter("token"));
-        resp.setStatus(HttpServletResponse.SC_OK);
+        try {
+            OAuthStore.RevokedGrant revoked = store.revokeTokenGrant(req.getParameter("token"),
+                    identity -> grantRevoker.prepare(identity.clientId(), identity.grantId()));
+            if (revoked != null) {
+                grantRevoker.revoke(revoked.clientId(), revoked.grantId());
+            }
+            resp.setStatus(HttpServletResponse.SC_OK);
+        } catch (RuntimeException unavailable) {
+            // A write-ahead fence that cannot be made durable must not be reported as revoked.
+            resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+        }
         resp.setHeader("Cache-Control", "no-store");
+    }
+
+    @FunctionalInterface
+    public interface GrantRevoker {
+        default void prepare(String clientId, String grantId) { }
+
+        void revoke(String clientId, String grantId);
     }
 
     // ------------------------------------------------------------------ HTML + helpers
@@ -264,7 +282,7 @@ public class OAuthServlet extends HttpServlet {
                 + ".row{display:flex;gap:12px;margin-top:24px}button{flex:1;padding:11px;border:0;"
                 + "border-radius:8px;font-size:14px;cursor:pointer}.allow{background:#2563eb;color:#fff}"
                 + ".deny{background:#e5e5ea;color:#111}</style></head><body><div class=\"card\">"
-                + "<h1>Authorize access to Protégé</h1>"
+                + "<h1>Authorize access to Protege</h1>"
                 + "<p><span class=\"who\">" + OAuthSupport.htmlEscape(client.clientName) + "</span> wants to "
                 + (canChange ? "read or change" : "read")
                 + " the ontology through the MCP server on this machine.</p>"

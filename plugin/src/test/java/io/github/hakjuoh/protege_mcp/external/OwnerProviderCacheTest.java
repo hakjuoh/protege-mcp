@@ -252,6 +252,191 @@ class OwnerProviderCacheTest {
     }
 
     @Test
+    void discardConsumesValidatedEvidenceWithoutPublishingCacheEntries() throws Exception {
+        Fixture fixture = fixture("discard", false, "project-a", 16,
+                Duration.ofMinutes(5));
+        OwnerProviderCache cache = fixture.cache(uri -> { });
+        ProviderOwnerConfig.ResolvedProvider authority = fixture.authority();
+        ProviderSearchRequest search = search("fresh only query");
+        ProviderPage page = page(result("Fresh", List.of(), null, 0));
+        OwnerProviderCache.Acquisition searchAcquisition =
+                acquireSearch(cache, fixture, authority, search);
+
+        cache.discardSearch(authority, searchAcquisition, search, page);
+
+        assertTrue(cache.getSearch(authority, search).isEmpty());
+        assertEquals("provider_acquisition_stale", assertThrows(ProviderFailure.class,
+                () -> cache.discardSearch(authority, searchAcquisition, search, page)).code());
+
+        ProviderInspectRequest inspect = inspect("http://example.org/EFO_0001");
+        ProviderResult result = page.items().get(0);
+        OwnerProviderCache.Acquisition inspectAcquisition =
+                cache.beginInspectAcquisition(authority, inspect);
+        markNetworkSuccess(fixture, authority, inspectAcquisition);
+
+        cache.discardInspect(authority, inspectAcquisition, inspect, result);
+
+        assertTrue(cache.getInspect(authority, inspect).isEmpty());
+        assertEquals("provider_acquisition_stale", assertThrows(ProviderFailure.class,
+                () -> cache.discardInspect(authority, inspectAcquisition, inspect, result)).code());
+    }
+
+    @Test
+    void nonCacheablePublicationRechecksProjectOwnerCredentialAndContent() throws Exception {
+        Fixture projectFixture = fixture("discard-project-race", false, "project-a", 16,
+                Duration.ofMinutes(5));
+        AtomicReference<String> project = new AtomicReference<>("project-a");
+        OwnerProviderCache projectCache = projectFixture.cacheWithPolicy(
+                authority -> project.get(), uri -> { }, 16, 1_024 * 1_024);
+        ProviderOwnerConfig.ResolvedProvider projectAuthority = projectFixture.authority();
+        ProviderSearchRequest emptyRequest = search("empty race");
+        OwnerProviderCache.Acquisition emptyAcquisition = acquireSearch(
+                projectCache, projectFixture, projectAuthority, emptyRequest);
+        project.set("project-b");
+        assertEquals("provider_policy_changed", assertThrows(ProviderFailure.class,
+                () -> projectCache.discardSearch(projectAuthority, emptyAcquisition, emptyRequest,
+                        new ProviderPage(List.of(), 0, null, NOW, 0))).code());
+
+        Fixture ownerFixture = fixture("discard-owner-race", false, "project-a", 16,
+                Duration.ofMinutes(5));
+        OwnerProviderCache ownerCache = ownerFixture.cache(uri -> { });
+        ProviderOwnerConfig.ResolvedProvider ownerAuthority = ownerFixture.authority();
+        ProviderSearchRequest continuationRequest = search("continuation race");
+        OwnerProviderCache.Acquisition continuationAcquisition = acquireSearch(
+                ownerCache, ownerFixture, ownerAuthority, continuationRequest);
+        ownerFixture.writeConfig("https://different.example/ols4");
+        ProviderPage continuationPage = new ProviderPage(
+                List.of(result("Visible", List.of(), null, 0)), 2, "private-state", NOW, 0);
+        assertEquals("provider_authority_changed", assertThrows(ProviderFailure.class,
+                () -> ownerCache.discardSearch(ownerAuthority, continuationAcquisition,
+                        continuationRequest, continuationPage)).code());
+
+        Fixture credentialFixture = fixture("discard-credential-race", true, "project-a", 16,
+                Duration.ofMinutes(5));
+        OwnerProviderCache credentialCache = credentialFixture.cache(uri -> { });
+        ProviderOwnerConfig.ResolvedProvider credentialAuthority = credentialFixture.authority();
+        ProviderInspectRequest inspection = inspect("http://example.org/EFO_0001");
+        OwnerProviderCache.Acquisition inspectAcquisition = credentialCache
+                .beginInspectAcquisition(credentialAuthority, inspection);
+        markNetworkSuccess(credentialFixture, credentialAuthority, inspectAcquisition);
+        credentialFixture.credentials().rotate("token",
+                "rotated-owner-secret".getBytes(StandardCharsets.US_ASCII));
+        assertEquals("provider_acquisition_stale", assertThrows(ProviderFailure.class,
+                () -> credentialCache.discardInspect(credentialAuthority, inspectAcquisition,
+                        inspection, result("Visible", List.of(), null, 0))).code());
+
+        ProviderOwnerConfig.ResolvedProvider rotatedAuthority = credentialFixture.authority();
+        OwnerProviderCache.Acquisition unsafeAcquisition = credentialCache
+                .beginInspectAcquisition(rotatedAuthority, inspection);
+        markNetworkSuccess(credentialFixture, rotatedAuthority, unsafeAcquisition);
+        assertPublicationRedacted(() -> credentialCache.discardInspect(rotatedAuthority,
+                unsafeAcquisition, inspection,
+                result("Visible", List.of("Bearer vendor-secret"), null, 0)));
+
+        ProviderSearchRequest cursorRequest = search("unsafe cursor page");
+        OwnerProviderCache.Acquisition cursorAcquisition = acquireSearch(
+                credentialCache, credentialFixture, rotatedAuthority, cursorRequest);
+        ProviderPage unsafeCursorPage = new ProviderPage(List.of(result(
+                "Visible", List.of("token=cursor-secret"), null, 0)), 2,
+                "private-continuation", NOW, 0);
+        assertPublicationRedacted(() -> credentialCache.discardSearch(rotatedAuthority,
+                cursorAcquisition, cursorRequest, unsafeCursorPage));
+    }
+
+    @Test
+    void gatewayFinalFenceDetectsOwnerAndCredentialChangeAfterPublication() throws Exception {
+        Fixture credentialFixture = fixture("final-credential-race", true, "project-a", 16,
+                Duration.ofMinutes(5));
+        OwnerProviderCache credentialCache = credentialFixture.cache(uri -> { });
+        ProviderOwnerConfig.ResolvedProvider credentialAuthority = credentialFixture.authority();
+        ProviderInspectRequest inspection = inspect("http://example.org/EFO_0001");
+        ProviderResult result = result("Visible", List.of(), null, 0);
+        OwnerProviderCache.Acquisition credentialAcquisition = credentialCache
+                .beginInspectAcquisition(credentialAuthority, inspection);
+        String credentialScope = credentialAcquisition.scopeFingerprint();
+        markNetworkSuccess(credentialFixture, credentialAuthority, credentialAcquisition);
+        credentialCache.discardInspect(credentialAuthority, credentialAcquisition,
+                inspection, result);
+
+        credentialFixture.credentials().rotate("token",
+                "final-rotated-secret".getBytes(StandardCharsets.US_ASCII));
+
+        assertEquals("provider_acquisition_stale", assertThrows(ProviderFailure.class,
+                () -> credentialCache.finalFenceInspect(credentialAuthority, credentialScope,
+                        inspection, result)).code());
+
+        Fixture ownerFixture = fixture("final-owner-race", false, "project-a", 16,
+                Duration.ofMinutes(5));
+        OwnerProviderCache ownerCache = ownerFixture.cache(uri -> { });
+        ProviderOwnerConfig.ResolvedProvider ownerAuthority = ownerFixture.authority();
+        ProviderSearchRequest request = search("owner final race");
+        ProviderPage page = page(result);
+        OwnerProviderCache.Acquisition ownerAcquisition = ownerCache
+                .beginSearchAcquisition(ownerAuthority, request);
+        String ownerScope = ownerAcquisition.scopeFingerprint();
+        markNetworkSuccess(ownerFixture, ownerAuthority, ownerAcquisition);
+        ownerCache.discardSearch(ownerAuthority, ownerAcquisition, request, page);
+
+        ownerFixture.writeConfig("https://different.example/ols4");
+
+        assertEquals("provider_authority_changed", assertThrows(ProviderFailure.class,
+                () -> ownerCache.finalFenceSearch(ownerAuthority, ownerScope, request, page)).code());
+    }
+
+    @Test
+    void modelAccessPreventionRetainsItsHonestBoundaryError() throws Exception {
+        Fixture fixture = fixture("model-access", false, "project-a", 16,
+                Duration.ofMinutes(5));
+        OwnerProviderCache projectBlocked = fixture.cacheWithPolicy(authority -> {
+            throw io.github.hakjuoh.protege_mcp.server.McpAccessException
+                    .effectsPrevented("model read did not start");
+        }, uri -> { }, 16, 1_024 * 1_024);
+        assertTrue(assertThrows(io.github.hakjuoh.protege_mcp.server.McpAccessException.class,
+                () -> projectBlocked.beginSearchAcquisition(
+                        fixture.authority(), search("blocked project"))).effectsPrevented());
+
+        OwnerProviderCache networkBlocked = fixture.cache(uri -> {
+            throw io.github.hakjuoh.protege_mcp.server.McpAccessException
+                    .effectsPrevented("network policy read did not start");
+        });
+        assertTrue(assertThrows(io.github.hakjuoh.protege_mcp.server.McpAccessException.class,
+                () -> networkBlocked.beginSearchAcquisition(
+                        fixture.authority(), search("blocked network"))).effectsPrevented());
+
+        OwnerProviderCache transportCache = fixture.cache(uri -> { });
+        ProviderOwnerConfig.ResolvedProvider authority = fixture.authority();
+        ProviderSearchRequest request = search("blocked executor gate");
+        OwnerProviderCache.Acquisition transportAcquisition = transportCache
+                .beginSearchAcquisition(authority, request);
+        ProviderNetworkExecutor transportBlocked = new ProviderNetworkExecutor(authority,
+                fixture.credentials(), uri -> {
+                    throw io.github.hakjuoh.protege_mcp.server.McpAccessException
+                            .effectsPrevented("executor gate did not complete");
+                }, host -> publicAddress(), (target, headers, addresses) -> {
+                    throw new AssertionError("transport must not run");
+                }, fixture.clock(), duration -> { }, transportAcquisition);
+        assertTrue(assertThrows(io.github.hakjuoh.protege_mcp.server.McpAccessException.class,
+                () -> transportBlocked.get(new ProviderRequest("/api", Map.of())))
+                .effectsPrevented());
+
+        AtomicBoolean blockAfterResponse = new AtomicBoolean();
+        OwnerProviderCache lateCache = fixture.cacheWithPolicy(authorityValue -> {
+            if (blockAfterResponse.get()) {
+                throw io.github.hakjuoh.protege_mcp.server.McpAccessException
+                        .effectsPrevented("late project gate did not complete");
+            }
+            return authorityValue.projectFingerprint();
+        }, uri -> { }, 16, 1_024 * 1_024);
+        OwnerProviderCache.Acquisition lateAcquisition = lateCache.beginSearchAcquisition(
+                authority, search("late blocked project"));
+        ProviderNetworkExecutor lateBlocked = executor(
+                fixture, authority, lateAcquisition, () -> blockAfterResponse.set(true));
+        assertTrue(assertThrows(io.github.hakjuoh.protege_mcp.server.McpAccessException.class,
+                () -> lateBlocked.get(new ProviderRequest("/api", Map.of())))
+                .effectsPrevented());
+    }
+
+    @Test
     void enforcesLruEntryAndTtlBounds() throws Exception {
         Fixture fixture = fixture("lru", false, "project-a", 2, Duration.ofSeconds(5));
         OwnerProviderCache cache = fixture.cache(uri -> { });
@@ -276,39 +461,100 @@ class OwnerProviderCacheTest {
     }
 
     @Test
+    void clockRollbackInvalidatesEntriesInsteadOfExtendingTheirLifetime() throws Exception {
+        Fixture fixture = fixture("clock-rollback", false, "project-a", 16,
+                Duration.ofMinutes(15));
+        OwnerProviderCache cache = fixture.cache(uri -> { });
+        ProviderSearchRequest request = search("rollback query");
+        assertTrue(putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(), null, 0))));
+
+        fixture.clock().advance(Duration.ofMinutes(10));
+        assertTrue(cache.getSearch(fixture.authority(), request).isPresent());
+        fixture.clock().set(NOW.plus(Duration.ofMinutes(5)));
+
+        assertTrue(cache.getSearch(fixture.authority(), request).isEmpty());
+    }
+
+    @Test
+    void projectTtlDoesNotDeleteOtherProjectEntriesInSharedCache() throws Exception {
+        Fixture fixture = fixture("mixed-ttl", false, "project-a", 16,
+                Duration.ofHours(24));
+        OwnerProviderCache longCache = fixture.cacheForProject("project-a", uri -> { });
+        ProviderOwnerConfig.ResolvedProvider longAuthority = fixture.resolve("project-a");
+        ProviderSearchRequest longRequest = search("long lived query");
+        assertTrue(putSearch(longCache, fixture, longAuthority, longRequest,
+                page(result("Visible", List.of(), null, 0))));
+
+        ProviderOwnerConfig.ResolvedProvider shortAuthority = fixture.resolve("project-b");
+        OwnerProviderCache shortCache = new OwnerProviderCache(fixture.cacheRoot(),
+                fixture.credentials(), () -> fixture.resolve("project-b"),
+                authority -> authority.projectFingerprint(), uri -> { }, fixture.clock(),
+                Duration.ofMinutes(1), 16, 1_024 * 1_024);
+        assertTrue(shortCache.getSearch(shortAuthority, search("short lived query")).isEmpty());
+
+        assertTrue(longCache.getSearch(longAuthority, longRequest).isPresent());
+    }
+
+    @Test
     void rejectsCredentialShapedPayloadsAndStrictlyRevalidatesCodecModels() throws Exception {
         Fixture fixture = fixture("safety", true, "project-a", 16, Duration.ofMinutes(5));
         OwnerProviderCache cache = fixture.cache(uri -> { });
         ProviderSearchRequest request = search("safe query");
 
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("owner-only-secret", List.of(), null, 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of("Bearer opaque-token"), null, 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of("Negotiate opaque-token"), null, 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of("DPoP opaque-token"), null, 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of("Mutual opaque-token"), null, 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of("HOBA opaque-token"), null, 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of("vapid opaque-token"), null, 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of("Cookie: SID=opaque"), null, 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of("token=vendor-secret"), null, 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(
+                        "https://cdn.example/file;token=vendor-secret"), null, 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(
+                        "https://cdn.example/file;%74oken=vendor-secret"), null, 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(
+                        "https://cdn.example/file;%2574oken=vendor-secret"), null, 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(
+                        "https://cdn.example/file;%252574oken=vendor-secret"), null, 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(
+                        "https://cdn.example/file;%252525252574oken=vendor-secret"), null, 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of(), "https://license.example/?token=x", 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of(), "ftp://user:password@example.org/file", 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of(), "//alice:opaque@example.org/file", 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
-                page(result("Visible", List.of(), "ftp://files.example/file?opaque=x", 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
-                page(result("Visible", List.of(), "file:/path?opaque=x", 0))));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
-                page(result("Visible", List.of(), "custom:/resource?opaque=x", 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(), "ftp://files.example/file?token=x", 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(), "file:/path?secret=x", 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(), "custom:/resource#credential=x", 0))));
+        ProviderResult benignIri = resultFor("efo", "https://example.org/ontology#Term",
+                "Visible", List.of("https://example.org/about?version=1#section"),
+                "https://license.example/terms?version=1#grant", 0);
+        ProviderSearchRequest benignRequest = search("benign iri query");
+        assertTrue(putSearch(cache, fixture, fixture.authority(), benignRequest,
+                page(benignIri)));
+        assertEquals(benignIri, cache.getSearch(fixture.authority(), benignRequest)
+                .orElseThrow().items().get(0));
         ProviderSearchRequest sensitive = search("sensitive raw query");
         assertFalse(putSearch(cache, fixture, fixture.authority(), sensitive,
                 page(result("sensitive raw query", List.of(), null, 0))));
@@ -318,7 +564,7 @@ class OwnerProviderCacheTest {
 
         String escapedSecret = "quote\"and\\slash";
         fixture.credentials().rotate("token", escapedSecret.getBytes(StandardCharsets.US_ASCII));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result(escapedSecret, List.of(), null, 0))));
         byte[] escapedJson = "{\"value\":\"quote\\\"and\\\\slash\"}"
                 .getBytes(StandardCharsets.UTF_8);
@@ -331,8 +577,21 @@ class OwnerProviderCacheTest {
         assertTrue(ProviderNetworkExecutor.containsCanary(
                 "{\"value\":\"a\\/b\"}".getBytes(StandardCharsets.UTF_8),
                 "a/b".getBytes(StandardCharsets.US_ASCII)));
+        fixture.credentials().rotate("token", "abc/def".getBytes(StandardCharsets.US_ASCII));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(
+                        "https://cdn.example/file;%74oken=abc%2Fdef"), null, 0))));
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
+                page(result("Visible", List.of(
+                        "https://cdn.example/file;%2574oken=abc%252Fdef"), null, 0))));
+        assertTrue(ProviderNetworkExecutor.containsCanary(
+                "{\"value\":\"abc%2Fdef\"}".getBytes(StandardCharsets.UTF_8),
+                "abc/def".getBytes(StandardCharsets.US_ASCII)));
+        assertTrue(ProviderNetworkExecutor.containsCanary(
+                "{\"value\":\"abc%252Fdef\"}".getBytes(StandardCharsets.UTF_8),
+                "abc/def".getBytes(StandardCharsets.US_ASCII)));
         fixture.credentials().rotate("token", "false".getBytes(StandardCharsets.US_ASCII));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of(), null, 0))));
         assertTrue(ProviderNetworkExecutor.containsCanary(
                 "{\"value\":false}".getBytes(StandardCharsets.UTF_8),
@@ -342,7 +601,7 @@ class OwnerProviderCacheTest {
         assertFalse(putSearch(cache, fixture, fixture.authority(), search("false"),
                 page(result("Visible", List.of(), null, 0))));
         fixture.credentials().rotate("token", "1".getBytes(StandardCharsets.US_ASCII));
-        assertFalse(putSearch(cache, fixture, fixture.authority(), request,
+        assertPublicationRedacted(() -> putSearch(cache, fixture, fixture.authority(), request,
                 page(result("Visible", List.of(), null, 0))));
         StringBuilder exhausted = new StringBuilder("[");
         for (int index = 0; index < 250_001; index++) exhausted.append("\"x\",");
@@ -360,8 +619,18 @@ class OwnerProviderCacheTest {
                 .getBytes(StandardCharsets.UTF_8);
         byte[] fingerprint = json.replace(safe.resultFingerprint(),
                 "sha256:" + "0".repeat(64)).getBytes(StandardCharsets.UTF_8);
+        byte[] termFingerprint = json.replace(safe.termFingerprint(),
+                "sha256:" + "0".repeat(64)).getBytes(StandardCharsets.UTF_8);
+        String legacyJson = json.replace(",\"term_fingerprint\":\""
+                + safe.termFingerprint() + "\"", "");
         assertThrows(java.io.IOException.class, () -> ProviderCacheCodec.decodeResult(unknown));
         assertThrows(java.io.IOException.class, () -> ProviderCacheCodec.decodeResult(fingerprint));
+        assertThrows(java.io.IOException.class,
+                () -> ProviderCacheCodec.decodeResult(termFingerprint));
+        ProviderResult legacy = ProviderCacheCodec.decodeResult(
+                legacyJson.getBytes(StandardCharsets.UTF_8));
+        assertEquals(safe.resultFingerprint(), legacy.resultFingerprint());
+        assertEquals(safe.termFingerprint(), legacy.termFingerprint());
     }
 
     @Test
@@ -680,15 +949,21 @@ class OwnerProviderCacheTest {
                 retries, false, null);
     }
 
+    private static void assertPublicationRedacted(
+            org.junit.jupiter.api.function.Executable publication) {
+        ProviderFailure failure = assertThrows(ProviderFailure.class, publication);
+        assertEquals("provider_redaction_failed", failure.code());
+    }
+
     private static InetAddress[] publicAddress() throws java.net.UnknownHostException {
         return new InetAddress[] {InetAddress.getByAddress(
                 new byte[] {93, (byte) 184, (byte) 216, 34})};
     }
 
     private static byte[] emptyState(long nextAccess) throws Exception {
-        byte[] content = ByteBuffer.allocate(8 + Long.BYTES + Integer.BYTES)
-                .put("PMCPCHE1".getBytes(StandardCharsets.US_ASCII))
-                .putLong(nextAccess).putInt(0).array();
+        byte[] content = ByteBuffer.allocate(8 + Long.BYTES * 2 + Integer.BYTES)
+                .put("PMCPCHE2".getBytes(StandardCharsets.US_ASCII))
+                .putLong(nextAccess).putLong(NOW.toEpochMilli()).putInt(0).array();
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(content);
         return ByteBuffer.allocate(content.length + digest.length).put(content).put(digest).array();
     }

@@ -11,7 +11,7 @@ public final class ToolCatalog {
     }
 
     /**
-     * Every tool provider, in registration order — the single source of truth. A provider is declared
+     * Every tool provider, in registration order - the single source of truth. A provider is declared
      * exactly once here; {@link #buildAll} lets each contribute into one shared {@link ToolRegistry}.
      * Package-private so the aggregation test iterates this same list rather than re-listing the
      * providers (which previously duplicated this order in two places and could silently drift).
@@ -44,6 +44,7 @@ public final class ToolCatalog {
             ShaclTools::register,
             ProjectPolicyTools::register,
             MappingTools::register,
+            ExternalTermTools::register,
             QcSuiteTools::register,
             ReleaseTools::register,
             AuditTools::register);

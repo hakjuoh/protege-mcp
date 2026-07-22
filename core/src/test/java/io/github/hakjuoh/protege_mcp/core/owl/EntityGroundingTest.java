@@ -45,8 +45,8 @@ class EntityGroundingTest {
         assertEquals(IRI.create("https://example.org/conformance#path/with~part"),
                 EntityGrounding.iri("ex:path/with~part",
                         Map.of("ex", "https://example.org/conformance#")));
-        assertEquals(IRI.create("https://example.org/conformance#표현"),
-                EntityGrounding.iri("ex:표현",
+        assertEquals(IRI.create("https://example.org/conformance#\uD45C\uD604"),
+                EntityGrounding.iri("ex:\uD45C\uD604",
                         Map.of("ex", "https://example.org/conformance#")));
     }
 }

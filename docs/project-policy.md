@@ -58,6 +58,8 @@ Version 2 retains every v1 field and adds four fail-closed blocks:
   reference only; its binding and generation stay in owner-local configuration. A provider may require
   evidence for `reuse`, `mint`, or the explicitly scoped `provider_evidence` validation stage; that stage
   names declared provider ids under `validation.provider_evidence.providers` and defaults to fresh evidence.
+  See [External terms](tools/external-terms.html#owner-setup) for owner configuration, permissions,
+  anonymous OLS4 setup, cache behavior, and troubleshooting.
 - `mappings` declares the project-confined SSSOM 1.0 TSV sidecar, predicate/source/license allowlists,
   required validation findings, directional-cycle severity, and explicitly scoped many-to-one rules.
 - `jobs` can only tighten the four public job types and product maxima: two workers, 32 queued jobs,

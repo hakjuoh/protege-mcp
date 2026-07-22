@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **91 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **95 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -28,6 +28,7 @@ preview, impact, release, project-boundary, audit, and isolated-preflight guaran
 | Task | New tools | What they add |
 | --- | --- | --- |
 | SSSOM mappings | [`list_mappings`](mappings.html#list_mappings), [`add_mapping`](mappings.html#add_mapping), [`remove_mapping`](mappings.html#remove_mapping), [`import_sssom`](mappings.html#import_sssom), [`export_sssom`](mappings.html#export_sssom), [`validate_mappings`](mappings.html#validate_mappings) | Governed SSSOM 1.0 authoring with deterministic IDs, project validation, revision-bound pagination, compare-and-swap writes, and atomic import/export. |
+| External terms | [`search_external_terms`](external-terms.html#search_external_terms), [`inspect_external_term`](external-terms.html#inspect_external_term), [`propose_term_reuse`](external-terms.html#propose_term_reuse), [`accept_reuse_proposal`](external-terms.html#accept_reuse_proposal) | Project-governed OLS4 discovery plus immutable, revision-bound reuse proposals and explicit receipt/CAS/saga acceptance. |
 
 ---
 

@@ -28,9 +28,9 @@ import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
  * authorization codes (bound to PKCE challenge + redirect + resource), and access/refresh tokens.
  *
  * <p>Registered clients and access/refresh tokens are <b>persisted</b> across restarts via the
- * injected load/save hooks (the Protégé preferences store), so a client that connected once keeps
- * working after Protégé restarts instead of failing re-authorization with "Unknown client".
- * Authorization codes are intentionally <b>not</b> persisted — they are 2-minute, mid-flow only.
+ * injected load/save hooks (the Protege preferences store), so a client that connected once keeps
+ * working after Protege restarts instead of failing re-authorization with "Unknown client".
+ * Authorization codes are intentionally <b>not</b> persisted - they are 2-minute, mid-flow only.
  *
  * <p>Access-token validation also accepts the plugin's static bearer token, so manual
  * {@code --header "Authorization: Bearer <token>"} setups keep working alongside OAuth.
@@ -39,7 +39,7 @@ import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
  * authenticated request ({@link #listClients()}), and individual clients/tokens can be revoked
  * ({@link #revokeClient(String)}, {@link #revokeToken(String)}).
  *
- * <p>Dead registrations clean themselves up — no manual revoking after a client reconnects: when a
+ * <p>Dead registrations clean themselves up - no manual revoking after a client reconnects: when a
  * re-registered client completes authorization, the same-name registrations it replaced are dropped
  * (see {@code removeSupersededSiblings}), and {@link #sweepInactiveClients()} reaps abandoned
  * auth flows after {@link #ABANDONED_CLIENT_GRACE_MS} and clients silent past
@@ -105,7 +105,7 @@ public final class OAuthStore {
     /**
      * @param loadPersistedNow whether to rehydrate the persisted clients + tokens immediately. Pass
      *     {@code false} when the caller cannot yet tell whether this store should see the shared
-     *     persisted state — e.g. before the server's port is bound — and call
+     *     persisted state - e.g. before the server's port is bound - and call
      *     {@link #loadPersisted()} once it can.
      */
     public OAuthStore(Supplier<String> staticToken, Supplier<String> loadState,
@@ -257,7 +257,7 @@ public final class OAuthStore {
      * {@link #persistLock}; the caller persists.
      *
      * <p>Known trade-off: two <em>concurrently live</em> same-name clients with separate
-     * credential stores cannot be told apart from a reconnect — the one idle across the other's
+     * credential stores cannot be told apart from a reconnect - the one idle across the other's
      * authorization loses its tokens and must re-authorize (a browser consent, so a human is in
      * the loop each round). Authorization is same-machine-only, and same-machine clients of one
      * app share a credential store, so this needs two distinct apps claiming one name; accepted
@@ -265,7 +265,7 @@ public final class OAuthStore {
      */
     private void removeSupersededSiblings(Client successor) {
         if (successor.clientName == null || successor.clientName.isEmpty()) {
-            return; // no name to match on — never supersede anonymous registrations
+            return; // no name to match on - never supersede anonymous registrations
         }
         purgeExpired(); // an expired code must not shield a dead registration
         List<Client> victims = new ArrayList<>();
@@ -280,7 +280,7 @@ public final class OAuthStore {
         }
         for (Client victim : victims) {
             dropClientLocked(victim.clientId);
-            log.info("protege-mcp oauth: cleaned up client {} ({}) — superseded by re-registered "
+            log.info("protege-mcp oauth: cleaned up client {} ({}) - superseded by re-registered "
                     + "client {}", victim.clientId, victim.clientName, successor.clientId);
         }
     }
@@ -289,22 +289,26 @@ public final class OAuthStore {
         if (refreshToken == null) {
             return null;
         }
-        // issueTokens() drops the client's prior grant pair, so this rotates the refresh token too.
-        Grant g = refreshTokens.get(refreshToken);
-        if (g == null) {
-            return null;
+        synchronized (persistLock) {
+            // Lookup, owner liveness, removal, and replacement are one transaction with RFC 7009
+            // revocation. A refresh that starts after a revoke cannot resurrect the deleted grant.
+            Grant g = refreshTokens.get(refreshToken);
+            if (g == null) {
+                return null;
+            }
+            if (clients.get(g.clientId) == null) {
+                // Fail closed like isValidAccessToken: a grant whose client record is gone (cleaned
+                // up, revoked, or evicted) must not mint fresh tokens - answering 200 here would trap
+                // the client in a refresh-then-401 loop instead of sending it back to re-register.
+                return null;
+            }
+            log.debug("protege-mcp oauth: refreshing tokens for client {}", g.clientId);
+            // A refresh CONTINUES the same grant: broker session pins are keyed by grantId, so minting
+            // a new one here would 403 every pinned MCP session on the standard 401->refresh->retry flow.
+            // Revoking either rotated token still drops the whole grant (same id). issueTokens is
+            // synchronized on this same reentrant monitor, preserving the transaction boundary.
+            return issueTokens(g.clientId, g.scope, g.resource, g.grantId);
         }
-        if (clients.get(g.clientId) == null) {
-            // Fail closed like isValidAccessToken: a grant whose client record is gone (cleaned
-            // up, revoked, or evicted) must not mint fresh tokens — answering 200 here would trap
-            // the client in a refresh-then-401 loop instead of sending it back to re-register.
-            return null;
-        }
-        log.debug("protege-mcp oauth: refreshing tokens for client {}", g.clientId);
-        // A refresh CONTINUES the same grant: broker session pins are keyed by grantId, so minting
-        // a new one here would 403 every pinned MCP session on the standard 401→refresh→retry flow.
-        // Revoking either rotated token still drops the whole grant (same id).
-        return issueTokens(g.clientId, g.scope, g.resource, g.grantId);
     }
 
     /** Accept either a live OAuth access token or the plugin's static bearer token. */
@@ -340,7 +344,7 @@ public final class OAuthStore {
             if (c != null) {
                 // A token is only honoured while its owning client still exists: revokeClient() and
                 // eviction both drop a client together with its tokens, so an orphaned-but-live grant
-                // only arises from corrupted persisted state — fail closed there rather than accept a
+                // only arises from corrupted persisted state - fail closed there rather than accept a
                 // bearer token whose client is gone.
                 // Best-effort, in-memory: not persisted on the hot auth path (that would write prefs
                 // on every request), so the displayed "last seen" only reaches disk via a later
@@ -424,12 +428,27 @@ public final class OAuthStore {
 
     /**
      * Revoke a token (RFC 7009). Because the access/refresh pair issued together share a grant id,
-     * revoking either one also drops its sibling — so a client that revokes its refresh token does
+     * revoking either one also drops its sibling - so a client that revokes its refresh token does
      * not keep a still-live access token. Returns true if the token was recognised.
      */
     public boolean revokeToken(String token) {
+        return revokeTokenGrant(token) != null;
+    }
+
+    /** Revoke one OAuth grant and return only its secret-free owner identity. */
+    public RevokedGrant revokeTokenGrant(String token) {
+        return revokeTokenGrant(token, ignored -> { });
+    }
+
+    /**
+     * Revoke one OAuth grant after a caller-provided write-ahead fence is durably prepared.
+     * The preparation callback runs under the same monitor as refresh and token deletion; if it
+     * fails, the grant remains live and the caller can safely retry the revocation.
+     */
+    public RevokedGrant revokeTokenGrant(String token,
+            java.util.function.Consumer<RevokedGrant> prepare) {
         if (token == null) {
-            return false;
+            return null;
         }
         synchronized (persistLock) {
             Grant grant = accessTokens.get(token);
@@ -437,26 +456,41 @@ public final class OAuthStore {
                 grant = refreshTokens.get(token);
             }
             if (grant == null) {
-                return false;
+                return null;
             }
+            RevokedGrant identity = new RevokedGrant(grant.clientId, grant.grantId);
+            prepare.accept(identity);
             String grantId = grant.grantId;
             accessTokens.values().removeIf(g -> grantId.equals(g.grantId));
             refreshTokens.values().removeIf(g -> grantId.equals(g.grantId));
             log.debug("protege-mcp oauth: revoked token grant for client {}", grant.clientId);
             persist();
+            return identity;
         }
-        return true;
+    }
+
+    /** Replay a durable broker journal entry without needing the original bearer token. */
+    public boolean revokeGrant(String clientId, String grantId) {
+        if (clientId == null || grantId == null) return false;
+        synchronized (persistLock) {
+            boolean removed = accessTokens.values().removeIf(g -> clientId.equals(g.clientId)
+                    && grantId.equals(g.grantId));
+            removed |= refreshTokens.values().removeIf(g -> clientId.equals(g.clientId)
+                    && grantId.equals(g.grantId));
+            if (removed) persist();
+            return removed;
+        }
     }
 
     /**
      * Drop registrations that are demonstrably dead: token-less, code-less ones past
-     * {@link #ABANDONED_CLIENT_GRACE_MS} (abandoned auth flows — and, deliberately, a client that
+     * {@link #ABANDONED_CLIENT_GRACE_MS} (abandoned auth flows - and, deliberately, a client that
      * RFC-7009-revoked all its tokens without re-authorizing: dynamic clients re-register on the
      * next connect), and any client silent past {@link #INACTIVE_CLIENT_TTL_MS} (its tokens go
-     * with it — a client that idle would have to refresh anyway). Both clocks run from
+     * with it - a client that idle would have to refresh anyway). Both clocks run from
      * {@link #hydratedAt} at the earliest, so a restart with stale persisted {@code lastSeenAt}
      * never triggers an early reap. Grants whose owning client is gone (only reachable through a
-     * cleanup/exchange race) are dropped too — they can never validate but would otherwise sit in
+     * cleanup/exchange race) are dropped too - they can never validate but would otherwise sit in
      * the persisted blob forever. Runs opportunistically from {@link #registerClient},
      * {@link #listClients()} and the broker's maintenance loop; persists only on removal.
      *
@@ -582,7 +616,7 @@ public final class OAuthStore {
     /**
      * Serialize clients + tokens to JSON and hand it to the save hook. Codes are not persisted.
      *
-     * <p>When {@link #maxPersistChars} is positive, this is the standalone Protégé preference store:
+     * <p>When {@link #maxPersistChars} is positive, this is the standalone Protege preference store:
      * {@code java.util.prefs} caps a single value at 8192 chars and <em>throws</em> above that. To
      * guarantee the write always succeeds (a silent failure would freeze the persisted state and
      * re-introduce "Unknown client" on the next restart), expired tokens are purged and, if the blob
@@ -605,14 +639,23 @@ public final class OAuthStore {
                 }
                 if (evicted > 0) {
                     log.warn("protege-mcp oauth: persisted state exceeded the {}-char preference "
-                            + "limit; evicted {} least-recently-seen client(s) — they will re-authorize "
+                            + "limit; evicted {} least-recently-seen client(s) - they will re-authorize "
                             + "on next connect", maxPersistChars, evicted);
                 }
                 saveState.accept(json);
             } catch (Exception e) {
+                if (maxPersistChars == 0) {
+                    if (e instanceof RuntimeException runtime) throw runtime;
+                    throw new IllegalStateException("failed to persist broker OAuth state", e);
+                }
                 log.warn("protege-mcp oauth: failed to persist state", e);
             }
         }
+    }
+
+    /** Force a durable snapshot; file-backed broker stores fail closed if the save hook fails. */
+    public void persistState() {
+        persist();
     }
 
     private String serializeState() throws com.fasterxml.jackson.core.JsonProcessingException {
@@ -637,7 +680,7 @@ public final class OAuthStore {
      * Evict the client whose last activity (authenticated request, or the registration itself for
      * a never-seen client) is oldest, together with its tokens. Counting registration as activity
      * matters at capacity: ordering by raw {@code lastSeenAt} would rank a just-registered client
-     * (still 0) below every previously seen one and evict it during its own registration — it
+     * (still 0) below every previously seen one and evict it during its own registration - it
      * would then finish authorization against a record that no longer exists.
      */
     private boolean evictLeastRecentlySeenClient() {
@@ -839,7 +882,10 @@ public final class OAuthStore {
         }
     }
 
-    /** Immutable per-client snapshot for the UI — decoupled from the mutable {@link Client}. */
+    /** Secret-free identity returned only after an OAuth grant was actually revoked. */
+    public record RevokedGrant(String clientId, String grantId) { }
+
+    /** Immutable per-client snapshot for the UI - decoupled from the mutable {@link Client}. */
     public static final class ClientInfo {
         public final String clientId;
         public final String clientName;

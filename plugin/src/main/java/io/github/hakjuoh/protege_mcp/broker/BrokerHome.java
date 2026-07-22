@@ -15,15 +15,16 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * File-system contract shared by the broker process and the Protégé instances that discover it.
+ * File-system contract shared by the broker process and the Protege instances that discover it.
  *
  * <p>Everything lives under one owner-only directory (default {@code ~/.protege-mcp}, {@code 0700}):
  * {@code secret} (the same-user trust anchor for the {@code /internal} API and never sent to MCP
  * clients), {@code broker.json} (the live broker's pid/port/version, written atomically), {@code
- * broker.lock} (the singleton {@link java.nio.channels.FileLock} a broker holds while it serves —
+ * broker.lock} (the singleton {@link java.nio.channels.FileLock} a broker holds while it serves -
  * see {@link BrokerMain}), {@code oauth.json} (the broker's persisted OAuth clients + tokens),
+ * {@code revocations.json} (backend commit fences awaiting current or future window acknowledgement),
  * {@code broker.log} (the spawned process's stdout/stderr) and {@code jars/} (content-named
- * classpath copies the broker runs from — see {@link BrokerSpawner}). Same-user trust comes from the
+ * classpath copies the broker runs from - see {@link BrokerSpawner}). Same-user trust comes from the
  * file permissions: only a process that can read {@code secret} may register instances or ask the
  * broker to shut down.
  */
@@ -62,6 +63,10 @@ public final class BrokerHome {
         return dir.resolve("oauth.json");
     }
 
+    public Path revocationsFile() {
+        return dir.resolve("revocations.json");
+    }
+
     public Path logFile() {
         return dir.resolve("broker.log");
     }
@@ -69,7 +74,7 @@ public final class BrokerHome {
     /**
      * The singleton lock file: a booting broker {@code tryLock}s it (retrying while a dying holder
      * finishes exiting) and keeps the lock until it stops serving, releasing it explicitly on a
-     * graceful stop (the OS releases it even on a crash — no stale-lock handling needed). The file
+     * graceful stop (the OS releases it even on a crash - no stale-lock handling needed). The file
      * itself is never deleted; only the lock matters.
      */
     public Path lockFile() {
@@ -114,7 +119,7 @@ public final class BrokerHome {
                 writeOwnerOnly(file, minted, false);
                 return minted;
             } catch (FileAlreadyExistsException raced) {
-                // another process minted first — loop re-reads it
+                // another process minted first - loop re-reads it
             }
         }
         String existing = Files.readString(file, StandardCharsets.UTF_8).trim();
@@ -161,6 +166,19 @@ public final class BrokerHome {
         }
     }
 
+    /** Atomically replace the owner-only backend revocation tombstone journal. */
+    public void writeRevocationState(String json) throws IOException {
+        ensureDir();
+        Path tmp = dir.resolve("revocations.json.tmp-" + ProcessHandle.current().pid());
+        writeOwnerOnly(tmp, json, true);
+        try {
+            Files.move(tmp, revocationsFile(), StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException nonAtomicFs) {
+            Files.move(tmp, revocationsFile(), StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
     /** Remove the state file, but only if it still names {@code pid} (don't erase a successor's). */
     public void deleteStateIfOwnedBy(long pid) {
         try {
@@ -184,7 +202,7 @@ public final class BrokerHome {
         try {
             Files.setPosixFilePermissions(file, FILE_PERMS);
         } catch (UnsupportedOperationException ignored) {
-            // non-POSIX file system — the directory ACL is the only guard there
+            // non-POSIX file system - the directory ACL is the only guard there
         }
     }
 }

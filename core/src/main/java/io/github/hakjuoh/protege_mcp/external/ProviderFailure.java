@@ -46,7 +46,8 @@ public final class ProviderFailure extends IOException {
     }
 
     static String requireText(String value, String field, int maximum) {
-        if (value == null || value.isBlank() || value.length() > maximum) {
+        if (value == null || value.isBlank()
+                || value.codePointCount(0, value.length()) > maximum) {
             throw new IllegalArgumentException(field + " is missing or exceeds " + maximum);
         }
         return value;

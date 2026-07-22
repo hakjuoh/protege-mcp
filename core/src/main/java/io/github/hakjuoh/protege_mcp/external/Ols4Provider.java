@@ -235,7 +235,8 @@ public final class Ols4Provider implements ExternalTermProvider {
                 + Base64.getUrlEncoder().withoutPadding().encodeToString(fromHex(requestDigest))
                 + "."
                 + Base64.getUrlEncoder().withoutPadding().encodeToString(packed);
-        if (value.length() > ProviderSearchRequest.MAX_CONTINUATION_LENGTH) {
+        if (value.codePointCount(0, value.length())
+                > ProviderSearchRequest.MAX_CONTINUATION_LENGTH) {
             throw new ProviderFailure("provider_cursor_quota_exceeded",
                     "OLS4 continuation exceeds the bounded cursor state", false);
         }
@@ -360,7 +361,7 @@ public final class Ols4Provider implements ExternalTermProvider {
         JsonNode value = parent.get(field);
         if (value == null || value.isNull()) return null;
         if (!value.isTextual() || value.textValue().isBlank()
-                || value.textValue().length() > maximum) {
+                || value.textValue().codePointCount(0, value.textValue().length()) > maximum) {
             throw malformed("OLS4 field " + field + " is invalid");
         }
         return value.textValue();
@@ -382,7 +383,7 @@ public final class Ols4Provider implements ExternalTermProvider {
             throw malformed("OLS4 string list is invalid");
         }
         for (String item : result) {
-            if (item.isBlank() || item.length() > maxLength) {
+            if (item.isBlank() || item.codePointCount(0, item.length()) > maxLength) {
                 throw malformed("OLS4 string exceeds its bound");
             }
         }
@@ -411,7 +412,7 @@ public final class Ols4Provider implements ExternalTermProvider {
     }
 
     private static String replacementText(String value) throws ProviderFailure {
-        if (value.isBlank() || value.length() > 4_096) {
+        if (value.isBlank() || value.codePointCount(0, value.length()) > 4_096) {
             throw malformed("OLS4 replacement field is invalid");
         }
         return value;

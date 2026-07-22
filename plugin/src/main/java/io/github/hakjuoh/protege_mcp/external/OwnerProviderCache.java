@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
+import io.github.hakjuoh.protege_mcp.server.McpAccessException;
+
 /** Owner-authorized cache for fully validated provider pages and term evidence. */
 public final class OwnerProviderCache {
 
@@ -51,6 +53,18 @@ public final class OwnerProviderCache {
         this.store = new ProviderCacheStore(root, clock, ttl, maxEntries, maxBytes);
     }
 
+    OwnerProviderCache(OwnerCredentialStore credentials, AuthorityLoader authorityLoader,
+            ProjectGate projectGate, ProviderNetworkExecutor.NetworkGate networkGate) {
+        if (authorityLoader == null || projectGate == null || networkGate == null) {
+            throw new IllegalArgumentException("provider authority dependencies are invalid");
+        }
+        this.credentials = credentials;
+        this.authorityLoader = authorityLoader;
+        this.projectGate = projectGate;
+        this.networkGate = networkGate;
+        this.store = null;
+    }
+
     /**
      * Bind one provider operation to the owner authority and credential generation that must be
      * used by its network executor and by its eventual cache publication.
@@ -79,7 +93,18 @@ public final class OwnerProviderCache {
 
     public Optional<ProviderPage> getSearch(ProviderOwnerConfig.ResolvedProvider expected,
             ProviderSearchRequest request) throws ProviderFailure {
+        Optional<SearchRead> read = getSearchForPublication(expected, request);
+        if (read.isEmpty()) return Optional.empty();
+        SearchRead value = read.orElseThrow();
+        finalFenceSearch(expected, value.scope(), request, value.page());
+        return Optional.of(value.page());
+    }
+
+    Optional<SearchRead> getSearchForPublication(
+            ProviderOwnerConfig.ResolvedProvider expected,
+            ProviderSearchRequest request) throws ProviderFailure {
         requireProvider(expected, request == null ? null : request.providerId());
+        if (store == null) return Optional.empty();
         byte[] queryCanary = request.query().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         try {
             List<String> identity = searchIdentity(request);
@@ -99,7 +124,7 @@ public final class OwnerProviderCache {
                     ProviderPage page = decodePage(payload);
                     validatePage(after.authority(), request, page);
                     authorize(page.items());
-                    return Optional.of(page);
+                    return Optional.of(new SearchRead(page, after.fingerprint()));
                 }
             } finally {
                 Arrays.fill(payload, (byte) 0);
@@ -111,7 +136,18 @@ public final class OwnerProviderCache {
 
     public Optional<ProviderResult> getInspect(ProviderOwnerConfig.ResolvedProvider expected,
             ProviderInspectRequest request) throws ProviderFailure {
+        Optional<InspectRead> read = getInspectForPublication(expected, request);
+        if (read.isEmpty()) return Optional.empty();
+        InspectRead value = read.orElseThrow();
+        finalFenceInspect(expected, value.scope(), request, value.result());
+        return Optional.of(value.result());
+    }
+
+    Optional<InspectRead> getInspectForPublication(
+            ProviderOwnerConfig.ResolvedProvider expected,
+            ProviderInspectRequest request) throws ProviderFailure {
         requireProvider(expected, request == null ? null : request.providerId());
+        if (store == null) return Optional.empty();
         List<String> identity = inspectIdentity(request);
         byte[] payload;
         String beforeScope;
@@ -129,7 +165,7 @@ public final class OwnerProviderCache {
                 ProviderResult result = decodeResult(payload);
                 validateResult(after.authority(), request, result);
                 authorize(List.of(result));
-                return Optional.of(result);
+                return Optional.of(new InspectRead(result, after.fingerprint()));
             }
         } finally {
             Arrays.fill(payload, (byte) 0);
@@ -137,9 +173,9 @@ public final class OwnerProviderCache {
     }
 
     /**
-     * Publish one terminal search page. Returns false when otherwise valid evidence is deliberately
-     * non-cacheable (cursor-bearing, sensitive, or over a configured bound). Every call consumes
-     * its acquisition, including a false result or later validation failure.
+     * Publish one search page. Returns false when safe evidence is deliberately non-cacheable
+     * because it is cursor-bearing, cross-origin, query-bearing, or over a cache bound. Unsafe
+     * evidence is rejected. Every call consumes its acquisition.
      */
     public boolean putSearch(ProviderOwnerConfig.ResolvedProvider expected, Acquisition acquisition,
             ProviderSearchRequest request, ProviderPage page) throws ProviderFailure {
@@ -147,12 +183,12 @@ public final class OwnerProviderCache {
         Publication publication = consume(acquisition, expected, ProviderCacheStore.Kind.SEARCH,
                 searchIdentity(request));
         validatePage(expected, request, page);
-        if (page.continuation() != null || publication.crossOrigin()) return false;
-        authorize(page.items());
         byte[] payload = encodePage(page);
-        if (payload == null) return false;
+        if (payload == null) throw redactionFailed();
         byte[] queryCanary = request.query().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         try {
+            approvePublication(expected, publication, page.items(), payload);
+            if (page.continuation() != null || publication.crossOrigin()) return false;
             return put(ProviderCacheStore.Kind.SEARCH, expected, publication.scope(),
                     searchIdentity(request), payload, queryCanary);
         } finally {
@@ -162,8 +198,8 @@ public final class OwnerProviderCache {
     }
 
     /**
-     * Publish one inspected term. Returns false when valid evidence is sensitive or over a bound.
-     * Every call consumes its acquisition, including a false result or later validation failure.
+     * Publish one inspected term. Returns false when safe evidence is cross-origin or over a cache
+     * bound. Unsafe evidence is rejected. Every call consumes its acquisition.
      */
     public boolean putInspect(ProviderOwnerConfig.ResolvedProvider expected,
             Acquisition acquisition, ProviderInspectRequest request, ProviderResult result)
@@ -172,11 +208,11 @@ public final class OwnerProviderCache {
         Publication publication = consume(acquisition, expected, ProviderCacheStore.Kind.INSPECT,
                 inspectIdentity(request));
         validateResult(expected, request, result);
-        if (publication.crossOrigin()) return false;
-        authorize(List.of(result));
         byte[] payload = encodeResult(result);
-        if (payload == null) return false;
+        if (payload == null) throw redactionFailed();
         try {
+            approvePublication(expected, publication, List.of(result), payload);
+            if (publication.crossOrigin()) return false;
             return put(ProviderCacheStore.Kind.INSPECT, expected, publication.scope(),
                     inspectIdentity(request), payload, null);
         } finally {
@@ -184,9 +220,105 @@ public final class OwnerProviderCache {
         }
     }
 
+    /**
+     * Consume and validate search evidence without retaining it. This is used when the project
+     * policy disables caching while preserving the same acquisition and authority checks.
+     */
+    public void discardSearch(ProviderOwnerConfig.ResolvedProvider expected,
+            Acquisition acquisition, ProviderSearchRequest request, ProviderPage page)
+            throws ProviderFailure {
+        requireProvider(expected, request == null ? null : request.providerId());
+        Publication publication = consume(acquisition, expected, ProviderCacheStore.Kind.SEARCH,
+                searchIdentity(request));
+        validatePage(expected, request, page);
+        byte[] payload = encodePage(page);
+        if (payload == null) throw redactionFailed();
+        try {
+            approvePublication(expected, publication, page.items(), payload);
+        } finally {
+            Arrays.fill(payload, (byte) 0);
+        }
+    }
+
+    /** Consume and validate inspected evidence without retaining it. */
+    public void discardInspect(ProviderOwnerConfig.ResolvedProvider expected,
+            Acquisition acquisition, ProviderInspectRequest request, ProviderResult result)
+            throws ProviderFailure {
+        requireProvider(expected, request == null ? null : request.providerId());
+        Publication publication = consume(acquisition, expected, ProviderCacheStore.Kind.INSPECT,
+                inspectIdentity(request));
+        validateResult(expected, request, result);
+        byte[] payload = encodeResult(result);
+        if (payload == null) throw redactionFailed();
+        try {
+            approvePublication(expected, publication, List.of(result), payload);
+        } finally {
+            Arrays.fill(payload, (byte) 0);
+        }
+    }
+
+    private void approvePublication(ProviderOwnerConfig.ResolvedProvider expected,
+            Publication publication, List<ProviderResult> results, byte[] payload)
+            throws ProviderFailure {
+        String firstScope;
+        try (ScopeLease first = revalidate(expected)) {
+            authorize(first.authority().origin().origin());
+            if (!publication.scope().equals(first.fingerprint())) throw staleAcquisition();
+            authorize(results);
+            if (!ProviderCacheSafety.safe(payload, first.secretInternal(), null)) {
+                throw redactionFailed();
+            }
+            firstScope = first.fingerprint();
+        }
+        try (ScopeLease current = revalidate(expected)) {
+            authorize(current.authority().origin().origin());
+            authorize(results);
+            if (!firstScope.equals(current.fingerprint())) throw staleAcquisition();
+        }
+    }
+
+    void finalFenceSearch(ProviderOwnerConfig.ResolvedProvider expected, String scope,
+            ProviderSearchRequest request, ProviderPage page) throws ProviderFailure {
+        requireProvider(expected, request == null ? null : request.providerId());
+        validatePage(expected, request, page);
+        byte[] payload = encodePage(page);
+        if (payload == null) throw redactionFailed();
+        try {
+            finalFence(expected, scope, page.items(), payload);
+        } finally {
+            Arrays.fill(payload, (byte) 0);
+        }
+    }
+
+    void finalFenceInspect(ProviderOwnerConfig.ResolvedProvider expected, String scope,
+            ProviderInspectRequest request, ProviderResult result) throws ProviderFailure {
+        requireProvider(expected, request == null ? null : request.providerId());
+        validateResult(expected, request, result);
+        byte[] payload = encodeResult(result);
+        if (payload == null) throw redactionFailed();
+        try {
+            finalFence(expected, scope, List.of(result), payload);
+        } finally {
+            Arrays.fill(payload, (byte) 0);
+        }
+    }
+
+    private void finalFence(ProviderOwnerConfig.ResolvedProvider expected, String scope,
+            List<ProviderResult> results, byte[] payload) throws ProviderFailure {
+        try (ScopeLease current = revalidate(expected)) {
+            authorize(current.authority().origin().origin());
+            if (!scope.equals(current.fingerprint())) throw staleAcquisition();
+            authorize(results);
+            if (!ProviderCacheSafety.safe(payload, current.secretInternal(), null)) {
+                throw redactionFailed();
+            }
+        }
+    }
+
     private boolean put(ProviderCacheStore.Kind kind,
             ProviderOwnerConfig.ResolvedProvider expected, String acquisitionScope,
             List<String> identity, byte[] payload, byte[] queryCanary) throws ProviderFailure {
+        if (store == null) return false;
         try (ScopeLease first = revalidate(expected)) {
             authorize(first.authority().origin().origin());
             if (!acquisitionScope.equals(first.fingerprint())) throw staleAcquisition();
@@ -220,6 +352,9 @@ public final class OwnerProviderCache {
                 authorize(targetOrigin);
                 acquisition.noteOrigin(targetOrigin);
             }
+        } catch (McpAccessException accessFailure) {
+            acquisition.invalidate();
+            throw accessFailure;
         } catch (ProviderFailure failure) {
             acquisition.invalidate();
             throw failure;
@@ -239,6 +374,10 @@ public final class OwnerProviderCache {
         byte[] secret = null;
         try {
             if (current.credential() != null) {
+                if (credentials == null) {
+                    throw new ProviderFailure("provider_credential_missing",
+                            "Owner credential is not available", false);
+                }
                 lease = credentials.open(current.credential().id());
                 secret = lease.copySecret();
             }
@@ -256,6 +395,8 @@ public final class OwnerProviderCache {
         try {
             String fresh = projectGate.currentFingerprint(current);
             if (!current.projectFingerprint().equals(fresh)) throw new IllegalStateException();
+        } catch (McpAccessException accessFailure) {
+            throw accessFailure;
         } catch (ProviderFailure | RuntimeException denied) {
             throw new ProviderFailure("provider_policy_changed",
                     "Project provider policy changed before cache access", false);
@@ -273,6 +414,8 @@ public final class OwnerProviderCache {
     private void authorize(URI uri) throws ProviderFailure {
         try {
             networkGate.authorize(ProviderNetworkUris.origin(uri));
+        } catch (McpAccessException accessFailure) {
+            throw accessFailure;
         } catch (ProviderFailure | RuntimeException denied) {
             throw new ProviderFailure("provider_network_denied",
                     "Provider network authority denied cached evidence", false);
@@ -348,7 +491,9 @@ public final class OwnerProviderCache {
 
     private static byte[] encodePage(ProviderPage page) {
         try {
-            return ProviderCacheCodec.encodePage(page);
+            ProviderPage publicPage = new ProviderPage(page.items(), page.total(), null,
+                    page.fetchedAt(), page.retries());
+            return ProviderCacheCodec.encodePage(publicPage);
         } catch (IOException | RuntimeException invalid) {
             return null;
         }
@@ -392,10 +537,10 @@ public final class OwnerProviderCache {
             AuthorityLoader authorityLoader, ProjectGate projectGate,
             ProviderNetworkExecutor.NetworkGate networkGate, Clock clock, Duration ttl,
             int maxEntries, int maxBytes) {
-        if (credentials == null || authorityLoader == null || projectGate == null
+        if (authorityLoader == null || projectGate == null
                 || networkGate == null || clock == null
                 || ttl == null || ttl.isZero() || ttl.isNegative()
-                || ttl.compareTo(Duration.ofHours(1)) > 0
+                || ttl.compareTo(Duration.ofHours(24)) > 0
                 || maxEntries < 1 || maxEntries > DEFAULT_MAX_ENTRIES
                 || maxBytes < 4_096 || maxBytes > DEFAULT_MAX_BYTES) {
             throw new IllegalArgumentException("provider cache configuration is invalid");
@@ -414,6 +559,11 @@ public final class OwnerProviderCache {
     private static ProviderFailure staleAcquisition() {
         return new ProviderFailure("provider_acquisition_stale",
                 "Provider evidence was not acquired under the current owner authority", false);
+    }
+
+    private static ProviderFailure redactionFailed() {
+        return new ProviderFailure("provider_redaction_failed",
+                "Provider evidence failed public redaction checks", false);
     }
 
     @FunctionalInterface
@@ -466,6 +616,11 @@ public final class OwnerProviderCache {
             }
         }
 
+        synchronized String scopeFingerprint() throws ProviderFailure {
+            if (invalidated) throw staleAcquisition();
+            return scope;
+        }
+
         private synchronized void requireSnapshot(
                 ProviderOwnerConfig.ResolvedProvider candidate, String candidateScope)
                 throws ProviderFailure {
@@ -502,6 +657,10 @@ public final class OwnerProviderCache {
     }
 
     private record Publication(String scope, boolean crossOrigin) { }
+
+    record SearchRead(ProviderPage page, String scope) { }
+
+    record InspectRead(ProviderResult result, String scope) { }
 
     private static final class ScopeLease implements AutoCloseable {
         private final ProviderOwnerConfig.ResolvedProvider authority;

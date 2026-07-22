@@ -27,7 +27,7 @@ public final class ToolSchemaValidator {
             "object", "array", "string", "integer", "number", "boolean", "null");
     private static final Set<String> FIELDS = Set.of(
             "type", "title", "description", "properties", "required",
-            "additionalProperties", "items", "enum", "const", "minimum", "maximum",
+            "additionalProperties", "propertyNames", "items", "enum", "const", "minimum", "maximum",
             "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength", "pattern",
             "format", "minItems", "maxItems", "uniqueItems", "minProperties",
             "maxProperties", "allOf", "anyOf", "oneOf", "not", "default", "examples");
@@ -134,6 +134,12 @@ public final class ToolSchemaValidator {
             } else if (!additional.isBoolean()) {
                 throw invalid(path + ".additionalProperties must be a boolean or schema");
             }
+        }
+
+        JsonNode propertyNames = schema.get("propertyNames");
+        if (propertyNames != null) {
+            requireType(type, "object", path, "propertyNames");
+            validateNode(propertyNames, path + ".propertyNames");
         }
 
         JsonNode items = schema.get("items");
@@ -342,6 +348,10 @@ public final class ToolSchemaValidator {
         JsonNode additional = schema.get("additionalProperties");
         if (additional != null && additional.isObject()) {
             requireTypedNode(additional, path + ".additionalProperties");
+        }
+        JsonNode propertyNames = schema.get("propertyNames");
+        if (propertyNames != null) {
+            requireTypedNode(propertyNames, path + ".propertyNames");
         }
         for (String combination : List.of("allOf", "anyOf", "oneOf")) {
             JsonNode choices = schema.get(combination);

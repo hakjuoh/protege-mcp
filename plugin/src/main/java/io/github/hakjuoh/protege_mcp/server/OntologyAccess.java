@@ -13,14 +13,14 @@ import org.protege.editor.owl.OWLEditorKit;
 import org.protege.editor.owl.model.OWLModelManager;
 
 /**
- * The single choke point through which <em>every</em> MCP read/write touches the Protégé model.
+ * The single choke point through which <em>every</em> MCP read/write touches the Protege model.
  *
- * <p>OWL API objects and Protégé's caches/renderers/listeners are not thread safe and assume Swing
+ * <p>OWL API objects and Protege's caches/renderers/listeners are not thread safe and assume Swing
  * EDT access, so MCP edits must be serialised with manual UI edits by running on the EDT. MCP
  * handlers run on HTTP/transport threads ({@code immediateExecution(true)}), so this class marshals
  * the work onto the EDT with a bounded wait. The {@link SwingUtilities#isEventDispatchThread()}
  * guard runs the body inline when already on the EDT, avoiding an {@code invokeAndWait} self
- * deadlock. A stuck EDT surfaces as an {@link McpAccessException} (→ MCP error) instead of hanging.
+ * deadlock. A stuck EDT surfaces as an {@link McpAccessException} (MCP error) instead of hanging.
  */
 public final class OntologyAccess {
 
@@ -66,6 +66,23 @@ public final class OntologyAccess {
      * than the default so a slow-but-succeeding apply is not reported as a timeout.
      */
     public <T> T compute(Function<OWLModelManager, T> fn, long boundMillis) {
+        return dispatch(fn, boundMillis, false);
+    }
+
+    /**
+     * Queue a mutation with a bounded start wait, then join it through completion once it starts.
+     *
+     * <p>This prevents a model-thread commit from outliving the caller's write lock, authorization
+     * lease, audit ticket, or response. If the queue wait expires before execution starts, the body
+     * is cancelled with effects prevented. Once execution starts, the caller retains its resources
+     * and receives the body's actual result instead of an outcome-unknown timeout.
+     */
+    public <T> T computeMutation(Function<OWLModelManager, T> fn, long startBoundMillis) {
+        return dispatch(fn, startBoundMillis, true);
+    }
+
+    private <T> T dispatch(Function<OWLModelManager, T> fn, long boundMillis,
+            boolean joinStarted) {
         OWLModelManager mm = editorKit.getModelManager();
         if (edt.isDispatchThread()) {
             return fn.apply(mm);
@@ -76,7 +93,7 @@ public final class OntologyAccess {
         CountDownLatch latch = new CountDownLatch(1);
         edt.invokeLater(() -> {
             // Claim the task atomically. If the caller already gave up (timeout/interruption below),
-            // do NOT run the body — this prevents a queued task from mutating the model after the
+            // do NOT run the body; this prevents a queued task from mutating the model after the
             // client was told the call failed. A boolean check/set pair is insufficient here: timeout
             // can race between the check and fn.apply(), leaving both sides believing they won.
             if (!state.compareAndSet(QUEUED, RUNNING)) {
@@ -97,19 +114,42 @@ public final class OntologyAccess {
         try {
             if (!latch.await(boundMillis, TimeUnit.MILLISECONDS)) {
                 boolean prevented = state.compareAndSet(QUEUED, CANCELLED);
-                throw abandoned("Timed out after " + boundMillis + " ms waiting for the Protégé UI "
-                        + "thread (the application may be busy).", prevented, failure.get());
+                if (joinStarted && !prevented) {
+                    awaitUninterruptibly(latch);
+                } else {
+                    throw abandoned("Timed out after " + boundMillis
+                            + " ms waiting for the Protege UI thread (the application may be "
+                            + "busy).", prevented, failure.get());
+                }
             }
         } catch (InterruptedException e) {
             boolean prevented = state.compareAndSet(QUEUED, CANCELLED);
-            Thread.currentThread().interrupt();
-            throw abandoned("Interrupted while waiting for the Protégé UI thread.",
-                    prevented, failure.get());
+            if (joinStarted && !prevented) {
+                awaitUninterruptibly(latch);
+                Thread.currentThread().interrupt();
+            } else {
+                Thread.currentThread().interrupt();
+                throw abandoned("Interrupted while waiting for the Protege UI thread.",
+                        prevented, failure.get());
+            }
         }
         if (failure.get() != null) {
             throw failure.get();
         }
         return result.get();
+    }
+
+    private static void awaitUninterruptibly(CountDownLatch latch) {
+        boolean interrupted = false;
+        while (true) {
+            try {
+                latch.await();
+                break;
+            } catch (InterruptedException retry) {
+                interrupted = true;
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     private static McpAccessException abandoned(String message, boolean prevented,

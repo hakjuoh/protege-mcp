@@ -74,4 +74,31 @@ class PrincipalExecutionGateTest {
         lease.close();
         assertEquals(0, gate.revokeClient("static-local-admin").observedActive());
     }
+
+    @Test
+    void shutdownWaitsForActiveLeaseThenPermanentlyRejectsNewWork() throws Exception {
+        PrincipalExecutionGate gate = new PrincipalExecutionGate();
+        AuthenticatedPrincipal principal = AuthenticatedPrincipal.staticAdmin();
+        PrincipalExecutionGate.Lease active = gate.acquire(principal);
+        var pool = Executors.newSingleThreadExecutor();
+        try {
+            CountDownLatch started = new CountDownLatch(1);
+            var shutdown = pool.submit(() -> {
+                started.countDown();
+                gate.closeAndAwait();
+                return true;
+            });
+            assertTrue(started.await(1, TimeUnit.SECONDS));
+            assertThrows(java.util.concurrent.TimeoutException.class,
+                    () -> shutdown.get(100, TimeUnit.MILLISECONDS));
+            active.close();
+            assertTrue(shutdown.get(2, TimeUnit.SECONDS));
+            ToolArgException refused = assertThrows(ToolArgException.class,
+                    () -> gate.acquire(principal));
+            assertEquals("authorization_revoked", refused.code());
+        } finally {
+            active.close();
+            pool.shutdownNow();
+        }
+    }
 }

@@ -24,6 +24,31 @@ each section is also published as the body of its
 ## [Unreleased]
 
 ### Added
+- Added project-governed `search_external_terms` and `inspect_external_term` tools for one exact OLS4
+  provider at a time. Owner-only endpoint bindings, strict HTTPS egress, credential-generation and
+  project-bound caching, opaque principal/grant/workspace cursors, bounded typed evidence, final
+  publication revalidation, and fail-closed secret-like response scanning keep project-authored policy
+  from selecting arbitrary endpoints or exposing provider state.
+- Added `propose_term_reuse`, which performs a cache-bypassing direct re-inspection of the selected
+  external term and creates a 15-minute, principal/grant/workspace-scoped immutable proposal bound to
+  provider evidence, model and mapping revisions, policy digest, action, and normalized operations.
+  A stable content fingerprint excludes request-time timestamp/retry churn while the proposal still
+  binds the complete acquisition evidence. Proposal creation never writes project state.
+- Added explicit `accept_reuse_proposal` acceptance. Reuse returns a non-mutating receipt, mapping uses
+  the proposal's original SSSOM revision for one CAS, and mint-plus-mapping records the one-broadcast
+  ontology commit before attempting the sidecar. A failed second step returns a bounded `partial`
+  continuation and manual recovery without reminting or claiming cross-resource atomicity. Opaque
+  canonical project, policy-source, mapping-target, and store-existence identities are fingerprint-bound;
+  started mint commits retain their authorization/audit lifetime and renew only a receipt continuation.
+- Documented the complete anonymous EBI OLS4 owner setup, policy binding, permission requirements,
+  cache behavior, credential lifecycle boundary, and stable troubleshooting codes.
+- Made OAuth RFC 7009 grant revocation linearizable with refresh and crash-safe in broker mode.
+  Owner-only `~/.protege-mcp/revocations.json` is a bounded write-ahead journal: backend fences are
+  retried across unavailable/later windows and broker restarts, stale OAuth state is replayed before
+  serving, persistence failures fail closed, and a sealed quiescent shutdown compacts the journal.
+  Heartbeat-stale, unregistered, removed, or replaced live-process endpoint incarnations remain in a
+  bounded revocation-only quarantine until PID death, without remaining routable; version takeover
+  cannot discard that quarantine.
 - Froze the complete 0.7.2 plugin and headless MCP contracts before expanding the 0.8 surface. Every
   tool now advertises an output schema and a common bounded, recursively sanitized typed-error schema;
   new tools must declare a narrow recursive output contract and both adapters validate and snapshot
@@ -47,6 +72,9 @@ each section is also published as the body of its
 ### Tests
 - Added immutable 0.7.2 plugin/headless goldens, recursive schema-dialect attacks, result-validation
   mutants, redaction/canary/immutability cases, and execution/audit outcome tests.
+- Added deterministic refresh/revoke concurrency, write-ahead failure, corrupt/oversized/capacity
+  journal, owner-only permission, broker restart replay, later-window retry, late-session-pin, and
+  bounded in-memory tombstone tests.
 - Pinned both policy-schema hashes and a fixed v1 normalized digest; added v2 schema/default/semantic,
   mutation, template, immutability, public migration-result, input-amplification, symlink-escape,
   symlink, same-path source/ordinary-directory replacement before and after asset validation, transaction

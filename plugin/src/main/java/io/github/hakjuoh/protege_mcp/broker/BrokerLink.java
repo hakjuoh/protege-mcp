@@ -21,22 +21,22 @@ import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.McpServerManager;
 
 /**
- * This Protégé process's connection to the shared broker: one registration for the whole JVM,
+ * This Protege process's connection to the shared broker: one registration for the whole JVM,
  * carrying every attached window's backend (ephemeral port + per-window broker secret), refreshed by
  * a heartbeat that also propagates the current bearer token and the user's broker idle-linger
  * preference. Windows attach/detach as EditorKits
- * come and go; when the last one detaches (or the JVM exits — a shutdown hook backs this up), the
+ * come and go; when the last one detaches (or the JVM exits - a shutdown hook backs this up), the
  * process unregisters, dropping the broker's reference count toward its self-shutdown.
  *
  * <p>Self-healing: a heartbeat answered with "unknown process" (broker restarted) re-registers, and
- * a heartbeat that cannot reach the broker at all (crashed/killed) re-runs discovery and — throttled
- * — re-spawns one. An idle broker left behind by a different plugin version is retired and replaced
+ * a heartbeat that cannot reach the broker at all (crashed/killed) re-runs discovery and - throttled
+ * - re-spawns one. An idle broker left behind by a different plugin version is retired and replaced
  * (never while other instances still use it). The window servers themselves are untouched by any of
- * this — only the registration is redone.
+ * this - only the registration is redone.
  *
  * <p>Threading: the mutating flows ({@code attach}/{@code detach}/{@code beat}) serialize on this
  * object, but the read-side used by the EDT ({@link #brokerMcpUrl()}, {@link #isAttached}) is
- * lock-free — a slow spawn/discovery must never stall the UI.
+ * lock-free - a slow spawn/discovery must never stall the UI.
  */
 public final class BrokerLink {
 
@@ -74,13 +74,13 @@ public final class BrokerLink {
     /**
      * Bring this window under the shared broker: ensure a broker is alive (spawning one if this is
      * the first instance), start the window's server on an ephemeral port in broker-managed mode,
-     * and include it in this process's registration. Returns false — with the controller left in
-     * the state the caller found it (a server WE started for the broker is stopped again) — when no
+     * and include it in this process's registration. Returns false - with the controller left in
+     * the state the caller found it (a server WE started for the broker is stopped again) - when no
      * broker can be reached or spawned; the caller then uses standalone mode.
      */
     public synchronized boolean attach(McpServerController controller) {
         if (windows.containsKey(controller) && controller.isRunning()) {
-            return true; // already attached and serving — don't mint a new window identity
+            return true; // already attached and serving - don't mint a new window identity
         }
         boolean startedHere = false;
         boolean windowAdded = false;
@@ -95,13 +95,13 @@ public final class BrokerLink {
             String secret = controller.getBrokerSecret();
             if (!controller.isBrokerManaged() || secret == null) {
                 // Running, but as a standalone server (e.g. started before the preference flipped).
-                log.warn("protege-mcp: window server is not broker-managed — leaving it standalone");
+                log.warn("protege-mcp: window server is not broker-managed - leaving it standalone");
                 return false;
             }
             long now = System.currentTimeMillis();
             windows.put(controller, new InstanceRegistry.Window(
                     UUID.randomUUID().toString(), controller.getBoundPort(), secret,
-                    "Protégé window " + (windows.size() + 1), now, now));
+                    "Protege window " + (windows.size() + 1), now, now));
             windowAdded = true;
             syncRegistration();
             installShutdownHook();
@@ -112,7 +112,7 @@ public final class BrokerLink {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            log.warn("protege-mcp: could not attach to the shared broker — falling back to standalone", e);
+            log.warn("protege-mcp: could not attach to the shared broker - falling back to standalone", e);
             // Leave no zombie behind: an unregistered broker-managed server would be unreachable via
             // the broker AND would block the standalone fallback from starting.
             if (windowAdded) {
@@ -171,7 +171,7 @@ public final class BrokerLink {
     /**
      * User-initiated recovery (the view's Start while the broker is down): run the heartbeat's
      * re-discovery/re-spawn immediately, dropping the {@link #ENSURE_THROTTLE_MS} backoff that
-     * paces the automatic retries. Safe when the broker is actually fine — the beat then just
+     * paces the automatic retries. Safe when the broker is actually fine - the beat then just
      * heartbeats as usual.
      */
     public void reconnectNow() {
@@ -282,10 +282,10 @@ public final class BrokerLink {
     /**
      * Version takeover: an <em>idle</em> broker from a different plugin version is asked to retire
      * so this (newer or older, but matching) plugin can spawn its own; a mismatched broker that
-     * other instances still reference is kept — interop beats disruption. Returns the client to use,
+     * other instances still reference is kept - interop beats disruption. Returns the client to use,
      * or null when the caller should proceed to spawn.
      */
-    private BrokerClient maybeRetireForUpgrade(BrokerClient candidate, boolean maySpawn)
+    BrokerClient maybeRetireForUpgrade(BrokerClient candidate, boolean maySpawn)
             throws InterruptedException {
         try {
             JsonNode info = candidate.info();
@@ -293,9 +293,12 @@ public final class BrokerLink {
             if (McpServerManager.SERVER_VERSION.equals(brokerVersion)) {
                 return candidate;
             }
-            if (info.path("processes").asInt(0) > 0 || !maySpawn) {
+            boolean shutdownEligible = info.has("shutdown_eligible")
+                    ? info.path("shutdown_eligible").asBoolean(false)
+                    : info.path("processes").asInt(0) == 0;
+            if (!shutdownEligible || !maySpawn) {
                 log.warn("protege-mcp: shared broker runs plugin version {} (this window runs {}) and "
-                        + "is still referenced — using it as-is", brokerVersion,
+                        + "is still referenced - using it as-is", brokerVersion,
                         McpServerManager.SERVER_VERSION);
                 return candidate;
             }
@@ -307,7 +310,9 @@ public final class BrokerLink {
             }
             return null;
         } catch (IOException e) {
-            return null; // unreachable after all — rediscover/spawn
+            // A quiescence race can make shutdown return 409 after the info snapshot. Keep using a
+            // broker that still answers rather than spawning a competing version beside it.
+            return candidate.probe() ? candidate : null;
         }
     }
 
@@ -359,13 +364,13 @@ public final class BrokerLink {
                 refreshBrokerClientsQuietly();
                 return;
             }
-            // 404: the broker is alive but restarted — it lost us; fall through and re-register.
+            // 404: the broker is alive but restarted - it lost us; fall through and re-register.
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return;
         } catch (IOException | RuntimeException unreachable) {
             // The broker process itself is gone (crashed/killed): fall through to the throttled
-            // re-discovery, which re-SPAWNS a broker — this must not be short-circuited by the
+            // re-discovery, which re-SPAWNS a broker - this must not be short-circuited by the
             // exception, or a dead broker would never be replaced until a new window opens.
             brokerBaseUrl = null;
         }

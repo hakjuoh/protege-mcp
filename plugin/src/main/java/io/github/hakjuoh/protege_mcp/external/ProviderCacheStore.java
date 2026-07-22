@@ -28,7 +28,7 @@ final class ProviderCacheStore {
     private static final String DATA_FILE = "responses.bin";
     private static final String KEY_FILE = "query-hmac.key";
     private static final String LOCK_FILE = "cache.lock";
-    private static final byte[] DATA_MAGIC = "PMCPCHE1".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] DATA_MAGIC = "PMCPCHE2".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] KEY_MAGIC = "PMCPHMK1".getBytes(StandardCharsets.US_ASCII);
     private static final int DIGEST_BYTES = 32;
     private static final int HMAC_KEY_BYTES = 32;
@@ -59,7 +59,7 @@ final class ProviderCacheStore {
         return OwnerOnlyFiles.withLock(root, LOCK_FILE, () -> {
             State state = loadStateLocked();
             long now = now();
-            boolean changed = state.entries().removeIf(entry -> entry.expiresAt() <= now);
+            boolean changed = observeClockAndExpiry(state, now);
             String key = identityKey(kind, scope, identity);
             Entry found = state.entries().stream().filter(entry -> entry.kind() == kind
                             && entry.scope().equals(scope) && entry.key().equals(key))
@@ -74,7 +74,10 @@ final class ProviderCacheStore {
                 found.access(allocateAccess(state));
                 changed = true;
             }
-            if (changed) writeStateLocked(state);
+            if (changed) {
+                if (state.entries().isEmpty()) discardDataLocked();
+                else writeStateLocked(state);
+            }
             return found == null ? Optional.empty() : Optional.of(found.payloadCopy());
         });
     }
@@ -91,11 +94,13 @@ final class ProviderCacheStore {
             throws ProviderFailure {
         State state = loadStateLocked();
         long now = now();
-        state.entries().removeIf(entry -> entry.expiresAt() <= now);
+        observeClockAndExpiry(state, now);
         String key = identityKey(kind, scope, identity);
         state.entries().removeIf(entry -> entry.kind() == kind
                 && entry.scope().equals(scope) && entry.key().equals(key));
-        Entry candidate = new Entry(kind, scope, key, expiresAt(now), allocateAccess(state), payload);
+        long lifetime = ttl.toMillis();
+        Entry candidate = new Entry(kind, scope, key, now, lifetime, expiresAt(now),
+                allocateAccess(state), payload);
         state.entries().add(candidate);
         while (state.entries().size() > maxEntries || encodedSize(state) > maxBytes) {
             Entry oldest = state.entries().stream().min(Comparator.comparingLong(Entry::access))
@@ -118,19 +123,19 @@ final class ProviderCacheStore {
     }
 
     private State loadStateLocked() throws ProviderFailure {
-        if (!OwnerOnlyFiles.exists(root, DATA_FILE)) return new State(1, new ArrayList<>());
+        if (!OwnerOnlyFiles.exists(root, DATA_FILE)) return new State(1, 0, new ArrayList<>());
         byte[] encoded;
         try {
             encoded = OwnerOnlyFiles.read(root, DATA_FILE, maxBytes);
         } catch (ProviderFailure failure) {
             discardDataLocked();
-            return new State(1, new ArrayList<>());
+            return new State(1, 0, new ArrayList<>());
         }
         try {
             return decodeState(encoded);
         } catch (IOException | RuntimeException invalid) {
             discardDataLocked();
-            return new State(1, new ArrayList<>());
+            return new State(1, 0, new ArrayList<>());
         } finally {
             Arrays.fill(encoded, (byte) 0);
         }
@@ -195,6 +200,21 @@ final class ProviderCacheStore {
         }
     }
 
+    private static boolean observeClockAndExpiry(State state, long now) {
+        boolean changed = false;
+        if (now < state.highWater()) {
+            changed = !state.entries().isEmpty() || state.highWater() != now;
+            state.entries().clear();
+            state.highWater(now);
+            return changed;
+        }
+        if (now > state.highWater()) {
+            state.highWater(now);
+            changed = true;
+        }
+        return state.entries().removeIf(entry -> !entry.validAt(now)) || changed;
+    }
+
     private static long allocateAccess(State state) throws ProviderFailure {
         long value = state.nextAccess();
         if (value < 1 || value == Long.MAX_VALUE) {
@@ -209,9 +229,11 @@ final class ProviderCacheStore {
         if (size > maxBytes) throw new IOException("cache state exceeds bound");
         byte[] encoded = new byte[size];
         ByteBuffer value = ByteBuffer.wrap(encoded);
-        value.put(DATA_MAGIC).putLong(state.nextAccess()).putInt(state.entries().size());
+        value.put(DATA_MAGIC).putLong(state.nextAccess()).putLong(state.highWater())
+                .putInt(state.entries().size());
         for (Entry entry : state.entries()) {
-            value.put((byte) entry.kind().ordinal()).putLong(entry.expiresAt())
+            value.put((byte) entry.kind().ordinal()).putLong(entry.createdAt())
+                    .putLong(entry.lifetimeMillis()).putLong(entry.expiresAt())
                     .putLong(entry.access());
             put(value, entry.scope().getBytes(StandardCharsets.US_ASCII));
             put(value, entry.key().getBytes(StandardCharsets.US_ASCII));
@@ -223,7 +245,7 @@ final class ProviderCacheStore {
     }
 
     private State decodeState(byte[] encoded) throws IOException {
-        if (encoded.length < DATA_MAGIC.length + Long.BYTES + Integer.BYTES + DIGEST_BYTES
+        if (encoded.length < DATA_MAGIC.length + Long.BYTES * 2 + Integer.BYTES + DIGEST_BYTES
                 || encoded.length > maxBytes) throw new IOException("cache state size is invalid");
         int contentLength = encoded.length - DIGEST_BYTES;
         if (!MessageDigest.isEqual(digest(encoded, 0, contentLength),
@@ -235,8 +257,9 @@ final class ProviderCacheStore {
         value.get(magic);
         if (!Arrays.equals(DATA_MAGIC, magic)) throw new IOException("cache magic mismatch");
         long nextAccess = value.getLong();
+        long highWater = value.getLong();
         int count = value.getInt();
-        if (nextAccess < 1 || count < 0 || count > maxEntries) {
+        if (nextAccess < 1 || highWater < 0 || count < 0 || count > maxEntries) {
             throw new IOException("cache header invalid");
         }
         List<Entry> entries = new ArrayList<>();
@@ -245,13 +268,15 @@ final class ProviderCacheStore {
         for (int index = 0; index < count; index++) {
             int ordinal = value.get() & 0xff;
             if (ordinal >= Kind.values().length) throw new IOException("cache kind invalid");
+            long entryCreated = value.getLong();
+            long entryLifetime = value.getLong();
             long entryExpiry = value.getLong();
             long access = value.getLong();
             String scope = ascii(get(value, 80), "sha256:[0-9a-f]{64}");
             String key = ascii(get(value, 96), "hmac-sha256:[0-9a-f]{64}");
             byte[] payload = get(value, ProviderCacheCodec.MAX_PAYLOAD_BYTES);
             try {
-                if (entryExpiry < 0 || access < 1
+                if (!validLifetime(entryCreated, entryLifetime, entryExpiry) || access < 1
                         || !ProviderCacheSafety.safe(payload, null, null)) {
                     throw new IOException("cache entry invalid");
                 }
@@ -260,7 +285,8 @@ final class ProviderCacheStore {
                 if (!unique.add(kind + "\n" + scope + "\n" + key)) {
                     throw new IOException("cache entry duplicated");
                 }
-                entries.add(new Entry(kind, scope, key, entryExpiry, access, payload));
+                entries.add(new Entry(kind, scope, key, entryCreated, entryLifetime,
+                        entryExpiry, access, payload));
                 maximumAccess = Math.max(maximumAccess, access);
             } finally {
                 Arrays.fill(payload, (byte) 0);
@@ -269,7 +295,7 @@ final class ProviderCacheStore {
         if (value.hasRemaining() || nextAccess <= maximumAccess) {
             throw new IOException("cache tail invalid");
         }
-        return new State(nextAccess, entries);
+        return new State(nextAccess, highWater, entries);
     }
 
     private static void validatePayload(Kind kind, byte[] payload) throws IOException {
@@ -278,9 +304,9 @@ final class ProviderCacheStore {
     }
 
     private int encodedSize(State state) {
-        long size = DATA_MAGIC.length + Long.BYTES + Integer.BYTES + DIGEST_BYTES;
+        long size = DATA_MAGIC.length + Long.BYTES * 2 + Integer.BYTES + DIGEST_BYTES;
         for (Entry entry : state.entries()) {
-            size += 1L + Long.BYTES * 2 + Integer.BYTES * 3
+            size += 1L + Long.BYTES * 4 + Integer.BYTES * 3
                     + entry.scope().length() + entry.key().length()
                     + entry.payloadInternal().length;
         }
@@ -381,19 +407,34 @@ final class ProviderCacheStore {
         return new ProviderFailure("provider_cache_invalid", message, false);
     }
 
+    private static boolean validLifetime(long createdAt, long lifetime, long expiresAt) {
+        if (createdAt < 0 || lifetime < 1 || lifetime > Duration.ofHours(24).toMillis()) {
+            return false;
+        }
+        try {
+            return Math.addExact(createdAt, lifetime) == expiresAt;
+        } catch (ArithmeticException overflow) {
+            return false;
+        }
+    }
+
     private static final class Entry {
         private final Kind kind;
         private final String scope;
         private final String key;
+        private final long createdAt;
+        private final long lifetimeMillis;
         private final long expiresAt;
         private long access;
         private final byte[] payload;
 
-        private Entry(Kind kind, String scope, String key, long expiresAt, long access,
-                byte[] payload) {
+        private Entry(Kind kind, String scope, String key, long createdAt, long lifetimeMillis,
+                long expiresAt, long access, byte[] payload) {
             this.kind = kind;
             this.scope = scope;
             this.key = key;
+            this.createdAt = createdAt;
+            this.lifetimeMillis = lifetimeMillis;
             this.expiresAt = expiresAt;
             this.access = access;
             this.payload = payload.clone();
@@ -402,7 +443,13 @@ final class ProviderCacheStore {
         Kind kind() { return kind; }
         String scope() { return scope; }
         String key() { return key; }
+        long createdAt() { return createdAt; }
+        long lifetimeMillis() { return lifetimeMillis; }
         long expiresAt() { return expiresAt; }
+        boolean validAt(long now) {
+            return validLifetime(createdAt, lifetimeMillis, expiresAt)
+                    && createdAt <= now && expiresAt > now;
+        }
         long access() { return access; }
         void access(long value) { access = value; }
         byte[] payloadInternal() { return payload; }
@@ -411,15 +458,19 @@ final class ProviderCacheStore {
 
     private static final class State {
         private long nextAccess;
+        private long highWater;
         private final List<Entry> entries;
 
-        private State(long nextAccess, List<Entry> entries) {
+        private State(long nextAccess, long highWater, List<Entry> entries) {
             this.nextAccess = nextAccess;
+            this.highWater = highWater;
             this.entries = entries;
         }
 
         long nextAccess() { return nextAccess; }
         void nextAccess(long value) { nextAccess = value; }
+        long highWater() { return highWater; }
+        void highWater(long value) { highWater = value; }
         List<Entry> entries() { return entries; }
     }
 }

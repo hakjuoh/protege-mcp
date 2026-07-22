@@ -165,6 +165,26 @@ class Ols4ProviderTest {
     }
 
     @Test
+    void responseTextBoundsCountUnicodeCodePoints() throws Exception {
+        String astral = "\uD83D\uDE00";
+        String accepted = "{\"response\":{\"numFound\":1,\"start\":0,\"docs\":[{"
+                + "\"iri\":\"https://example.org/EFO_1\",\"ontology_name\":\"efo\","
+                + "\"label\":\"" + astral.repeat(4_096) + "\"}]}}";
+        ProviderPage page = new Ols4Provider().search(new ProviderSearchRequest(
+                "ols", "term", List.of("efo"), "en", 1, null),
+                request -> response("/ols4/api/search", accepted));
+        assertEquals(4_096, page.items().get(0).labels().get(0).value()
+                .codePointCount(0, page.items().get(0).labels().get(0).value().length()));
+
+        String rejected = accepted.replace(astral.repeat(4_096), astral.repeat(4_097));
+        ProviderFailure failure = assertThrows(ProviderFailure.class,
+                () -> new Ols4Provider().search(new ProviderSearchRequest(
+                        "ols", "term", List.of("efo"), "en", 1, null),
+                        request -> response("/ols4/api/search", rejected)));
+        assertEquals("provider_response_invalid", failure.code());
+    }
+
+    @Test
     void malformedOrMismatchedResponsesFailAtomically() {
         Ols4Provider provider = new Ols4Provider();
         ProviderFailure malformed = assertThrows(ProviderFailure.class,
@@ -214,6 +234,18 @@ class Ols4ProviderTest {
                         "ols", "efo", "https://example.org/EFO_1", "en"), mismatchedMetadata));
         assertEquals("provider_response_invalid", mismatch.code());
 
+        ProviderTransport invalidLanguage = request -> request.relativePath()
+                .equals("/api/ontologies/efo")
+                ? response("/ols4/api/ontologies/efo", "{\"ontologyId\":\"efo\"}")
+                : response("/ols4" + request.relativePath(), """
+                        {"iri":"https://example.org/EFO_1","label":"Term","lang":"en_US",
+                         "ontology_name":"efo","is_obsolete":false}
+                        """);
+        ProviderFailure language = assertThrows(ProviderFailure.class,
+                () -> new Ols4Provider().inspect(new ProviderInspectRequest(
+                        "ols", "efo", "https://example.org/EFO_1", "en"), invalidLanguage));
+        assertEquals("provider_response_invalid", language.code());
+
         ProviderTransport invalidIriMetadata = request -> request.relativePath()
                 .equals("/api/ontologies/efo")
                 ? response("/ols4/api/ontologies/efo", "{\"ontologyId\":\"efo\"}")
@@ -227,7 +259,7 @@ class Ols4ProviderTest {
                         "ols", "efo", "https://example.org/EFO_1", "en"), invalidIriMetadata));
         assertEquals("provider_response_invalid", invalidIri.code());
 
-        String iri = "https://example.org/" + "ü".repeat(4_000);
+        String iri = "https://example.org/" + "\u00FC".repeat(4_000);
         ProviderFailure tooLarge = assertThrows(ProviderFailure.class,
                 () -> new Ols4Provider().inspect(new ProviderInspectRequest(
                                 "ols", "efo", iri, "en"),

@@ -4,6 +4,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
@@ -22,28 +23,68 @@ public final class PrincipalExecutionGate {
     // removing them on a timer would let a request paused after authentication resume after expiry.
     // The whole context (and this bounded desktop-session state) is discarded on server restart.
     private final ConcurrentHashMap<String, ClientState> clients = new ConcurrentHashMap<>();
+    private final ReentrantReadWriteLock lifecycle = new ReentrantReadWriteLock(true);
+    private volatile boolean closed;
 
     public Lease acquire(AuthenticatedPrincipal principal) {
-        if (principal == null) {
-            throw new ToolArgException("authorization_denied",
-                    "Authorization denied: authenticated principal is missing.", false);
+        Lock lifecycleLease = lifecycle.readLock();
+        lifecycleLease.lock();
+        try {
+            if (closed) {
+                throw new ToolArgException("authorization_revoked",
+                        "Authorization denied: the tool context is shutting down.", false);
+            }
+            if (principal == null) {
+                throw new ToolArgException("authorization_denied",
+                        "Authorization denied: authenticated principal is missing.", false);
+            }
+            ClientState state = clients.computeIfAbsent(
+                    principal.clientId(), ignored -> new ClientState());
+            if (state.clientRevocationPending || (principal.grantId() != null
+                    && state.pendingGrants.contains(principal.grantId()))) {
+                throw new ToolArgException("authorization_revoked",
+                        "Authorization denied: this client or grant was revoked.", false);
+            }
+            state.lock.readLock().lock();
+            if (state.clientRevocationPending || state.clientRevoked
+                    || (principal.grantId() != null
+                    && (state.pendingGrants.contains(principal.grantId())
+                    || state.revokedGrants.contains(principal.grantId())))) {
+                state.lock.readLock().unlock();
+                throw new ToolArgException("authorization_revoked",
+                        "Authorization denied: this client or grant was revoked.", false);
+            }
+            state.active.incrementAndGet();
+            return new Lease(state, lifecycleLease);
+        } catch (RuntimeException | Error denied) {
+            lifecycleLease.unlock();
+            throw denied;
         }
-        ClientState state = clients.computeIfAbsent(principal.clientId(), ignored -> new ClientState());
-        if (state.clientRevocationPending || (principal.grantId() != null
-                && state.pendingGrants.contains(principal.grantId()))) {
-            throw new ToolArgException("authorization_revoked",
-                    "Authorization denied: this client or grant was revoked.", false);
+    }
+
+    /** Reject new executions without waiting for handlers that already hold lifecycle leases. */
+    public void beginShutdown() {
+        closed = true;
+    }
+
+    /** Whether shutdown can take exclusive ownership without waiting for an accepted handler. */
+    public boolean isDrained() {
+        Lock shutdown = lifecycle.writeLock();
+        if (!shutdown.tryLock()) return false;
+        shutdown.unlock();
+        return true;
+    }
+
+    /** Reject new executions and wait until every accepted handler releases its lifecycle lease. */
+    public void closeAndAwait() {
+        beginShutdown();
+        Lock shutdown = lifecycle.writeLock();
+        shutdown.lock();
+        try {
+            // Acquiring the write lock proves every earlier lifecycle read lease was released.
+        } finally {
+            shutdown.unlock();
         }
-        state.lock.readLock().lock();
-        if (state.clientRevocationPending || state.clientRevoked
-                || (principal.grantId() != null && (state.pendingGrants.contains(principal.grantId())
-                || state.revokedGrants.contains(principal.grantId())))) {
-            state.lock.readLock().unlock();
-            throw new ToolArgException("authorization_revoked",
-                    "Authorization denied: this client or grant was revoked.", false);
-        }
-        state.active.incrementAndGet();
-        return new Lease(state);
     }
 
     public Revocation revokeClient(String clientId) {
@@ -95,9 +136,11 @@ public final class PrincipalExecutionGate {
 
     public static final class Lease implements AutoCloseable {
         private ClientState state;
+        private Lock lifecycleLease;
 
-        private Lease(ClientState state) {
+        private Lease(ClientState state, Lock lifecycleLease) {
             this.state = state;
+            this.lifecycleLease = lifecycleLease;
         }
 
         @Override
@@ -109,6 +152,9 @@ public final class PrincipalExecutionGate {
             state = null;
             current.active.decrementAndGet();
             current.lock.readLock().unlock();
+            Lock lifecycle = lifecycleLease;
+            lifecycleLease = null;
+            lifecycle.unlock();
         }
     }
 

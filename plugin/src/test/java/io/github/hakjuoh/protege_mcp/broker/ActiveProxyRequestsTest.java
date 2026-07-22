@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
@@ -66,6 +67,42 @@ class ActiveProxyRequestsTest {
 
         requests.closeAll();
         assertTrue(bBody.closed);
+    }
+
+    @Test
+    void grantTerminationRejectsOnlyThatGrant() {
+        ActiveProxyRequests requests = new ActiveProxyRequests();
+        AuthenticatedPrincipal revoked = AuthenticatedPrincipal.oauthAdmin(
+                "client", "Client", "grant-a");
+        AuthenticatedPrincipal retained = AuthenticatedPrincipal.oauthAdmin(
+                "client", "Client", "grant-b");
+        ActiveProxyRequests.Reservation reservation = requests.open(revoked, null);
+        TrackingInputStream body = new TrackingInputStream();
+        reservation.attach(body);
+
+        assertEquals(1, requests.terminateGrant("client", "grant-a"));
+        assertTrue(body.closed);
+        assertNull(requests.open(revoked, null));
+        assertNotNull(requests.open(retained, null));
+        requests.closeAll();
+    }
+
+    @Test
+    void revocationTombstonesHaveAFailClosedCapacityBound() {
+        ActiveProxyRequests requests = new ActiveProxyRequests();
+        for (int index = 0; index < 4_096; index++) {
+            requests.prepareSession("session-" + index);
+        }
+        requests.prepareSession("session-0");
+        requests.prepareGrant("client", "grant");
+        assertThrows(IllegalStateException.class,
+                () -> requests.prepareSession("one-more-session"));
+
+        for (int index = 1; index < 2_048; index++) {
+            requests.prepareGrant("client", "grant-" + index);
+        }
+        assertThrows(IllegalStateException.class,
+                () -> requests.prepareClient("one-more-client"));
     }
 
     private static final class TrackingInputStream extends ByteArrayInputStream {

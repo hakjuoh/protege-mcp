@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
  * {@link OAuthServlet#doPost} entry points (the plan marked the private helpers "avoid", but they
  * are reachable and fully testable through the public methods with hand-rolled fakes).
  *
- * <p>Fakes are hand-rolled — no Mockito. {@link FakeRequest} records parameters / path-info / body,
+ * <p>Fakes are hand-rolled - no Mockito. {@link FakeRequest} records parameters / path-info / body,
  * {@link FakeResponse} records status, headers, content type, written body, redirect target and
  * {@code sendError}. The collaborators are a REAL {@link OAuthStore} (constructible with plain
  * lambda hooks, no Protege runtime) and a real {@link ObjectMapper}. Generated ids/codes/tokens are
@@ -49,7 +49,7 @@ class OAuthServletTest {
     }
 
     private static OAuthServlet servlet(OAuthStore store) {
-        return new OAuthServlet(store, MAPPER);
+        return new OAuthServlet(store, MAPPER, (clientId, grantId) -> { });
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -314,7 +314,8 @@ class OAuthServletTest {
 
     @Test
     void constructorAcceptsStoreAndMapper() {
-        OAuthServlet s = new OAuthServlet(emptyStore(), MAPPER);
+        OAuthServlet s = new OAuthServlet(emptyStore(), MAPPER,
+                (clientId, grantId) -> { });
         assertNotNull(s, "servlet constructed with store + mapper");
     }
 
@@ -550,7 +551,7 @@ class OAuthServletTest {
         assertEquals("text/html;charset=utf-8", resp.contentType, "consent page is HTML");
         assertEquals("no-store", resp.headers.get("Cache-Control"), "no-store");
         String html = resp.body();
-        assertTrue(html.contains("Authorize access to Protégé"), "consent heading present");
+        assertTrue(html.contains("Authorize access to Protege"), "consent heading present");
         assertTrue(html.contains("value=\"allow\""), "allow button present");
         assertTrue(html.contains("value=\"deny\""), "deny button present");
         assertTrue(html.contains("name=\"code_challenge\" value=\"abc123\""),
@@ -1113,15 +1114,50 @@ class OAuthServletTest {
         OAuthStore store = emptyStore();
         String cid = store.registerClient(List.of("http://a/cb"), "app").clientId;
         OAuthStore.Tokens issued = store.issueTokens(cid, "read", "res");
+        OAuthStore.TokenIdentity identity = store.authenticate(issued.accessToken);
+        String[] revoked = new String[2];
         assertTrue(store.isValidAccessToken(issued.accessToken), "token valid before revoke");
 
         FakeRequest req = new FakeRequest().path("/revoke").param("token", issued.accessToken);
         FakeResponse resp = new FakeResponse();
-        servlet(store).doPost(req, resp);
+        new OAuthServlet(store, MAPPER, (clientId, grantId) -> {
+            revoked[0] = clientId;
+            revoked[1] = grantId;
+        }).doPost(req, resp);
 
         assertEquals(HttpServletResponse.SC_OK, resp.status, "revoke -> 200");
         assertEquals("no-store", resp.headers.get("Cache-Control"), "no-store header set");
         assertFalse(store.isValidAccessToken(issued.accessToken), "token dropped after revoke");
+        assertEquals(cid, revoked[0]);
+        assertEquals(identity.grantId(), revoked[1]);
+    }
+
+    @Test
+    void revokeWriteAheadFailureReturns503AndKeepsGrantLive() throws IOException {
+        OAuthStore store = emptyStore();
+        String clientId = store.registerClient(List.of("http://a/cb"), "app").clientId;
+        OAuthStore.Tokens issued = store.issueTokens(clientId, "read", "res");
+        boolean[] executed = new boolean[1];
+        OAuthServlet.GrantRevoker revoker = new OAuthServlet.GrantRevoker() {
+            @Override
+            public void prepare(String ignoredClientId, String ignoredGrantId) {
+                throw new IllegalStateException("journal unavailable");
+            }
+
+            @Override
+            public void revoke(String ignoredClientId, String ignoredGrantId) {
+                executed[0] = true;
+            }
+        };
+        FakeRequest req = new FakeRequest().path("/revoke").param("token", issued.accessToken);
+        FakeResponse resp = new FakeResponse();
+
+        new OAuthServlet(store, MAPPER, revoker).doPost(req, resp);
+
+        assertEquals(HttpServletResponse.SC_SERVICE_UNAVAILABLE, resp.status);
+        assertTrue(store.isValidAccessToken(issued.accessToken));
+        assertFalse(executed[0]);
+        assertEquals("no-store", resp.headers.get("Cache-Control"));
     }
 
     @Test
@@ -1203,7 +1239,7 @@ class OAuthServletTest {
     // Same-machine gate: the consent-less flow must not be drivable from another host
     // ---------------------------------------------------------------------------------------------
 
-    /** 203.0.113.x (TEST-NET-3) is reserved for documentation — never a local interface address. */
+    /** 203.0.113.x (TEST-NET-3) is reserved for documentation - never a local interface address. */
     private static final String REMOTE_ADDR = "203.0.113.9";
 
     @Test
@@ -1222,7 +1258,7 @@ class OAuthServletTest {
     @Test
     void remotePeerCannotDriveTheAuthorizeDecision() throws IOException {
         // The Allow decision is bound to nothing but reachability, so a remote POST
-        // decision=allow would mint a code with zero user involvement — the exact hole the
+        // decision=allow would mint a code with zero user involvement - the exact hole the
         // gate closes for non-loopback binds.
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");

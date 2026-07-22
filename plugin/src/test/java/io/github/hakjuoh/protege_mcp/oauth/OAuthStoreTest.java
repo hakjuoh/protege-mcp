@@ -14,6 +14,9 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -149,6 +152,38 @@ class OAuthStoreTest {
     }
 
     @Test
+    void concurrentRefreshCannotResurrectARecognizedRevocation() throws Exception {
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            OAuthStore s = store("tok", null);
+            OAuthStore.Client c = s.registerClient(List.of("http://localhost/cb"), "app");
+            OAuthStore.Tokens first = s.issueTokens(c.clientId, "read", "res");
+            CountDownLatch prepared = new CountDownLatch(1);
+            CountDownLatch release = new CountDownLatch(1);
+            var revoke = pool.submit(() -> s.revokeTokenGrant(first.refreshToken, identity -> {
+                prepared.countDown();
+                try {
+                    if (!release.await(5, TimeUnit.SECONDS)) {
+                        throw new AssertionError("timed out holding the write-ahead fence");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(interrupted);
+                }
+            }));
+            assertTrue(prepared.await(5, TimeUnit.SECONDS));
+            var refresh = pool.submit(() -> s.refresh(first.refreshToken));
+            assertFalse(refresh.isDone(),
+                    "refresh must wait while revocation owns the grant transaction");
+            release.countDown();
+            assertNotNull(revoke.get(5, TimeUnit.SECONDS));
+            assertNull(refresh.get(5, TimeUnit.SECONDS));
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void ephemeralPrincipalIsNonPersistentExpiresAndRevokesImmediately() {
         java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000L);
         SaveCapture save = new SaveCapture();
@@ -217,7 +252,7 @@ class OAuthStoreTest {
         deferred.loadPersisted();
         assertNotNull(deferred.client(c.clientId), "loadPersisted() hydrates the persisted clients");
         assertTrue(deferred.isValidAccessToken(t.accessToken),
-                "…and the persisted grant authenticates after hydration");
+                "...and the persisted grant authenticates after hydration");
     }
 
     @Test
@@ -549,7 +584,7 @@ class OAuthStoreTest {
     @Test
     void isValidAccessTokenFalseWhenClientMissing() {
         // Fail-closed: an orphaned-but-unexpired grant (its client record gone, only reachable from
-        // corrupted persisted state) is rejected — a token is honoured only while its client exists.
+        // corrupted persisted state) is rejected - a token is honoured only while its client exists.
         String json = "{\"clients\":[],"
                 + "\"accessTokens\":[{\"token\":\"mcpt_orphan\",\"clientId\":\"gone\","
                 + "\"grantId\":\"g\",\"scope\":\"read\",\"resource\":\"res\","
@@ -647,7 +682,9 @@ class OAuthStoreTest {
     void revokeTokenViaAccessTokenDropsBothSiblings() {
         OAuthStore s = store("tok");
         OAuthStore.Tokens t = s.issueTokens("cid", "read", "res");
-        assertTrue(s.revokeToken(t.accessToken), "revoke by access token -> true");
+        OAuthStore.RevokedGrant revoked = s.revokeTokenGrant(t.accessToken);
+        assertEquals("cid", revoked.clientId());
+        assertFalse(revoked.grantId().isBlank());
         assertFalse(s.isValidAccessToken(t.accessToken), "access token dropped");
         assertNull(s.refresh(t.refreshToken), "sibling refresh token dropped");
     }
@@ -860,7 +897,7 @@ class OAuthStoreTest {
     @Test
     void evictedClientAccessTokenIsRejected() {
         // The persist() size guard evicts the least-recently-seen client TOGETHER with its tokens, so an
-        // evicted client's access token must stop validating — the runtime counterpart to the
+        // evicted client's access token must stop validating - the runtime counterpart to the
         // corrupted-state orphan rejection in isValidAccessTokenFalseWhenClientMissing. Deterministic on
         // a hand-cranked clock: 'victim' is issued its tokens first (issuing bumps lastSeenAt), then every
         // flood client is issued tokens at a strictly later clock value, leaving the victim as the
@@ -885,7 +922,7 @@ class OAuthStoreTest {
     @Test
     void issuingToAReRegisteredClientSupersedesItsOldSameNameRegistration() {
         // The reconnect case: a client lost its credentials, re-registered under the same name and
-        // completed authorization — its previous registration (and tokens) must clean up on its own.
+        // completed authorization - its previous registration (and tokens) must clean up on its own.
         java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
         OAuthStore s = store(clock, null);
         OAuthStore.Client old = s.registerClient(List.of("http://a/cb"), "Claude Code");
@@ -914,7 +951,7 @@ class OAuthStoreTest {
     @Test
     void supersedeKeepsASameNameClientSeenAfterTheSuccessorRegistered() {
         // Two genuinely live same-name clients: the older one authenticated a request AFTER the
-        // newcomer registered, proving it is alive — it must not be yanked.
+        // newcomer registered, proving it is alive - it must not be yanked.
         java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
         OAuthStore s = store(clock, null);
         OAuthStore.Client old = s.registerClient(List.of("http://a/cb"), "Claude Code");
@@ -926,7 +963,7 @@ class OAuthStoreTest {
         s.issueTokens(fresh.clientId, "read", "res");
         assertNotNull(s.client(old.clientId),
                 "a same-name client seen after the successor registered is demonstrably alive");
-        assertTrue(s.isValidAccessToken(oldTokens.accessToken), "…and keeps its tokens");
+        assertTrue(s.isValidAccessToken(oldTokens.accessToken), "...and keeps its tokens");
     }
 
     @Test
@@ -939,7 +976,7 @@ class OAuthStoreTest {
         OAuthStore.Client fresh = s.registerClient(List.of("http://b/cb"), "Claude Code");
         s.issueTokens(fresh.clientId, "read", "res");
         assertNotNull(s.client(inFlight.clientId),
-                "a pending (unexpired) auth code marks an in-flight flow — never superseded");
+                "a pending (unexpired) auth code marks an in-flight flow - never superseded");
         assertNotNull(s.consumeAuthCode(code), "the in-flight code still completes");
     }
 
@@ -1038,7 +1075,7 @@ class OAuthStoreTest {
         OAuthStore s = store(clock, null);
         OAuthStore.Client dead = s.registerClient(List.of("http://a/cb"), "Claude Code");
         s.newAuthCode(dead.clientId, "http://a/cb", "chal", "read", "res");
-        clock.addAndGet(130_000); // past the 2-minute code TTL — the flow is dead, not in-flight
+        clock.addAndGet(130_000); // past the 2-minute code TTL - the flow is dead, not in-flight
         OAuthStore.Client fresh = s.registerClient(List.of("http://b/cb"), "Claude Code");
         s.issueTokens(fresh.clientId, "read", "res");
         assertNull(s.client(dead.clientId),
@@ -1066,7 +1103,7 @@ class OAuthStoreTest {
     void supersedeRequiresStrictlyOlderRegistrationAndStaleLastSeen() {
         java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
         OAuthStore s = store(clock, null);
-        // Same-instant registrations (same clock value): neither is strictly older — both kept.
+        // Same-instant registrations (same clock value): neither is strictly older - both kept.
         OAuthStore.Client a = s.registerClient(List.of("http://a/cb"), "app");
         OAuthStore.Client b = s.registerClient(List.of("http://b/cb"), "app");
         s.issueTokens(b.clientId, "read", "res");
@@ -1106,7 +1143,7 @@ class OAuthStoreTest {
     @Test
     void sweepCollectsOrphanedGrants() throws Exception {
         // Grants whose client record is gone can never validate (fail-closed) but would otherwise
-        // sit in the persisted blob forever — the sweep drops them.
+        // sit in the persisted blob forever - the sweep drops them.
         java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong(1_000_000L);
         SaveCapture save = new SaveCapture();
         OAuthStore s = store(clock, save);

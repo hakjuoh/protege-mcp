@@ -267,7 +267,7 @@ class ToolRegistryTest {
 
     @Test
     void everyCatalogToolHasExactlyOneNonEmptyKnownCapabilityDeclaration() {
-        assertEquals(91, McpCatalog.get().toolNames().size());
+        assertEquals(95, McpCatalog.get().toolNames().size());
         assertEquals(McpCatalog.get().toolNames(), ToolCatalog.buildAll(
                 new ToolContext(null, null)).stream()
                         .map(spec -> spec.tool().name())

@@ -74,6 +74,33 @@ class SssomMappingStoreTest {
     }
 
     @Test
+    void lockedAddRejectsExistenceDriftEvenWhenCanonicalRevisionIsEqual() throws Exception {
+        Path target = temporary.resolve("existence/mappings.sssom.tsv");
+        Files.createDirectories(target.getParent());
+        SssomMappingStore store = store(target);
+        SssomMappingStore.Snapshot absent = store.read(structural(), unavailable());
+        Files.write(target, SssomParser.render(SssomDocument.empty()));
+        SssomMappingStore.Snapshot present = store.read(structural(), unavailable());
+        assertTrue(present.exists());
+        assertEquals(absent.mappingRevision(), present.mappingRevision());
+
+        SssomStoreException appeared = assertThrows(SssomStoreException.class,
+                () -> store.add(absent.mappingRevision(), row("A", "B"),
+                        mappingMetadata(), Map.of(), structural(), unavailable(),
+                        SssomMappingStore.MutationGuard.none(), false));
+        assertEquals("mapping_existence_conflict", appeared.code());
+        assertEquals(0, store.read(structural(), unavailable()).recordCount());
+
+        Files.delete(target);
+        SssomStoreException disappeared = assertThrows(SssomStoreException.class,
+                () -> store.add(present.mappingRevision(), row("A", "B"),
+                        mappingMetadata(), Map.of(), structural(), unavailable(),
+                        SssomMappingStore.MutationGuard.none(), true));
+        assertEquals("mapping_existence_conflict", disappeared.code());
+        assertFalse(Files.exists(target));
+    }
+
+    @Test
     void exactDuplicateIsIdempotentAndIdCollisionIsAtomic() throws Exception {
         Path target = temporary.resolve("mappings.sssom.tsv");
         SssomMappingStore store = store(target);

@@ -2,7 +2,11 @@ package io.github.hakjuoh.protege_mcp.tools;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -11,7 +15,11 @@ import java.util.Set;
 import org.semanticweb.owlapi.model.IRI;
 
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
+import io.github.hakjuoh.protege_mcp.contracts.ModelRevision;
 import io.github.hakjuoh.protege_mcp.core.workspace.WorkspaceFingerprints;
+import io.github.hakjuoh.protege_mcp.external.ReuseOperation;
+import io.github.hakjuoh.protege_mcp.external.ReuseProposal;
+import io.github.hakjuoh.protege_mcp.external.ReuseProposalTargetIdentity;
 import io.github.hakjuoh.protege_mcp.sssom.SssomEntityIndex;
 import io.github.hakjuoh.protege_mcp.sssom.SssomEntityIndexes;
 import io.github.hakjuoh.protege_mcp.sssom.SssomMappingStore;
@@ -23,7 +31,7 @@ import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
-/** Live Protégé adapter for the six shared SSSOM mapping operations. */
+/** Live Protege adapter for the six shared SSSOM mapping operations. */
 public final class MappingTools {
 
     private static final Set<String> MUTATIONS = Set.of(
@@ -137,6 +145,158 @@ public final class MappingTools {
             return resolve(context, exchange, args, writeStore, captureEntities);
         } catch (ToolArgException refusal) {
             throw effectsPrevented(refusal);
+        }
+    }
+
+    /** Capture the policy-governed mapping and model identity used by a read-only reuse proposal. */
+    static ProposalState proposalState(ToolContext context, McpSyncServerExchange exchange,
+            Map<String, Object> args) {
+        Resolved captured = resolve(context, exchange, args, false, false);
+        if (!captured.policy.loaded() || captured.policy.version() != 2
+                || captured.policy.digest() == null) {
+            throw new ToolArgException("provider_policy_required",
+                    "Reuse proposals require a valid project policy version 2.", false);
+        }
+        try {
+            SssomMappingStore store = new SssomMappingStore(captured.root, captured.target);
+            SssomMappingStore.Snapshot mappingSnapshot = store.read(captured.validation,
+                    SssomEntityIndex.unavailable());
+            String mappingRevision = mappingSnapshot.mappingRevision();
+            ModelRevision modelRevision = context.access().compute(mm -> context.revisions().current(
+                    mm, RevisionTools.digestImportLock(captured.policy),
+                    captured.policy.digest()).revision());
+
+            Resolved current = resolve(context, exchange, args, false, false);
+            SssomMappingStore.Snapshot currentMapping =
+                    new SssomMappingStore(current.root, current.target)
+                    .read(current.validation, SssomEntityIndex.unavailable());
+            String currentMappingRevision = currentMapping.mappingRevision();
+            if (!captured.identity().equals(current.identity())
+                    || !captured.policy.digest().equals(current.policy.digest())
+                    || !mappingRevision.equals(currentMappingRevision)
+                    || mappingSnapshot.exists() != currentMapping.exists()) {
+                throw new ToolArgException("proposal_input_changed",
+                        "Project policy or mapping state changed while the proposal was captured.",
+                        Map.of("effects_prevented", true), true);
+            }
+            ReuseProposalTargetIdentity targetIdentity = ReuseProposalTargetIdentity.create(
+                    canonicalIdentity(captured.root), canonicalIdentity(captured.policy.path()),
+                    canonicalIdentity(captured.target), mappingSnapshot.exists());
+            return new ProposalState(captured.policy, modelRevision, mappingRevision,
+                    targetIdentity);
+        } catch (SssomStoreException failure) {
+            throw toolFailure(failure);
+        } catch (IOException failure) {
+            throw new ToolArgException("mapping_io_failed",
+                    "Mapping state could not be captured for the reuse proposal.",
+                    Map.of("effects_prevented", true), true);
+        }
+    }
+
+    /** Commit the mapping step of an accepted reuse proposal with the ordinary mapping CAS. */
+    static Map<String, Object> acceptProposalMapping(ToolContext context,
+            McpSyncServerExchange exchange, Map<String, Object> args,
+            ReuseProposal proposal, boolean confirmationMode,
+            ModelRevision expectedModelRevision) {
+        if (proposal == null) throw new IllegalArgumentException("reuse proposal is required");
+        final Map<String, String> cells;
+        if (proposal.operation() instanceof ReuseOperation.AddMapping add) {
+            cells = add.mappingCells();
+        } else if (proposal.operation() instanceof ReuseOperation.MintLocalWithMapping mint) {
+            cells = mint.mappingCells();
+        } else {
+            throw new IllegalArgumentException(
+                    "reuse action does not contain a mapping operation");
+        }
+        Resolved resolved = resolveBeforeMutation(context, exchange, args, true, true);
+        if (!resolved.policy.loaded() || resolved.policy.version() != 2
+                || !proposal.inputIdentity().policyDigest().equals(resolved.policy.digest())) {
+            throw effectsPrevented(new ToolArgException("proposal_input_changed",
+                    "Project policy changed after the reuse proposal was issued.", true));
+        }
+        try {
+            SssomMappingStore store = new SssomMappingStore(resolved.root, resolved.target);
+            SssomMappingStore.Snapshot before = store.read(
+                    resolved.validation, SssomEntityIndex.unavailable());
+            ReuseProposalTargetIdentity targetIdentity = ReuseProposalTargetIdentity.create(
+                    canonicalIdentity(resolved.root), canonicalIdentity(resolved.policy.path()),
+                    canonicalIdentity(resolved.target), before.exists());
+            if (!proposal.inputIdentity().targetIdentity().equals(targetIdentity)) {
+                throw effectsPrevented(new ToolArgException("proposal_input_changed",
+                        "Project, policy source, or mapping target changed after the reuse "
+                                + "proposal was issued.", true));
+            }
+            SssomMappingStore.MutationGuard ordinary = mutationGuard(
+                    context, exchange, args, resolved, true, confirmationMode);
+            SssomMappingStore.MutationGuard acceptance = () -> {
+                ordinary.check();
+                if (expectedModelRevision != null) {
+                    ModelRevision current = context.access().compute(mm -> context.revisions()
+                            .current(mm, RevisionTools.digestImportLock(resolved.policy),
+                                    resolved.policy.digest()).revision());
+                    if (!expectedModelRevision.equals(current)) {
+                        throw new SssomStoreException("proposal_input_changed",
+                                "Ontology state changed after reuse proposal verification", true);
+                    }
+                }
+            };
+            return SssomToolService.add(store,
+                    proposal.inputIdentity().mappingRevision(), cells, initialMetadata(args),
+                    Map.of(), resolved.validation, resolved.entities,
+                    acceptance,
+                    proposal.inputIdentity().targetIdentity().mappingExists());
+        } catch (SssomStoreException failure) {
+            throw toolFailure(failure);
+        } catch (ToolArgException failure) {
+            throw effectsPrevented(failure);
+        } catch (IOException failure) {
+            throw new ToolArgException("mapping_io_failed",
+                    "Mapping acceptance failed after filesystem execution began; check the "
+                            + "mapping revision before retrying.",
+                    Map.of("outcome_unknown", true,
+                            "mutation_outcome_unknown", true,
+                            "retry_requires_state_check", true), false);
+        } catch (IllegalArgumentException failure) {
+            throw effectsPrevented(new ToolArgException(
+                    "reuse_operation_invalid", failure.getMessage(), false));
+        }
+    }
+
+    /** Recheck the exact proposal target from inside the joined model-thread mint boundary. */
+    static void requireProposalTarget(ToolContext context, McpSyncServerExchange exchange,
+            Map<String, Object> args, ReuseProposal proposal, ProjectPolicy loadedPolicy) {
+        if (proposal == null || loadedPolicy == null) {
+            throw new IllegalArgumentException("proposal and loaded policy are required");
+        }
+        Resolved current = resolve(context, exchange, args, false, false);
+        if (!current.policy.loaded() || current.policy.version() != 2
+                || !loadedPolicy.digest().equals(current.policy.digest())
+                || !canonicalIdentity(loadedPolicy.path()).equals(
+                        canonicalIdentity(current.policy.path()))) {
+            throw new ToolArgException("proposal_input_changed",
+                    "Project policy source changed before ontology mint execution.",
+                    Map.of("effects_prevented", true), true);
+        }
+        try {
+            SssomMappingStore.Snapshot mapping = new SssomMappingStore(
+                    current.root, current.target).read(
+                            current.validation, SssomEntityIndex.unavailable());
+            ReuseProposalTargetIdentity target = ReuseProposalTargetIdentity.create(
+                    canonicalIdentity(current.root), canonicalIdentity(current.policy.path()),
+                    canonicalIdentity(current.target), mapping.exists());
+            if (!proposal.inputIdentity().targetIdentity().equals(target)
+                    || !proposal.inputIdentity().mappingRevision()
+                            .equals(mapping.mappingRevision())) {
+                throw new ToolArgException("proposal_input_changed",
+                        "Project or mapping target changed before ontology mint execution.",
+                        Map.of("effects_prevented", true), true);
+            }
+        } catch (SssomStoreException failure) {
+            throw toolFailure(failure);
+        } catch (IOException failure) {
+            throw new ToolArgException("proposal_input_changed",
+                    "Mapping target could not be revalidated before ontology mint execution.",
+                    Map.of("effects_prevented", true), true);
         }
     }
 
@@ -300,6 +460,33 @@ public final class MappingTools {
         });
     }
 
+    private static String canonicalIdentity(Path path) {
+        if (path == null) {
+            throw new ToolArgException("Canonical proposal target identity is unavailable.");
+        }
+        Path candidate = path.toAbsolutePath().normalize();
+        try {
+            if (Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
+                return candidate.toRealPath().toString();
+            }
+            Deque<Path> suffix = new ArrayDeque<>();
+            Path existing = candidate;
+            while (existing != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
+                Path name = existing.getFileName();
+                if (name != null) suffix.push(name);
+                existing = existing.getParent();
+            }
+            if (existing == null) {
+                throw new IOException("no existing proposal target ancestor");
+            }
+            Path canonical = existing.toRealPath();
+            while (!suffix.isEmpty()) canonical = canonical.resolve(suffix.pop());
+            return canonical.normalize().toString();
+        } catch (IOException unsafe) {
+            throw new ToolArgException("Canonical proposal target identity is unavailable.");
+        }
+    }
+
     private static int limit(Map<String, Object> args) {
         Object value = args.get("limit");
         if (value == null) return SssomToolService.DEFAULT_PAGE_SIZE;
@@ -352,7 +539,8 @@ public final class MappingTools {
                     .map(finding -> finding.toJson()).toList());
             details.put("findings_truncated", failure.findings().size() > 25);
         }
-        boolean retryable = Set.of("mapping_revision_conflict", "project_lock_unavailable",
+        boolean retryable = Set.of("mapping_revision_conflict", "mapping_existence_conflict",
+                "proposal_input_changed", "project_lock_unavailable",
                 "cursor_revision_conflict").contains(failure.code());
         return new ToolArgException(failure.code(), failure.getMessage(), details, retryable);
     }
@@ -361,15 +549,24 @@ public final class MappingTools {
             Path root, Path target, SssomValidationPolicy validation,
             SssomEntityIndex entities, String configuredPolicy, String closureFingerprint) {
         Identity identity() {
-            return new Identity(policy.loaded(), policy.digest(), root, target,
+            return new Identity(policy.loaded(), policy.digest(),
+                    policy.path() == null ? "" : canonicalIdentity(policy.path()), root, target,
                     configuredPolicy == null ? "" : configuredPolicy);
         }
     }
 
-    private record Identity(boolean policyLoaded, String policyDigest, Path root,
-            Path target, String configuredPolicy) {
+    private record Identity(boolean policyLoaded, String policyDigest, String policySource,
+            Path root, Path target, String configuredPolicy) {
     }
 
     private record ModelCapture(SssomEntityIndex entities, String closureFingerprint) {
+    }
+
+    record ProposalState(ProjectPolicy policy, ModelRevision modelRevision,
+            String mappingRevision, ReuseProposalTargetIdentity targetIdentity) {
+
+        boolean mappingExists() {
+            return targetIdentity.mappingExists();
+        }
     }
 }

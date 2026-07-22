@@ -22,6 +22,7 @@ import io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas;
 import io.github.hakjuoh.protege_mcp.contracts.Legacy072ToolContracts;
 import io.github.hakjuoh.protege_mcp.contracts.ToolSchemaValidator;
 import io.github.hakjuoh.protege_mcp.contracts.SssomToolSchemas;
+import io.github.hakjuoh.protege_mcp.contracts.ExternalTermToolSchemas;
 import io.modelcontextprotocol.spec.McpSchema.PromptArgument;
 
 /**
@@ -38,8 +39,8 @@ public final class McpCatalog {
     private static final int FORMAT_VERSION = 1;
     private static final Pattern NAME = Pattern.compile("[a-z][a-z0-9_]*");
     private static final Pattern INTERNAL_REFERENCE = Pattern.compile(
-            "(?i)(?:\\bADR(?:\\s+|-)0*\\d+\\b|PLAN(?:\\.md)?\\s*§|"
-                    + "§\\s*\\d+|\\bM\\d+[A-Z]?\\s+milestone\\b|"
+            "(?i)(?:\\bADR(?:\\s+|-)0*\\d+\\b|PLAN(?:\\.md)?\\s*\u00A7|"
+                    + "\u00A7\\s*\\d+|\\bM\\d+[A-Z]?\\s+milestone\\b|"
                     + "\\bmilestone\\s+M\\d+[A-Z]?\\b)");
     private static final ObjectMapper JSON = JsonMapper.builder()
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -139,6 +140,8 @@ public final class McpCatalog {
                 // One cross-surface schema source prevents the live JSON catalog and headless
                 // registry from drifting on bounds or required fields.
                 schema = SssomToolSchemas.input(name, true);
+            } else if (ExternalTermToolSchemas.NAMES.contains(name)) {
+                schema = ExternalTermToolSchemas.input(name);
             }
             Map<String, Object> outputSchema = ToolContractSchemas.legacySuccessSchema();
             JsonNode outputNode = node.get("output_schema");
@@ -153,6 +156,10 @@ public final class McpCatalog {
                 }
             } else if (SssomToolSchemas.NAMES.contains(name)) {
                 outputSchema = SssomToolSchemas.output(name);
+                ToolSchemaValidator.validateTypedOutput(outputSchema,
+                        path + ".generated_output_schema");
+            } else if (ExternalTermToolSchemas.NAMES.contains(name)) {
+                outputSchema = ExternalTermToolSchemas.output(name);
                 ToolSchemaValidator.validateTypedOutput(outputSchema,
                         path + ".generated_output_schema");
             } else if (!Legacy072ToolContracts.liveToolNames().contains(name)) {

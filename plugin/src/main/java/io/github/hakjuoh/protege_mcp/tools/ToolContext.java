@@ -1,9 +1,13 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
+import io.github.hakjuoh.protege_mcp.external.DefaultExternalProviderGateway;
+import io.github.hakjuoh.protege_mcp.external.ExternalProviderGateway;
+import io.github.hakjuoh.protege_mcp.external.ReuseProposalStore;
 
 /**
  * Everything a tool handler needs: the EDT-marshalling {@link OntologyAccess} and the owning
@@ -12,8 +16,8 @@ import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
  * <p>Also carries the server-level {@linkplain #writeLock() write mutex}. MCP handlers run on
  * multi-threaded transport threads ({@code immediateExecution(true)}) and {@link OntologyAccess#compute}
  * only serialises each <em>individual</em> EDT hop, holding no lock across a multi-hop sequence. A tool
- * that must keep the model coherent across several hops — notably change-set-backed verified apply, whose
- * isolated preflight and final revision/policy revalidation precede one live commit — takes this lock so
+ * that must keep the model coherent across several hops - notably change-set-backed verified apply, whose
+ * isolated preflight and final revision/policy revalidation precede one live commit - takes this lock so
  * two such calls cannot interleave. One instance is built per server start and threaded to every provider,
  * so it is effectively server-wide. (Interactive GUI edits cannot take the lock; tools additionally detect
  * an intervening change, so the lock is the fast path, not the only guard.)
@@ -31,15 +35,32 @@ public final class ToolContext {
     private final ChangeSetStore changeSets = new ChangeSetStore();
     private final WorkspaceAudit audit;
     private final PrincipalExecutionGate executions = new PrincipalExecutionGate();
+    private final ExternalProviderGateway externalProviders;
+    private final ReuseProposalStore reuseProposals;
+    private final AtomicBoolean disposalStarted = new AtomicBoolean();
 
     public ToolContext(OntologyAccess access, McpServerController controller) {
         this(access, controller, null);
     }
 
     public ToolContext(OntologyAccess access, McpServerController controller, WriteConfirmer confirmer) {
+        this(access, controller, confirmer, new DefaultExternalProviderGateway());
+    }
+
+    ToolContext(OntologyAccess access, McpServerController controller, WriteConfirmer confirmer,
+            ExternalProviderGateway externalProviders) {
+        this(access, controller, confirmer, externalProviders, new ReuseProposalStore());
+    }
+
+    ToolContext(OntologyAccess access, McpServerController controller, WriteConfirmer confirmer,
+            ExternalProviderGateway externalProviders, ReuseProposalStore reuseProposals) {
         this.access = access;
         this.controller = controller;
         this.confirmer = confirmer;
+        this.externalProviders = java.util.Objects.requireNonNull(
+                externalProviders, "externalProviders");
+        this.reuseProposals = java.util.Objects.requireNonNull(
+                reuseProposals, "reuseProposals");
         this.audit = new WorkspaceAudit(this);
     }
 
@@ -53,7 +74,7 @@ public final class ToolContext {
 
     /**
      * The injected write-confirmation gate (the Swing dialog at runtime), or {@code null} when none is
-     * wired — e.g. in headless tests. With confirmation enabled and no confirmer, writes fail closed.
+     * wired - e.g. in headless tests. With confirmation enabled and no confirmer, writes fail closed.
      */
     public WriteConfirmer confirmer() {
         return confirmer;
@@ -95,9 +116,26 @@ public final class ToolContext {
         return executions;
     }
 
+    ExternalProviderGateway externalProviders() {
+        return externalProviders;
+    }
+
+    ReuseProposalStore reuseProposals() {
+        return reuseProposals;
+    }
+
+    public int revokeExternalClient(String clientId) {
+        return externalProviders.revokeClient(clientId) + reuseProposals.revokeClient(clientId);
+    }
+
+    public int revokeExternalGrant(String clientId, String grantId) {
+        return externalProviders.revokeGrant(clientId, grantId)
+                + reuseProposals.revokeGrant(clientId, grantId);
+    }
+
     /**
      * Release server-scoped resources when the owning server stops: removes the SPARQL cache's model
-     * listeners (on the EDT) and drops its cached snapshots. Best-effort — a shutting-down or unresponsive
+     * listeners (on the EDT) and drops its cached snapshots. Best-effort - a shutting-down or unresponsive
      * EDT never blocks server stop. Idempotent.
      *
      * <p>The bounded {@link OntologyAccess#compute} cancels its queued body on timeout, so a busy EDT
@@ -107,6 +145,33 @@ public final class ToolContext {
      * still runs once the EDT frees up.
      */
     public void dispose() {
+        if (!disposalStarted.compareAndSet(false, true)) return;
+        // Stop accepting handlers immediately. Waiting with an active handler could deadlock the
+        // EDT or block server stop/restart, so only an already-drained context cleans synchronously.
+        executions.beginShutdown();
+        if (javax.swing.SwingUtilities.isEventDispatchThread() || !executions.isDrained()) {
+            Thread cleanup = new Thread(this::disposeAfterDrain,
+                    "protege-mcp-tool-context-dispose");
+            cleanup.setDaemon(true);
+            cleanup.start();
+            return;
+        }
+        disposeAfterDrain();
+    }
+
+    private void disposeAfterDrain() {
+        // Drain before erasing continuation/provider state needed by an in-flight mutation.
+        executions.closeAndAwait();
+        try {
+            externalProviders.close();
+        } catch (RuntimeException ignored) {
+            // Best effort during shutdown; the context itself is no longer reachable afterward.
+        }
+        try {
+            reuseProposals.close();
+        } catch (RuntimeException ignored) {
+            // Best effort during shutdown; proposals are memory-only and no longer reachable.
+        }
         try {
             access.compute(mm -> {
                 sparqlCache.dispose();

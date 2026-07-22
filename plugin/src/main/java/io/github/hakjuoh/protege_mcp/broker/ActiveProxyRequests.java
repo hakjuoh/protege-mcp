@@ -21,6 +21,8 @@ import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
  */
 final class ActiveProxyRequests {
 
+    private static final int MAX_PRINCIPAL_TOMBSTONES = 2_048;
+    private static final int MAX_SESSION_TOMBSTONES = 4_096;
     private final Object lock = new Object();
     private final AtomicLong ids = new AtomicLong();
     private final Map<Long, Reservation> active = new HashMap<>();
@@ -28,16 +30,19 @@ final class ActiveProxyRequests {
     // let a request paused between authentication and open() resume after expiry and bypass the
     // revocation fence. Client/session ids are unique and the broker exits after its last instance.
     private final Set<String> revokedClients = new HashSet<>();
+    private final Set<String> revokedGrants = new HashSet<>();
     private final Set<String> terminatedSessions = new HashSet<>();
 
     Reservation open(AuthenticatedPrincipal principal, String sessionId) {
         synchronized (lock) {
             if (revokedClients.contains(principal.clientId())
+                    || revokedGrants.contains(grantKey(
+                            principal.clientId(), principal.grantId()))
                     || (sessionId != null && terminatedSessions.contains(sessionId))) {
                 return null;
             }
             Reservation reservation = new Reservation(ids.incrementAndGet(), principal.clientId(),
-                    blankToNull(sessionId));
+                    blankToNull(principal.grantId()), blankToNull(sessionId));
             active.put(reservation.id, reservation);
             return reservation;
         }
@@ -47,14 +52,48 @@ final class ActiveProxyRequests {
         if (clientId == null || clientId.isBlank()) {
             return 0;
         }
-        return terminate(clientId, null, true);
+        return terminate(clientId, null, null, true, false);
+    }
+
+    void prepareClient(String clientId) {
+        if (clientId == null || clientId.isBlank()) {
+            throw new IllegalArgumentException("client id is required");
+        }
+        synchronized (lock) {
+            remember(revokedClients, clientId);
+        }
+    }
+
+    int terminateGrant(String clientId, String grantId) {
+        if (clientId == null || clientId.isBlank() || grantId == null || grantId.isBlank()) {
+            return 0;
+        }
+        return terminate(clientId, grantId, null, false, true);
+    }
+
+    void prepareGrant(String clientId, String grantId) {
+        if (clientId == null || clientId.isBlank() || grantId == null || grantId.isBlank()) {
+            throw new IllegalArgumentException("grant identity is required");
+        }
+        synchronized (lock) {
+            remember(revokedGrants, grantKey(clientId, grantId));
+        }
     }
 
     int terminateSession(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             return 0;
         }
-        return terminate(null, sessionId, false);
+        return terminate(null, null, sessionId, false, false);
+    }
+
+    void prepareSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new IllegalArgumentException("session id is required");
+        }
+        synchronized (lock) {
+            remember(terminatedSessions, sessionId);
+        }
     }
 
     void closeAll() {
@@ -71,17 +110,21 @@ final class ActiveProxyRequests {
         bodies.forEach(ActiveProxyRequests::closeQuietly);
     }
 
-    private int terminate(String clientId, String sessionId, boolean rememberClient) {
+    private int terminate(String clientId, String grantId, String sessionId,
+            boolean rememberClient, boolean rememberGrant) {
         List<InputStream> bodies = new ArrayList<>();
         int terminated = 0;
         synchronized (lock) {
             if (rememberClient) {
-                revokedClients.add(clientId);
+                remember(revokedClients, clientId);
+            } else if (rememberGrant) {
+                remember(revokedGrants, grantKey(clientId, grantId));
             } else {
-                terminatedSessions.add(sessionId);
+                remember(terminatedSessions, sessionId);
             }
             for (Reservation reservation : active.values()) {
                 if ((clientId != null && clientId.equals(reservation.clientId))
+                        && (grantId == null || grantId.equals(reservation.grantId))
                         || (sessionId != null && sessionId.equals(reservation.sessionId))) {
                     if (!reservation.closed) {
                         terminated++;
@@ -101,6 +144,23 @@ final class ActiveProxyRequests {
         return value == null || value.isBlank() ? null : value;
     }
 
+    private static String grantKey(String clientId, String grantId) {
+        if (clientId == null || grantId == null) return "";
+        return clientId.length() + ":" + clientId + grantId.length() + ":" + grantId;
+    }
+
+    private void remember(Set<String> target, String value) {
+        if (target.contains(value)) return;
+        int size = target == terminatedSessions
+                ? terminatedSessions.size() : revokedClients.size() + revokedGrants.size();
+        int maximum = target == terminatedSessions
+                ? MAX_SESSION_TOMBSTONES : MAX_PRINCIPAL_TOMBSTONES;
+        if (size >= maximum) {
+            throw new IllegalStateException("proxy revocation tombstone capacity is exhausted");
+        }
+        target.add(value);
+    }
+
     private static void closeQuietly(InputStream body) {
         try {
             body.close();
@@ -112,13 +172,15 @@ final class ActiveProxyRequests {
     final class Reservation implements AutoCloseable {
         private final long id;
         private final String clientId;
+        private final String grantId;
         private final String sessionId;
         private InputStream body;
         private boolean closed;
 
-        private Reservation(long id, String clientId, String sessionId) {
+        private Reservation(long id, String clientId, String grantId, String sessionId) {
             this.id = id;
             this.clientId = clientId;
+            this.grantId = grantId;
             this.sessionId = sessionId;
         }
 

@@ -19,7 +19,7 @@ import org.semanticweb.owlapi.model.OWLOntologyManager;
 /**
  * Tests for the F3 CURIE-expansion fix in {@link EntityResolver}: a registered-prefix CURIE like
  * {@code bfo:BFO_0000031} must resolve to the imported term (via the active ontology's prefix map) instead
- * of being mis-read as an absolute IRI whose scheme happens to be {@code bfo} — which silently minted a junk
+ * of being mis-read as an absolute IRI whose scheme happens to be {@code bfo} - which silently minted a junk
  * class whose IRI was the literal string "bfo:BFO_0000031".
  */
 class EntityResolverCurieTest {
@@ -47,14 +47,15 @@ class EntityResolverCurieTest {
         assertEquals(IRI.create(GDC), EntityResolver.iriFor(mm, ":BFO_0000031"));
         assertEquals(IRI.create(OBO + "path/with~part"),
                 EntityResolver.iriFor(mm, "bfo:path/with~part"));
-        assertEquals(IRI.create(OBO + "표현"), EntityResolver.iriFor(mm, "bfo:표현"));
+        assertEquals(IRI.create(OBO + "\uD45C\uD604"),
+                EntityResolver.iriFor(mm, "bfo:\uD45C\uD604"));
     }
 
     @Test
     void leavesRealIrisAndPlainNamesAlone() throws Exception {
         OWLModelManager mm = fixture();
-        assertNull(EntityResolver.expandCurie(mm, "http://foo/Bar"), "scheme://… is an IRI, not a CURIE");
-        assertNull(EntityResolver.expandCurie(mm, "PlainName"), "no ':' → not a CURIE");
+        assertNull(EntityResolver.expandCurie(mm, "http://foo/Bar"), "scheme://... is an IRI, not a CURIE");
+        assertNull(EntityResolver.expandCurie(mm, "PlainName"), "no ':' means not a CURIE");
         assertNull(EntityResolver.expandCurie(mm, "unknownpfx:Thing"), "unregistered prefix does not expand");
         // A real absolute IRI still parses through iriFor unchanged (falls through to asIri).
         assertEquals(IRI.create("http://foo/Bar"), EntityResolver.iriFor(mm, "http://foo/Bar"));
@@ -70,7 +71,7 @@ class EntityResolverCurieTest {
     void manchesterCompoundResolvesCuriesAndFragments() throws Exception {
         // GAP #5: a COMPOUND Manchester expression must resolve registered-prefix CURIEs and bare IRI
         // fragments, not only quoted labels / <full IRI>. Target the parser fallback directly (the
-        // primary path needs a live Protégé checker, which FakeModelManager doesn't provide).
+        // primary path needs a live Protege checker, which FakeModelManager doesn't provide).
         String b = OBO + "BFO_0000040";
         OWLOntologyManager m = OWLManager.createOWLOntologyManager();
         OWLDataFactory df = m.getOWLDataFactory();

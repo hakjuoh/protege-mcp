@@ -17,22 +17,22 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * The broker's control-plane API for Protégé instances, mounted at {@code /internal/*}. Every call
+ * The broker's control-plane API for Protege instances, mounted at {@code /internal/*}. Every call
  * must carry the {@link #SECRET_HEADER} matching the directory secret from {@code ~/.protege-mcp}
- * (readable only by the same OS user — that file read <em>is</em> the authentication). MCP clients
+ * (readable only by the same OS user - that file read <em>is</em> the authentication). MCP clients
  * never see or need this header; it plays no part in {@code /mcp} auth.
  *
  * <ul>
- *   <li>{@code GET  /internal/info} — liveness/identity probe used by discovery.
- *   <li>{@code POST /internal/register} — {@code {pid, version, token, lingerMs?, windows[]}}
- *       → {@code {processId}}. {@code lingerMs} carries the user's idle-linger preference; a
+ *   <li>{@code GET  /internal/info} - liveness/identity probe used by discovery.
+ *   <li>{@code POST /internal/register} - {@code {pid, version, token, lingerMs?, windows[]}}
+ *       -> {@code {processId}}. {@code lingerMs} carries the user's idle-linger preference; a
  *       payload without it (older plugin) leaves the broker's current linger untouched.
- *   <li>{@code POST /internal/heartbeat} — same body plus {@code processId}; 404 = re-register.
- *   <li>{@code POST /internal/unregister} — {@code {processId}}; may drop the refcount to zero.
- *   <li>{@code GET  /internal/clients} — list OAuth clients and their effective capabilities.
- *   <li>{@code POST /internal/revoke-client} — revoke a client and invalidate its session pins.
- *   <li>{@code POST /internal/terminate-session} — invalidate one routed session pin.
- *   <li>{@code POST /internal/shutdown} — graceful exit (used by tests and version takeover).
+ *   <li>{@code POST /internal/heartbeat} - same body plus {@code processId}; 404 = re-register.
+ *   <li>{@code POST /internal/unregister} - {@code {processId}}; may drop the refcount to zero.
+ *   <li>{@code GET  /internal/clients} - list OAuth clients and their effective capabilities.
+ *   <li>{@code POST /internal/revoke-client} - revoke a client and invalidate its session pins.
+ *   <li>{@code POST /internal/terminate-session} - invalidate one routed session pin.
+ *   <li>{@code POST /internal/shutdown} - graceful exit (used by tests and version takeover).
  * </ul>
  */
 public final class InternalApiServlet extends HttpServlet {
@@ -57,13 +57,20 @@ public final class InternalApiServlet extends HttpServlet {
     public InternalApiServlet(String dirSecret, InstanceRegistry registry,
             java.util.function.Supplier<BrokerState> identity, Runnable shutdown, OAuthStore oauthStore,
             ActiveProxyRequests activeRequests) {
+        this(dirSecret, registry, identity, shutdown, oauthStore, activeRequests,
+                new BackendRevocationFanout(registry));
+    }
+
+    InternalApiServlet(String dirSecret, InstanceRegistry registry,
+            java.util.function.Supplier<BrokerState> identity, Runnable shutdown, OAuthStore oauthStore,
+            ActiveProxyRequests activeRequests, BackendRevocationFanout backendRevocations) {
         this.dirSecret = dirSecret;
         this.registry = registry;
         this.identity = identity;
         this.shutdown = shutdown;
         this.oauthStore = oauthStore;
         this.activeRequests = activeRequests;
-        this.backendRevocations = new BackendRevocationFanout(registry);
+        this.backendRevocations = backendRevocations;
     }
 
     @Override
@@ -111,7 +118,9 @@ public final class InternalApiServlet extends HttpServlet {
         node.put("version", state == null ? "" : state.version);
         node.put("startedAt", state == null ? 0 : state.startedAt);
         node.put("processes", registry.processCount());
+        node.put("retained_processes", registry.retainedProcessCount());
         node.put("windows", registry.windowCount());
+        node.put("shutdown_eligible", registry.shutdownEligible());
         writeJson(resp, 200, node);
     }
 
@@ -138,7 +147,7 @@ public final class InternalApiServlet extends HttpServlet {
             registry.noteRequestedLinger(body.path("lingerMs").asLong(-1));
             writeJson(resp, 200, mapper.createObjectNode().put("ok", true));
         } else {
-            // 404 tells the instance the broker lost it (e.g. broker restart) — re-register.
+            // 404 tells the instance the broker lost it (e.g. broker restart) - re-register.
             writeJson(resp, 404, mapper.createObjectNode().put("error", "unknown_process"));
         }
     }
@@ -182,12 +191,24 @@ public final class InternalApiServlet extends HttpServlet {
             writeJson(resp, 400, mapper.createObjectNode().put("error", "invalid_client_id"));
             return;
         }
+        try {
+            backendRevocations.prepareClient(clientId);
+            activeRequests.prepareClient(clientId);
+            registry.prepareClientRevocation(clientId);
+        } catch (RuntimeException unavailable) {
+            ObjectNode failed = mapper.createObjectNode().put("revoked", false)
+                    .put("credential_removed", false)
+                    .put("commit_fence_confirmed", false)
+                    .put("error", "revocation_fence_unavailable");
+            writeJson(resp, 503, failed);
+            return;
+        }
         boolean credentialRemoved = oauthStore.revokeClient(clientId);
         // Idempotent by design: after a partial 503 the credential is already absent, but retrying
         // this same request must still re-send every backend fence until all windows acknowledge.
-        int sessions = registry.dropSessionsForPrincipal(clientId);
         int inFlight = activeRequests.terminateClient(clientId);
-        BackendRevocationFanout.Result backend = backendRevocations.revokeClient(clientId);
+        int sessions = registry.dropSessionsForPrincipal(clientId);
+        BackendRevocationFanout.Result backend = backendRevocations.executeClient(clientId);
         ObjectNode result = mapper.createObjectNode();
         result.put("revoked", backend.confirmed());
         result.put("credential_removed", credentialRemoved);
@@ -210,6 +231,13 @@ public final class InternalApiServlet extends HttpServlet {
             return;
         }
         boolean existed = registry.windowForSession(sessionId).isPresent();
+        try {
+            activeRequests.prepareSession(sessionId);
+        } catch (RuntimeException unavailable) {
+            writeJson(resp, 503, mapper.createObjectNode()
+                    .put("error", "revocation_fence_unavailable"));
+            return;
+        }
         registry.unpinSession(sessionId);
         int inFlight = activeRequests.terminateSession(sessionId);
         ObjectNode result = mapper.createObjectNode();
@@ -220,6 +248,11 @@ public final class InternalApiServlet extends HttpServlet {
     }
 
     private void shutdown(HttpServletResponse resp) throws IOException {
+        if (!registry.sealForRequestedShutdown()) {
+            writeJson(resp, HttpServletResponse.SC_CONFLICT, mapper.createObjectNode()
+                    .put("error", "broker_not_quiescent"));
+            return;
+        }
         writeJson(resp, 200, mapper.createObjectNode().put("ok", true));
         // Flush the acknowledgement before the exit path tears the connector down.
         resp.flushBuffer();
@@ -230,10 +263,12 @@ public final class InternalApiServlet extends HttpServlet {
         List<InstanceRegistry.Window> windows = new ArrayList<>();
         long now = System.currentTimeMillis();
         for (JsonNode w : body.path("windows")) {
+            if (windows.size() >= InstanceRegistry.MAX_WINDOWS_PER_PROCESS) break;
             int port = w.path("port").asInt(0);
             String id = w.path("id").asText("");
             String secret = w.path("secret").asText("");
-            if (port <= 0 || id.isEmpty() || secret.isEmpty()) {
+            if (port <= 0 || id.isEmpty() || id.length() > 256
+                    || secret.isEmpty() || secret.length() > 512) {
                 continue; // malformed window entries are skipped, not fatal
             }
             windows.add(new InstanceRegistry.Window(

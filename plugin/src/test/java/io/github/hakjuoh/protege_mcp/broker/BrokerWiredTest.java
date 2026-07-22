@@ -177,6 +177,16 @@ class BrokerWiredTest {
         return http.send(rb.build(), HttpResponse.BodyHandlers.ofString());
     }
 
+    private static void awaitCount(java.util.concurrent.atomic.AtomicInteger counter, int minimum)
+            throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (counter.get() < minimum && System.nanoTime() < deadline) {
+            Thread.sleep(25);
+        }
+        assertTrue(counter.get() >= minimum,
+                () -> "expected at least " + minimum + " backend fences, got " + counter.get());
+    }
+
     // ---- auth ------------------------------------------------------------------------------------
 
     @Test
@@ -284,11 +294,11 @@ class BrokerWiredTest {
         HttpResponse<String> init = call("POST", "/mcp", STATIC_TOKEN);
         assertTrue(init.body().contains("first"));
 
-        // A newer window appears and takes the default slot…
+        // A newer window appears and takes the default slot...
         FakeBackend second = startBackend("second");
         c.heartbeat(processId, STATIC_TOKEN, -1, List.of(reg(first, "w1", 100), reg(second, "w2", 999)));
 
-        // …but the established session keeps hitting the window that owns its state.
+        // ...but the established session keeps hitting the window that owns its state.
         HttpRequest pinned = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + brokerPort + "/mcp"))
                 .header("Authorization", "Bearer " + STATIC_TOKEN)
                 .header("Mcp-Session-Id", "session-of-first")
@@ -358,6 +368,174 @@ class BrokerWiredTest {
         }
         assertEquals(40, store.listClients().size(),
                 "oauth.json has no 8k java.util.prefs limit, so active clients stay registered");
+    }
+
+    @Test
+    void rfc7009RevocationDropsGrantPinsAndFansOutBackendFence() throws Exception {
+        FakeBackend backend = startBackend("grant-revocation");
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(backend, "w-grant", 100)));
+        OAuthStore.Client registered = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/cb"), "grant-client");
+        OAuthStore.Tokens tokens = broker.oauthStore().issueTokens(
+                registered.clientId, "read", null);
+        OAuthStore.TokenIdentity identity = broker.oauthStore().authenticate(tokens.accessToken);
+        broker.registry().pinSession("grant-session", "w-grant", identity.principal());
+
+        HttpResponse<String> revoked = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/oauth/revoke"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString("token="
+                        + java.net.URLEncoder.encode(tokens.accessToken,
+                                StandardCharsets.UTF_8)))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, revoked.statusCode());
+        assertFalse(broker.oauthStore().isValidAccessToken(tokens.accessToken));
+        assertTrue(broker.registry().windowForSession("grant-session").isEmpty());
+        assertEquals(1, backend.fencedClients.get());
+    }
+
+    @Test
+    void revocationStillFencesAnUnregisteredLiveProcessSnapshot() throws Exception {
+        FakeBackend backend = startBackend("unregistered-revocation");
+        BrokerClient brokerClient = client();
+        String processId = brokerClient.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN,
+                -1, List.of(reg(backend, "w-unregistered", 100)));
+        OAuthStore.Client registered = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/cb"), "unregistered-client");
+        OAuthStore.Tokens tokens = broker.oauthStore().issueTokens(
+                registered.clientId, "read", null);
+        brokerClient.unregister(processId);
+
+        HttpResponse<String> revoked = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/oauth/revoke"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString("token="
+                        + java.net.URLEncoder.encode(tokens.accessToken,
+                                StandardCharsets.UTF_8)))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, revoked.statusCode());
+        assertFalse(broker.oauthStore().isValidAccessToken(tokens.accessToken));
+        assertEquals(1, backend.fencedClients.get());
+        assertTrue(broker.registry().listWindows().isEmpty(),
+                "an unregister snapshot must remain fence-only and never routable");
+    }
+
+    @Test
+    void revocationStillFencesAWindowRemovedByHeartbeat() throws Exception {
+        FakeBackend removed = startBackend("heartbeat-removed");
+        BrokerClient brokerClient = client();
+        String processId = brokerClient.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN,
+                -1, List.of(reg(removed, "w-heartbeat-removed", 100)));
+        OAuthStore.Client registered = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/cb"), "heartbeat-removed-client");
+        OAuthStore.Tokens tokens = broker.oauthStore().issueTokens(
+                registered.clientId, "read", null);
+        assertTrue(brokerClient.heartbeat(processId, STATIC_TOKEN, -1, List.of()));
+
+        HttpResponse<String> revoked = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/oauth/revoke"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString("token="
+                        + java.net.URLEncoder.encode(tokens.accessToken,
+                                StandardCharsets.UTF_8)))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, revoked.statusCode());
+        assertEquals(1, removed.fencedClients.get());
+        assertTrue(broker.registry().listWindows().isEmpty());
+    }
+
+    @Test
+    void failedDurableGrantPrepareLeavesTokenAndRoutingUsable() throws Exception {
+        FakeBackend backend = startBackend("grant-write-failure");
+        client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(backend, "w-grant-write-failure", 100)));
+        OAuthStore.Client registered = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/cb"), "grant-write-failure-client");
+        OAuthStore.Tokens tokens = broker.oauthStore().issueTokens(
+                registered.clientId, "read", null);
+        java.nio.file.Path blockedTemporaryJournal = home.dir().resolve(
+                "revocations.json.tmp-" + ProcessHandle.current().pid());
+        java.nio.file.Files.createDirectory(blockedTemporaryJournal);
+
+        HttpResponse<String> failed = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/oauth/revoke"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString("token="
+                        + java.net.URLEncoder.encode(tokens.accessToken,
+                                StandardCharsets.UTF_8)))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(503, failed.statusCode());
+        assertTrue(broker.oauthStore().isValidAccessToken(tokens.accessToken));
+        assertEquals(200, call("POST", "/mcp", tokens.accessToken).statusCode(),
+                "failed write-ahead persistence must not install irreversible routing fences");
+    }
+
+    @Test
+    void rfc7009RevocationPersistsAndRetriesUnacknowledgedGrantFence() throws Exception {
+        FakeBackend backend = startBackend("grant-retry", false);
+        String processId = client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(backend, "w-grant-retry", 100)));
+        OAuthStore.Client registered = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/cb"), "grant-retry-client");
+        OAuthStore.Tokens tokens = broker.oauthStore().issueTokens(
+                registered.clientId, "read", null);
+        String grantId = broker.oauthStore().authenticate(tokens.accessToken).grantId();
+
+        HttpResponse<String> revoked = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/oauth/revoke"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString("token="
+                        + java.net.URLEncoder.encode(tokens.refreshToken,
+                                StandardCharsets.UTF_8)))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, revoked.statusCode(), "RFC 7009 does not disclose fence state");
+        assertFalse(broker.oauthStore().isValidAccessToken(tokens.accessToken));
+        assertTrue(java.nio.file.Files.readString(home.revocationsFile()).contains(grantId),
+                "the exact failed grant fence must survive a broker restart");
+        assertTrue(backend.fencedClients.get() >= 1);
+
+        backend.acknowledgeFences.set(true);
+        awaitCount(backend.fencedClients, 2);
+
+        FakeBackend later = startBackend("grant-retry-later", true);
+        client().heartbeat(processId, STATIC_TOKEN, -1,
+                List.of(reg(backend, "w-grant-retry", 100),
+                        reg(later, "w-grant-retry-later", 200)));
+        awaitCount(later.fencedClients, 1);
+    }
+
+    @Test
+    void brokerRestartReplaysJournalAgainstStaleOauthState() throws Exception {
+        OAuthStore.Client registered = broker.oauthStore().registerClient(
+                List.of("http://127.0.0.1/cb"), "restart-replay-client");
+        OAuthStore.Tokens tokens = broker.oauthStore().issueTokens(
+                registered.clientId, "read", null);
+        String staleOauthState = java.nio.file.Files.readString(home.oauthFile());
+
+        HttpResponse<String> revoked = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/oauth/revoke"))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString("token="
+                        + java.net.URLEncoder.encode(tokens.accessToken,
+                                StandardCharsets.UTF_8)))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, revoked.statusCode());
+        assertFalse(broker.oauthStore().isValidAccessToken(tokens.accessToken));
+
+        broker.stop();
+        home.writeOauthState(staleOauthState);
+        broker = new BrokerServer(home, dirSecret, "test", shutdownRequested::countDown,
+                8_000, 300, 60_000);
+        brokerPort = broker.start(0);
+
+        assertFalse(broker.oauthStore().isValidAccessToken(tokens.accessToken),
+                "write-ahead replay must remove a token resurrected by stale OAuth state");
     }
 
     @Test
@@ -474,8 +652,10 @@ class BrokerWiredTest {
         BrokerClient.RevocationResult retried = client().revokeClient(registered.clientId);
         assertTrue(retried.revoked(), "retry must finish fencing after the credential is already gone");
         assertTrue(retried.commitFenceConfirmed());
-        assertEquals(2, fenced.fencedClients.get(), "an idempotent retry reaffirms every live window");
-        assertEquals(2, unfenced.fencedClients.get());
+        assertTrue(fenced.fencedClients.get() >= 1,
+                "the acknowledged backend remains fenced across an idempotent retry");
+        assertTrue(unfenced.fencedClients.get() >= 2,
+                "the unacknowledged backend is retried until it confirms");
     }
 
     @Test
@@ -568,7 +748,7 @@ class BrokerWiredTest {
 
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(resp.body(), StandardCharsets.UTF_8))) {
-            // The FIRST event must arrive while the backend is still holding the stream open — that
+            // The FIRST event must arrive while the backend is still holding the stream open - that
             // is the proof the proxy flushes per chunk instead of buffering the response.
             AtomicReference<String> firstLine = new AtomicReference<>();
             Thread readerThread = new Thread(() -> {
@@ -595,6 +775,7 @@ class BrokerWiredTest {
         BrokerClient c = client();
         String processId = c.register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1, List.of());
         c.unregister(processId);
+        broker.registry().reap(8_000, pid -> false);
         assertTrue(shutdownRequested.await(5, TimeUnit.SECONDS),
                 "refcount 0 past the linger must trigger the broker's self-shutdown");
     }
@@ -602,6 +783,25 @@ class BrokerWiredTest {
     @Test
     void internalShutdownIsHonoured() throws Exception {
         client().requestShutdown();
+        assertTrue(shutdownRequested.await(5, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void versionTakeoverShutdownRefusesALiveQuarantinedProcess() throws Exception {
+        BrokerClient brokerClient = client();
+        String processId = brokerClient.register(ProcessHandle.current().pid(), "old", STATIC_TOKEN,
+                -1, List.of());
+        brokerClient.unregister(processId);
+
+        com.fasterxml.jackson.databind.JsonNode info = brokerClient.info();
+        assertEquals(0, info.path("processes").asInt());
+        assertEquals(1, info.path("retained_processes").asInt());
+        assertFalse(info.path("shutdown_eligible").asBoolean(true));
+        assertThrows(IOException.class, brokerClient::requestShutdown);
+        assertFalse(shutdownRequested.await(500, TimeUnit.MILLISECONDS));
+
+        broker.registry().reap(8_000, pid -> false);
+        brokerClient.requestShutdown();
         assertTrue(shutdownRequested.await(5, TimeUnit.SECONDS));
     }
 
@@ -614,7 +814,7 @@ class BrokerWiredTest {
                 "register must deliver the user's linger preference to the broker");
         // Discriminating step: unregister under the 45 s override. The broker's own default here
         // is 300 ms, so if maintain() ignored the reported linger it would ask to exit within a
-        // couple of ticks — staying alive proves the override is what the exit decision uses.
+        // couple of ticks - staying alive proves the override is what the exit decision uses.
         c.unregister(processId);
         assertFalse(shutdownRequested.await(2_500, TimeUnit.MILLISECONDS),
                 "with a reported 45 s linger the broker must outlive its 300 ms default");
@@ -623,6 +823,7 @@ class BrokerWiredTest {
         assertEquals(0, broker.registry().effectiveLingerMs(300),
                 "a heartbeat must update a changed preference on the running broker");
         c.unregister(processId);
+        broker.registry().reap(8_000, pid -> false);
         assertTrue(shutdownRequested.await(5, TimeUnit.SECONDS),
                 "linger 0: the broker must ask to exit on the first maintenance tick after emptying");
     }

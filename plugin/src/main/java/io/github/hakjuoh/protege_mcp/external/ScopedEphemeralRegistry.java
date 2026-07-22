@@ -69,7 +69,7 @@ final class ScopedEphemeralRegistry<T> implements AutoCloseable {
         long now = now();
         Entry<T> entry = entries.get(key);
         if (entry == null || !entry.scope.equals(scope)) throw invalid();
-        if (entry.expiresAt <= now) {
+        if (!entry.expiryHeld && entry.expiresAt <= now) {
             entries.remove(key, entry);
             throw failure("expired", "Provider " + kind + " expired");
         }
@@ -128,7 +128,7 @@ final class ScopedEphemeralRegistry<T> implements AutoCloseable {
         if (current != expected || current.claim != marker) {
             throw invalid();
         }
-        if (current.expiresAt <= now) {
+        if (!current.expiryHeld && current.expiresAt <= now) {
             entries.remove(token, current);
             throw failure("expired", "Provider " + kind + " expired before completion");
         }
@@ -153,12 +153,47 @@ final class ScopedEphemeralRegistry<T> implements AutoCloseable {
         if (current != expected || current.claim != marker) {
             throw invalid();
         }
-        if (current.expiresAt <= now) {
+        if (!current.expiryHeld && current.expiresAt <= now) {
             entries.remove(token, current);
             throw failure("expired", "Provider " + kind + " expired while in use");
         }
         cleanup(now);
         return current.value;
+    }
+
+    private synchronized void holdExpiry(String token, Entry<T> expected, Object marker)
+            throws ProviderFailure {
+        requireOpen();
+        long now = now();
+        Entry<T> current = entries.get(token);
+        if (current != expected || current.claim != marker || current.expiryHeld) throw invalid();
+        if (current.expiresAt <= now) {
+            entries.remove(token, current);
+            throw failure("expired", "Provider " + kind + " expired before protected execution");
+        }
+        current.expiryHeld = true;
+        cleanup(now);
+    }
+
+    private synchronized void releaseExpiryHold(String token, Entry<T> expected, Object marker,
+            boolean renew) throws ProviderFailure {
+        Entry<T> current = entries.get(token);
+        if (current != expected || current.claim != marker || !current.expiryHeld) return;
+        if (renew) {
+            requireOpen();
+            current.expiresAt = expiresAt(now());
+        }
+        current.expiryHeld = false;
+    }
+
+    private synchronized void renewExpiryHold(String token, Entry<T> expected, Object marker)
+            throws ProviderFailure {
+        Entry<T> current = entries.get(token);
+        if (current != expected || current.claim != marker || !current.expiryHeld) {
+            throw invalid();
+        }
+        requireOpen();
+        current.expiresAt = expiresAt(now());
     }
 
     private synchronized void release(String token, Entry<T> expected, Object marker) {
@@ -216,7 +251,7 @@ final class ScopedEphemeralRegistry<T> implements AutoCloseable {
     }
 
     private void cleanup(long now) {
-        entries.values().removeIf(entry -> entry.expiresAt <= now);
+        entries.values().removeIf(entry -> !entry.expiryHeld && entry.expiresAt <= now);
     }
 
     private int principalCount(ProviderSessionScope scope) {
@@ -292,8 +327,9 @@ final class ScopedEphemeralRegistry<T> implements AutoCloseable {
     private static final class Entry<T> {
         private final ProviderSessionScope scope;
         private final T value;
-        private final long expiresAt;
+        private long expiresAt;
         private Object claim;
+        private boolean expiryHeld;
 
         private Entry(ProviderSessionScope scope, T value, long expiresAt) {
             this.scope = Objects.requireNonNull(scope);
@@ -308,6 +344,8 @@ final class ScopedEphemeralRegistry<T> implements AutoCloseable {
         private final String token;
         private final Entry<T> entry;
         private Object marker;
+        private boolean expiryHeld;
+        private boolean closeRequested;
 
         private Claim(ScopedEphemeralRegistry<T> owner, String token, Entry<T> entry,
                 Object marker) {
@@ -322,8 +360,19 @@ final class ScopedEphemeralRegistry<T> implements AutoCloseable {
             return owner.value(token, entry, marker);
         }
 
+        synchronized ExpiryLease holdExpiry() throws ProviderFailure {
+            requireActive();
+            if (expiryHeld) throw new IllegalStateException("ephemeral claim expiry is already held");
+            owner.holdExpiry(token, entry, marker);
+            expiryHeld = true;
+            return new ExpiryLease(this);
+        }
+
         synchronized String replace(T successor) throws ProviderFailure {
             requireActive();
+            if (expiryHeld) {
+                throw new IllegalStateException("ephemeral claim cannot complete while expiry is held");
+            }
             String next = owner.replace(token, entry, marker, successor);
             finish();
             return next;
@@ -336,8 +385,31 @@ final class ScopedEphemeralRegistry<T> implements AutoCloseable {
         @Override
         public synchronized void close() {
             if (owner == null) return;
+            if (expiryHeld) {
+                closeRequested = true;
+                return;
+            }
             owner.release(token, entry, marker);
             finish();
+        }
+
+        private synchronized void finishExpiryHold(boolean renew) throws ProviderFailure {
+            requireActive();
+            if (!expiryHeld) return;
+            owner.releaseExpiryHold(token, entry, marker, renew);
+            expiryHeld = false;
+            if (closeRequested) {
+                owner.release(token, entry, marker);
+                finish();
+            }
+        }
+
+        private synchronized void renewExpiryHold() throws ProviderFailure {
+            requireActive();
+            if (!expiryHeld) {
+                throw new IllegalStateException("ephemeral claim expiry is not held");
+            }
+            owner.renewExpiryHold(token, entry, marker);
         }
 
         private synchronized void requireActive() {
@@ -347,6 +419,33 @@ final class ScopedEphemeralRegistry<T> implements AutoCloseable {
         private synchronized void finish() {
             owner = null;
             marker = null;
+        }
+    }
+
+    /** Temporarily freezes claim expiry while one protected operation is running. */
+    static final class ExpiryLease implements AutoCloseable {
+        private Claim<?> claim;
+
+        private ExpiryLease(Claim<?> claim) {
+            this.claim = claim;
+        }
+
+        synchronized void renew() throws ProviderFailure {
+            if (claim == null) return;
+            claim.renewExpiryHold();
+        }
+
+        @Override
+        public synchronized void close() {
+            if (claim == null) return;
+            Claim<?> current = claim;
+            claim = null;
+            try {
+                current.finishExpiryHold(false);
+            } catch (ProviderFailure unavailable) {
+                throw new IllegalStateException("ephemeral expiry hold could not be released",
+                        unavailable);
+            }
         }
     }
 }

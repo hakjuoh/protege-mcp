@@ -81,6 +81,25 @@ class ToolSchemaValidatorTest {
                 Map.of("type", "object", "additionalProperties", true), "input"));
     }
 
+    @Test
+    void validatesBoundedObjectPropertyNames() {
+        Map<String, Object> schema = Map.of(
+                "type", "object",
+                "propertyNames", Map.of("type", "string", "pattern", "^[a-z_]{1,16}$"),
+                "additionalProperties", Map.of("type", "string", "maxLength", 8));
+
+        Map<String, Object> output = output(schema);
+        assertDoesNotThrow(() -> ToolSchemaValidator.validateOutput(output, "result"));
+        assertDoesNotThrow(() -> ToolSchemaValidator.validateTypedOutput(output, "result"));
+        ToolSchemaValidator.Compiled compiled = ToolSchemaValidator.compile(output);
+        assertTrue(compiled.violations(Map.of(
+                "value", Map.of("valid_name", "value"))).isEmpty());
+        assertFalse(compiled.violations(Map.of(
+                "value", Map.of("Invalid", "value"))).isEmpty());
+        assertFalse(compiled.violations(Map.of(
+                "value", Map.of("valid_name", "too-long-value"))).isEmpty());
+    }
+
     private static Map<String, Object> output(Map<String, Object> property) {
         return Map.of("type", "object", "properties", Map.of("value", property),
                 "additionalProperties", false);

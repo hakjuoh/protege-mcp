@@ -91,10 +91,20 @@ public final class SssomMappingStore {
             Map<String, Object> initialMetadata, Map<String, String> initialPrefixMap,
             SssomValidationPolicy policy, SssomEntityIndex entities, MutationGuard guard)
             throws IOException {
+        return add(expectedRevision, record, initialMetadata, initialPrefixMap,
+                policy, entities, guard, null);
+    }
+
+    /** Add one row while also requiring the locked baseline to retain its existence state. */
+    public Mutation add(String expectedRevision, MappingRecord record,
+            Map<String, Object> initialMetadata, Map<String, String> initialPrefixMap,
+            SssomValidationPolicy policy, SssomEntityIndex entities, MutationGuard guard,
+            Boolean expectedExists) throws IOException {
         if (record == null) throw new IllegalArgumentException("mapping record is required");
         Map<String, Object> metadata = initialMetadata == null ? Map.of() : Map.copyOf(initialMetadata);
         Map<String, String> prefixes = initialPrefixMap == null ? Map.of() : Map.copyOf(initialPrefixMap);
-        return mutate(expectedRevision, policy, entities, guard, false, (current, exists) -> {
+        return mutate(expectedRevision, policy, entities, guard, false, expectedExists,
+                (current, exists) -> {
             Set<String> columns = new LinkedHashSet<>(current.columns());
             columns.addAll(record.cells().keySet());
             List<MappingRecord> records = new ArrayList<>(current.records());
@@ -112,7 +122,7 @@ public final class SssomMappingStore {
         if (mappingId == null || mappingId.isBlank()) {
             throw new IllegalArgumentException("mapping_id is required");
         }
-        return mutate(expectedRevision, policy, entities, guard, false, (current, exists) -> {
+        return mutate(expectedRevision, policy, entities, guard, false, null, (current, exists) -> {
             List<MappingRecord> records = current.records().stream()
                     .filter(record -> !mappingId.equals(record.mappingId())).toList();
             if (records.size() == current.records().size()) {
@@ -130,7 +140,7 @@ public final class SssomMappingStore {
         if (incoming == null || mode == null) {
             throw new IllegalArgumentException("incoming document and import mode are required");
         }
-        return mutate(expectedRevision, policy, entities, guard, mode == ImportMode.REPLACE,
+        return mutate(expectedRevision, policy, entities, guard, mode == ImportMode.REPLACE, null,
                 (current, exists) -> mode == ImportMode.REPLACE ? incoming : merge(current, incoming));
     }
 
@@ -164,7 +174,7 @@ public final class SssomMappingStore {
                             true, false, List.of(), invalid);
                 }
                 Mutation mutation = mutateLocked(expectedRevision, policy, entities,
-                        checkedGuard, mode == ImportMode.REPLACE,
+                        checkedGuard, mode == ImportMode.REPLACE, null,
                         (current, exists) -> mode == ImportMode.REPLACE
                                 ? incoming : merge(current, incoming));
                 return new FileImport(mutation, incoming.records().size());
@@ -253,13 +263,13 @@ public final class SssomMappingStore {
 
     private Mutation mutate(String expectedRevision, SssomValidationPolicy policy,
             SssomEntityIndex entities, MutationGuard guard, boolean allowInvalidCurrent,
-            Candidate candidate) throws IOException {
+            Boolean expectedExists, Candidate candidate) throws IOException {
         requireRevision(expectedRevision);
         MutationGuard checkedGuard = guard == null ? MutationGuard.none() : guard;
         try {
             return ProjectFileLock.withLock(stateRoot, projectRoot,
                     () -> mutateLocked(expectedRevision, policy, entities, checkedGuard,
-                            allowInvalidCurrent, candidate));
+                            allowInvalidCurrent, expectedExists, candidate));
         } catch (ProjectFileLock.UnavailableException held) {
             throw new SssomStoreException("mapping_revision_conflict",
                     "another mapping transaction is in progress; re-read mapping_revision", true,
@@ -269,12 +279,16 @@ public final class SssomMappingStore {
 
     private Mutation mutateLocked(String expectedRevision, SssomValidationPolicy policy,
             SssomEntityIndex entities, MutationGuard guard, boolean allowInvalidCurrent,
-            Candidate candidate) throws IOException {
+            Boolean expectedExists, Candidate candidate) throws IOException {
         checkGuard(guard);
         Loaded current = load(target, policy, entities);
         if (!current.snapshot.mappingRevision.equals(expectedRevision)) {
             throw new SssomStoreException("mapping_revision_conflict",
                     "Expected mapping revision does not match the current canonical store", true);
+        }
+        if (expectedExists != null && expectedExists.booleanValue() != current.baseline.exists) {
+            throw new SssomStoreException("mapping_existence_conflict",
+                    "Mapping store existence changed after the expected state was captured", true);
         }
         if (!allowInvalidCurrent && !current.report.valid()) {
             throw validationFailure(current.report);

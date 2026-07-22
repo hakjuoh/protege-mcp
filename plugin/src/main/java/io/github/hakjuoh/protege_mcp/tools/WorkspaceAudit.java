@@ -20,7 +20,7 @@ import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
 import io.github.hakjuoh.protege_mcp.server.McpAccessException;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
-/** Request-bound attribution for one live Protégé window, backed by owner-only JSONL streams. */
+/** Request-bound attribution for one live Protege window, backed by owner-only JSONL streams. */
 final class WorkspaceAudit {
 
     private static final long POLICY_REFRESH_NANOS = 5_000_000_000L;
@@ -80,8 +80,8 @@ final class WorkspaceAudit {
             committed = AuditFacts.committed(content, ticket.mutationExpected());
         }
         List<String> references = new ArrayList<>(ticket.confirmationReferences());
-        if (Boolean.TRUE.equals(committed) && context.controller() != null
-                && context.controller().isConfirmWrites()) {
+        Boolean capturedConfirmation = AuditFacts.interactiveWriteConfirmation(content);
+        if (Boolean.TRUE.equals(committed) && Boolean.TRUE.equals(capturedConfirmation)) {
             references.add("interactive_write_confirmation");
         }
         Map<String, Object> summary = new java.util.LinkedHashMap<>(AuditFacts.summary(content));

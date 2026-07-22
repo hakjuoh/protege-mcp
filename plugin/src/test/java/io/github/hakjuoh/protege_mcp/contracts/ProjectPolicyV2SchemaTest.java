@@ -96,6 +96,33 @@ class ProjectPolicyV2SchemaTest {
                 "origin_alias", "ebi-ols", "api_key", "secret"))));
         assertInvalid(secret, "secret must never be policy content");
 
+        Map<String, Object> invalidCredential = base();
+        invalidCredential.put("external_terms", Map.of("providers", List.of(Map.of(
+                "id", "ols", "profile", "ols4", "enabled", true,
+                "origin_alias", "ebi-ols", "credential_id", "4invalid"))));
+        assertInvalid(invalidCredential, "credential grammar must match the owner store");
+
+        Map<String, Object> longCredential = base();
+        longCredential.put("external_terms", Map.of("providers", List.of(Map.of(
+                "id", "ols", "profile", "ols4", "enabled", true,
+                "origin_alias", "ebi-ols", "credential_id", "a".repeat(65)))));
+        assertInvalid(longCredential, "credential length must match the owner store");
+
+        for (int ttl : List.of(0, 86_400)) {
+            Map<String, Object> boundary = base();
+            boundary.put("external_terms", Map.of("providers", List.of(Map.of(
+                    "id", "ols", "profile", "ols4", "enabled", true,
+                    "origin_alias", "ebi-ols", "ttl_seconds", ttl))));
+            assertValid(boundary, "provider TTL boundary " + ttl);
+        }
+        for (int ttl : List.of(-1, 86_401)) {
+            Map<String, Object> boundary = base();
+            boundary.put("external_terms", Map.of("providers", List.of(Map.of(
+                    "id", "ols", "profile", "ols4", "enabled", true,
+                    "origin_alias", "ebi-ols", "ttl_seconds", ttl))));
+            assertInvalid(boundary, "provider TTL outside boundary " + ttl);
+        }
+
         for (Map<String, Object> jobs : List.<Map<String, Object>>of(
                 Map.of("workers", 3), Map.of("queue_capacity", 33),
                 Map.of("active_per_principal", 9), Map.of("retention_seconds", 3601))) {

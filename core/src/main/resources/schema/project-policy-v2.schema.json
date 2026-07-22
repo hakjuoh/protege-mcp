@@ -541,14 +541,17 @@
               "ontologies": {
                 "type": "array",
                 "maxItems": 64,
-                "items": {"$ref": "#/$defs/nonEmptyString"},
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+                },
                 "uniqueItems": true,
                 "default": []
               },
               "languages": {
                 "type": "array",
                 "maxItems": 16,
-                "items": {"type": "string", "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"},
+                "items": {"type": "string", "maxLength": 64, "pattern": "^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$"},
                 "uniqueItems": true,
                 "default": []
               },
@@ -794,8 +797,8 @@
     "credentialId": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"
     },
     "boundedStringList": {
       "type": "array",

@@ -6,7 +6,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
-/** Complete capability declaration for the public in-Protégé MCP tool catalog. */
+/** Complete capability declaration for the public in-Protege MCP tool catalog. */
 public final class ToolCapabilityCatalog {
 
     private static final Map<String, Set<String>> REQUIRED = declarations();
@@ -46,6 +46,8 @@ public final class ToolCapabilityCatalog {
         Set<String> admin = access(Capability.ONTOLOGY_ADMIN);
         Set<String> readProject = access(Capability.ONTOLOGY_READ,
                 Capability.FILESYSTEM_PROJECT_READ);
+        Set<String> providerRead = access(Capability.ONTOLOGY_READ,
+                Capability.FILESYSTEM_PROJECT_READ, Capability.NETWORK_ACCESS);
         Set<String> adminProjectRead = access(Capability.ONTOLOGY_ADMIN,
                 Capability.FILESYSTEM_PROJECT_READ);
         Set<String> adminProjectWrite = access(Capability.ONTOLOGY_ADMIN,
@@ -77,6 +79,8 @@ public final class ToolCapabilityCatalog {
         declare(map, readProject, "get_model_revision", "verify_import_lock", "validate_catalog",
                 "get_project_policy", "validate_project_policy", "run_project_qc",
                 "list_mappings", "validate_mappings");
+        declare(map, providerRead, "search_external_terms", "inspect_external_term",
+                "propose_term_reuse");
         declare(map, curate,
                 "create_class", "create_entity", "add_subclass_of", "add_annotation", "add_axiom",
                 "remove_axiom", "apply_changes", "set_label", "undo_change", "redo_change",
@@ -92,7 +96,8 @@ public final class ToolCapabilityCatalog {
         declare(map, adminProjectWrite, "save_ontology", "write_catalog",
                 "write_project_policy_template");
         declare(map, adminProjectReadWrite, "write_import_lock");
-        declare(map, curateProjectReadWrite, "add_mapping", "remove_mapping", "import_sssom");
+        declare(map, curateProjectReadWrite, "add_mapping", "remove_mapping", "import_sssom",
+                "accept_reuse_proposal");
         declare(map, readProjectWrite, "export_sssom");
         declare(map, releaseRead, "run_release_gate");
         declare(map, releaseWrite, "prepare_release");

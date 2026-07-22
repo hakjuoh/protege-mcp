@@ -18,7 +18,7 @@ public final class AuditFacts {
             "policy_digest", "prepared", "previous_mapping_revision", "mapping_revision",
             "record_count", "removed", "saved", "semantic_fingerprint", "sha256",
             "source_count", "source_records", "spreadsheet_safe", "lossless", "valid",
-            "verified", "written");
+            "verified", "written", "interactive_confirmation");
     private static final Set<String> REVISION_FIELDS = Set.of(
             "closure_fingerprint", "document_fingerprint", "import_lock_digest",
             "policy_digest", "semantic_fingerprint", "session_revision", "workspace_fingerprint");
@@ -83,7 +83,16 @@ public final class AuditFacts {
                 arguments.get("expected_mapping_revision"), SHA256);
         addReference(references, "target_digest",
                 arguments.get("expected_target_digest"), SHA256);
+        addReference(references, "proposal_fingerprint",
+                arguments.get("proposal_fingerprint"), SHA256);
         return List.copyOf(references);
+    }
+
+    /** Captured interactive approval evidence supplied by a typed tool result, when present. */
+    public static Boolean interactiveWriteConfirmation(Object structuredContent) {
+        if (!(structuredContent instanceof Map<?, ?> source)) return null;
+        Object value = source.get("interactive_confirmation");
+        return value instanceof Boolean decision ? decision : null;
     }
 
     /** Link the committed release to its manifest without retaining the manifest body. */

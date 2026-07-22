@@ -15,6 +15,7 @@ public record ProviderPage(List<ProviderResult> items, long total, String contin
 
     public ProviderPage {
         if (items == null || items.size() > 100 || total < items.size()
+                || total > Integer.MAX_VALUE
                 || fetchedAt == null || retries < 0 || retries > ProviderResponse.MAX_RETRIES) {
             throw new IllegalArgumentException("provider page is invalid");
         }

@@ -12,6 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -30,10 +33,10 @@ import org.protege.editor.owl.model.OWLModelManager;
  * {@link OntologyAccess#run(Consumer)} route work onto the Swing event-dispatch thread through the
  * package-private {@link OntologyAccess.EdtGateway}. Because this test lives in the same package it
  * can supply hand-rolled gateway doubles and drive the fast path, async path, timeout, cancellation
- * and exception-translation logic deterministically, with no live Protégé runtime.
+ * and exception-translation logic deterministically, with no live Protege runtime.
  *
  * <p>{@link OWLEditorKit} is a concrete class (not an interface) so it cannot be {@code Proxy}'d; a
- * bare instance is created via {@code sun.misc.Unsafe.allocateInstance} — its {@code getModelManager()}
+ * bare instance is created via {@code sun.misc.Unsafe.allocateInstance}; its {@code getModelManager()}
  * then returns {@code null}, which is fine because every {@code fn} here ignores the model manager.
  */
 class OntologyAccessSeamTest {
@@ -54,7 +57,7 @@ class OntologyAccessSeamTest {
         return (OWLEditorKit) allocate(OWLEditorKit.class);
     }
 
-    /** Gateway reporting "on the EDT" — compute runs the body inline and never enqueues. */
+    /** Gateway reporting "on the EDT"; compute runs the body inline and never enqueues. */
     private static final class InlineGateway implements OntologyAccess.EdtGateway {
         final AtomicInteger invokeLaterCalls = new AtomicInteger();
 
@@ -203,7 +206,7 @@ class OntologyAccessSeamTest {
         access.run(mm -> ranOn.set(Thread.currentThread()));
 
         Thread ran = ranOn.get();
-        // Prove the consumer actually executed before comparing threads — otherwise a broken async
+        // Prove the consumer actually executed before comparing threads; otherwise a broken async
         // seam (consumer never runs, ranOn stays null) would still pass `currentThread() != null`.
         assertNotNull(ran, "run executed the consumer");
         assertNotSame(Thread.currentThread(), ran,
@@ -275,6 +278,109 @@ class OntologyAccessSeamTest {
         assertTrue(msg.contains("Timed out"), "message reports a timeout: " + msg);
         assertTrue(msg.contains("25"), "message carries the wait bound (25 ms): " + msg);
         assertTrue(thrown.effectsPrevented(), "a still-queued body was atomically cancelled");
+    }
+
+    @Test
+    void mutationQueueTimeoutCancelsBodyBeforeItStarts() throws Exception {
+        CapturingGateway gateway = new CapturingGateway();
+        OntologyAccess access = new OntologyAccess(bareKit(), 30_000L, gateway);
+        AtomicInteger mutations = new AtomicInteger();
+
+        McpAccessException failure = assertThrows(McpAccessException.class,
+                () -> access.computeMutation(mm -> mutations.incrementAndGet(), 25L));
+        assertTrue(failure.effectsPrevented());
+        gateway.captured.run();
+        assertEquals(0, mutations.get());
+    }
+
+    @Test
+    void mutationJoinsStartedBodyPastQueueBound() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        OntologyAccess.EdtGateway gateway = new OntologyAccess.EdtGateway() {
+            @Override
+            public boolean isDispatchThread() {
+                return false;
+            }
+
+            @Override
+            public void invokeLater(Runnable task) {
+                Thread worker = new Thread(task, "joined-model-thread-body");
+                worker.setDaemon(true);
+                worker.start();
+            }
+        };
+        OntologyAccess access = new OntologyAccess(bareKit(), 30_000L, gateway);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<Integer> result = executor.submit(() -> access.computeMutation(mm -> {
+                started.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException failure) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(failure);
+                }
+                return 7;
+            }, 25L));
+            assertTrue(started.await(2, TimeUnit.SECONDS));
+            Thread.sleep(75L);
+            assertFalse(result.isDone(), "a started mutation retains its caller past the bound");
+            release.countDown();
+            assertEquals(7, result.get(2, TimeUnit.SECONDS));
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void interruptedMutationCallerStillJoinsStartedBodyAndRestoresInterrupt() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch callerDone = new CountDownLatch(1);
+        OntologyAccess.EdtGateway gateway = new OntologyAccess.EdtGateway() {
+            @Override
+            public boolean isDispatchThread() {
+                return false;
+            }
+
+            @Override
+            public void invokeLater(Runnable task) {
+                Thread worker = new Thread(task, "interrupted-joined-model-body");
+                worker.setDaemon(true);
+                worker.start();
+            }
+        };
+        OntologyAccess access = new OntologyAccess(bareKit(), 30_000L, gateway);
+        AtomicReference<Integer> result = new AtomicReference<>();
+        AtomicBoolean interrupted = new AtomicBoolean();
+        Thread caller = new Thread(() -> {
+            try {
+                result.set(access.computeMutation(mm -> {
+                    started.countDown();
+                    try {
+                        release.await();
+                    } catch (InterruptedException failure) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(failure);
+                    }
+                    return 9;
+                }, 30_000L));
+                interrupted.set(Thread.currentThread().isInterrupted());
+            } finally {
+                callerDone.countDown();
+            }
+        }, "interrupted-mutation-caller");
+        caller.setDaemon(true);
+        caller.start();
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+        caller.interrupt();
+        assertFalse(callerDone.await(100, TimeUnit.MILLISECONDS));
+        release.countDown();
+        assertTrue(callerDone.await(2, TimeUnit.SECONDS));
+        assertEquals(9, result.get());
+        assertTrue(interrupted.get());
     }
 
     @Test

@@ -19,8 +19,7 @@ public record ProviderSearchRequest(String providerId, String query, List<String
         LinkedHashSet<String> unique = new LinkedHashSet<>();
         for (String ontology : ontologies) unique.add(identifier(ontology, "ontology"));
         ontologies = unique.stream().sorted().toList();
-        language = language == null || language.isBlank() ? "en"
-                : identifier(language.toLowerCase(Locale.ROOT), "language");
+        language = language(language);
         if (limit < 1 || limit > 100) throw new IllegalArgumentException("limit must be 1..100");
         if (continuation != null && (continuation.isBlank()
                 || continuation.length() > MAX_CONTINUATION_LENGTH)) {
@@ -35,11 +34,26 @@ public record ProviderSearchRequest(String providerId, String query, List<String
         return value.toLowerCase(Locale.ROOT);
     }
 
+    static String language(String value) {
+        String normalized = value == null || value.isBlank()
+                ? "en" : value.toLowerCase(Locale.ROOT);
+        if (normalized.length() > 64
+                || !normalized.matches("[a-z]{2,8}(?:-[a-z0-9]{1,8})*")) {
+            throw new IllegalArgumentException("language is invalid");
+        }
+        return normalized;
+    }
+
     private static String normalizeQuery(String value) {
-        ProviderFailure.requireText(value, "query", 512);
-        String normalized = Normalizer.normalize(value, Normalizer.Form.NFKC)
+        value = ProviderValues.wellFormed(
+                ProviderFailure.requireText(value, "query", 512), "query");
+        String normalized = ProviderValues.wellFormed(
+                Normalizer.normalize(value, Normalizer.Form.NFKC), "query")
                 .trim().replaceAll("\\s+", " ");
         if (normalized.isBlank()) throw new IllegalArgumentException("query is blank");
+        if (normalized.codePointCount(0, normalized.length()) > 512) {
+            throw new IllegalArgumentException("query exceeds 512 characters after normalization");
+        }
         return normalized;
     }
 }
