@@ -172,7 +172,7 @@ cross-resource atomicity or silently rolls back a later edit. There is no hidden
 transition.
 
 Provider cursors and proposals are owner/grant/workspace scoped. Cursors expire after five minutes and are
-limited to 32 per principal, 256 per backend, and 64 KiB each. Proposals expire after 15 minutes and are
+limited to 32 per principal, 256 per backend, and 256 KiB each. Proposals expire after 15 minutes and are
 limited to 64 per principal, 256 per backend, and 256 KiB each. Revocation, window close, or restart deletes
 both; exhaustion returns `cursor_quota_exceeded` or `proposal_quota_exceeded` without evicting an active
 continuation.
