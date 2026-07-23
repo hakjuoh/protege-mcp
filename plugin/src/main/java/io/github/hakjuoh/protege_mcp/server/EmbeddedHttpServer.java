@@ -82,6 +82,9 @@ public final class EmbeddedHttpServer {
      * @return the actual bound port.
      */
     public synchronized int start(int port) throws Exception {
+        if (server != null) {
+            throw new IllegalStateException("Embedded HTTP server is already started");
+        }
         if (isWildcard(bindAddress) && port != 0) {
             // BSD/macOS quirk: with SO_REUSEADDR (Jetty's connector default) a wildcard bind
             // SUCCEEDS while another process holds 127.0.0.1 on the same port — and that specific
@@ -100,36 +103,43 @@ public final class EmbeddedHttpServer {
             }
         }
 
-        server = new Server();
+        Server candidateServer = new Server();
+        ServerConnector candidateConnector = new ServerConnector(candidateServer);
+        try {
+            candidateConnector.setHost(bindAddress);
+            candidateConnector.setPort(port);
+            candidateServer.addConnector(candidateConnector);
 
-        connector = new ServerConnector(server);
-        connector.setHost(bindAddress);
-        connector.setPort(port);
-        server.addConnector(connector);
+            ServletContextHandler context = new ServletContextHandler();
+            context.setContextPath("/");
 
-        ServletContextHandler context = new ServletContextHandler();
-        context.setContextPath("/");
+            for (FilterReg f : filters) {
+                FilterHolder holder = new FilterHolder(f.filter);
+                holder.setAsyncSupported(true);
+                context.addFilter(holder, f.pathSpec,
+                        EnumSet.of(DispatcherType.REQUEST, DispatcherType.ASYNC));
+            }
+            for (ServletReg s : servlets) {
+                ServletHolder holder = new ServletHolder(s.servlet);
+                holder.setAsyncSupported(s.asyncSupported);
+                context.addServlet(holder, s.pathSpec);
+            }
 
-        for (FilterReg f : filters) {
-            FilterHolder holder = new FilterHolder(f.filter);
-            holder.setAsyncSupported(true);
-            context.addFilter(holder, f.pathSpec, EnumSet.of(DispatcherType.REQUEST, DispatcherType.ASYNC));
+            candidateServer.setHandler(context);
+            candidateServer.setStopTimeout(2_000L);
+            candidateServer.start();
+
+            int bound = candidateConnector.getLocalPort();
+            if (!isWildcard(bindAddress) && !bindAddress.startsWith("127.")) {
+                addLoopbackAliasQuietly(candidateServer, bound);
+            }
+            server = candidateServer;
+            connector = candidateConnector;
+            return bound;
+        } catch (Exception | Error failure) {
+            stopCandidate(candidateServer);
+            throw failure;
         }
-        for (ServletReg s : servlets) {
-            ServletHolder holder = new ServletHolder(s.servlet);
-            holder.setAsyncSupported(s.asyncSupported);
-            context.addServlet(holder, s.pathSpec);
-        }
-
-        server.setHandler(context);
-        server.setStopTimeout(2_000L);
-        server.start();
-
-        int bound = connector.getLocalPort();
-        if (!isWildcard(bindAddress) && !bindAddress.startsWith("127.")) {
-            addLoopbackAliasQuietly(bound);
-        }
-        return bound;
     }
 
     /**
@@ -141,15 +151,28 @@ public final class EmbeddedHttpServer {
      * {@code localhost} bind — or a foreign loopback listener owns the port; the primary bind
      * stays authoritative either way).
      */
-    private void addLoopbackAliasQuietly(int boundPort) {
-        ServerConnector alias = new ServerConnector(server);
+    private static void addLoopbackAliasQuietly(Server candidateServer, int boundPort) {
+        ServerConnector alias = new ServerConnector(candidateServer);
         alias.setHost(LOOPBACK);
         alias.setPort(boundPort);
-        server.addConnector(alias);
+        candidateServer.addConnector(alias);
         try {
             alias.start();
         } catch (Exception conflict) {
-            server.removeConnector(alias);
+            candidateServer.removeConnector(alias);
+        }
+    }
+
+    private static void stopCandidate(Server candidateServer) {
+        try {
+            candidateServer.stop();
+        } catch (Exception ignored) {
+            // Best effort cleanup preserves the original startup failure.
+        }
+        try {
+            candidateServer.destroy();
+        } catch (RuntimeException ignored) {
+            // Best effort cleanup preserves the original startup failure.
         }
     }
 

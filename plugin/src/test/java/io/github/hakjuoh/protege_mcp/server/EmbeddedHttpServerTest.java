@@ -292,22 +292,21 @@ class EmbeddedHttpServerTest {
     }
 
     @Test
-    void startTwiceReplacesServerWithFreshInstance() throws Exception {
-        // start() unconditionally assigns a brand-new Server/ServerConnector, so a second start(0)
-        // does not throw — it orphans the first server and binds a new ephemeral port.
+    void startTwiceIsRejectedWithoutOrphaningTheRunningServer() throws Exception {
         host = new EmbeddedHttpServer();
+        host.addServlet(new RecordingServlet("ready"), "/health", false);
         int firstPort = host.start(0);
         Object firstServer = field(host, "server");
 
-        int secondPort = host.start(0);
-        Object secondServer = field(host, "server");
+        IllegalStateException duplicate = assertThrows(IllegalStateException.class,
+                () -> host.start(0));
 
-        assertTrue(secondPort > 0, "second start(0) should bind another ephemeral port");
-        assertTrue(firstServer != secondServer,
-                "second start() should replace the server field with a fresh instance");
-        assertNotEquals(firstPort, secondPort,
-                "an orphaned first server still holds its port, so the new one must pick a different port");
-        assertTrue(host.isRunning(), "the host should report running via the newly started server");
+        assertEquals("Embedded HTTP server is already started", duplicate.getMessage());
+        assertTrue(firstServer == field(host, "server"),
+                "a rejected duplicate start must retain the original server");
+        assertTrue(host.isRunning(), "the original server should remain running");
+        assertEquals(200, get(firstPort, "/health").status,
+                "the original server should remain reachable after the rejected start");
     }
 
     @Test
@@ -371,11 +370,17 @@ class EmbeddedHttpServerTest {
     }
 
     @Test
-    void startWithFallbackRethrowsNonBindFailures() {
+    void startWithFallbackRethrowsNonBindFailuresAndPermitsCleanRetry() throws Exception {
         host = new EmbeddedHttpServer();
         assertThrows(IllegalArgumentException.class, () -> host.startWithFallback(-1),
                 "a non-bind failure (invalid port) must propagate, not trigger the fallback");
         assertFalse(host.isRunning(), "the host must not come up after a non-bind failure");
+        assertNull(field(host, "server"), "a failed start must not publish a partial server");
+        assertNull(field(host, "connector"), "a failed start must not publish a partial connector");
+
+        int bound = host.startWithFallback(0);
+        assertTrue(bound > 0, "a valid retry should bind after failed startup cleanup");
+        assertTrue(host.isRunning(), "a valid retry should leave the host running");
     }
 
     // ---- isBindConflict --------------------------------------------------------
