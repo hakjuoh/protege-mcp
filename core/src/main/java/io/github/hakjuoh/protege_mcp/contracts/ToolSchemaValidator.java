@@ -30,7 +30,8 @@ public final class ToolSchemaValidator {
             "additionalProperties", "propertyNames", "items", "enum", "const", "minimum", "maximum",
             "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength", "pattern",
             "format", "minItems", "maxItems", "uniqueItems", "minProperties",
-            "maxProperties", "allOf", "anyOf", "oneOf", "not", "default", "examples");
+            "maxProperties", "contains", "allOf", "anyOf", "oneOf", "not", "default",
+            "examples");
 
     private ToolSchemaValidator() {
     }
@@ -146,6 +147,11 @@ public final class ToolSchemaValidator {
         if (items != null) {
             requireType(type, "array", path, "items");
             validateNode(items, path + ".items");
+        }
+        JsonNode contains = schema.get("contains");
+        if (contains != null) {
+            requireType(type, "array", path, "contains");
+            validateNode(contains, path + ".contains");
         }
 
         validateEnum(schema, path, type);
@@ -325,7 +331,7 @@ public final class ToolSchemaValidator {
     private static void requireTypedNode(JsonNode schema, String path) {
         boolean constrained = schema.has("type") || schema.has("enum") || schema.has("const")
                 || schema.has("allOf") || schema.has("anyOf") || schema.has("oneOf")
-                || schema.has("not");
+                || schema.has("not") || schema.has("contains");
         if (!constrained) {
             throw invalid(path + " must declare a type or a constraining composition");
         }
@@ -345,6 +351,8 @@ public final class ToolSchemaValidator {
         }
         JsonNode items = schema.get("items");
         if (items != null) requireTypedNode(items, path + ".items");
+        JsonNode contains = schema.get("contains");
+        if (contains != null) requireTypedNode(contains, path + ".contains");
         JsonNode additional = schema.get("additionalProperties");
         if (additional != null && additional.isObject()) {
             requireTypedNode(additional, path + ".additionalProperties");

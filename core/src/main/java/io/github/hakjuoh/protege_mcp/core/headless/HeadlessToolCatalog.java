@@ -14,6 +14,7 @@ import io.github.hakjuoh.protege_mcp.contracts.Legacy072ToolContracts;
 import io.github.hakjuoh.protege_mcp.contracts.ToolSchemaValidator;
 import io.github.hakjuoh.protege_mcp.contracts.ImmutableJson;
 import io.github.hakjuoh.protege_mcp.contracts.SssomToolSchemas;
+import io.github.hakjuoh.protege_mcp.contracts.ReasonerToolSchemas;
 
 /** Public MCP metadata for the deliberately small, project-confined headless subset. */
 public final class HeadlessToolCatalog {
@@ -98,12 +99,14 @@ public final class HeadlessToolCatalog {
         List<Definition> definitions = new ArrayList<>();
         definitions.add(new Definition(SURFACE_TOOL,
                 "Describe the project-confined headless stdio surface, effective capabilities, "
-                        + "message bounds, supported tools, and live Protégé tools that are unavailable.",
+                        + "message bounds, supported tools, and live Prot\u00e9g\u00e9 tools that are unavailable.",
                 objectSchema(Map.of(), List.of()), Set.of()));
         definitions.add(definition("validate_project_policy",
                 "Validate the fixed project policy supplied when this stdio server started. Returns "
                         + "structured schema, semantic, and project-containment findings and writes nothing.",
                 objectSchema(Map.of(), List.of())));
+        definitions.add(reasonerDefinition("get_reasoner_capabilities"));
+        definitions.add(reasonerDefinition("validate_rules"));
         definitions.add(mappingDefinition("list_mappings",
                 "List the canonical project's SSSOM mappings with revision-bound cursor pagination."));
         definitions.add(mappingDefinition("add_mapping",
@@ -166,6 +169,13 @@ public final class HeadlessToolCatalog {
     private static Definition mappingDefinition(String name, String description) {
         return new Definition(name, description, SssomToolSchemas.input(name, false),
                 SssomToolSchemas.output(name), ToolContractSchemas.errorSchema(),
+                ToolCapabilityCatalog.required(name));
+    }
+
+    private static Definition reasonerDefinition(String name) {
+        return new Definition(name, ReasonerToolSchemas.description(name),
+                ReasonerToolSchemas.input(name),
+                ReasonerToolSchemas.output(name), ToolContractSchemas.errorSchema(),
                 ToolCapabilityCatalog.required(name));
     }
 

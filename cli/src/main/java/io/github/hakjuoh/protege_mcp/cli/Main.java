@@ -26,29 +26,43 @@ import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
+import org.semanticweb.owlapi.reasoner.BufferingMode;
+import org.semanticweb.owlapi.reasoner.SimpleConfiguration;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 import io.github.hakjuoh.protege_mcp.contracts.ContractJson;
+import io.github.hakjuoh.protege_mcp.contracts.Finding;
+import io.github.hakjuoh.protege_mcp.contracts.FindingSeverity;
 import io.github.hakjuoh.protege_mcp.contracts.GateStatus;
+import io.github.hakjuoh.protege_mcp.contracts.StageStatus;
 import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.core.diff.SemanticDiffService;
 import io.github.hakjuoh.protege_mcp.core.headless.HeadlessReleaseResults;
 import io.github.hakjuoh.protege_mcp.core.headless.HeadlessToolService;
 import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
 import io.github.hakjuoh.protege_mcp.core.qc.HeadlessProjectQcService;
+import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcReport;
+import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcRequest;
+import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcStageReport;
+import io.github.hakjuoh.protege_mcp.core.qc.QcStageExecution;
+import io.github.hakjuoh.protege_mcp.core.qc.QcStageVerdict;
 import io.github.hakjuoh.protege_mcp.core.release.ArtifactStore;
 import io.github.hakjuoh.protege_mcp.core.release.HeadlessReleaseService;
 import io.github.hakjuoh.protege_mcp.core.release.ReleaseReports;
 import io.github.hakjuoh.protege_mcp.core.workspace.FilesystemProjectWorkspace;
 import io.github.hakjuoh.protege_mcp.core.workspace.ImportLockService;
+import io.github.hakjuoh.protege_mcp.core.workspace.WorkspaceSnapshot;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityRegistry;
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerIdentity;
+import io.github.hakjuoh.protege_mcp.reasoner.RuleValidationService;
 
 /**
- * Java 17 headless surface proving the core has no Protégé runtime dependency.
+ * Java 17 headless surface proving the core has no Protege runtime dependency.
  *
  * <p>Exit codes: {@code 0} a gate/command passed; {@code 1} a validation/release gate
  * FAILED (a clean, loaded, but non-passing result); {@code 2} a configuration/usage error; {@code 3}
@@ -141,7 +155,7 @@ public final class Main {
     private static int validatePolicy(String[] args, PrintStream out) throws Exception {
         Options opts = parse(args, Set.of("--project"),
                 Set.of("--no-network", "--no-external"));
-        // Headless policy syntax/asset validation has no installed Protégé reasoner registry.
+        // Headless policy syntax/asset validation has no installed Protege reasoner registry.
         // Runtime reasoner availability is checked by the adapter that executes project QC.
         boolean noExternal = opts.flags.contains("--no-external");
         ProjectPolicy policy = ProjectPolicyLoader.load(Path.of(required(opts, "--project")),
@@ -172,28 +186,160 @@ public final class Main {
         ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null, null, null, true);
         if (!policy.valid()) return renderInvalidPolicy(policy, format, opts, noExternal, out);
 
-        HeadlessProjectQcService.Result qc = HeadlessProjectQcService.run(
-                new FilesystemProjectWorkspace(policyPath),
-                new org.semanticweb.HermiT.ReasonerFactory(), 25,
-                LocalDate.now(ZoneOffset.UTC));
+        FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(policyPath);
+        var factory = new org.semanticweb.HermiT.ReasonerFactory();
+        final HeadlessProjectQcService.Result qc;
+        Map<String, Object> ruleValidation;
+        try (WorkspaceSnapshot snapshot = workspace.capture()) {
+            qc = HeadlessProjectQcService.runCaptured(workspace, snapshot, factory, 25,
+                    LocalDate.now(ZoneOffset.UTC));
+            long timeoutMillis = reasoningTimeoutMillis(snapshot.policy());
+            ReasonerIdentity identity = ReasonerIdentity.capture(factory.getClass().getName(),
+                    factory.getReasonerName(), factory, new SimpleConfiguration(timeoutMillis),
+                    BufferingMode.BUFFERING, "headless_policy_reasoning_configuration");
+            var capabilities = new ReasonerCapabilityRegistry().report(identity);
+            try {
+                ruleValidation = RuleValidationService.validate(
+                        RuleValidationService.capture(RuleValidationService.snapshot(
+                                snapshot.closure(), true)), capabilities, 0,
+                        RuleValidationService.MAX_PAGE);
+            } catch (RuleValidationService.BudgetExceededException exceeded) {
+                ruleValidation = ruleValidationFailure(exceeded);
+            }
+        }
+        ProjectQcReport combined = withRuleValidation(qc.report(), ruleValidation);
         Map<String, Object> result = new LinkedHashMap<>(qc.output());
+        result.putAll(combined.toMap());
         result.put("scope", "project_qc");
+        result.put("rule_validation", ruleValidation);
         recordNoNetwork(opts, result);
         if (noExternal) result.put("no_external_paths", true);
         switch (format) {
             case "json" -> out.println(ReleaseReports.projectJson(result));
             case "markdown" -> out.print(
-                    ReleaseReports.projectMarkdown(qc.report(), result, 100));
-            case "junit" -> out.print(ReleaseReports.projectJunit(qc.report(), null));
-            case "sarif" -> out.println(ReleaseReports.projectSarifJson(qc.report(),
+                    ReleaseReports.projectMarkdown(combined, result, 100));
+            case "junit" -> out.print(ReleaseReports.projectJunit(combined, null));
+            case "sarif" -> out.println(ReleaseReports.projectSarifJson(combined,
                     rootArtifact(policy)));
             default -> throw new IllegalStateException("validated format was not handled");
         }
-        return switch (qc.report().gate()) {
+        return switch (combined.gate()) {
             case PASS -> 0;
             case FAIL -> 1;
             case ERROR -> 3;
         };
+    }
+
+    private static ProjectQcReport withRuleValidation(ProjectQcReport report,
+            Map<String, Object> validation) {
+        boolean executionError = validation.containsKey("error_code");
+        boolean compatible = Boolean.TRUE.equals(validation.get("compatible"));
+        List<Finding> stageFindings = ruleFindings(validation, compatible, executionError);
+        Map<String, Object> stageDetails = new LinkedHashMap<>();
+        stageDetails.put("compatible", compatible);
+        for (String key : List.of("total_rules", "unsupported_rules", "unknown_rules",
+                "untested_rules", "incompatible_rule_count", "snapshot_fingerprint",
+                "error_code", "budget", "maximum", "observed")) {
+            if (validation.get(key) != null) stageDetails.put(key, validation.get(key));
+        }
+        QcStageExecution execution = new QcStageExecution("rules",
+                executionError ? QcStageVerdict.ERROR
+                        : compatible ? QcStageVerdict.PASS : QcStageVerdict.FAIL,
+                executionError ? validationErrorMessage(validation) : null,
+                stageDetails);
+        ProjectQcStageReport stage = new ProjectQcStageReport(execution, true, true,
+                executionError ? StageStatus.ERROR
+                        : compatible ? StageStatus.PASS : StageStatus.FAIL,
+                executionError ? validationErrorMessage(validation) : null,
+                stageFindings);
+        List<ProjectQcStageReport> stages = new ArrayList<>(report.stages());
+        stages.add(stage);
+        List<Finding> findings = new ArrayList<>(report.findings());
+        findings.addAll(stageFindings);
+        GateStatus gate = report.gate() == GateStatus.ERROR || executionError
+                ? GateStatus.ERROR : compatible ? report.gate() : GateStatus.FAIL;
+        ProjectQcRequest request = report.request();
+        List<String> requiredStages = new ArrayList<>(request.requiredStages());
+        if (!requiredStages.contains("rules")) requiredStages.add("rules");
+        List<String> snapshotStages = new ArrayList<>(request.snapshotStages());
+        if (!snapshotStages.contains("rules")) snapshotStages.add("rules");
+        ProjectQcRequest combinedRequest = new ProjectQcRequest(request.policyLoaded(),
+                request.policyVersion(), request.policyDigest(), requiredStages,
+                request.failOn(), request.fingerprint(), request.selectedReasoner(),
+                request.snapshotConsistent(), request.preconditionError(),
+                request.snapshotMode(), snapshotStages, request.sameValidationSnapshot(),
+                request.closureFingerprint());
+        return new ProjectQcReport(gate, combinedRequest, stages, findings,
+                report.stagesRan() + 1, report.stagesSkipped(),
+                report.rdfDatasetFingerprint(), report.rdfDatasetIdentity(),
+                report.missingRequiredStages());
+    }
+
+    private static List<Finding> ruleFindings(Map<String, Object> validation,
+            boolean compatible, boolean executionError) {
+        if (compatible) return List.of();
+        if (executionError) {
+            return List.of(new Finding("swrl.rules.validation_error", "rule_validation",
+                    FindingSeverity.ERROR, validationErrorMessage(validation),
+                    null, null, null, null, null, Map.of(
+                            "error_code", validation.get("error_code"),
+                            "budget", validation.get("budget"),
+                            "maximum", validation.get("maximum"),
+                            "observed", validation.get("observed"))));
+        }
+        List<Finding> findings = new ArrayList<>();
+        Object raw = validation.get("incompatible_rule_summaries");
+        if (raw instanceof List<?> summaries) {
+            for (Object item : summaries) {
+                if (!(item instanceof Map<?, ?> summary)) continue;
+                String ruleId = String.valueOf(summary.get("rule_id"));
+                findings.add(new Finding("swrl.rule.incompatible", "rule_validation",
+                        FindingSeverity.ERROR,
+                        "SWRL rule " + ruleId + " has unsupported, unknown, or untested coverage.",
+                        null, null, null, null, null, Map.of(
+                                "rule_id", ruleId,
+                                "status", String.valueOf(summary.get("status")),
+                                "finding_count", summary.get("finding_count"),
+                                "finding_codes", summary.get("finding_codes"),
+                                "incompatible_predicates",
+                                summary.get("incompatible_predicates"))));
+            }
+        }
+        if (!findings.isEmpty()) return List.copyOf(findings);
+        return List.of(new Finding("swrl.rules.incompatible", "rule_validation",
+                FindingSeverity.ERROR,
+                "SWRL validation found unsupported, unknown, or untested rule coverage.",
+                null, null, null, null, null, Map.of()));
+    }
+
+    private static String validationErrorMessage(Map<String, Object> validation) {
+        return String.valueOf(validation.get("error_code")) + ": "
+                + String.valueOf(validation.get("message"));
+    }
+
+    private static Map<String, Object> ruleValidationFailure(
+            RuleValidationService.BudgetExceededException exceeded) {
+        Map<String, Object> failure = new LinkedHashMap<>();
+        failure.put("completed", false);
+        failure.put("compatible", false);
+        failure.put("error_code", "rule_validation_budget_exceeded");
+        failure.put("message", exceeded.getMessage());
+        failure.put("budget", exceeded.budget());
+        failure.put("maximum", exceeded.maximum());
+        failure.put("observed", exceeded.observed());
+        failure.put("effects_prevented", true);
+        return Map.copyOf(failure);
+    }
+
+    private static long reasoningTimeoutMillis(ProjectPolicy policy) {
+        Object rawReasoning = policy.effective().get("reasoning");
+        if (rawReasoning instanceof Map<?, ?> reasoning) {
+            Object rawTimeout = reasoning.get("timeout_ms");
+            if (rawTimeout instanceof Number timeout && timeout.longValue() > 0) {
+                return timeout.longValue();
+            }
+        }
+        return 120_000L;
     }
 
     private static int renderInvalidPolicy(ProjectPolicy policy, String format, Options opts,
@@ -222,8 +368,8 @@ public final class Main {
     /**
      * The shared policy-validation JSON body (0.6.1 shape). One honesty refinement:
      * {@code policy_loaded} reports whether the policy actually reached evaluation (a digest
-     * exists), so a missing or unparseable file — which the loader deliberately models as a
-     * loaded-invalid result so plugin callers cannot silently fall back — no longer prints the
+     * exists), so a missing or unparseable file -- which the loader deliberately models as a
+     * loaded-invalid result so plugin callers cannot silently fall back -- no longer prints the
      * contradictory {@code policy_loaded:true} next to {@code policy_not_found}/{@code yaml_invalid}.
      * This aligns with the exit-code contract, where those states are {@code 2} (never evaluated).
      */
@@ -288,7 +434,7 @@ public final class Main {
             if (issue.path() != null) {
                 md.append(" `").append(issue.path()).append('`');
             }
-            md.append(" — ").append(issue.message().replace("\n", " ")).append('\n');
+            md.append(" \u2014 ").append(issue.message().replace("\n", " ")).append('\n');
         }
         md.append('\n');
     }
@@ -355,8 +501,8 @@ public final class Main {
     }
 
     /**
-     * A valid policy passes (exit 0). An invalid policy that was still fully evaluated — parsed,
-     * schema-valid, semantic checks run, so a canonical {@code policy_digest} was computed — is a
+     * A valid policy passes (exit 0). An invalid policy that was still fully evaluated -- parsed,
+     * schema-valid, semantic checks run, so a canonical {@code policy_digest} was computed -- is a
      * gate-style failure (exit 1). A policy that could not be brought to an evaluable form (missing,
      * unparseable, schema-invalid, oversized, unreadable) never gets a digest and is a configuration
      * error (exit 2).
@@ -509,7 +655,7 @@ public final class Main {
     /**
      * A diff operand: the ontology document to load, plus optional resolved-from-manifest metadata.
      * For a manifest operand, {@code verifiedBytes} carries the exact byte array the sha256/length
-     * verification consumed, and the load parses those bytes — re-reading the path would let a
+     * verification consumed, and the load parses those bytes -- re-reading the path would let a
      * concurrent writer swap the content between verification and diff.
      */
     private record ResolvedOperand(Path document, Map<String, Object> manifest, byte[] verifiedBytes) {
@@ -518,7 +664,7 @@ public final class Main {
     /**
      * A {@code --left}/{@code --right} operand is a plain ontology document unless it is a {@code .json}
      * file that parses as a release manifest ({@code manifest_version} present). A manifest is resolved
-     * to its PRIMARY ontology artifact ({@code artifacts[0]} — the release manifest always lists the
+     * to its PRIMARY ontology artifact ({@code artifacts[0]} -- the release manifest always lists the
      * ontology artifact first), whose recorded sha256 is verified against the file on disk and whose
      * path is re-validated for containment before any diff. A non-manifest {@code .json} (e.g. a
      * JSON-LD ontology) is loaded unchanged.
@@ -542,7 +688,7 @@ public final class Main {
     /**
      * A release manifest is a small metadata file; a multi-gigabyte {@code .json} operand is never a
      * manifest. Cap the pre-read so an untrusted CI operand cannot exhaust the heap through the
-     * whole-file buffer this manifest probe would otherwise create — matching the loader's
+     * whole-file buffer this manifest probe would otherwise create -- matching the loader's
      * {@code MAX_POLICY_BYTES} discipline. Oversized {@code .json} operands are simply not treated as
      * manifests and fall through to OWLAPI's streaming document loader.
      */
@@ -606,7 +752,7 @@ public final class Main {
                     + ") is missing, not an integer, or exceeds the in-memory verification bound.");
         }
         Path resolved = authorizeArtifact(manifestDir, artifactPath);
-        // ONE bounded read backs the sha256, the byte-length check, AND the diff parse below —
+        // ONE bounded read backs the sha256, the byte-length check, AND the diff parse below --
         // hashing the path and re-reading it later would attest a hash for content the diff never
         // saw; one extra byte proves a longer file without buffering it.
         byte[] verifiedBytes;
@@ -689,12 +835,12 @@ public final class Main {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         // Map every import IRI to ONE private empty placeholder document, so an untrusted checkout
         // cannot make this asserted-only CLI contact localhost, cloud metadata, the public network,
-        // or any local file it names — and cannot amplify temp usage either: however many imports a
+        // or any local file it names -- and cannot amplify temp usage either: however many imports a
         // hostile document declares, the cost is exactly this placeholder file. Each import must
         // genuinely RESOLVE rather than merely fail under SILENT handling (OWLAPI's Manchester frame
         // parser dereferences each imported ontology without a null guard), and the placeholder must
         // stay ANONYMOUS (Turtle/RDF-XML set a root's own ontology IRI only at the END of the
-        // streaming parse — a placeholder claiming an import IRI would collide with a self-importing
+        // streaming parse -- a placeholder claiming an import IRI would collide with a self-importing
         // root's trailing SetOntologyID). The first import loads the placeholder; the manager
         // resolves every further import IRI to that already-loaded ontology by document IRI
         // (loadImports requests allowExists=true). The primary document is a FileDocumentSource and

@@ -17,6 +17,140 @@ Select and run the reasoner Protégé has installed, then read what it inferred 
 
 ---
 
+## `get_reasoner_capabilities`
+
+Reports capabilities for the reasoner currently selected in Protege without creating or running a
+reasoner. The identity includes the factory id/class and class-file SHA-256, a digest and explicit list
+of the reviewed runtime package scopes plus their class count, implementation version, configuration-class
+SHA-256, complete configuration digest,
+semantic configuration digest, configuration profile, buffering mode, and a stable profile key. Profile
+selection requires one explicitly reviewed tuple of id, code digest/scopes/count, version, semantic
+configuration, and effective buffering mode; matching independent allowlists, a name, or a version is
+insufficient. The complete digest still records operational timeout/monitor changes, while
+those changes do not falsely erase identical inference capabilities. Only the reviewed HermiT
+`1.3.8.431`, OWLAPI structural reasoner `4.5.29`, and ELK `0.5.0` identities receive a `reviewed` profile;
+all other versions or non-reviewed/uninspectable semantic configurations remain `unknown`.
+
+*Read-only.* Also available through headless stdio for its fixed bundled reasoner.
+
+**Arguments**
+
+None.
+
+**Returns**
+
+- `identity`: exact non-secret reasoner and configuration identity.
+  It also exposes timeout, progress-monitor class, fresh-entity policy, and individual-node policy
+  separately from the digest. `timeout_ms: -1` is the OWLAPI/HermiT sentinel for no configured
+  timeout; `-2` means an unrecognized configuration was deliberately not invoked or reflected.
+- `reviewed_code_scopes`, `reviewed_code_class_count`, and `reviewed_code_digest` attest every class,
+  including inner classes, in the reviewed reasoner, OWLAPI, and compatibility package scopes. Raw plugin
+  and shaded CLI layouts are separate exact tuples. The pinned counts are below the 6,000-class cap
+  (HermiT raw 2,635/modular replacement 2,722/shaded 3,118; structural 1,533; ELK modular
+  4,848/official Protege bundle 4,871).
+  Every HermiT tuple covers the inference-critical Apache Axiom XML/datatype implementation; both
+  replacement layouts additionally cover their `net/automatalib/**` implementation.
+  Multi-release entries and matching classes in mixed nested OSGi JARs are included as a candidate union,
+  so changing either a base class, any versioned variant, or its active multi-release marker changes the
+  pinned digest. Only entries in a
+  container marked `Multi-Release: true` participate in JVM version selection, and the class-loader
+  selected bytes must match the exact active candidate for the running JVM. Each effective
+  class-loader resource must match one scanned class digest so split-package overrides fail closed.
+  Protege Felix `bundle:` resources are resolved through the framework's trusted local-URL bridge and
+  then subjected to the same regular-file, local-JAR, class-byte, and container-size checks; arbitrary
+  URL handlers and remote protocols are never opened. `jar:file:` fields are parsed directly and read
+  with `JarFile`, so a custom `jar:` handler is never invoked. File authorities and UNC paths are rejected
+  before any filesystem probe. The
+  scan allows at most 24 MiB of class bytes plus 24 MiB of effective-resource verification, 4 MiB per
+  class, 64 MiB of nested-JAR bytes, a 128 MiB outer container, 150,000 entries, and five seconds. Any
+  class, byte, entry, time, duplicate, override, or unsupported-location limit discards the entire scan
+  as `unknown`; evidence is never truncated and accepted.
+- `configuration_digest` records the complete bounded configuration; `semantic_configuration_digest`
+  is the exact reviewed inference-semantics key. `configuration_binary_digest` separately attests the
+  selected configuration class. ELK worker-count and evictor-builder values are captured in the complete
+  digest but excluded from the semantic projection; unsupported-feature and incremental-mode settings
+  remain semantic. Both official ELK buffering recommendations are exact reviewed tuples. For
+  `configuration_profile: unrecognized`, both configuration digests
+  are class-bound failure markers rather than claims of complete object identity, and no reviewed profile
+  can match them.
+- `capability_digest`: binds the complete vocabulary, statuses, evidence, incompatibilities, and identity.
+- `profile_status`, `exact_profile_match`: whether the complete identity has a reviewed profile.
+- `owl_capabilities`, `rule_capabilities`, `swrl_atom_capabilities`: complete closed capability rows with
+  `supported`, `unsupported`, `unknown`, or `untested` status and evidence.
+- `swrl_builtin_capabilities`: every predicate in the closed side-effect-free SWRLB allowlist, with
+  exact-profile support evidence. A predicate absent from this allowlist is always unsupported, even if
+  it uses the standard `swrlb:` namespace.
+- `known_incompatibilities`: bounded reviewed caveats.
+- `absence_means_supported`: always `false`; omitted capability evidence never implies support.
+
+The report does not claim that an installed reasoner can execute a particular ontology or rule. Use
+`validate_rules` for the rules currently in the project and `run_reasoner` to classify.
+
+---
+
+## `validate_rules`
+
+Validates the current SWRL rules against the exact selected reasoner profile without executing any rule or
+creating a reasoner. It parses every body/head atom, argument, variable, and built-in in an accepted,
+preflight-bounded corpus before producing a bounded page. Unknown built-ins, including
+filesystem/network/plugin-defined operations, are always `unsupported`. The report deliberately separates
+the necessary body-variable binding check from DL-safety: OWLAPI rules do not identify a non-DL predicate
+partition, so `dl_safety_status` is exact reasoner-profile engine evidence, not a syntactic proof that a
+rule is formally DL-safe.
+
+*Read-only.* Also available through headless stdio. The live default includes the imports closure.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `include_imports` | boolean | no | `true` | Validate the active ontology's imports closure; false limits capture to the active ontology. |
+| `offset` | integer | no | `0` | Zero-based deterministic rule offset, at most 2,000. |
+| `limit` | integer | no | `10` | Rule reports to return, from 1 through 10. |
+| `snapshot_fingerprint` | SHA-256 string | required when `offset > 0` | none | Fingerprint returned by the first page; later pages fail if the selected source set, full ontology/version IDs, rule corpus, or capability evidence changed. |
+
+**Returns**
+
+- `executed_rules`: always `false`; `parsed_every_atom`: always `true`.
+- `compatible`: true only when every rule and required exact-profile capability is supported and every
+  variable passes the separate non-built-in body binding check.
+- `coverage_complete`: false if any required capability remains `unknown` or `untested`, even when another
+  unsupported atom already determines the rule verdict.
+- `snapshot_fingerprint`, `fingerprint_stability`, and warnings bind pagination and disclose when anonymous
+  identifiers make the token session-only.
+- exact rule totals by support state plus `offset`, `returned`, and optional `next_offset`.
+- `incompatible_rule_summaries` identifies every incompatible rule in the accepted corpus, including
+  rules outside the current ten-row detail page.
+- each rule's digest, complete source count plus truncation, support state, engine DL-safety evidence,
+  body-variable safety, complete atom/finding counts, bounded samples, and truncation flags.
+
+Capture fails before returning a partial report above 128 source ontologies, 4,096 characters in any
+ontology/version identifier, 2,000 rule occurrences or
+unique rules, 512 combined body/head atoms in one rule, 256 rule annotations, 20,000 total atoms,
+100,000 total arguments, 262,144 characters/4,096 nodes/128 levels in one canonical object,
+2,000,000 canonical UTF-8 bytes, or 10 seconds. Rule occurrence count is checked before rule axioms are
+copied and checked again afterward. In the live adapter both checks and the copy share one uninterrupted
+model-thread hop; headless operates on its already isolated workspace snapshot. The live model-thread hop
+walks direct imports under the 128-source cap instead of first materializing an unbounded closure, then
+captures the selected plugin recipe, bounded source identities, and immutable
+OWLAPI rule axioms; runtime-code/configuration identity, canonicalization, and parsing run afterward, and
+the resulting corpus is a detached DTO with no OWLAPI fields. A page contains at most 10 rules, 32 atom samples per rule, and 8
+argument/variable samples per atom so headless output remains inside its 8 MiB transport ceiling.
+
+Budget failures use `rule_validation_budget_exceeded`; a missing continuation token uses
+`rule_validation_snapshot_required`; a changed token uses retryable `rule_validation_snapshot_changed`.
+
+HermiT `1.3.8.431` supports the reviewed DL-safe rule atom subset but not SWRL built-ins. OWLAPI structural
+and ELK `0.5.0` do not execute SWRL. An unknown reasoner remains unknown only for a predicate on the closed
+pure SWRLB allowlist; every other predicate fails closed as unsupported.
+
+Dependency or plugin updates deliberately change the attested tuple to `unknown`. Restoring `reviewed`
+requires rerunning the real reasoner fixtures and packaged smoke, reviewing every changed runtime scope and
+configuration class, then updating the pinned digest/count/version tuple together; a version-only bump is
+never sufficient.
+
+---
+
 ## `list_reasoners`
 
 Lists every reasoner factory installed in Protégé and marks the one currently selected. Factories remain separate even when they share a display name, so their ids can still be discovered and used to disambiguate `set_reasoner` before classifying with `run_reasoner`.

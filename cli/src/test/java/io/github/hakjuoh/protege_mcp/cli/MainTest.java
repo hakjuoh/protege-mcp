@@ -12,10 +12,15 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
+import org.semanticweb.owlapi.model.IRI;
 
 import io.github.hakjuoh.protege_mcp.core.release.ArtifactStore;
 
@@ -202,7 +207,7 @@ class MainTest {
 
     @Test
     void diffToleratesUnresolvableImportsAndReportsThem() throws Exception {
-        // The import IRI names a file that is never created, so it cannot resolve — deterministically
+        // The import IRI names a file that is never created, so it cannot resolve -- deterministically
         // and without any network access. The asserted-only diff must survive it, not exit 3.
         String missingIri = temp.resolve("missing-import.ofn").toUri().toString();
         Path left = temp.resolve("left-import.ofn");
@@ -231,7 +236,7 @@ class MainTest {
     void manchesterDocumentsWithImportsDiffWithoutFetchingThem() throws Exception {
         // OWLAPI's Manchester frame parser dereferences each imported ontology without a null guard,
         // so a blocked import must still RESOLVE (to an empty local placeholder) rather than merely
-        // fail under silent missing-import handling — otherwise every .omn document with an Import:
+        // fail under silent missing-import handling -- otherwise every .omn document with an Import:
         // line aborts the whole diff with exit 3. The import target exists and is never read.
         Path imported = temp.resolve("vocab.ofn");
         Files.writeString(imported,
@@ -265,7 +270,7 @@ class MainTest {
         // All import IRIs map to ONE placeholder file, so a hostile document declaring arbitrarily
         // many imports cannot amplify temp-file usage. The first import loads the placeholder and
         // the manager must resolve every further import IRI to that same already-loaded anonymous
-        // ontology by document IRI — exercised through the Manchester parser, which dereferences
+        // ontology by document IRI -- exercised through the Manchester parser, which dereferences
         // each imported ontology mid-parse and would abort on any import that failed to resolve.
         Path left = temp.resolve("left-two-imports.omn");
         Path right = temp.resolve("right-two-imports.omn");
@@ -434,7 +439,7 @@ class MainTest {
         assertTrue(invalidOut.toString().contains("\"policy_loaded\" : true"),
                 "a fully evaluated policy (digest present) still reports policy_loaded true");
 
-        // A policy that never parses cleanly has no digest and is a configuration error, exit 2 —
+        // A policy that never parses cleanly has no digest and is a configuration error, exit 2 --
         // and policy_loaded honestly reports false, since the policy never reached evaluation.
         Path missing = temp.resolve("does-not-exist.yaml");
         ByteArrayOutputStream missingOut = new ByteArrayOutputStream();
@@ -693,7 +698,7 @@ class MainTest {
 
     @Test
     void manifestDiffRejectsAMissingArtifactWithoutDiffing() throws Exception {
-        // The artifact path is well-formed and contained, but the file is absent → exit 3, no diff.
+        // The artifact path is well-formed and contained, but the file is absent -> exit 3, no diff.
         Path manifest = temp.resolve("manifest.json");
         Files.writeString(manifest, """
                 {
@@ -729,7 +734,7 @@ class MainTest {
 
         ByteArrayOutputStream err = new ByteArrayOutputStream();
         // The oversized json is NOT whole-file-buffered by the manifest probe (no OOM) and is not
-        // treated as a manifest — it falls through to the streaming OWLAPI loader. The parse outcome
+        // treated as a manifest -- it falls through to the streaming OWLAPI loader. The parse outcome
         // is OWLAPI's business; what this pins is that the run COMPLETES (returns a code, never an
         // uncaught OutOfMemoryError) and never reaches the sha256/containment manifest path.
         int code = Main.run(new String[] {"diff", "--left", big.toString(), "--right", right.toString()},
@@ -740,7 +745,7 @@ class MainTest {
 
     @Test
     void validateExitsOneForAnInvalidPolicyAndTwoForAnUnloadableOne() throws Exception {
-        // The `validate` command has its own exitFor return site (json AND markdown) — pin its
+        // The `validate` command has its own exitFor return site (json AND markdown) -- pin its
         // non-zero verdicts directly, not only transitively through validate-policy.
         Path invalid = temp.resolve("invalid.yaml");
         Files.writeString(invalid, """
@@ -801,6 +806,7 @@ class MainTest {
                 reasoning:
                   reasoner: HermiT
                   owl_profile: DL
+                  timeout_ms: 300000
                 validation:
                   required_stages: [interoperability, reasoner, profile]
                   fail_on: error
@@ -817,6 +823,8 @@ class MainTest {
         assertTrue(json.contains("\"semantic_fingerprint\""), json);
         assertTrue(json.contains("HermiT"), json);
         assertTrue(json.contains("\"gate\" : \"pass\""), json);
+        assertTrue(json.contains("\"rule_validation\""), json);
+        assertTrue(json.contains("\"parsed_every_atom\" : true"), json);
         assertFalse(json.contains(temp.toString()), "CI JSON must not leak its local project root");
         assertTrue(json.contains("\"policy_path\" : \"project.yaml\""), json);
         assertTrue(json.contains("\"project_root\" : \".\""), json);
@@ -864,6 +872,110 @@ class MainTest {
                 "--format", "bogus"}, new PrintStream(new ByteArrayOutputStream()),
                 new PrintStream(err)));
         assertTrue(err.toString().contains("configuration error:"), err::toString);
+    }
+
+    @Test
+    void oneShotValidateFailsClosedOnAnUnsupportedSwrlBuiltin() throws Exception {
+        Path policy = temp.resolve("rules-project.yaml");
+        Files.writeString(policy, """
+                version: 1
+                project_id: cli-rules
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [profile]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(policy, "cli-rules");
+        var manager = OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(IRI.create("https://example.org/root"));
+        var data = manager.getOWLDataFactory();
+        var x = data.getSWRLVariable(IRI.create("https://example.org/var/x"));
+        var y = data.getSWRLVariable(IRI.create("https://example.org/var/y"));
+        for (int index = 0; index < 12; index++) {
+            manager.addAxiom(ontology, data.getSWRLRule(Set.of(data.getSWRLBuiltInAtom(
+                    IRI.create("http://www.w3.org/2003/11/swrlb#add" + index), List.of(x, y))),
+                    Set.of(data.getSWRLClassAtom(data.getOWLClass(
+                            IRI.create("https://example.org/Result" + index)), x))));
+        }
+        manager.saveOntology(ontology, new TurtleDocumentFormat(),
+                IRI.create(temp.resolve("ontology.ttl").toUri()));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        assertEquals(1, Main.run(new String[] {"validate", "--project", policy.toString()},
+                new PrintStream(out), new PrintStream(new ByteArrayOutputStream())));
+        String json = out.toString(StandardCharsets.UTF_8);
+        assertTrue(json.contains("\"rule_validation\""), json);
+        assertTrue(json.contains("\"unsupported_rules\" : 12"), json);
+        assertTrue(json.contains("\"incompatible_rule_count\" : 12"), json);
+        assertTrue(json.contains("\"returned\" : 10"), json);
+        assertTrue(json.contains("swrlb#add"), json);
+
+        ByteArrayOutputStream junit = new ByteArrayOutputStream();
+        assertEquals(1, Main.run(new String[] {"validate", "--project", policy.toString(),
+                "--format", "junit"}, new PrintStream(junit),
+                new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(junit.toString(StandardCharsets.UTF_8)
+                .contains("swrl.rule.incompatible"), junit::toString);
+
+        ByteArrayOutputStream sarif = new ByteArrayOutputStream();
+        assertEquals(1, Main.run(new String[] {"validate", "--project", policy.toString(),
+                "--format", "sarif"}, new PrintStream(sarif),
+                new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(sarif.toString(StandardCharsets.UTF_8)
+                .contains("swrl.rule.incompatible"), sarif::toString);
+    }
+
+    @Test
+    void oneShotRuleBudgetFailureUsesTheRequestedReportFormat() throws Exception {
+        Path policy = temp.resolve("rule-budget-project.yaml");
+        Files.writeString(policy, """
+                version: 1
+                project_id: cli-rule-budget
+                root_ontology: https://example.org/root
+                interoperability:
+                  profile: https://hakjuoh.github.io/protege-mcp/profiles/project-v1/
+                  root_artifact: ontology.ttl
+                  metadata: {path: ro-crate-metadata.json, format: ro-crate-1.3}
+                  canonicalization: {algorithm: RDFC-1.0, hash: SHA-256, scope: root-ontology}
+                validation:
+                  required_stages: [profile]
+                """, StandardCharsets.UTF_8);
+        materializeRoCrate(policy, "cli-rule-budget");
+        var manager = OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(IRI.create("https://example.org/root"));
+        var data = manager.getOWLDataFactory();
+        var x = data.getSWRLVariable(IRI.create("https://example.org/var/x"));
+        java.util.Set<org.semanticweb.owlapi.model.SWRLAtom> body =
+                new java.util.LinkedHashSet<>();
+        for (int index = 0; index < 513; index++) {
+            body.add(data.getSWRLClassAtom(data.getOWLClass(
+                    IRI.create("https://example.org/Budget" + index)), x));
+        }
+        manager.addAxiom(ontology, data.getSWRLRule(body,
+                Set.of(data.getSWRLClassAtom(data.getOWLClass(
+                        IRI.create("https://example.org/Result")), x))));
+        manager.saveOntology(ontology, new TurtleDocumentFormat(),
+                IRI.create(temp.resolve("ontology.ttl").toUri()));
+
+        ByteArrayOutputStream json = new ByteArrayOutputStream();
+        assertEquals(3, Main.run(new String[] {"validate", "--project", policy.toString()},
+                new PrintStream(json), new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(json.toString(StandardCharsets.UTF_8)
+                .contains("rule_validation_budget_exceeded"), json::toString);
+        assertTrue(json.toString(StandardCharsets.UTF_8).contains("\"gate\" : \"error\""),
+                json::toString);
+
+        ByteArrayOutputStream junit = new ByteArrayOutputStream();
+        assertEquals(3, Main.run(new String[] {"validate", "--project", policy.toString(),
+                "--format", "junit"}, new PrintStream(junit),
+                new PrintStream(new ByteArrayOutputStream())));
+        assertTrue(junit.toString(StandardCharsets.UTF_8)
+                .contains("rule_validation_budget_exceeded"), junit::toString);
+        assertTrue(junit.toString(StandardCharsets.UTF_8).contains("<error"), junit::toString);
     }
 
     @Test
@@ -996,7 +1108,7 @@ class MainTest {
                      "conformsTo":{"@id":"https://hakjuoh.github.io/protege-mcp/profiles/project-v1/"},
                      "mainEntity":{"@id":"ontology.ttl"},"hasPart":{"@id":"ontology.ttl"}},
                     {"@id":"https://hakjuoh.github.io/protege-mcp/profiles/project-v1/",
-                     "@type":["CreativeWork","Profile"],"name":"Protégé MCP project profile"},
+                     "@type":["CreativeWork","Profile"],"name":"Prot\u00e9g\u00e9 MCP project profile"},
                     {"@id":"ontology.ttl","@type":"File","encodingFormat":"text/turtle",
                      "about":{"@id":"https://example.org/root"}},
                     {"@id":"https://example.org/root","@type":"Dataset",

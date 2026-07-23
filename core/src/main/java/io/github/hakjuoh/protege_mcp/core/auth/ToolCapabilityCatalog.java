@@ -70,6 +70,7 @@ public final class ToolCapabilityCatalog {
                 "search_entities", "get_entity", "get_axioms_for_entity", "get_ontology_context",
                 "get_entity_context", "preview_changes", "list_rules",
                 "inspect_imports", "diff_ontologies", "semantic_diff", "analyze_change_impact",
+                "get_reasoner_capabilities", "validate_rules",
                 "run_reasoner", "get_unsatisfiable_classes", "get_inferred_superclasses",
                 "explain_entailment", "get_explanations", "explain_inconsistency",
                 "execute_dl_query", "list_reasoners", "sparql_query", "sparql_schema",

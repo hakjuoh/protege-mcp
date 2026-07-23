@@ -8,13 +8,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.semanticweb.owlapi.apibinding.OWLManager;
+import org.semanticweb.owlapi.formats.TurtleDocumentFormat;
+import org.semanticweb.owlapi.model.IRI;
 
 import io.github.hakjuoh.protege_mcp.core.headless.HeadlessToolService;
 import io.github.hakjuoh.protege_mcp.core.headless.HeadlessExecutionException;
 
 class HeadlessToolServiceTest {
+
+    @TempDir
+    Path temp;
 
     private final Path policy = Path.of("src/smoke/policy.yaml").toAbsolutePath();
     private final HeadlessToolService service = new HeadlessToolService(policy,
@@ -48,6 +56,87 @@ class HeadlessToolServiceTest {
         assertEquals(false, audit.get("exported"));
         assertEquals(true, audit.get("dry_run"));
         assertEquals(".protege-mcp/audit-export.jsonl", audit.get("path"));
+    }
+
+    @Test
+    void headlessReasonerCapabilitiesAndRuleValidationUseTypedOfflineContracts()
+            throws Exception {
+        Map<String, Object> capabilities = execute("get_reasoner_capabilities", Map.of());
+        assertEquals("reviewed", capabilities.get("profile_status"), capabilities::toString);
+        assertEquals(true, capabilities.get("exact_profile_match"));
+        assertTrue(capabilities.toString().contains("1.3.8.431"));
+
+        Map<String, Object> validation = execute("validate_rules", Map.of("limit", 10));
+        assertEquals(false, validation.get("executed_rules"));
+        assertEquals(true, validation.get("parsed_every_atom"));
+        assertEquals(0, validation.get("total_rules"));
+        assertEquals(true, validation.get("compatible"));
+    }
+
+    @Test
+    void directHeadlessCallsEnforceTheSharedClosedInputContractAndSnapshotCodes() {
+        for (Map<String, Object> invalid : java.util.List.of(
+                Map.<String, Object>of("extra", true),
+                Map.<String, Object>of("limit", 11),
+                Map.<String, Object>of("limit", "10"),
+                Map.<String, Object>of("snapshot_fingerprint", "bad"))) {
+            HeadlessExecutionException failure = assertThrows(HeadlessExecutionException.class,
+                    () -> execute("validate_rules", invalid));
+            assertEquals("invalid_request", failure.code(), invalid::toString);
+            assertEquals(true, failure.details().get("effects_prevented"));
+        }
+
+        HeadlessExecutionException required = assertThrows(HeadlessExecutionException.class,
+                () -> execute("validate_rules", Map.of("offset", 1)));
+        assertEquals("rule_validation_snapshot_required", required.code());
+        HeadlessExecutionException changed = assertThrows(HeadlessExecutionException.class,
+                () -> execute("validate_rules", Map.of("offset", 1,
+                        "snapshot_fingerprint", "sha256:" + "0".repeat(64))));
+        assertEquals("rule_validation_snapshot_changed", changed.code());
+        assertEquals(true, changed.retryable());
+    }
+
+    @Test
+    void missingContinuationSnapshotIsRejectedBeforeWorkspaceCapture() {
+        HeadlessToolService missingWorkspace = new HeadlessToolService(
+                temp.resolve("missing-policy.yaml"),
+                new org.semanticweb.HermiT.ReasonerFactory(), Clock.systemUTC());
+        HeadlessExecutionException required = assertThrows(HeadlessExecutionException.class,
+                () -> missingWorkspace.execute("validate_rules", Map.of("offset", 1),
+                        HeadlessToolService.DEFAULT_CAPABILITIES,
+                        HeadlessStdioServer.MAX_INBOUND_MESSAGE_BYTES,
+                        HeadlessStdioServer.MAX_OUTBOUND_MESSAGE_BYTES));
+        assertEquals("rule_validation_snapshot_required", required.code());
+    }
+
+    @Test
+    void headlessValidationParsesAndReportsARealRule() throws Exception {
+        java.nio.file.Files.copy(Path.of("src/smoke/policy.yaml"), temp.resolve("policy.yaml"));
+        java.nio.file.Files.copy(Path.of("src/smoke/ro-crate-metadata.json"),
+                temp.resolve("ro-crate-metadata.json"));
+        var manager = OWLManager.createOWLOntologyManager();
+        var ontology = manager.createOntology(IRI.create("https://example.org/cli-smoke"));
+        var data = manager.getOWLDataFactory();
+        var a = data.getOWLClass(IRI.create("https://example.org/A"));
+        var b = data.getOWLClass(IRI.create("https://example.org/B"));
+        var individual = data.getOWLNamedIndividual(IRI.create("https://example.org/individual"));
+        var x = data.getSWRLVariable(IRI.create("https://example.org/var/x"));
+        manager.addAxiom(ontology, data.getOWLClassAssertionAxiom(a, individual));
+        manager.addAxiom(ontology, data.getSWRLRule(Set.of(data.getSWRLClassAtom(a, x)),
+                Set.of(data.getSWRLClassAtom(b, x))));
+        manager.saveOntology(ontology, new TurtleDocumentFormat(),
+                IRI.create(temp.resolve("ontology.ttl").toUri()));
+
+        HeadlessToolService local = new HeadlessToolService(temp.resolve("policy.yaml"),
+                new org.semanticweb.HermiT.ReasonerFactory(), Clock.systemUTC());
+        Map<String, Object> validation = local.execute("validate_rules", Map.of(),
+                HeadlessToolService.DEFAULT_CAPABILITIES,
+                HeadlessStdioServer.MAX_INBOUND_MESSAGE_BYTES,
+                HeadlessStdioServer.MAX_OUTBOUND_MESSAGE_BYTES);
+        assertEquals(1, validation.get("total_rules"));
+        assertEquals(2, validation.get("parsed_atom_count"));
+        assertEquals(1, validation.get("supported_rules"));
+        assertEquals(true, validation.get("compatible"));
     }
 
     @Test

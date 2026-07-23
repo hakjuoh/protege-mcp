@@ -18,18 +18,20 @@ import org.semanticweb.owlapi.reasoner.OWLReasoner;
 import org.semanticweb.owlapi.reasoner.OWLReasonerConfiguration;
 import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
 
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerIdentity;
+
 /**
- * Point-in-time recipe for constructing private reasoners with the selected Protégé plugin's settings.
+ * Point-in-time recipe for constructing private reasoners with the selected Protege plugin's settings.
  *
  * <p>Using only {@link ProtegeOWLReasonerInfo#getReasonerFactory()} silently falls back to the OWLAPI
- * factory defaults. Protégé itself also supplies the plugin's configuration and chooses its recommended
+ * factory defaults. Protege itself also supplies the plugin's configuration and chooses its recommended
  * buffering mode. This class captures all three values together on the model thread, then permits reasoner
- * construction over a private ontology without consulting mutable Protégé state again.
+ * construction over a private ontology without consulting mutable Protege state again.
  *
  * <p>The exact configuration object is retained rather than normalized to {@code SimpleConfiguration}:
  * reasoner plugins may return a private subtype carrying settings beyond the four fields exposed by the
  * OWLAPI interface. The only deliberate substitution is a silent progress monitor, because an isolated
- * background computation must not call Protégé's live classification UI.
+ * background computation must not call Protege's live classification UI.
  */
 final class IsolatedReasonerSpec {
 
@@ -51,7 +53,7 @@ final class IsolatedReasonerSpec {
         this.configuredFactory = new ConfigurationPreservingFactory();
     }
 
-    /** Capture the selected plugin recipe. Must run inside the Protégé model-thread boundary. */
+    /** Capture the selected plugin recipe. Must run inside the Protege model-thread boundary. */
     static IsolatedReasonerSpec capture(OWLReasonerManager manager) {
         Objects.requireNonNull(manager, "manager");
         ProtegeOWLReasonerInfo info = manager.getCurrentReasonerFactory();
@@ -94,7 +96,7 @@ final class IsolatedReasonerSpec {
         return new IsolatedReasonerSpec(id, name, factory, config, buffering);
     }
 
-    /** Create the same buffering/non-buffering kind that Protégé would create for classification. */
+    /** Create the same buffering/non-buffering kind that Protege would create for classification. */
     OWLReasoner create(OWLOntology ontology) {
         return selectedBuffering == BufferingMode.BUFFERING
                 ? configuredFactory.createReasoner(ontology)
@@ -124,6 +126,11 @@ final class IsolatedReasonerSpec {
 
     OWLReasonerConfiguration configuration() {
         return configuration;
+    }
+
+    ReasonerIdentity capabilityIdentity() {
+        return ReasonerIdentity.capture(reasonerId, reasonerName, delegate, configuration,
+                selectedBuffering, "protege_selected_plugin");
     }
 
     /** Stable, non-secret description suitable for QC/explanation result metadata. */

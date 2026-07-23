@@ -228,6 +228,21 @@
             </exclusions>
         </dependency>
 
+        <!-- Exact reviewed ELK profile fixture. Test-only: live deployments obtain ELK from the
+             installed Protege reasoner plugin, and the production bundle does not embed it. -->
+        <dependency>
+            <groupId>au.csiro</groupId>
+            <artifactId>elk-protege</artifactId>
+            <version>${elk.version}</version>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>net.sourceforge.owlapi</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
     </dependencies>
 
     <build>

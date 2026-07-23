@@ -8,6 +8,23 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
 ## [Unreleased]
 
 ### Added
+- Added `get_reasoner_capabilities` and `validate_rules` to the live and headless surfaces. Reports
+  bind to one exact reviewed tuple of factory id/class SHA-256, every class in explicit runtime package
+  scopes (including inner classes, Apache Axiom, and replacement-layout AutomataLib), scope count,
+  implementation version, configuration-class SHA-256, semantic configuration digest, and effective
+  buffering mode while retaining the complete operational configuration digest; effective class-loader
+  resources reject split-package overrides, Felix bundle resources are normalized to bounded local
+  artifacts, active multi-release selection is manifest-aware, and ELK worker/evictor values are explicitly captured. Only
+  reviewed HermiT 1.3.8.431 (including its official Protege adapter), OWLAPI
+  structural 4.5.29, and ELK 0.5.0 identities (including the official Protege bundle) receive
+  non-unknown profiles. Rule validation executes nothing, parses every atom and built-in, reports a
+  bounded accepted corpus, separates body-variable binding from engine DL-safety evidence, binds pagination
+  to a mandatory continuation fingerprint, and fails every built-in outside a closed pure SWRLB allowlist.
+  Live capture bounds direct-import traversal and ontology/version identifiers, preflights occurrence count,
+  copies a small coherent immutable-axiom snapshot on the model
+  thread, and performs runtime-code/configuration identity plus canonicalization off-thread,
+  and returns detached DTOs; all incompatible rules remain identifiable beyond the ten-row detail page.
+  Headless stdio and one-shot `validate` reuse the same service and transport-sized result contract.
 - Added project-governed `search_external_terms` and `inspect_external_term` tools for one exact OLS4
   provider at a time. Owner-only endpoint bindings, strict HTTPS egress, credential-generation and
   project-bound caching, opaque principal/grant/workspace cursors, bounded typed evidence, final
@@ -54,6 +71,13 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
   use their own revision instead of perturbing ordinary ontology preflight.
 
 ### Tests
+- Added exact-version/configuration/runtime-code-tuple mutants, official Protege HermiT/ELK capture, real HermiT inference
+  and built-in rejection, structural and ELK hierarchy/assertion/property-chain/consistency/satisfiability/
+  incremental fixtures, closed vocabulary/allowlist schemas, every global corpus/render budget, worst-case
+  output, order-independent rule fingerprints, ontology-version and mandatory snapshot pagination, strict
+  cross-adapter arguments/errors, multi-page one-shot findings, an expanded digest-pinned 0.8 feature contract,
+  manifest-aware multi-release selection, an actual Felix nested-bundle resource, and shaded headless
+  HermiT evidence.
 - Added immutable 0.7.2 plugin/headless goldens, recursive schema-dialect attacks, result-validation
   mutants, redaction/canary/immutability cases, and execution/audit outcome tests.
 - Added deterministic refresh/revoke concurrency, write-ahead failure, corrupt/oversized/capacity

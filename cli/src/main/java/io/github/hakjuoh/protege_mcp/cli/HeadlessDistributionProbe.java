@@ -18,10 +18,16 @@ import org.semanticweb.owlapi.model.OWLNamedIndividual;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 import org.semanticweb.owlapi.model.OWLObjectProperty;
+import org.semanticweb.owlapi.reasoner.BufferingMode;
 import org.semanticweb.owlapi.reasoner.InferenceType;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
+import org.semanticweb.owlapi.reasoner.SimpleConfiguration;
 import org.semanticweb.owlapi.vocab.OWL2Datatype;
 import org.semanticweb.owlapi.vocab.OWLFacet;
+
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityRegistry;
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityReport;
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerIdentity;
 
 /**
  * Build-time probe for the reasoner-bearing standalone distribution.
@@ -44,6 +50,7 @@ public final class HeadlessDistributionProbe {
             }
             verifyDistribution(Path.of(args[0]), Path.of(args[1]), Path.of(args[2]), Path.of(args[3]),
                     args[4]);
+            verifyReviewedShadedProfile();
         }
         System.out.println("Headless HermiT distribution probe passed."
                 + (args.length == 5 ? " Version: " + args[4] : ""));
@@ -63,6 +70,22 @@ public final class HeadlessDistributionProbe {
         verifyInconsistent();
         verifyRoleChainAutomaton();
         verifyDatatypeCorners();
+    }
+
+    private static void verifyReviewedShadedProfile() {
+        ReasonerFactory factory = new ReasonerFactory();
+        ReasonerIdentity identity = ReasonerIdentity.capture(
+                ReasonerFactory.class.getName(), "HermiT", factory,
+                new SimpleConfiguration(120_000L), BufferingMode.BUFFERING,
+                "headless_distribution_probe");
+        ReasonerCapabilityReport report = new ReasonerCapabilityRegistry().report(identity);
+        require("reviewed".equals(report.profileStatus()),
+                "shaded HermiT runtime did not match the reviewed capability profile");
+        require(identity.reviewedCodeClassCount() == 3_118,
+                "shaded HermiT reviewed class count changed");
+        require("sha256:c928f88672398c60bcf6b4445a5c753cf41accb4ec0f993042292ba9a1e6d1c8"
+                        .equals(identity.reviewedCodeDigest()),
+                "shaded HermiT reviewed code digest changed");
     }
 
     private static void verifySatisfiableAndUnsatisfiable() throws Exception {
@@ -145,19 +168,23 @@ public final class HeadlessDistributionProbe {
         OWLObjectProperty first = df.getOWLObjectProperty(IRI.create("urn:probe:first"));
         OWLObjectProperty second = df.getOWLObjectProperty(IRI.create("urn:probe:second"));
         OWLObjectProperty composed = df.getOWLObjectProperty(IRI.create("urn:probe:composed"));
-        OWLClass seed = df.getOWLClass(IRI.create("urn:probe:RoleSeed"));
-        OWLClass filler = df.getOWLClass(IRI.create("urn:probe:RoleFiller"));
+        OWLNamedIndividual start = df.getOWLNamedIndividual(IRI.create("urn:probe:start"));
+        OWLNamedIndividual middle = df.getOWLNamedIndividual(IRI.create("urn:probe:middle"));
+        OWLNamedIndividual end = df.getOWLNamedIndividual(IRI.create("urn:probe:end"));
         manager.addAxiom(ontology,
                 df.getOWLSubPropertyChainOfAxiom(List.of(first, second), composed));
-        manager.addAxiom(ontology, df.getOWLSubClassOfAxiom(seed,
-                df.getOWLObjectSomeValuesFrom(first, df.getOWLObjectSomeValuesFrom(second, filler))));
         manager.addAxiom(ontology,
-                df.getOWLSubClassOfAxiom(seed, df.getOWLObjectSomeValuesFrom(composed, filler)));
+                df.getOWLObjectPropertyAssertionAxiom(first, start, middle));
+        manager.addAxiom(ontology,
+                df.getOWLObjectPropertyAssertionAxiom(second, middle, end));
 
         OWLReasoner reasoner = new ReasonerFactory().createReasoner(ontology);
         try {
             reasoner.precomputeInferences(InferenceType.CLASS_HIERARCHY);
-            require(reasoner.isConsistent(), "role-chain automaton probe ontology was reported inconsistent");
+            require(reasoner.isConsistent(),
+                    "role-chain automaton probe ontology was reported inconsistent");
+            require(reasoner.getObjectPropertyValues(start, composed).containsEntity(end),
+                    "HermiT did not infer the property-chain assertion");
         } finally {
             reasoner.dispose();
         }

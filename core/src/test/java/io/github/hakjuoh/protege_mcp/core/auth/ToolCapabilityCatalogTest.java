@@ -12,7 +12,7 @@ class ToolCapabilityCatalogTest {
 
     @Test
     void completeCatalogUsesOnlyPublicCapabilitiesAndOneSharedImplicationRule() {
-        assertEquals(95, ToolCapabilityCatalog.names().size());
+        assertEquals(97, ToolCapabilityCatalog.names().size());
         for (String name : ToolCapabilityCatalog.names()) {
             Set<String> required = ToolCapabilityCatalog.required(name);
             assertFalse(required.isEmpty(), name);

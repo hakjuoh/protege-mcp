@@ -140,6 +140,26 @@ class IsolatedReasonerSpecTest {
         assertEquals(0, factory.creations);
     }
 
+    @Test
+    void capabilityIdentityCapturesTheSelectedPluginWithoutCreatingAReasoner() {
+        TrackingFactory factory = new TrackingFactory();
+        IsolatedReasonerSpec spec = IsolatedReasonerSpec.capture(info(factory, configuration(),
+                BufferingMode.NON_BUFFERING, new AtomicReference<>()));
+
+        var identity = spec.capabilityIdentity();
+
+        assertEquals("test.reasoner", identity.factoryId());
+        assertEquals("Test Reasoner", identity.reasonerName());
+        assertEquals("non_buffering", identity.toMap().get("buffering_mode"));
+        assertEquals("protege_selected_plugin", identity.configurationSource());
+        assertTrue(identity.configurationDigest().matches("sha256:[0-9a-f]{64}"));
+        assertTrue(identity.factoryBinaryDigest().matches("sha256:[0-9a-f]{64}"));
+        assertEquals("unknown", identity.reviewedCodeDigest());
+        assertTrue(identity.reviewedCodeScopes().isEmpty());
+        assertEquals(0, identity.reviewedCodeClassCount());
+        assertEquals(0, factory.creations, "capability inspection must never execute reasoning");
+    }
+
     private static OWLReasonerConfiguration configuration() {
         return new SimpleConfiguration(new NullReasonerProgressMonitor(), FreshEntityPolicy.DISALLOW, 1234L,
                 IndividualNodeSetPolicy.BY_NAME);

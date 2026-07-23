@@ -2801,6 +2801,40 @@
       "additionalProperties" : false
     }
   }, {
+    "name" : "get_reasoner_capabilities",
+    "description" : "Report the selected reasoner identity and fail-closed OWL/SWRL capabilities for an exact reviewed runtime-code and semantic configuration tuple.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : { },
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "validate_rules",
+    "description" : "Validate every captured SWRL atom and built-in without executing rules. Reports body-variable safety separately from reasoner-profile DL-safety evidence with bounded snapshot-bound pagination.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "include_imports" : {
+          "type" : "boolean"
+        },
+        "offset" : {
+          "type" : "integer",
+          "minimum" : 0,
+          "maximum" : 2000
+        },
+        "limit" : {
+          "type" : "integer",
+          "minimum" : 1,
+          "maximum" : 10
+        },
+        "snapshot_fingerprint" : {
+          "type" : "string",
+          "pattern" : "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties" : false
+    }
+  }, {
     "name" : "run_reasoner",
     "description" : "Run the reasoner selected in Protégé (classify) and wait for completion. Reports the resulting status and unsatisfiable-class count, and warns when the ontology has SWRL rules the selected reasoner silently ignores (ELK).",
     "input_schema" : {

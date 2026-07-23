@@ -14,6 +14,8 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
+import org.semanticweb.owlapi.reasoner.BufferingMode;
+import org.semanticweb.owlapi.reasoner.SimpleConfiguration;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,11 +44,25 @@ import io.github.hakjuoh.protege_mcp.sssom.SssomPolicies;
 import io.github.hakjuoh.protege_mcp.sssom.SssomStoreException;
 import io.github.hakjuoh.protege_mcp.sssom.SssomToolService;
 import io.github.hakjuoh.protege_mcp.sssom.SssomValidationPolicy;
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityRegistry;
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityReport;
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerIdentity;
+import io.github.hakjuoh.protege_mcp.reasoner.RuleValidationService;
 
 /** Serialized application-service adapter behind the project-confined stdio tool subset. */
 public final class HeadlessToolService {
 
     private static final ObjectMapper JSON = ContractJson.mapper();
+    private static final ReasonerCapabilityRegistry REASONER_PROFILES =
+            new ReasonerCapabilityRegistry();
+    private static final Set<String> CONFIRMED_MAPPING_MUTATIONS = Set.of(
+            "add_mapping", "remove_mapping", "import_sssom", "export_sssom");
+    private static final Map<String, ToolSchemaValidator.Compiled> INPUT_CONTRACTS =
+            HeadlessToolCatalog.definitions().stream().collect(
+                    java.util.stream.Collectors.toUnmodifiableMap(
+                            HeadlessToolCatalog.Definition::name,
+                            definition -> ToolSchemaValidator.compile(
+                                    definition.inputSchema())));
 
     public static final Set<String> DEFAULT_CAPABILITIES = Set.of(
             Capability.ONTOLOGY_READ.value(), Capability.ONTOLOGY_CURATE.value(),
@@ -85,7 +101,16 @@ public final class HeadlessToolService {
         Map<String, Object> args = arguments == null ? Map.of() : arguments;
         Set<String> capabilities = effectiveCapabilities == null ? Set.of()
                 : Set.copyOf(effectiveCapabilities);
-        boolean mutation = mutationExpected(HeadlessToolCatalog.definition(tool).requiredCapabilities());
+        HeadlessToolCatalog.Definition definition = HeadlessToolCatalog.definition(tool);
+        requireMappingConfirmation(tool, args);
+        List<String> inputViolations = INPUT_CONTRACTS.get(tool).violations(args);
+        if (!inputViolations.isEmpty()) {
+            throw new HeadlessExecutionException("invalid_request",
+                    "Tool '" + tool + "' arguments violate the advertised input schema.",
+                    Map.of("violations", inputViolations, "effects_prevented", true),
+                    false, null);
+        }
+        boolean mutation = mutationExpected(definition.requiredCapabilities());
         final AuditState audit;
         try {
             audit = auditState(false);
@@ -112,6 +137,8 @@ public final class HeadlessToolService {
                 case HeadlessToolCatalog.SURFACE_TOOL -> surface(capabilities,
                         maxInboundBytes, maxOutboundBytes);
                 case "validate_project_policy" -> policyResult(loadPolicy());
+                case "get_reasoner_capabilities" -> reasonerCapabilities();
+                case "validate_rules" -> validateRules(args);
                 case "list_mappings", "add_mapping", "remove_mapping", "import_sssom",
                         "export_sssom", "validate_mappings" -> mapping(tool, args);
                 case "run_project_qc" -> runProjectQc(args);
@@ -159,8 +186,8 @@ public final class HeadlessToolService {
         } catch (RuntimeException auditFailure) {
             HeadlessExecutionException attribution = new HeadlessExecutionException(
                     "audit_failed_after_completion",
-                    "Audit attribution failed after '" + tool + "' completed; its outcome — "
-                    + "including any committed changes — still stands and was NOT rolled back. "
+                    "Audit attribution failed after '" + tool + "' completed; its outcome \u2014 "
+                    + "including any committed changes \u2014 still stands and was NOT rolled back. "
                     + "Do not retry before checking the current state. " + rootMessage(auditFailure),
                     Map.of("tool_completed", true, "outcome_unknown", mutation,
                             "retry_requires_state_check", mutation), false, auditFailure);
@@ -244,8 +271,8 @@ public final class HeadlessToolService {
         }
         result.put("supported_tools", supported);
         result.put("unavailable_live_tools", HeadlessToolCatalog.unavailableLiveToolNames());
-        result.put("unavailable_reason", "These operations require the live Protégé adapter or have "
-                + "no project-confined headless implementation; use the in-Protégé MCP server.");
+        result.put("unavailable_reason", "These operations require the live Prot\u00e9g\u00e9 adapter or have "
+                + "no project-confined headless implementation; use the in-Prot\u00e9g\u00e9 MCP server.");
         return result;
     }
 
@@ -256,9 +283,64 @@ public final class HeadlessToolService {
         return new LinkedHashMap<>(result.output());
     }
 
+    private Map<String, Object> reasonerCapabilities() {
+        return new LinkedHashMap<>(reasonerProfile(loadPolicy()).toMap());
+    }
+
+    private Map<String, Object> validateRules(Map<String, Object> args) throws IOException {
+        boolean includeImports = bool(args, "include_imports", true);
+        int offset = integer(args, "offset", 0, 0, RuleValidationService.MAX_UNIQUE_RULES);
+        int limit = integer(args, "limit", RuleValidationService.MAX_PAGE,
+                1, RuleValidationService.MAX_PAGE);
+        String expectedSnapshot = string(args, "snapshot_fingerprint");
+        if (offset > 0 && expectedSnapshot == null) {
+            throw new HeadlessExecutionException("rule_validation_snapshot_required",
+                    "snapshot_fingerprint is required when offset is greater than zero",
+                    Map.of("effects_prevented", true), false, null);
+        }
+        try (WorkspaceSnapshot snapshot = workspace().capture()) {
+            var ontologies = includeImports ? snapshot.closure() : Set.of(snapshot.root());
+            return RuleValidationService.validate(RuleValidationService.capture(
+                            RuleValidationService.snapshot(ontologies, includeImports)),
+                    reasonerProfile(snapshot.policy()), offset, limit, expectedSnapshot);
+        } catch (RuleValidationService.BudgetExceededException exceeded) {
+            throw new HeadlessExecutionException("rule_validation_budget_exceeded",
+                    exceeded.getMessage(), Map.of("budget", exceeded.budget(),
+                            "maximum", exceeded.maximum(), "observed", exceeded.observed(),
+                            "effects_prevented", true), false, exceeded);
+        } catch (RuleValidationService.SnapshotMismatchException changed) {
+            throw new HeadlessExecutionException("rule_validation_snapshot_changed",
+                    changed.getMessage(), Map.of("effects_prevented", true), true, changed);
+        } catch (RuleValidationService.SnapshotRequiredException required) {
+            throw new HeadlessExecutionException("rule_validation_snapshot_required",
+                    required.getMessage(), Map.of("effects_prevented", true), false, required);
+        }
+    }
+
+    private ReasonerCapabilityReport reasonerProfile(ProjectPolicy policy) {
+        String name;
+        try {
+            name = reasonerFactory.getReasonerName();
+        } catch (RuntimeException failure) {
+            name = reasonerFactory.getClass().getSimpleName();
+        }
+        ReasonerIdentity identity = ReasonerIdentity.capture(
+                reasonerFactory.getClass().getName(), name, reasonerFactory,
+                new SimpleConfiguration(reasoningTimeoutMillis(policy)), BufferingMode.BUFFERING,
+                "headless_policy_reasoning_configuration");
+        return REASONER_PROFILES.report(identity);
+    }
+
+    private static long reasoningTimeoutMillis(ProjectPolicy policy) {
+        Object value = object(policy.effective().get("reasoning")).get("timeout_ms");
+        if (value instanceof Number number && number.longValue() > 0) {
+            return number.longValue();
+        }
+        return 120_000L;
+    }
+
     private Map<String, Object> mapping(String tool, Map<String, Object> args) {
-        boolean mutation = Set.of("add_mapping", "remove_mapping", "import_sssom",
-                "export_sssom").contains(tool);
+        boolean mutation = CONFIRMED_MAPPING_MUTATIONS.contains(tool);
         if (mutation && !Boolean.TRUE.equals(args.get("confirm"))) {
             throw new HeadlessExecutionException("confirmation_required",
                     "Mapping filesystem mutations require confirm=true.",
@@ -315,6 +397,15 @@ public final class HeadlessToolService {
         } catch (IllegalArgumentException failure) {
             throw new HeadlessExecutionException("invalid_request", failure.getMessage(),
                     Map.of("effects_prevented", true), false, failure);
+        }
+    }
+
+    private static void requireMappingConfirmation(String tool, Map<String, Object> args) {
+        if (CONFIRMED_MAPPING_MUTATIONS.contains(tool)
+                && !Boolean.TRUE.equals(args.get("confirm"))) {
+            throw new HeadlessExecutionException("confirmation_required",
+                    "Mapping filesystem mutations require confirm=true.",
+                    Map.of("effects_prevented", true), false, null);
         }
     }
 
@@ -619,12 +710,18 @@ public final class HeadlessToolService {
     }
 
     private static int integer(Map<String, Object> args, String key, int fallback) {
+        return integer(args, key, fallback, 0, 1000);
+    }
+
+    private static int integer(Map<String, Object> args, String key, int fallback,
+            int minimum, int maximum) {
         Object value = args.get(key);
         if (value == null) return fallback;
         if (!(value instanceof Number number)) throw new IllegalArgumentException(key + " must be an integer");
         int parsed = number.intValue();
-        if (parsed < 0 || parsed > 1000 || number.doubleValue() != parsed) {
-            throw new IllegalArgumentException(key + " must be an integer between 0 and 1000");
+        if (parsed < minimum || parsed > maximum || number.doubleValue() != parsed) {
+            throw new IllegalArgumentException(key + " must be an integer between "
+                    + minimum + " and " + maximum);
         }
         return parsed;
     }

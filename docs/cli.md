@@ -97,6 +97,8 @@ only the project-confined headless operations that share completed core services
 
 - `get_headless_capabilities`
 - `validate_project_policy`
+- `get_reasoner_capabilities`
+- `validate_rules`
 - `list_mappings`
 - `add_mapping`
 - `remove_mapping`
@@ -122,8 +124,16 @@ workspace operations within one session, rejects inbound JSON-RPC lines over 1 M
 8 MiB, and writes only protocol messages to stdout. Startup,
 configuration, and transport failures go to stderr.
 
+The one-shot `validate` command also runs the same bounded, non-executing SWRL validation over its captured
+offline imports closure. JSON includes the bounded detail page plus summaries for every incompatible rule;
+Markdown, JUnit, and SARIF include one finding for each such summary in the required `rules` stage. An
+incompatible or incompletely covered rule set makes the command exit `1` even when the other project QC stages
+pass. A rule-capture budget failure is still emitted in the requested format as `gate=error` and exits `3`.
+Changing `reasoning.timeout_ms` changes the complete runtime identity but not the reviewed semantic capability
+profile when every inference-relevant setting remains identical.
+
 Stdio authentication is the operating system's child-process boundary. The default local profile contains
-the exact capabilities needed by the fourteen supported tools, including `server:admin` for the fixed
+the exact capabilities needed by the sixteen supported tools, including `server:admin` for the fixed
 `export_audit_log` operation, but it has no network or external-filesystem authority. `--capabilities`
 can narrow it further with a comma- or whitespace-separated list of
 exact public scopes, for example:
