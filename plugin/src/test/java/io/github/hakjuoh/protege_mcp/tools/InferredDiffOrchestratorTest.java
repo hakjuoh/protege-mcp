@@ -168,9 +168,10 @@ class InferredDiffOrchestratorTest {
         InferredDiffOrchestrator.Captured captured =
                 InferredDiffOrchestrator.capture(mm, left, right, false, "HermiT");
 
-        // A 1 ms budget expires before (or during) evaluation; either the whole section or its
-        // categories error — never an exception, never a silently complete result claiming success.
-        Map<String, Object> evaluated = InferredDiffOrchestrator.run(captured, 1, 25);
+        // The package-private orchestration seam accepts an already expired budget sentinel. This
+        // avoids a wall-clock race while proving the production expiry path: either the whole
+        // section or its categories error, never an exception or a silently complete result.
+        Map<String, Object> evaluated = InferredDiffOrchestrator.run(captured, -1, 25);
         Map<?, ?> inferred = (Map<?, ?>) evaluated.get("inferred");
         boolean sectionErrored = inferred.containsKey("error");
         boolean categoriesErrored = inferred.get("errored_categories") instanceof java.util.List<?> l
