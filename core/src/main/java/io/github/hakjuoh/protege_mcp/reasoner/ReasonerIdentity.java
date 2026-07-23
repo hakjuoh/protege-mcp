@@ -234,6 +234,10 @@ public record ReasonerIdentity(
     }
 
     private static String classDigest(Class<?> type) {
+        return readClassDigest(type);
+    }
+
+    private static String readClassDigest(Class<?> type) {
         String resource = "/" + type.getName().replace('.', '/') + ".class";
         try (InputStream in = type.getResourceAsStream(resource)) {
             if (in == null) return "unknown";

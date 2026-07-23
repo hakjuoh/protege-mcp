@@ -1,6 +1,6 @@
 # Protégé MCP — Current Design
 
-> Architecture snapshot for release 0.7.2. User-facing installation and operation are documented at
+> Architecture snapshot for release 0.7.2 plus the implemented, unreleased 0.8.0 slices. User-facing installation and operation are documented at
 > <https://hakjuoh.github.io/protege-mcp/>. Historical feature delivery is recorded in
 > [`CHANGELOG.md`](CHANGELOG.md); unimplemented work is tracked in [`PLAN.md`](PLAN.md).
 
@@ -12,7 +12,7 @@ in-Protégé Ontology Assistant and a headless CLI for reproducible project vali
 
 The design has three execution surfaces:
 
-- The **live plugin** serves 85 MCP tools and 11 prompts over authenticated Streamable HTTP. Reads and writes
+- The **live plugin** serves 99 MCP tools and 11 prompts over authenticated Streamable HTTP. Reads and writes
   operate on the active `OWLModelManager`; ontology changes are visible immediately and join Protégé's Undo
   stack, except for the explicit document-format prefix-map operations described in section 7.3.
 - The **Ontology Assistant** drives an installed `claude` or `codex` CLI back through the live plugin's MCP
@@ -91,7 +91,7 @@ external clients.
 
 ```text
 CLI command or stdio MCP client
-  -> HeadlessToolService / shared project services
+  -> HeadlessToolService dispatch / HeadlessMaterializationService or shared project services
   -> FilesystemProjectWorkspace capture
   -> offline OWLAPI + bundled HermiT execution
   -> checksum-guarded file or release-directory transaction
@@ -293,6 +293,8 @@ The `core` module groups reusable semantics by responsibility:
 - `core.release`: release gates, deterministic bundles/manifests, RO-Crate metadata, artifact storage, and
   JSON/Markdown/JUnit/SARIF reports.
 - `core.auth` and `core.audit`: capability declarations/authorization and redacted audit persistence/export.
+- `jobs`: closed asynchronous job/result contracts, owner-scoped admission/retention, cancellation and
+  publication fences, bounded private artifacts, and adapter scheduler/guard interfaces.
 - `core.headless`: the fixed stdio catalog and orchestration used by the CLI.
 - `ro_crate`: host-independent RO-Crate project-profile parsing and validation.
 
@@ -307,7 +309,7 @@ one identity as interchangeable with another.
 
 ## 9. Tool and prompt surface
 
-The plugin catalog contains **85 tools and 11 prompts**. The authoritative metadata is the validated resource:
+The plugin catalog contains **104 tools and 11 prompts**. The authoritative metadata is the validated resource:
 
 `plugin/src/main/resources/io/github/hakjuoh/protege_mcp/catalog/mcp-catalog.json`
 
@@ -362,10 +364,20 @@ The executable CLI supports:
 Exit codes are stable: `0` passed, `1` a loaded validation/gate failed, `2` configuration or usage error, and
 `3` execution or infrastructure error.
 
-The stdio surface contains eight tools:
+The stdio surface contains eighteen tools:
 
 - `get_headless_capabilities`
 - `validate_project_policy`
+- `get_reasoner_capabilities`
+- `validate_rules`
+- `materialize_inferences`
+- `commit_materialization`
+- `list_mappings`
+- `add_mapping`
+- `remove_mapping`
+- `import_sssom`
+- `export_sssom`
+- `validate_mappings`
 - `run_project_qc`
 - `verify_import_lock`
 - `write_import_lock`
@@ -379,8 +391,16 @@ delimited inbound messages to 1 MiB and outbound messages to 8 MiB.
 
 `FilesystemProjectWorkspace` captures policy, root ontology, modules, catalogs, imports, locks, and validation
 assets into a private temporary workspace. It verifies source identity before and after capture and before
-publication. File writes use checksum-guarded atomic replacement with optional backup; release publication
+publication. File writes use checksum-guarded no-overwrite hard-link publication with optional backup;
+release publication
 uses a guarded whole-directory transaction.
+
+Inference materialization is preview-first. Core enumerates six closed categories with a disposable reasoner,
+whole-category count/byte/time bounds, stable provenance, and a 30-minute owner-local artifact. The live
+adapter rechecks the complete source/policy/reasoner identity and applies each axiom batch in one model-manager
+broadcast. Active-source changes form one Undo unit; new-ontology creation uses the model-manager lifecycle and
+is reported separately. The headless adapter rechecks a captured workspace and publishes verified Functional
+Syntax through the project lock, checksum backup, and atomic single-file transaction.
 
 The bundled headless reasoner is HermiT 1.3.8.431, aligned with OWLAPI 4.5.29. Its configuration and known
 parity boundary are documented in
@@ -436,17 +456,15 @@ See [`TESTING.md`](TESTING.md), [`docs/performance.md`](docs/performance.md), an
 
 ## 15. Current intentional limitations
 
-- The live plugin performs long operations synchronously with bounds and cancellation fences; there is no
-  public asynchronous job/progress API.
-- SWRL rules can be listed and edited, but the product has no general rule-capability negotiation or
-  inference-materialization workflow.
+- The live plugin exposes bounded in-memory jobs for classification, project QC, semantic diff, and inference
+  materialization. Job ids and private artifacts intentionally do not survive a window/backend restart.
 - Confirmation, capabilities, and audit are implemented; named-role and two-person approval are not.
-- Local entity search is policy-aware, but no external terminology provider, SSSOM mapping manager, or
-  lifecycle state machine is built in.
+- External terminology and SSSOM mapping are implemented, but the governed lifecycle state machine remains
+  deferred.
 - Releases can be exported and verified, but there is no direct publishing adapter for commercial ontology or
   knowledge-graph platforms.
-- The headless stdio server intentionally exposes only the eight project/release tools above, not the live
-  85-tool editor surface.
+- The headless stdio server intentionally exposes only the eighteen project/release tools above, not the live
+  104-tool editor surface or its ephemeral job ids.
 - A non-loopback bind is explicit plain-HTTP opt-in and is not a supported multi-user deployment model.
 
 Future work on these boundaries belongs in [`PLAN.md`](PLAN.md); completed behavior should update this design

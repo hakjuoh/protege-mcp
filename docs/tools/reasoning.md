@@ -31,7 +31,8 @@ those changes do not falsely erase identical inference capabilities. Only the re
 `1.3.8.431`, OWLAPI structural reasoner `4.5.29`, and ELK `0.5.0` identities receive a `reviewed` profile;
 all other versions or non-reviewed/uninspectable semantic configurations remain `unknown`.
 
-*Read-only.* Also available through headless stdio for its fixed bundled reasoner.
+*Read-only.* Also available through headless stdio for its fixed bundled reasoner; headless execution additionally
+requires `filesystem:project:read` because the exact policy-governed configuration is loaded from the project.
 
 **Arguments**
 
@@ -64,7 +65,11 @@ None.
   scan allows at most 24 MiB of class bytes plus 24 MiB of effective-resource verification, 4 MiB per
   class, 64 MiB of nested-JAR bytes, a 128 MiB outer container, 150,000 entries, and five seconds. Any
   class, byte, entry, time, duplicate, override, or unsupported-location limit discards the entire scan
-  as `unknown`; evidence is never truncated and accepted.
+  as `unknown`; evidence is never truncated and accepted. Successful scans are cached only while every local
+  code-source file retains its pinned file key, size, modification time, and bounded SHA-256 container digest.
+  Pins are captured before and after the evidence scan and must be identical. OSGi URLs expose no portable
+  immutable bundle-generation identity, so OSGi evidence is recomputed instead of cached. `unknown` is retried
+  rather than cached forever, and a changed pin evicts the cached entry and fails closed.
 - `configuration_digest` records the complete bounded configuration; `semantic_configuration_digest`
   is the exact reviewed inference-semantics key. `configuration_binary_digest` separately attests the
   selected configuration class. ELK worker-count and evictor-builder values are captured in the complete
@@ -98,7 +103,8 @@ the necessary body-variable binding check from DL-safety: OWLAPI rules do not id
 partition, so `dl_safety_status` is exact reasoner-profile engine evidence, not a syntactic proof that a
 rule is formally DL-safe.
 
-*Read-only.* Also available through headless stdio. The live default includes the imports closure.
+*Read-only.* Also available through headless stdio, where `filesystem:project:read` is additionally required for
+the captured policy and ontology files. The live default includes the imports closure.
 
 **Arguments**
 
@@ -148,6 +154,145 @@ Dependency or plugin updates deliberately change the attested tuple to `unknown`
 requires rerunning the real reasoner fixtures and packaged smoke, reviewing every changed runtime scope and
 configuration class, then updating the pinned digest/count/version tuple together; a version-only bump is
 never sufficient.
+
+---
+
+## `materialize_inferences`
+
+Creates a read-only preview with one disposable reasoner over an isolated ontology snapshot. The request
+must explicitly name one or more of the six closed categories, a destination, provenance text, and all four
+limits. Every category requires `supported` evidence from the exact capability profile. `unsupported`,
+`unknown`, and `untested` evidence fails before reasoner creation. An enumeration failure, timeout, or count
+or byte overflow discards the complete category and publishes no artifact.
+
+The six categories are `subclass_axioms`, `equivalent_class_axioms`, `class_assertions`,
+`property_hierarchy_axioms`, `object_property_assertions`, and `data_property_assertions`. The request limits
+cannot exceed project-policy v2 materialization limits or the hard 50,000-axiom/64-MiB bounds.
+
+The result reports requested, supported, produced, and empty categories; complete per-category counts;
+asserted collisions; stable content and provenance digests; the complete model/import/mapping/policy/reasoner
+identity; and a private artifact id, fingerprint, digest, and expiry. Generated axioms carry a stable
+provenance IRI derived from source, closure, exact reasoner, category, and content identities. Preview never
+changes the active ontology, selected reasoner, or project files. It does populate the owner-private,
+bounded artifact store and may populate validated runtime-evidence caches. Artifacts expire after 30
+minutes and are private to the owning live window or stdio session.
+
+Only one private preview may compute or dispose its reasoner at a time per service. A timed-out or cancelled
+preview keeps returning `materialization_busy` for later previews until both its worker and bounded disposal
+finish; late results are fenced and never published. If the sole cleanup worker cannot accept disposal or
+the reasoner never returns from disposal, the service remains fail-closed busy instead of accumulating
+undisposed reasoners.
+
+The live adapter accepts `new_ontology` and an explicitly policy-enabled `active_source` destination. The
+headless adapter accepts only a project-confined `project_file`; it rejects every ontology project input as a
+file destination. Headless preview supports the common 50,000-axiom ceiling. Live preview requires both
+axiom limits to be at most 500 so its one-broadcast/one-Undo commit remains inside the versioned 100 ms
+model-thread stall budget; larger runs use headless project-file output.
+
+**Arguments**
+
+- `categories`: non-empty unique array of the six closed category ids.
+- `destination`: `{kind, identifier}`; `identifier` is an ontology IRI for live destinations and a
+  project-relative path for `project_file`.
+- `provenance`: `{generator, purpose}` bounded provenance text.
+- `limits`: `{max_axioms_per_category, max_axioms_total, max_bytes, timeout_ms}`.
+- `policy_path`: optional already-authorized live policy path; headless execution is fixed to its startup
+  policy.
+
+**Returns**
+
+- `status`, `preview_only`, `complete`, `live_state_changed`: successful private-preview status.
+- `requested_categories`, `supported_categories`, `produced_categories`, `skipped_categories`: complete
+  category accounting.
+- `categories`, `asserted_collision_count`: per-category counts, digests, provenance, and collisions.
+- `input_identity`, `provenance`, `destination_plan`, `limits`: immutable commit preconditions.
+- `artifact`: owner-local `{artifact_id, artifact_fingerprint, artifact_digest,
+  materialization_digest, created_at, expires_at, axiom_count, canonical_bytes}`.
+
+## `commit_materialization`
+
+Commits an owner-local preview only after `confirm=true`, artifact digest verification, and a final recheck of
+the complete source revision/closure, imports, mapping revision, project policy, exact reasoner configuration,
+destination, authorization, and live write preferences. Writing `active_source` additionally requires
+`allow_source=true` and policy `allow_source_write: true`.
+
+`collision_mode` is `reject` by default. `merge` retains an existing logical axiom and adds the stable
+provenance form; `replace` removes only different-provenance logical forms and preserves unrelated ontology
+axioms and metadata. The live adapter applies all axiom changes in one `applyChanges` broadcast. An
+`active_source` commit is one Undo unit; creating a new ontology uses Protégé's model-manager lifecycle and
+reports `single_undo: false` because ontology creation itself is not an Undo-stack operation. The headless
+adapter requires `overwrite=true` and `expected_target_digest` for an existing file, performs verified
+Functional Syntax serialization, stages a private sibling, then acquires the authoritative project-local
+lock for baseline recheck, backup, and publication. It preserves a verified backup
+and installs without replacement rename semantics. The final state machine moves an existing target into an
+owner-only private transaction directory, verifies the displaced inode, and publishes or restores only with
+an atomic hard-link CREATE_NEW operation. A concurrently recreated target is never overwritten; the private
+stage/displaced paths and observed target facts are retained in a
+`materialization_guarded_replacement_incomplete` receipt. Providers without same-filesystem hard links fail
+closed. Pathname hard-link use additionally requires a stable POSIX ancestor chain with no group/other write
+permission. A sticky shared ancestor such as `/tmp` is accepted only above an already protected project
+directory; direct shared-directory targets are rejected. It treats other processes/plugins under the same OS
+account as trusted; providers without the required POSIX attributes fail closed for project-file commit. Staged content
+must support a real file force, while directory-entry force is best effort where the platform exposes it.
+The move-to-link interval briefly removes an existing public name. Recovery is mutation, so it runs only under
+the same project lock at transaction begin or commit; opening a target never recovers it. Exact-owner `0700`
+directories, UUID names, and matching manifests bound trusted evidence. One unambiguous pre-publication orphan
+can be restored. Recovery writes its own uncertainty marker before linking and cleanup removes `displaced`
+before state markers. Publication-uncertain, recovery-uncertain, or multiple/mixed candidate states retain
+evidence and never restore an absent target automatically. Any recovery or cleanup side effect returns
+`materialization_workspace_recovery_applied`, reports observed target facts, and requires the caller to retry.
+The quota counts only trusted directories. Directory forcing is best effort, so the protocol does not claim
+portable power-loss durability.
+
+For `materialization_workspace_recovery_ambiguous`, stop every live and headless writer first. Preserve an
+offline copy of the current target and every reported evidence directory. Compare their SHA-256 digests with
+the preview, backup, and receipt digests; do not copy a `displaced` file over the target merely because it is
+older. After choosing the authoritative target from project history or a verified backup, move the resolved
+evidence directories out of the project root while writers remain stopped, then retry the operation. Keep the
+offline copy until the retry and project QC both pass.
+
+The canonical project root reserves the authenticated owner-only `.protege-mcp-workspace-lock/` directory as
+the single cross-process coordinate. The root itself must not be group/other writable. The directory contains
+an immutable project-identity file and a separate `0600`, single-link lock inode; unknown pre-existing content
+is preserved byte-for-byte and refused. Only that authenticated root-level directory is excluded from captured
+asset identities, while nested same-named user directories remain governed. Alternative user homes or adapter
+state directories therefore cannot create independent locks for the same project; pathname/inode replacement
+fails recovery closed.
+Recommitting in `reject` or `replace` mode is a `noop` only when every exact axiom/provenance pair already
+exists and no alternate-provenance form remains. Explicit `merge` may also be a `noop` when all exact pairs
+exist because alternate forms are intentionally retained.
+Imported duplicates are not destination-document matches and may be materialized locally.
+
+If backup publication succeeds but destination publication fails, headless execution returns
+`materialization_backup_published` with separate `backup_location_current`, `backup_state_known`,
+`backup_verified`, `target_state_known`, and optional `target_preserved`/`backup_sha256` evidence. It never
+describes an unverified backup as recoverable. `outcome_known=true` means the reported partial side effect is
+fully observed; otherwise the adapter adds `outcome_unknown` and requires a state check. A replacement that
+applied but failed post-install verification similarly reports the intended target digest without claiming it
+is the current digest.
+
+Authorization requires `ontology:admin`, `ontology:curate`, and `filesystem:project:read` because the live
+adapter must reauthorize and fingerprint project policy assets. Headless project-file commits additionally
+require `filesystem:project:write`; all capabilities are rechecked at execution.
+
+**Arguments**
+
+- `artifact_id`, `artifact_fingerprint`: exact owner-local preview coordinates.
+- `confirm`: must be `true`.
+- `collision_mode`: `reject` (default), `merge`, or `replace`.
+- `allow_source`: live-only additional confirmation for `active_source`.
+- `overwrite`, `expected_target_digest`: headless-only CAS controls for an existing `project_file`.
+- `policy_path`: optional already-authorized live policy path matching the preview.
+
+**Returns**
+
+- `status`, `committed`: `committed` or idempotent `noop` outcome.
+- `artifact_id`, `artifact_fingerprint`, `artifact_digest`, `materialization_digest`, `destination`: committed
+  artifact identity.
+- `added_axioms`, `existing_axioms`, `asserted_collision_count`: destination accounting.
+- `single_undo`: true only when the live axiom change was one observable Undo unit.
+- `new_revision`: optional live model revision after a committed change.
+- `target_digest`: headless verified destination-file digest.
 
 ---
 

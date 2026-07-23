@@ -8,7 +8,7 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **97 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **104 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
@@ -29,7 +29,8 @@ preview, impact, release, project-boundary, audit, and isolated-preflight guaran
 | --- | --- | --- |
 | SSSOM mappings | [`list_mappings`](mappings.html#list_mappings), [`add_mapping`](mappings.html#add_mapping), [`remove_mapping`](mappings.html#remove_mapping), [`import_sssom`](mappings.html#import_sssom), [`export_sssom`](mappings.html#export_sssom), [`validate_mappings`](mappings.html#validate_mappings) | Governed SSSOM 1.0 authoring with deterministic IDs, project validation, revision-bound pagination, compare-and-swap writes, and atomic import/export. |
 | External terms | [`search_external_terms`](external-terms.html#search_external_terms), [`inspect_external_term`](external-terms.html#inspect_external_term), [`propose_term_reuse`](external-terms.html#propose_term_reuse), [`accept_reuse_proposal`](external-terms.html#accept_reuse_proposal) | Project-governed OLS4 discovery plus immutable, revision-bound reuse proposals and explicit receipt/CAS/saga acceptance. |
-| Reasoner and rules | [`get_reasoner_capabilities`](reasoning.html#get_reasoner_capabilities), [`validate_rules`](reasoning.html#validate_rules) | Exact runtime-code/semantic-configuration tuple evidence and bounded non-executing SWRL validation. |
+| Reasoner and rules | [`get_reasoner_capabilities`](reasoning.html#get_reasoner_capabilities), [`validate_rules`](reasoning.html#validate_rules), [`materialize_inferences`](reasoning.html#materialize_inferences), [`commit_materialization`](reasoning.html#commit_materialization) | Exact capability evidence, non-executing SWRL validation, and preview-first bounded inference publication. |
+| Asynchronous jobs | [`start_job`](jobs.html#start_job), [`get_job`](jobs.html#get_job), [`cancel_job`](jobs.html#cancel_job), [`list_jobs`](jobs.html#list_jobs), [`export_job_artifact`](jobs.html#export_job_artifact) | Owner-scoped live jobs with immutable captures, bounded execution, monotonic cancellation, private verified artifacts, and guarded atomic export. |
 
 ---
 
@@ -144,7 +145,7 @@ The top-level [Prompts](../prompts/) guide packages these flows for one-click us
 `list_rules`, `add_rule`, `remove_rule`, `validate_rules`
 
 ### [Reasoning](reasoning.html)
-`get_reasoner_capabilities`, `validate_rules`, `list_reasoners`, `set_reasoner`, `run_reasoner`, `get_unsatisfiable_classes`,
+`get_reasoner_capabilities`, `validate_rules`, `materialize_inferences`, `commit_materialization`, `list_reasoners`, `set_reasoner`, `run_reasoner`, `get_unsatisfiable_classes`,
 `get_inferred_superclasses` · `execute_dl_query` · `explain_entailment` · `get_explanations` ·
 `explain_inconsistency`
 

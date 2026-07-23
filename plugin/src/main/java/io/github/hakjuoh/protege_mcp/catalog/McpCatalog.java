@@ -24,6 +24,7 @@ import io.github.hakjuoh.protege_mcp.contracts.ToolSchemaValidator;
 import io.github.hakjuoh.protege_mcp.contracts.SssomToolSchemas;
 import io.github.hakjuoh.protege_mcp.contracts.ExternalTermToolSchemas;
 import io.github.hakjuoh.protege_mcp.contracts.ReasonerToolSchemas;
+import io.github.hakjuoh.protege_mcp.contracts.JobToolSchemas;
 import io.modelcontextprotocol.spec.McpSchema.PromptArgument;
 
 /**
@@ -134,6 +135,8 @@ public final class McpCatalog {
             rejectInternalReference(description, path + ".description");
             if (ReasonerToolSchemas.NAMES.contains(name)) {
                 description = ReasonerToolSchemas.description(name);
+            } else if (JobToolSchemas.NAMES.contains(name)) {
+                description = JobToolSchemas.description(name);
             }
             JsonNode schemaNode = required(node, "input_schema", path);
             requireObject(schemaNode, path + ".input_schema");
@@ -148,6 +151,8 @@ public final class McpCatalog {
                 schema = ExternalTermToolSchemas.input(name);
             } else if (ReasonerToolSchemas.NAMES.contains(name)) {
                 schema = ReasonerToolSchemas.input(name);
+            } else if (JobToolSchemas.NAMES.contains(name)) {
+                schema = JobToolSchemas.input(name);
             }
             Map<String, Object> outputSchema = ToolContractSchemas.legacySuccessSchema();
             JsonNode outputNode = node.get("output_schema");
@@ -170,6 +175,10 @@ public final class McpCatalog {
                         path + ".generated_output_schema");
             } else if (ReasonerToolSchemas.NAMES.contains(name)) {
                 outputSchema = ReasonerToolSchemas.output(name);
+                ToolSchemaValidator.validateTypedOutput(outputSchema,
+                        path + ".generated_output_schema");
+            } else if (JobToolSchemas.NAMES.contains(name)) {
+                outputSchema = JobToolSchemas.output(name);
                 ToolSchemaValidator.validateTypedOutput(outputSchema,
                         path + ".generated_output_schema");
             } else if (!Legacy072ToolContracts.liveToolNames().contains(name)) {

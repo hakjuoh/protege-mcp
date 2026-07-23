@@ -133,6 +133,13 @@ final class IsolatedReasonerSpec {
                 selectedBuffering, "protege_selected_plugin");
     }
 
+    SelectionKey selectionKey() {
+        return new SelectionKey(reasonerId, reasonerName, delegate.getClass().getName(),
+                configuration.getClass().getName(), selectedBuffering,
+                configuration.getTimeOut(), configuration.getFreshEntityPolicy(),
+                configuration.getIndividualNodeSetPolicy());
+    }
+
     /** Stable, non-secret description suitable for QC/explanation result metadata. */
     Map<String, Object> metadata(BufferingMode actualBuffering) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -212,6 +219,11 @@ final class IsolatedReasonerSpec {
     private static String message(RuntimeException e) {
         return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
     }
+
+    record SelectionKey(String reasonerId, String reasonerName, String factoryClass,
+            String configurationClass, BufferingMode bufferingMode, long timeoutMillis,
+            FreshEntityPolicy freshEntityPolicy,
+            IndividualNodeSetPolicy individualNodeSetPolicy) { }
 
     private final class ConfigurationPreservingFactory implements OWLReasonerFactory {
         @Override

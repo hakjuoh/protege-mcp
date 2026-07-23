@@ -21,11 +21,13 @@ import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
 
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint;
+import io.github.hakjuoh.protege_mcp.core.headless.HeadlessReasonerProfiles;
 import io.github.hakjuoh.protege_mcp.core.qc.CompetencyQuestionService.Question;
 import io.github.hakjuoh.protege_mcp.core.qc.InvariantQcService.Invariant;
 import io.github.hakjuoh.protege_mcp.core.workspace.ProjectWorkspace;
 import io.github.hakjuoh.protege_mcp.core.workspace.WorkspaceSnapshot;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
+import io.github.hakjuoh.protege_mcp.reasoner.RuleValidationService;
 
 /** Complete policy-backed QC execution over one offline, lifecycle-owned workspace snapshot. */
 public final class HeadlessProjectQcService {
@@ -182,6 +184,7 @@ public final class HeadlessProjectQcService {
                 default -> throw new IllegalStateException("unsupported QC stage: " + stage);
             }
         }
+        executions.add(ruleValidationExecution(closure, reasonerFactory, policy));
         executions = executions.stream()
                 .map(execution -> portableExecution(snapshot, execution)).toList();
 
@@ -191,8 +194,10 @@ public final class HeadlessProjectQcService {
                 .filter(execution -> execution.verdict().ran()
                         && !execution.verdict().executionError())
                 .map(QcStageExecution::stage).toList();
+        List<String> requiredStages = new ArrayList<>(config.stages);
+        if (!requiredStages.contains("rules")) requiredStages.add("rules");
         ProjectQcRequest request = new ProjectQcRequest(true, config.policyVersion,
-                policy.digest(), new ArrayList<>(config.stages), config.failOn, fingerprint,
+                policy.digest(), requiredStages, config.failOn, fingerprint,
                 selectedReasoner, workspace.isCurrent(snapshot), null, "isolated",
                 snapshotStages, true, snapshot.closureFingerprint());
         ProjectQcReport report = ProjectQcService.aggregate(request, executions);
@@ -202,7 +207,57 @@ public final class HeadlessProjectQcService {
         output.put("project_root", ".");
         output.put("resolved_assets", assetJson(policy));
         output.put("surface", "headless");
+        executions.stream()
+                .filter(execution -> "rules".equals(execution.stage())
+                        && execution.details() != null)
+                .findFirst()
+                .ifPresent(execution -> output.put("rule_validation", execution.details()));
         return new Result(report, output);
+    }
+
+    private static QcStageExecution ruleValidationExecution(Set<OWLOntology> closure,
+            OWLReasonerFactory factory, ProjectPolicy policy) {
+        try {
+            RuleValidationService.CapturedCorpus corpus = RuleValidationService.capture(
+                    RuleValidationService.snapshot(closure, true));
+            if (corpus.totalRules() == 0) {
+                Map<String, Object> details = new LinkedHashMap<>();
+                details.put("executed_rules", false);
+                details.put("parsed_every_atom", true);
+                details.put("compatible", true);
+                details.put("coverage_complete", true);
+                details.put("total_rules", 0);
+                details.put("reasoner_required", false);
+                details.put("snapshot_fingerprint", corpus.corpusFingerprint());
+                return new QcStageExecution("rules", QcStageVerdict.PASS,
+                        null, details);
+            }
+            if (factory == null) {
+                return QcStageExecution.error("rules",
+                        "SWRL rules require a selected headless reasoner capability profile.",
+                        Map.of("error_code", "rule_validation_reasoner_unavailable"));
+            }
+            Map<String, Object> validation = RuleValidationService.validate(
+                    corpus,
+                    HeadlessReasonerProfiles.report(factory, policy),
+                    0, RuleValidationService.MAX_PAGE);
+            return new QcStageExecution("rules",
+                    Boolean.TRUE.equals(validation.get("compatible"))
+                            ? QcStageVerdict.PASS : QcStageVerdict.FAIL,
+                    null, validation);
+        } catch (RuleValidationService.BudgetExceededException exceeded) {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("error_code", "rule_validation_budget_exceeded");
+            details.put("budget", exceeded.budget());
+            details.put("maximum", exceeded.maximum());
+            details.put("observed", exceeded.observed());
+            return QcStageExecution.error("rules",
+                    "rule_validation_budget_exceeded: " + exceeded.getMessage(), details);
+        } catch (RuntimeException | LinkageError failure) {
+            return QcStageExecution.error("rules",
+                    "SWRL validation failed: " + message(failure),
+                    Map.of("error_code", "rule_validation_failed"));
+        }
     }
 
     private static QcStageExecution invariantExecution(QuerySnapshot queries,

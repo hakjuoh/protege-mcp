@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.FilterInputStream;
 import java.lang.reflect.Method;
 import java.net.URI;
+import java.net.JarURLConnection;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLConnection;
@@ -12,6 +13,8 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.CodeSource;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -22,6 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -35,6 +39,7 @@ final class RuntimeCodeEvidence {
     private static final Limits PRODUCTION_LIMITS = new Limits(24L * 1024 * 1024,
             64L * 1024 * 1024, 128L * 1024 * 1024, 4 * 1024 * 1024,
             6_000, 150_000, 5_000L);
+    private static final long MAX_PIN_BYTES = 512L * 1024 * 1024;
     private static final Set<String> OSGI_RESOURCE_PROTOCOLS = Set.of(
             "bundle", "bundleresource", "bundleentry");
     private static final Set<String> TRUSTED_OSGI_CONNECTION_TYPES = Set.of(
@@ -45,15 +50,44 @@ final class RuntimeCodeEvidence {
             "org.apache.felix.framework.BundleWiringImpl$BundleClassLoader",
             "org.eclipse.osgi.internal.loader.EquinoxClassLoader",
             "org.eclipse.osgi.internal.baseadaptor.DefaultClassLoader");
+    private static final EvidenceCache CACHE = new EvidenceCache(
+            RuntimeCodeEvidence::captureCached);
 
     private RuntimeCodeEvidence() {
     }
 
     static Evidence capture(Class<?> factoryType) {
+        CachedEvidence cached = CACHE.get(factoryType);
+        if (!cached.cacheable()) {
+            CACHE.remove(factoryType);
+            return cached.evidence();
+        }
+        List<CodeSourcePin> current = codeSourcePins(factoryType,
+                new PinBudget(deadlineAfterMillis(PRODUCTION_LIMITS.captureMillis)));
+        if (current == null || !cached.pins().equals(current)) {
+            CACHE.remove(factoryType);
+            return Evidence.unknown();
+        }
+        return cached.evidence();
+    }
+
+    private static CachedEvidence captureCached(Class<?> factoryType) {
+        long deadlineNanos = deadlineAfterMillis(PRODUCTION_LIMITS.captureMillis);
+        PinBudget pinBudget = new PinBudget(deadlineNanos);
+        List<CodeSourcePin> before = codeSourcePins(factoryType, pinBudget);
+        Evidence evidence = captureUncached(factoryType, deadlineNanos);
+        List<CodeSourcePin> after = codeSourcePins(factoryType, pinBudget);
+        boolean stable = before != null && before.equals(after);
+        return new CachedEvidence(evidence,
+                stable ? after : List.of(), stable);
+    }
+
+    private static Evidence captureUncached(Class<?> factoryType, long deadlineNanos) {
         ClassLoader loader = factoryType.getClassLoader();
         TreeMap<String, String> classDigests = new TreeMap<>();
         Set<String> activeMultiReleaseEntries = new LinkedHashSet<>();
-        ByteBudget budget = new ByteBudget();
+        ByteBudget budget = new ByteBudget(
+                System::nanoTime, PRODUCTION_LIMITS, deadlineNanos);
         try {
             List<Scope> scopes = scopes(factoryType);
             if (scopes.isEmpty()) return Evidence.unknown();
@@ -175,6 +209,113 @@ final class RuntimeCodeEvidence {
         } catch (IOException | RuntimeException unavailable) {
             return null;
         }
+    }
+
+    private static List<CodeSourcePin> codeSourcePins(
+            Class<?> factoryType, PinBudget budget) {
+        try {
+            List<CodeSourcePin> pins = new ArrayList<>();
+            Map<String, ContainerPin> containers = new TreeMap<>();
+            for (Scope scope : scopes(factoryType)) {
+                for (String anchorName : scope.anchors) {
+                    Class<?> anchor = Class.forName(
+                            anchorName, false, factoryType.getClassLoader());
+                    URL location = codeLocation(anchor);
+                    if (location == null) return null;
+                    CodeSourcePin pin = pin(anchor, location, budget, containers);
+                    if (pin == null) return null;
+                    pins.add(pin);
+                }
+            }
+            return List.copyOf(pins);
+        } catch (IOException | ReflectiveOperationException | RuntimeException
+                | LinkageError unavailable) {
+            return null;
+        }
+    }
+
+    static CodeSourcePin pin(Class<?> anchor, URL location) throws IOException {
+        return pin(anchor, location,
+                new PinBudget(deadlineAfterMillis(PRODUCTION_LIMITS.captureMillis)),
+                new TreeMap<>());
+    }
+
+    private static CodeSourcePin pin(Class<?> anchor, URL location,
+            PinBudget budget, Map<String, ContainerPin> containers) throws IOException {
+        URL effective = location;
+        if ("jar".equals(location.getProtocol())) {
+            URLConnection connection = location.openConnection();
+            connection.setUseCaches(false);
+            if (!(connection instanceof JarURLConnection jar)) return null;
+            effective = jar.getJarFileURL();
+        }
+        if ("file".equals(effective.getProtocol())) {
+            Path path = localFilePath(effective).toRealPath(LinkOption.NOFOLLOW_LINKS);
+            String locationKey = path.toString();
+            ContainerPin container = containers.get(locationKey);
+            if (container == null) {
+                BasicFileAttributes attributes = Files.readAttributes(path,
+                        BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (!attributes.isRegularFile() || attributes.isSymbolicLink()
+                        || attributes.fileKey() == null) {
+                    return null;
+                }
+                String contentDigest = digestRegularFile(
+                        path, PRODUCTION_LIMITS.maxContainerBytes, budget);
+                BasicFileAttributes after = Files.readAttributes(path,
+                        BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (!attributes.fileKey().equals(after.fileKey())
+                        || attributes.size() != after.size()
+                        || !attributes.lastModifiedTime().equals(after.lastModifiedTime())) {
+                    return null;
+                }
+                container = new ContainerPin(String.valueOf(attributes.fileKey()),
+                        attributes.size(), attributes.lastModifiedTime().toMillis(),
+                        contentDigest);
+                containers.put(locationKey, container);
+            }
+            return new CodeSourcePin(anchor, locationKey, container.fileKey(),
+                    container.bytes(), container.modifiedMillis(), container.contentDigest());
+        }
+        if (OSGI_RESOURCE_PROTOCOLS.contains(effective.getProtocol())) {
+            // OSGi URLs do not expose a portable immutable bundle-generation identity.
+            // Recompute evidence rather than caching it against an assumed generation.
+            return null;
+        }
+        return null;
+    }
+
+    private static String digestRegularFile(
+            Path path, long maximumBytes, PinBudget budget) throws IOException {
+        budget.checkTime();
+        long size = Files.size(path);
+        if (size < 0 || size > maximumBytes) {
+            throw new IOException("runtime-code container exceeds evidence budget");
+        }
+        MessageDigest digest = sha256();
+        long total = 0;
+        byte[] buffer = new byte[8192];
+        try (InputStream input = Files.newInputStream(path)) {
+            for (int read; (read = input.read(buffer)) >= 0;) {
+                if (read == 0) continue;
+                total += read;
+                budget.claim(read);
+                if (total > maximumBytes) {
+                    throw new IOException("runtime-code container exceeds evidence budget");
+                }
+                digest.update(buffer, 0, read);
+            }
+        }
+        if (total != size) {
+            throw new IOException("runtime-code container changed while it was pinned");
+        }
+        return hex(digest);
+    }
+
+    private static long deadlineAfterMillis(long millis) {
+        long now = System.nanoTime();
+        long duration = TimeUnit.MILLISECONDS.toNanos(millis);
+        return now > Long.MAX_VALUE - duration ? Long.MAX_VALUE : now + duration;
     }
 
     private static boolean containsScope(Map<String, String> digests, String prefix) {
@@ -672,6 +813,67 @@ final class RuntimeCodeEvidence {
         }
     }
 
+    record CachedEvidence(Evidence evidence, List<CodeSourcePin> pins, boolean cacheable) {
+        CachedEvidence {
+            pins = List.copyOf(pins);
+        }
+    }
+
+    record CodeSourcePin(Class<?> anchor, String location, String fileKey,
+            long bytes, long modifiedMillis, String contentDigest) {
+    }
+
+    private record ContainerPin(String fileKey, long bytes,
+            long modifiedMillis, String contentDigest) { }
+
+    private static final class PinBudget {
+        private final long deadlineNanos;
+        private long bytes;
+
+        PinBudget(long deadlineNanos) {
+            this.deadlineNanos = deadlineNanos;
+        }
+
+        void claim(int count) throws IOException {
+            checkTime();
+            bytes += count;
+            if (count < 0 || bytes > MAX_PIN_BYTES) {
+                throw new IOException("runtime-code pins exceed cumulative byte budget");
+            }
+        }
+
+        void checkTime() throws IOException {
+            if (System.nanoTime() - deadlineNanos >= 0) {
+                throw new IOException("runtime-code pins exceed evidence time budget");
+            }
+        }
+    }
+
+    static final class EvidenceCache {
+        private final Function<Class<?>, CachedEvidence> loader;
+        private final ClassValue<CachedEvidence> values;
+
+        EvidenceCache(Function<Class<?>, CachedEvidence> loader) {
+            this.loader = java.util.Objects.requireNonNull(loader, "loader");
+            this.values = new ClassValue<>() {
+                @Override
+                protected CachedEvidence computeValue(Class<?> type) {
+                    return EvidenceCache.this.loader.apply(type);
+                }
+            };
+        }
+
+        CachedEvidence get(Class<?> type) {
+            CachedEvidence value = values.get(type);
+            if (Evidence.unknown().equals(value.evidence())) values.remove(type);
+            return value;
+        }
+
+        void remove(Class<?> type) {
+            values.remove(type);
+        }
+    }
+
     private record Scope(String prefix, List<String> anchors) { }
 
     record Limits(long maxTotalClassBytes, long maxNestedEntryBytes,
@@ -705,13 +907,22 @@ final class RuntimeCodeEvidence {
         }
 
         ByteBudget(LongSupplier nanoTime, Limits limits) {
+            this(nanoTime, limits, deadline(nanoTime, limits.captureMillis));
+        }
+
+        ByteBudget(LongSupplier nanoTime, Limits limits, long deadlineNanos) {
             if (nanoTime == null || limits == null) {
                 throw new IllegalArgumentException("clock and limits are required");
             }
             this.nanoTime = nanoTime;
             this.limits = limits;
-            this.deadlineNanos = nanoTime.getAsLong()
-                    + TimeUnit.MILLISECONDS.toNanos(limits.captureMillis);
+            this.deadlineNanos = deadlineNanos;
+        }
+
+        private static long deadline(LongSupplier nanoTime, long millis) {
+            long now = nanoTime.getAsLong();
+            long duration = TimeUnit.MILLISECONDS.toNanos(millis);
+            return now > Long.MAX_VALUE - duration ? Long.MAX_VALUE : now + duration;
         }
 
         void claimEntry() throws IOException {

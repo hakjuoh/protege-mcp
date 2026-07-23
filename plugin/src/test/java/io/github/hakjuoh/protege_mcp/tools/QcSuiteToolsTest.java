@@ -71,8 +71,9 @@ class QcSuiteToolsTest {
                 new ProjectPolicyTools.PolicyContext(null, "http://example.org/f5", List.of(), null),
                 Map.of());
 
-        assertEquals(Set.of("interoperability", "provider_evidence"), config.stages);
-        assertEquals(Set.of("interoperability", "provider_evidence"), config.requiredStages);
+        assertEquals(Set.of("interoperability", "provider_evidence", "rules"), config.stages);
+        assertEquals(Set.of("interoperability", "provider_evidence", "rules"),
+                config.requiredStages);
         ToolContext context = new ToolContext(HeadlessAccess.over(ontology(false)), null);
         QcSuiteExecution execution = QcSuiteTools.execute(context, config);
         QcStageResult unavailable = execution.results.stream()

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 
 import io.github.hakjuoh.protege_mcp.core.auth.ToolCapabilityCatalog;
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.contracts.ToolContractSchemas;
 import io.github.hakjuoh.protege_mcp.contracts.Legacy072ToolContracts;
 import io.github.hakjuoh.protege_mcp.contracts.ToolSchemaValidator;
@@ -107,6 +108,8 @@ public final class HeadlessToolCatalog {
                 objectSchema(Map.of(), List.of())));
         definitions.add(reasonerDefinition("get_reasoner_capabilities"));
         definitions.add(reasonerDefinition("validate_rules"));
+        definitions.add(reasonerDefinition("materialize_inferences"));
+        definitions.add(reasonerDefinition("commit_materialization"));
         definitions.add(mappingDefinition("list_mappings",
                 "List the canonical project's SSSOM mappings with revision-bound cursor pagination."));
         definitions.add(mappingDefinition("add_mapping",
@@ -129,6 +132,7 @@ public final class HeadlessToolCatalog {
                         + "and checksums. Non-locked policies report verified=false and write nothing.",
                 objectSchema(Map.of(), List.of())));
         definitions.add(definition("write_import_lock",
+                // Frozen v0.7.2 catalog wording; current writes use guarded hard-link publication.
                 "Generate the deterministic project import lock from captured local imports. Dry-run is "
                         + "the default; a write uses checksum-guarded atomic replacement with backup.",
                 objectSchema(Map.of(
@@ -173,10 +177,21 @@ public final class HeadlessToolCatalog {
     }
 
     private static Definition reasonerDefinition(String name) {
+        Set<String> required = ToolCapabilityCatalog.required(name);
+        if (Set.of("get_reasoner_capabilities", "validate_rules").contains(name)) {
+            LinkedHashSet<String> headless = new LinkedHashSet<>(required);
+            headless.add(Capability.FILESYSTEM_PROJECT_READ.value());
+            required = Collections.unmodifiableSet(headless);
+        } else if ("commit_materialization".equals(name)) {
+            LinkedHashSet<String> headless = new LinkedHashSet<>(required);
+            headless.add(Capability.FILESYSTEM_PROJECT_READ.value());
+            headless.add(Capability.FILESYSTEM_PROJECT_WRITE.value());
+            required = Collections.unmodifiableSet(headless);
+        }
         return new Definition(name, ReasonerToolSchemas.description(name),
                 ReasonerToolSchemas.input(name),
                 ReasonerToolSchemas.output(name), ToolContractSchemas.errorSchema(),
-                ToolCapabilityCatalog.required(name));
+                required);
     }
 
     private static Map<String, Definition> byName() {

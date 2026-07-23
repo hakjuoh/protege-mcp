@@ -177,6 +177,7 @@ class ReasonerCapabilityToolsTest {
     private static ToolRegistry registry() {
         ToolRegistry registry = new ToolRegistry();
         ReasonerCapabilityTools.register(registry, new ToolContext(null, null));
+        MaterializationTools.register(registry, new ToolContext(null, null));
         return registry;
     }
 

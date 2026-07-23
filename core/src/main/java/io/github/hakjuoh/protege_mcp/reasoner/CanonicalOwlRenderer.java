@@ -15,12 +15,12 @@ import org.semanticweb.owlapi.util.OWLObjectVisitorExAdapter;
 import org.semanticweb.owlapi.util.OWLObjectWalker;
 
 /** Prefix-free Functional Syntax rendering with a hard allocation bound. */
-final class CanonicalOwlRenderer {
+public final class CanonicalOwlRenderer {
 
     private CanonicalOwlRenderer() {
     }
 
-    static String render(OWLOntology context, OWLObject object, int maximumCharacters,
+    public static String render(OWLOntology context, OWLObject object, int maximumCharacters,
             int maximumNodes, int maximumDepth, Runnable deadlineCheck) {
         if (context == null || object == null || maximumCharacters < 1 || maximumNodes < 1
                 || maximumDepth < 1 || deadlineCheck == null) {

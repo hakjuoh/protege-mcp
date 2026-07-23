@@ -52,6 +52,13 @@ final class QcStageResult {
         return new QcStageResult(stage, true, QcSuiteTools.FAIL, summary, reason, true);
     }
 
+    static QcStageResult erroredWithDetails(String stage, String reason,
+            Map<String, Object> details) {
+        Map<String, Object> summary = new LinkedHashMap<>(details);
+        summary.put("error", reason);
+        return new QcStageResult(stage, true, QcSuiteTools.FAIL, summary, reason, true);
+    }
+
     /** Uncapped unsatisfiable-class IRIs for attribution; null unless the reasoner ran consistent. */
     Set<String> attributionUnsatIris() {
         return attributionUnsatIris;

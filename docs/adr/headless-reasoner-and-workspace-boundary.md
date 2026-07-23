@@ -116,9 +116,15 @@ Adapters own environment mechanics, not validation meaning:
   through the model thread, and commits changes through one GUI Undo unit.
 - The headless adapter reads only authorized project files, resolves catalogs/locks without network unless
   explicitly allowed, works in a temporary project workspace, checks source bytes/revision immediately
-  before replacement, and commits with atomic replacement plus optional backup. A project-confined
+  before replacement, and commits by displacing the verified target into an owner-only transaction directory
+  and publishing with atomic hard-link CREATE_NEW semantics plus optional backup. A project-confined
   cross-process advisory lock serializes mutating CLI/stdio operations; inability to acquire or support the
-  lock fails mutation closed rather than falling back to last-writer-wins. It promises no GUI Undo.
+  lock fails mutation closed rather than falling back to last-writer-wins. Its authenticated owner-only
+  `.protege-mcp-workspace-lock/` directory lives in the canonical, non-shared-writable project root, so
+  different user-home or adapter state roots cannot create independent locks for one project. It contains an
+  immutable project identity and a separate single-link lock inode. Unknown collisions are preserved unchanged
+  and refused. Asset capture excludes only this authenticated root-level coordination directory; nested
+  same-named user directories remain governed assets. It promises no GUI Undo.
 - The CLI and stdio MCP layers parse arguments, map exit/protocol errors, and select supported services;
   they do not reimplement QC or release decisions.
 
@@ -137,7 +143,26 @@ Results identify the adapter, reasoner, policy digest, and exact captured revisi
 - Moving orchestration into core is incremental: pure decisions and contracts move first; Protégé model,
   renderer, EDT, Undo, preferences, OAuth, and UI types remain prohibited in core.
 - Filesystem mutation cannot reuse live Undo semantics. Temporary workspaces, checksum conflict detection,
-  backups, manifests, and atomic replacement are the recovery boundary.
+  backups, manifests, guarded hard-link publication, and retained partial-effect receipts are the recovery
+  boundary.
+- Moving the old target aside creates an unavoidable move-to-link crash interval. The target inode is pinned
+  and verified before displacement, so the interval contains no full-file hash. Transaction begin and commit
+  inspect recovery state only while holding the same project lock; read-only target opens never recover.
+  Owner/mode, UUID name, and a self-describing manifest authenticate each private directory inside the
+  protected project parent. A single pre-publication orphan can restore its displaced inode. Once publication
+  is marked uncertain, an absent target is never automatically restored; evidence is retained for inspection.
+  Recovery publication has its own forced uncertainty marker before linking, and safety-ordered cleanup
+  removes `displaced` before any state marker. Multiple or mixed ambiguous/recoverable candidates fail closed.
+  Any successful recovery or cleanup returns a side-effect receipt and stops the requested operation so the
+  caller must inspect state and retry. Only authenticated directories count toward the 32-directory quota.
+  File forcing is required and directory forcing is best effort, so this is a logical process-crash protocol
+  rather than a portable power-loss guarantee.
+- Ambiguous evidence returns a stable typed error with evidence paths and requires offline resolution: stop
+  all writers, preserve target/evidence copies, compare hashes against history and receipts, move only resolved
+  evidence out of the project, retry, and retain the copy until project QC passes.
+- Guarded pathname linking requires POSIX ownership and same-filesystem hard links. The normal Windows
+  provider and other unsupported providers fail closed for all single-file workspace transactions. Processes
+  running under the same OS account remain inside the documented trust boundary.
 
 ## Verification
 
@@ -154,4 +179,7 @@ Results identify the adapter, reasoner, policy digest, and exact captured revisi
   manifests, and report checksums for the same captured project.
 - Headless mutation tests cover symlink/path escapes, offline imports, tampered locks, source swaps,
   concurrent processes/advisory-lock failure, replacement failure, backup recovery, interruption, and
-  stale-result rejection.
+  stale-result rejection. Crash tests cover locked pre-publication restoration, read-only-open non-mutation,
+  post-publication and mid-recovery process termination without stale resurrection, multiple/mixed orphans,
+  divergent lock roots, and hostile retained entries. One test halts a separate JVM after the recovery link
+  and verifies both OS lock release and fail-closed restart behavior.

@@ -1153,6 +1153,22 @@ public final class ProjectPolicyLoader {
             }
         }
 
+        Map<String, Object> jobs = object(policy, "jobs");
+        int active = ((Number) jobs.get("active_per_principal")).intValue();
+        int retainedPrincipal =
+                ((Number) jobs.get("retained_per_principal")).intValue();
+        int retainedBackend =
+                ((Number) jobs.get("retained_per_backend")).intValue();
+        if (retainedPrincipal < active) {
+            issues.add(error("job_retention_below_active",
+                    "jobs.retained_per_principal",
+                    "retained_per_principal must be at least active_per_principal."));
+        }
+        if (retainedBackend < retainedPrincipal) {
+            issues.add(error("job_backend_retention_below_principal",
+                    "jobs.retained_per_backend",
+                    "retained_per_backend must be at least retained_per_principal."));
+        }
     }
 
     private static boolean requireRegularFile(Path path, String field, List<PolicyIssue> issues) {

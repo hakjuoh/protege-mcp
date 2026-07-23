@@ -7,8 +7,11 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.nio.file.Files;
+import java.nio.file.FileVisitResult;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -166,6 +169,8 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
             context.verify(policyCapture);
 
             Path projectRoot = policy.projectRoot().toRealPath();
+            WorkspaceSnapshot.ProjectRootIdentity projectRootIdentity =
+                    WorkspaceSnapshot.captureProjectRoot(projectRoot);
             List<Path> roots = policy.assets().getOrDefault("root_artifact", List.of());
             if (roots.size() != 1) {
                 throw new IOException("valid project policy did not resolve exactly one root artifact");
@@ -215,13 +220,17 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
             if (!sourcePin.isCurrent()) {
                 throw new IOException("project policy identity changed before snapshot publication");
             }
+            if (projectRootIdentity.fileKey() != null
+                    && !projectRootIdentity.isCurrent()) {
+                throw new IOException("project root identity changed before snapshot publication");
+            }
 
             ModelRevision modelRevision = new ModelRevision(workspaceId,
                     revision.incrementAndGet(), fingerprint.semanticFingerprint(),
                     fingerprint.documentFingerprint());
             WorkspaceSnapshot snapshot = new WorkspaceSnapshot(policy, manager, root,
                     context.sources(), capturedAssets, modelRevision, closureFingerprint,
-                    lockDigest, temporaryRoot, sourcePin);
+                    lockDigest, temporaryRoot, sourcePin, projectRootIdentity);
             success = true;
             return snapshot;
         } finally {
@@ -260,7 +269,39 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
     /** Begin a checksum-guarded single-file transaction within this snapshot's project. */
     public WorkspaceTransaction beginTransaction(WorkspaceSnapshot snapshot, Path target,
             boolean backup) throws IOException {
+        recoverTransactions(snapshot, target);
         return new WorkspaceTransaction(this, snapshot, target, backup);
+    }
+
+    /** Begin a transaction whose existing target is rejected before hashing past the caller bound. */
+    public WorkspaceTransaction beginTransaction(WorkspaceSnapshot snapshot, Path target,
+            boolean backup, long maximumExistingBytes) throws IOException {
+        recoverTransactions(snapshot, target);
+        return new WorkspaceTransaction(
+                this, snapshot, target, backup, maximumExistingBytes);
+    }
+
+    private void recoverTransactions(WorkspaceSnapshot snapshot, Path target) throws IOException {
+        if (!ownsOpenSnapshot(snapshot) || !sourcesCurrent(snapshot)
+                || !snapshot.projectRootCurrent()) {
+            throw new IOException("workspace sources changed before transaction creation");
+        }
+        Path projectRoot = snapshot.projectRootPath();
+        try (WorkspaceProjectLock.Handle lock = WorkspaceProjectLock.acquire(
+                    stateRoot, projectRoot);
+                SecureTargetAnchor anchor = SecureTargetAnchor.open(projectRoot, target)) {
+            SecureTargetAnchor.RecoverySweepReceipt receipt =
+                    anchor.recoverOrphanedTransactionsUnderLock(lock,
+                            WorkspaceProjectLock.path(stateRoot, projectRoot));
+            if (receipt.mutationApplied()) {
+                throw WorkspaceTransaction.orphanRecoveryApplied(receipt, null);
+            }
+        } catch (SecureTargetAnchor.AmbiguousRecoveryException ambiguous) {
+            throw WorkspaceTransaction.ambiguousRecovery(ambiguous);
+        } catch (SecureTargetAnchor.OrphanRecoveryAppliedException applied) {
+            throw WorkspaceTransaction.orphanRecoveryApplied(
+                    applied.receipt(), applied);
+        }
     }
 
     /** Begin a guarded whole-directory release publication transaction. */
@@ -286,7 +327,9 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
         try {
             for (WorkspaceSource source : snapshot.sources()) {
                 boolean directory = source.kind().startsWith("asset_directory:");
-                FileIdentity original = pinnedIdentity(source.original(), directory);
+                FileIdentity original = directory
+                        ? directoryIdentity(source.original(), snapshot.projectRootPath())
+                        : pinnedIdentity(source.original(), false);
                 FileIdentity captured = pinnedIdentity(source.captured(), directory);
                 if (original.bytes != source.bytes() || !original.sha256.equals(source.sha256())
                         || captured.bytes != source.bytes()
@@ -689,10 +732,15 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
     }
 
     static FileIdentity directoryIdentity(Path directory) throws IOException {
+        return directoryIdentity(directory, null);
+    }
+
+    static FileIdentity directoryIdentity(Path directory, Path projectRoot)
+            throws IOException {
         Path root = directory.toRealPath();
         MessageDigest digest = digest();
         long totalBytes = 0;
-        for (Path path : directoryEntries(root)) {
+        for (Path path : directoryEntries(root, projectRoot)) {
             if (Files.isSymbolicLink(path)) {
                 throw new IOException("asset directory contains a symbolic link: " + path);
             }
@@ -716,17 +764,40 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
     }
 
     private static List<Path> directoryEntries(Path root) throws IOException {
+        return directoryEntries(root, null);
+    }
+
+    private static List<Path> directoryEntries(Path root, Path projectRoot) throws IOException {
         List<Path> entries = new ArrayList<>();
-        try (var walk = Files.walk(root)) {
-            var iterator = walk.iterator();
-            while (iterator.hasNext()) {
+        Path reserved = projectRoot == null ? null
+                : projectRoot.toRealPath().resolve(WorkspaceProjectLock.LOCK_DIRECTORY);
+        Files.walkFileTree(root, new SimpleFileVisitor<>() {
+            private void add(Path candidate) throws IOException {
                 if (entries.size() >= MAX_DIRECTORY_ENTRIES) {
                     throw new IOException("asset directory exceeds " + MAX_DIRECTORY_ENTRIES
                             + " entries: " + root);
                 }
-                entries.add(iterator.next());
+                entries.add(candidate);
             }
-        }
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path directory,
+                    BasicFileAttributes attributes) throws IOException {
+                if (directory.equals(reserved)
+                        && WorkspaceProjectLock.isReservedMetadataDirectory(directory)) {
+                    return FileVisitResult.SKIP_SUBTREE;
+                }
+                add(directory);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes)
+                    throws IOException {
+                add(file);
+                return FileVisitResult.CONTINUE;
+            }
+        });
         entries.sort(Comparator.comparing(Path::toString));
         return entries;
     }
@@ -829,6 +900,7 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
         final Path root;
         final Map<Path, CapturedFile> byOriginal = new LinkedHashMap<>();
         final List<WorkspaceSource> directorySources = new ArrayList<>();
+        final Map<Path, Path> directoryProjectRoots = new LinkedHashMap<>();
         int sequence;
         int storedFiles;
         long storedBytes;
@@ -896,7 +968,7 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
             }
             Path targetRoot = root.resolve(String.format("asset-%05d", sequence++));
             Files.createDirectories(targetRoot);
-            for (Path path : directoryEntries(real)) {
+            for (Path path : directoryEntries(real, projectRoot)) {
                 if (Files.isSymbolicLink(path)) {
                     throw new IOException("asset directory contains a symbolic link: " + path);
                 }
@@ -917,13 +989,14 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
                     storedBytes += file.bytes;
                 }
             }
-            FileIdentity originalIdentity = directoryIdentity(real);
+            FileIdentity originalIdentity = directoryIdentity(real, projectRoot);
             FileIdentity capturedIdentity = directoryIdentity(targetRoot);
             if (!originalIdentity.equals(capturedIdentity)) {
                 throw new IOException("asset directory changed during capture: " + directory);
             }
             directorySources.add(new WorkspaceSource("asset_directory:" + kind, real, targetRoot,
                     originalIdentity.sha256, originalIdentity.bytes));
+            directoryProjectRoots.put(real, projectRoot);
             return targetRoot;
         }
 
@@ -949,7 +1022,8 @@ public final class FilesystemProjectWorkspace implements ProjectWorkspace {
                 verify(captured);
             }
             for (WorkspaceSource directory : directorySources) {
-                FileIdentity original = pinnedIdentity(directory.original(), true);
+                FileIdentity original = directoryIdentity(directory.original(),
+                        directoryProjectRoots.get(directory.original()));
                 FileIdentity captured = pinnedIdentity(directory.captured(), true);
                 if (original.bytes != directory.bytes() || !original.sha256.equals(directory.sha256())
                         || !original.equals(captured)) {

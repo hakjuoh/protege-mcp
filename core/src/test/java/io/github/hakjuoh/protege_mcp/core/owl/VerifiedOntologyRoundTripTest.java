@@ -78,6 +78,16 @@ class VerifiedOntologyRoundTripTest {
         assertArrayEquals(expected, result.content());
     }
 
+    @Test
+    void enforcesTheCallerByteBoundDuringSerialization() throws Exception {
+        VerifiedOntologyRoundTrip.ArtifactSizeException exceeded = assertThrows(
+                VerifiedOntologyRoundTrip.ArtifactSizeException.class,
+                () -> VerifiedOntologyRoundTrip.serialize(
+                        ontology(), new TurtleDocumentFormat(), 16));
+
+        assertEquals(16, exceeded.maximumBytes());
+    }
+
     private static OWLOntology ontology() throws Exception {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         OWLOntology ontology = manager.createOntology(IRI.create("https://example.org/round-trip"));

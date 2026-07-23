@@ -56,6 +56,8 @@ public final class ToolCapabilityCatalog {
                 Capability.FILESYSTEM_PROJECT_READ, Capability.FILESYSTEM_PROJECT_WRITE);
         Set<String> curateProjectReadWrite = access(Capability.ONTOLOGY_CURATE,
                 Capability.FILESYSTEM_PROJECT_READ, Capability.FILESYSTEM_PROJECT_WRITE);
+        Set<String> materializationCommit = access(Capability.ONTOLOGY_ADMIN,
+                Capability.ONTOLOGY_CURATE, Capability.FILESYSTEM_PROJECT_READ);
         Set<String> readProjectWrite = access(Capability.ONTOLOGY_READ,
                 Capability.FILESYSTEM_PROJECT_READ, Capability.FILESYSTEM_PROJECT_WRITE);
         Set<String> releaseRead = access(Capability.ONTOLOGY_RELEASE,
@@ -76,10 +78,10 @@ public final class ToolCapabilityCatalog {
                 "execute_dl_query", "list_reasoners", "sparql_query", "sparql_schema",
                 "sparql_validate", "validate_ontology", "validate_governance",
                 "list_competency_questions", "run_competency_questions", "verify_ontology",
-                "shacl_validate", "run_qc_suite");
+                "shacl_validate", "run_qc_suite", "get_job", "cancel_job", "list_jobs");
         declare(map, readProject, "get_model_revision", "verify_import_lock", "validate_catalog",
                 "get_project_policy", "validate_project_policy", "run_project_qc",
-                "list_mappings", "validate_mappings");
+                "list_mappings", "validate_mappings", "materialize_inferences", "start_job");
         declare(map, providerRead, "search_external_terms", "inspect_external_term",
                 "propose_term_reuse");
         declare(map, curate,
@@ -99,7 +101,8 @@ public final class ToolCapabilityCatalog {
         declare(map, adminProjectReadWrite, "write_import_lock");
         declare(map, curateProjectReadWrite, "add_mapping", "remove_mapping", "import_sssom",
                 "accept_reuse_proposal");
-        declare(map, readProjectWrite, "export_sssom");
+        declare(map, materializationCommit, "commit_materialization");
+        declare(map, readProjectWrite, "export_sssom", "export_job_artifact");
         declare(map, releaseRead, "run_release_gate");
         declare(map, releaseWrite, "prepare_release");
         declare(map, auditExport, "export_audit_log");

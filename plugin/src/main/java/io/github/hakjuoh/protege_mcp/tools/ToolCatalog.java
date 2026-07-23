@@ -35,6 +35,7 @@ public final class ToolCatalog {
             DiffTools::register,
             ImpactTools::register,
             ReasonerCapabilityTools::register,
+            MaterializationTools::register,
             ReasonerTools::register,
             SparqlTools::register,
             SparqlAuthoringTools::register,
@@ -47,6 +48,7 @@ public final class ToolCatalog {
             MappingTools::register,
             ExternalTermTools::register,
             QcSuiteTools::register,
+            JobTools::register,
             ReleaseTools::register,
             AuditTools::register);
 

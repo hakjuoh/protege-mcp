@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -37,14 +38,15 @@ class ProjectQcToolsTest {
         Map<String, Object> result = run(temp, policy, false);
         assertEquals("pass", result.get("gate"), () -> result.toString());
         assertEquals(true, result.get("policy_loaded"));
-        assertEquals(3, result.get("stages_ran"));
+        assertEquals(4, result.get("stages_ran"));
         assertEquals(0, result.get("stages_skipped"));
         assertEquals(true, result.get("snapshot_consistent"));
         @SuppressWarnings("unchecked")
         Map<String, Object> snapshot = (Map<String, Object>) result.get("validation_snapshot");
         assertEquals("isolated", snapshot.get("mode"));
         assertEquals(true, snapshot.get("same_snapshot"));
-        assertEquals(List.of("interoperability", "governance", "structural"), snapshot.get("stages"));
+        assertEquals(List.of("interoperability", "governance", "structural", "rules"),
+                snapshot.get("stages"));
         assertTrue(String.valueOf(result.get("semantic_fingerprint")).startsWith("sha256:"));
         assertTrue(String.valueOf(result.get("rdf_dataset_fingerprint")).startsWith("sha256:"));
     }
@@ -108,7 +110,7 @@ class ProjectQcToolsTest {
         Map<String, Object> result = run(temp, policy, true);
 
         assertEquals("fail", result.get("gate"), () -> result.toString());
-        assertEquals(4, result.get("stages_ran"));
+        assertEquals(5, result.get("stages_ran"));
         assertEquals(0, result.get("stages_skipped"));
         assertTrue(String.valueOf(result.get("resolved_assets")).contains("shapes.ttl"));
         assertTrue(String.valueOf(result.get("findings")).contains("shacl"));
@@ -407,6 +409,47 @@ class ProjectQcToolsTest {
     }
 
     @Test
+    void selectedReasonerRuleValidationFailsClosedWithDetailedFindings(@TempDir Path temp)
+            throws Exception {
+        Path policy = writePolicy(temp, "[structural]",
+                "reasoning:\n  reasoner: HermiT\n", "error");
+        ToolContext context = reasonerSelectionContext(temp, true);
+
+        Map<String, Object> result = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+
+        assertEquals("fail", result.get("gate"), () -> result.toString());
+        assertEquals(false, ((Map<?, ?>) result.get("rule_validation")).get("compatible"));
+        assertTrue(String.valueOf(result.get("findings")).contains("swrl.rule.incompatible"),
+                () -> result.toString());
+    }
+
+    @Test
+    void swrlProjectWithoutASelectedReasonerFailsClosed(@TempDir Path temp)
+            throws Exception {
+        Path policy = writePolicy(temp, "[structural]", "", "error");
+        OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
+        OWLOntology ontology = manager.createOntology(IRI.create(ONTOLOGY_IRI));
+        manager.setOntologyFormat(ontology, new TurtleDocumentFormat());
+        manager.setOntologyDocumentIRI(ontology,
+                IRI.create(temp.resolve("ontology.ttl").toUri()));
+        OWLDataFactory data = manager.getOWLDataFactory();
+        var cls = data.getOWLClass(IRI.create(ONTOLOGY_IRI + "#RuleClass"));
+        var variable = data.getSWRLVariable(IRI.create("https://example.org/var/x"));
+        var atom = data.getSWRLClassAtom(cls, variable);
+        manager.addAxiom(ontology, data.getSWRLRule(Set.of(atom), Set.of(atom)));
+        ToolContext context = new ToolContext(
+                HeadlessAccess.over(FakeModelManager.over(ontology)), null);
+
+        Map<String, Object> result = structured(ProjectQcTools.run(context,
+                Map.of("policy_path", policy.toString()), true));
+
+        assertEquals("error", result.get("gate"), result::toString);
+        assertTrue(String.valueOf(result.get("findings"))
+                .contains("rule_validation_reasoner_unavailable"), result::toString);
+    }
+
+    @Test
     void registersPolicyToolsWithOptionalPaths() {
         ToolRegistry registry = new ToolRegistry();
         ProjectPolicyTools.register(registry, new ToolContext(null, null));
@@ -468,10 +511,25 @@ class ProjectQcToolsTest {
      * 'HermiT 1.4.3.456' selected and backed by a real HermiT factory.
      */
     private static ToolContext reasonerSelectionContext(Path temp) throws Exception {
+        return reasonerSelectionContext(temp, false);
+    }
+
+    private static ToolContext reasonerSelectionContext(Path temp, boolean incompatibleRule)
+            throws Exception {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         OWLOntology ontology = manager.createOntology(IRI.create(ONTOLOGY_IRI));
         manager.setOntologyFormat(ontology, new TurtleDocumentFormat());
         manager.setOntologyDocumentIRI(ontology, IRI.create(temp.resolve("ontology.ttl").toUri()));
+        if (incompatibleRule) {
+            OWLDataFactory data = manager.getOWLDataFactory();
+            var x = data.getSWRLVariable(IRI.create("https://example.org/var/x"));
+            manager.addAxiom(ontology, data.getSWRLRule(
+                    java.util.Set.of(data.getSWRLBuiltInAtom(
+                            IRI.create("http://www.w3.org/2003/11/swrlb#unsupported"),
+                            List.of(x))),
+                    java.util.Set.of(data.getSWRLClassAtom(data.getOWLClass(
+                            IRI.create(ONTOLOGY_IRI + "#Result")), x))));
+        }
         org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo elk =
                 reasonerInfo("ELK 0.6.0", "org.semanticweb.elk");
         org.protege.editor.owl.model.inference.ProtegeOWLReasonerInfo hermit =

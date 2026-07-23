@@ -24,6 +24,7 @@ import org.semanticweb.owlapi.profiles.Profiles;
 import org.semanticweb.owlapi.reasoner.OWLReasoner;
 
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprints;
+import io.github.hakjuoh.protege_mcp.contracts.ModelRevision;
 import io.github.hakjuoh.protege_mcp.policy.ReasonerNames;
 import io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint;
 import io.github.hakjuoh.protege_mcp.contracts.RdfDatasetFingerprint;
@@ -35,6 +36,8 @@ import io.github.hakjuoh.protege_mcp.core.qc.InvariantQcService;
 import io.github.hakjuoh.protege_mcp.core.qc.PolicyGovernanceService;
 import io.github.hakjuoh.protege_mcp.core.qc.ShaclValidationService;
 import io.github.hakjuoh.protege_mcp.core.qc.StructuralQcService;
+import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityRegistry;
+import io.github.hakjuoh.protege_mcp.reasoner.RuleValidationService;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /**
@@ -65,6 +68,7 @@ public final class QcSuiteTools {
     private static final String CQS = "cqs";
     private static final String SHACL = "shacl";
     private static final String PROVIDER_EVIDENCE = "provider_evidence";
+    private static final String RULES = "rules";
 
     static final String PASS = "pass";
     static final String INFO = "info";
@@ -137,14 +141,60 @@ public final class QcSuiteTools {
 
     /** Execute the existing isolated QC pipeline after applying an exact private preflight delta. */
     static QcSuiteExecution execute(ToolContext ctx, QcRunConfig config, List<NormalizedChange> changes) {
+        return execute(capture(ctx, config, changes));
+    }
+
+    /**
+     * Capture every live-model input in one model-thread hop. The returned value is detached from
+     * Protégé and may be evaluated later by the per-window job executor.
+     */
+    static CapturedExecution capture(
+            ToolContext ctx, QcRunConfig config, List<NormalizedChange> changes) {
         Phase1 p1 = ctx.access().compute(mm -> phase1(mm, config, changes));
-        boolean snapshotConsistent = true;
         String preconditionError = null;
         if (config.projectMode && config.requiredOntologyIri != null
                 && !config.requiredOntologyIri.equals(p1.activeOntologyIri)) {
             preconditionError = "active ontology does not match project policy: expected '"
                     + config.requiredOntologyIri + "', found '" + p1.activeOntologyIri + "'";
         }
+        return new CapturedExecution(p1, config, preconditionError);
+    }
+
+    /**
+     * Job capture variant that binds the advertised revision to the exact model-thread snapshot
+     * hop, including the policy/import coordinates used by later publication guards.
+     */
+    static CapturedExecution capture(ToolContext ctx, QcRunConfig config,
+            List<NormalizedChange> changes, String importLockDigest, String policyDigest) {
+        Phase1 p1 = ctx.access().compute(mm -> {
+            Phase1 captured = phase1(mm, config, changes);
+            OntologyFingerprint liveBaseline =
+                    OntologyFingerprints.compute(mm.getActiveOntology());
+            captured.modelRevision = ctx.revisions().current(
+                    mm, importLockDigest, policyDigest).revision();
+            if (!captured.fingerprint.semanticFingerprint().equals(
+                            liveBaseline.semanticFingerprint())
+                    || !captured.fingerprint.documentFingerprint().equals(
+                            liveBaseline.documentFingerprint())) {
+                throw new ToolArgException("job_input_changed",
+                        "The ontology changed while the project-QC snapshot was captured.",
+                        Map.of("effects_prevented", true), true);
+            }
+            return captured;
+        });
+        String preconditionError = null;
+        if (config.projectMode && config.requiredOntologyIri != null
+                && !config.requiredOntologyIri.equals(p1.activeOntologyIri)) {
+            preconditionError = "active ontology does not match project policy: expected '"
+                    + config.requiredOntologyIri + "', found '" + p1.activeOntologyIri + "'";
+        }
+        return new CapturedExecution(p1, config, preconditionError);
+    }
+
+    /** Evaluate a previously captured private QC snapshot without consulting live model state. */
+    static QcSuiteExecution execute(CapturedExecution captured) {
+        Phase1 p1 = captured.phase1;
+        QcRunConfig config = captured.config;
         ReasoningOutcome reasoning = runIsolatedReasoner(p1, config);
         p1.validationSnapshot = reasoning.snapshot;
         List<QcStageResult> results = new ArrayList<>();
@@ -216,14 +266,70 @@ public final class QcSuiteTools {
                     "provider_evidence_unavailable: the provider executor is not available on this "
                             + "execution surface", "provider_evidence_unavailable"));
         }
+        if (config.projectMode) {
+            results.add(ruleValidationStage(p1));
+        }
         List<String> isolatedStages = results.stream()
                 .filter(result -> result.ran && !result.executionError)
                 .map(result -> result.stage).toList();
-        return new QcSuiteExecution(results, p1.fingerprint, snapshotConsistent,
-                p1.selectedReasoner, preconditionError,
+        return new QcSuiteExecution(results, p1.fingerprint, true,
+                p1.selectedReasoner, captured.preconditionError,
                 p1.validationSnapshot == null ? "none" : "isolated", isolatedStages,
                 p1.validationSnapshot != null || config.stages.isEmpty(), p1.closureFingerprint,
                 p1.missingImports, p1.importReport);
+    }
+
+    /** Immutable ownership wrapper for one detached phase-one QC capture. */
+    static final class CapturedExecution {
+        private final Phase1 phase1;
+        private final QcRunConfig config;
+        private final String preconditionError;
+
+        private CapturedExecution(
+                Phase1 phase1, QcRunConfig config, String preconditionError) {
+            this.phase1 = phase1;
+            this.config = config;
+            this.preconditionError = preconditionError;
+        }
+
+        io.github.hakjuoh.protege_mcp.contracts.OntologyFingerprint fingerprint() {
+            return phase1.fingerprint;
+        }
+
+        String closureFingerprint() {
+            return phase1.closureFingerprint;
+        }
+
+        IsolatedReasonerSpec reasonerSpec() {
+            return phase1.reasonerSpec;
+        }
+
+        ModelRevision modelRevision() {
+            if (phase1.modelRevision == null) {
+                throw new IllegalStateException(
+                        "this QC capture is not bound to a job model revision");
+            }
+            return phase1.modelRevision;
+        }
+
+        QcSuiteExecution identityExecution() {
+            return new QcSuiteExecution(List.of(), phase1.fingerprint, true,
+                    phase1.selectedReasoner, preconditionError, "isolated", List.of(), true,
+                    phase1.closureFingerprint, phase1.missingImports,
+                    phase1.importReport);
+        }
+    }
+
+    /** Release a detached capture that was rejected before its worker could execute. */
+    static void discard(CapturedExecution captured) {
+        if (captured == null || captured.phase1.validationSnapshot == null) return;
+        OWLOntology active = captured.phase1.validationSnapshot.active();
+        org.semanticweb.owlapi.model.OWLOntologyManager manager =
+                active.getOWLOntologyManager();
+        for (OWLOntology ontology : new ArrayList<>(manager.getOntologies())) {
+            manager.removeOntology(ontology);
+        }
+        captured.phase1.validationSnapshot = null;
     }
 
     /** Everything phase 1 gathers on the model thread. */
@@ -239,6 +345,7 @@ public final class QcSuiteTools {
         boolean needInferred;
         List<Map<String, Object>> missingImports = Collections.emptyList();
         ImportTools.ImportReport importReport;
+        ModelRevision modelRevision;
     }
 
     private record ExecutionPrecondition(String semanticFingerprint, String closureFingerprint,
@@ -265,7 +372,7 @@ public final class QcSuiteTools {
                 p1.needInferred = true;
             }
         }
-        if (config.stages.contains(REASONER) || p1.needInferred) {
+        if (config.stages.contains(REASONER) || p1.needInferred || config.projectMode) {
             // A successful manager capture with no current factory is Protégé's None selection, not
             // a capture error: nothing is selected, so the stage skips. Every lookup/capture exception
             // is an error — a damaged live registry must never be reinterpreted as a deliberate None
@@ -314,6 +421,61 @@ public final class QcSuiteTools {
                     mm.getActiveOntology().getImportsClosure());
         }
         return p1;
+    }
+
+    /** Validate every captured SWRL rule against the exact selected reasoner profile. */
+    private static QcStageResult ruleValidationStage(Phase1 p1) {
+        try {
+            if (p1.validationSnapshot == null) {
+                return QcStageResult.errored(RULES,
+                        "SWRL validation has no coherent ontology snapshot.",
+                        "rule_validation_snapshot_unavailable");
+            }
+            RuleValidationService.CapturedCorpus corpus = RuleValidationService.capture(
+                    RuleValidationService.snapshot(p1.validationSnapshot.closure(), true));
+            if (corpus.totalRules() == 0) {
+                Map<String, Object> summary = new LinkedHashMap<>();
+                summary.put("executed_rules", false);
+                summary.put("parsed_every_atom", true);
+                summary.put("compatible", true);
+                summary.put("coverage_complete", true);
+                summary.put("total_rules", 0);
+                summary.put("reasoner_required", false);
+                summary.put("snapshot_fingerprint", corpus.corpusFingerprint());
+                return new QcStageResult(RULES, true, PASS, summary, null);
+            }
+            if (p1.reasonerCaptureError != null) {
+                return QcStageResult.errored(RULES,
+                        "SWRL rules cannot be validated because selected reasoner capture failed: "
+                                + p1.reasonerCaptureError,
+                        "rule_validation_reasoner_unavailable");
+            }
+            if (p1.reasonerSpec == null) {
+                return QcStageResult.errored(RULES,
+                        "SWRL rules require a selected reasoner capability profile.",
+                        "rule_validation_reasoner_unavailable");
+            }
+            Map<String, Object> validation = RuleValidationService.validate(corpus,
+                    new ReasonerCapabilityRegistry().report(
+                            p1.reasonerSpec.capabilityIdentity()),
+                    0, RuleValidationService.MAX_PAGE);
+            return new QcStageResult(RULES, true,
+                    Boolean.TRUE.equals(validation.get("compatible")) ? PASS : FAIL,
+                    validation, null);
+        } catch (RuleValidationService.BudgetExceededException exceeded) {
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("error_code", "rule_validation_budget_exceeded");
+            summary.put("budget", exceeded.budget());
+            summary.put("maximum", exceeded.maximum());
+            summary.put("observed", exceeded.observed());
+            return QcStageResult.erroredWithDetails(RULES,
+                    "rule_validation_budget_exceeded: " + exceeded.getMessage(), summary);
+        } catch (RuntimeException | LinkageError failure) {
+            return QcStageResult.errored(RULES,
+                    "SWRL validation failed: " + (failure.getMessage() == null
+                            ? failure.getClass().getSimpleName() : failure.getMessage()),
+                    "rule_validation_failed");
+        }
     }
 
     /**

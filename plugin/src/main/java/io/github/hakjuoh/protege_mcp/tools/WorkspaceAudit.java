@@ -18,6 +18,7 @@ import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
 import io.github.hakjuoh.protege_mcp.server.McpAccessException;
+import io.github.hakjuoh.protege_mcp.jobs.JobEvent;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /** Request-bound attribution for one live Protege window, backed by owner-only JSONL streams. */
@@ -105,6 +106,49 @@ final class WorkspaceAudit {
                 Map.of("failure_type", failure.getClass().getSimpleName(),
                         "effects_prevented", prevented,
                         "outcome_unknown", unknown), null));
+    }
+
+    /** Persist one already-redacted job lifecycle fact without ontology or request content. */
+    void jobEvent(JobEvent job) {
+        Resolved resolved = resolve(false);
+        Map<String, Object> summary = new java.util.LinkedHashMap<>();
+        summary.put("job_id", job.jobId());
+        summary.put("job_type", job.type().id());
+        summary.put("job_state", job.state().id());
+        summary.put("job_event", job.kind().id());
+        summary.put("job_sequence", job.sequence());
+        summary.put("workspace_id", job.workspaceId());
+        summary.put("owner_fingerprint", job.ownerFingerprint());
+        summary.put("principal_fingerprint", job.principalFingerprint());
+        summary.put("client_fingerprint", job.clientFingerprint());
+        summary.put("grant_fingerprint", job.grantFingerprint());
+        summary.put("input_identity_digest", job.inputIdentityDigest());
+        summary.put("progress_updates", job.progressUpdates());
+        summary.put("progress_events_emitted", job.progressEventsEmitted());
+        summary.put("progress_events_suppressed", job.progressEventsSuppressed());
+        summary.put("elapsed_millis", job.elapsedMillis());
+        summary.put("artifact_count", job.artifactCount());
+        summary.put("artifact_bytes", job.artifactBytes());
+        summary.put("cancellation_requested", job.cancellationRequested());
+        summary.put("cancellation_effective", job.cancellationEffective());
+        summary.put("commit_started", job.commitStarted());
+        if (job.errorCode() != null) summary.put("error_code", job.errorCode());
+        AuditEvent.Outcome outcome = job.kind()
+                == io.github.hakjuoh.protege_mcp.jobs.JobEventKind.TERMINAL
+                        && job.state() == io.github.hakjuoh.protege_mcp.jobs.JobState.FAILED
+                        ? AuditEvent.Outcome.FAILED
+                        : job.kind()
+                                == io.github.hakjuoh.protege_mcp.jobs.JobEventKind.TERMINAL
+                                ? AuditEvent.Outcome.SUCCEEDED : AuditEvent.Outcome.STARTED;
+        resolved.log().append(new AuditEvent(
+                "job." + job.type().id() + "." + job.kind().id(), outcome,
+                new AuditEvent.Actor(job.principalFingerprint(), "Asynchronous job owner",
+                        "job", job.requiredCapabilities()),
+                resolved.ontologyIri(), null, null,
+                job.kind() == io.github.hakjuoh.protege_mcp.jobs.JobEventKind.TERMINAL
+                        ? job.state() == io.github.hakjuoh.protege_mcp.jobs.JobState.SUCCEEDED
+                        : null,
+                summary, List.of(), null));
     }
 
     private static boolean effectsPrevented(Object failure) {

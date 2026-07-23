@@ -408,6 +408,37 @@ public final class DiffTools {
                 documentPath.toString(), mappings, unresolvedOut, networkRule);
     }
 
+    /**
+     * Load only already-captured root bytes for the asynchronous asserted diff. Every import IRI is
+     * redirected to an unresolvable URN, so neither a sibling file/catalog nor a network response can
+     * become an uncaptured computation input.
+     */
+    static OWLOntology loadRootDocument(byte[] documentBytes, java.nio.file.Path documentPath,
+            Collection<String> unresolvedOut) {
+        OWLOntologyManager manager = OwlManagers.create();
+        manager.addMissingImportListener(
+                event -> unresolvedOut.add(event.getImportedOntologyURI().toString()));
+        manager.getIRIMappers().add(ignored ->
+                org.semanticweb.owlapi.model.IRI.create(
+                        "urn:protege-mcp:async-import-disabled"));
+        OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
+                .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
+                .setFollowRedirects(false);
+        try {
+            return manager.loadOntologyFromOntologyDocument(
+                    new org.semanticweb.owlapi.io.StreamDocumentSource(
+                            new java.io.ByteArrayInputStream(documentBytes),
+                            org.semanticweb.owlapi.model.IRI.create(
+                                    documentPath.toUri())),
+                    config);
+        } catch (OWLOntologyCreationException failure) {
+            throw new ToolArgException(
+                    "Could not load asynchronous comparison root document '"
+                            + documentPath + "': "
+                            + OwlParsingErrors.conciseMessage(failure));
+        }
+    }
+
     private static OWLOntology loadDocument(
             org.semanticweb.owlapi.io.OWLOntologyDocumentSource documentSource, String normalized,
             List<OntologyDocumentTools.ImportMapping> mappings, Collection<String> unresolvedOut,

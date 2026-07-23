@@ -9,7 +9,8 @@
       {"stage": "reasoner", "status": "pass"},
       {"stage": "profile", "status": "pass"},
       {"stage": "governance", "status": "pass"},
-      {"stage": "structural", "status": "pass"}
+      {"stage": "structural", "status": "pass"},
+      {"stage": "rules", "status": "pass"}
     ],
     "reasoner_factory": "org.semanticweb.HermiT.ReasonerFactory",
     "findings": [
@@ -36,8 +37,8 @@
     ],
     "artifacts": {
       "ontology.ttl": "sha256:7bd77992762393ba9697683bfdc47c1ce8b08e81a8caceae5b95ad6ddc8314a3",
-      "reports/qc.md": "sha256:b2fb4174cf0cd1a5809dd08f64218c03c71797bde5a2cd8c4825cfbbb00348df",
-      "reports/qc.xml": "sha256:1e4e068103b3114233a74aa64b312b1f3dd2faf66c15211350c19d5e2a46b890",
+        "reports/qc.md": "sha256:5520f4596afe956f07f1f182e96731a84cb8fa9674d9bd3bfbbe7e4f4d658086",
+      "reports/qc.xml": "sha256:4018e268d33c3929a11dd88e2cd670f4f5853ae85029f050897200d647b306d5",
       "reports/qc.sarif": "sha256:2a21b69ab832232b1396e263266728a67027951bdf0a7b9f6352f33b169edc62"
     },
     "manifest_semantic_fingerprint": "sha256:f1a4ce446cc385f6d460a3242225586e4640b713974749cc1906189bff21de97",

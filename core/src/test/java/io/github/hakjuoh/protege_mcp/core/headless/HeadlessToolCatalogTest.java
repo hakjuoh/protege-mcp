@@ -10,12 +10,27 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 import io.github.hakjuoh.protege_mcp.core.auth.ToolCapabilityCatalog;
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 
 class HeadlessToolCatalogTest {
 
     @Test
     void supportedAndUnavailableNamesPartitionTheLiveCatalogExactly() {
-        assertEquals(16, HeadlessToolCatalog.definitions().size());
+        assertEquals(18, HeadlessToolCatalog.definitions().size());
+        assertTrue(HeadlessToolCatalog.supportedNames().contains("materialize_inferences"));
+        assertTrue(HeadlessToolCatalog.supportedNames().contains("commit_materialization"));
+        Set<String> headlessReasonerRead = Set.of(Capability.ONTOLOGY_READ.value(),
+                Capability.FILESYSTEM_PROJECT_READ.value());
+        assertEquals(headlessReasonerRead, HeadlessToolCatalog.definition(
+                "get_reasoner_capabilities").requiredCapabilities());
+        assertEquals(headlessReasonerRead, HeadlessToolCatalog.definition(
+                "validate_rules").requiredCapabilities());
+        assertEquals(Set.of(Capability.ONTOLOGY_ADMIN.value(),
+                        Capability.ONTOLOGY_CURATE.value(),
+                        Capability.FILESYSTEM_PROJECT_READ.value(),
+                        Capability.FILESYSTEM_PROJECT_WRITE.value()),
+                HeadlessToolCatalog.definition("commit_materialization")
+                        .requiredCapabilities());
         assertTrue(HeadlessToolCatalog.supportedNames().contains(
                 HeadlessToolCatalog.SURFACE_TOOL));
         assertTrue(HeadlessToolCatalog.definition(

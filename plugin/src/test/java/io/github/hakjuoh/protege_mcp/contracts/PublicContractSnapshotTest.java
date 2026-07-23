@@ -76,6 +76,7 @@ class PublicContractSnapshotTest {
 
     private static final String BASELINE = "0.5.0";
     private static final String V072_BASELINE = "0.7.2";
+    private static final String V080_BASELINE = "0.8.0";
     private static final String UPDATE_PROPERTY = "protege.contract.snapshot.update";
     private static final String OVERWRITE_PROPERTY = "protege.contract.snapshot.overwrite";
     private static final Pattern RELEASE = Pattern.compile("[0-9]+\\.[0-9]+\\.[0-9]+");
@@ -132,6 +133,8 @@ class PublicContractSnapshotTest {
     private static Map<String, Object> baselinePrompts;
     private static Map<String, Object> v072Tools;
     private static Map<String, Object> v072Prompts;
+    private static Map<String, Object> v080Tools;
+    private static Map<String, Object> v080Prompts;
 
     @BeforeAll
     static void captureAndOptionallyWrite() throws IOException {
@@ -151,6 +154,8 @@ class PublicContractSnapshotTest {
         baselinePrompts = read(promptSnapshot(BASELINE));
         v072Tools = read(toolSnapshot(V072_BASELINE));
         v072Prompts = read(promptSnapshot(V072_BASELINE));
+        v080Tools = read(toolSnapshot(V080_BASELINE));
+        v080Prompts = read(promptSnapshot(V080_BASELINE));
     }
 
     @Test
@@ -246,6 +251,22 @@ class PublicContractSnapshotTest {
         assertEquals(canonical(v072Prompts), Files.readString(promptSnapshot(V072_BASELINE)));
         assertUnique(entries(v072Tools, "tools"));
         assertUnique(entries(v072Prompts, "prompts"));
+    }
+
+    @Test
+    void v080GoldensFreezeTheCompleteReleaseCandidateSurface() throws IOException {
+        assertEquals(104, entries(v080Tools, "tools").size(),
+                "0.8.0 release candidate exposes 104 tools");
+        assertEquals(11, entries(v080Prompts, "prompts").size(),
+                "0.8.0 retains 11 prompts");
+        assertEquals(node(v080Tools.get("tools")), node(currentTools.get("tools")),
+                "the live tool contract drifted from the immutable 0.8.0 golden");
+        assertEquals(node(v080Prompts.get("prompts")), node(currentPrompts.get("prompts")),
+                "the live prompt contract drifted from the immutable 0.8.0 golden");
+        assertEquals(canonical(v080Tools), Files.readString(toolSnapshot(V080_BASELINE)));
+        assertEquals(canonical(v080Prompts), Files.readString(promptSnapshot(V080_BASELINE)));
+        assertUnique(entries(v080Tools, "tools"));
+        assertUnique(entries(v080Prompts, "prompts"));
     }
 
     @Test

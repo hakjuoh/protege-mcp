@@ -21,7 +21,7 @@ import io.github.hakjuoh.protege_mcp.core.headless.HeadlessToolCatalog;
 class ReasonerContractSnapshotTest {
 
     private static final String SNAPSHOT =
-            "sha256:fb4f2f1739f6fce8fd399c8647893f30cf088e527901b914f200074cea0ca25a";
+            "sha256:783984c8fa8262cef4dd0c4c1dc8ac015d94a0d3be6211c56a27430623886472";
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY)
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);

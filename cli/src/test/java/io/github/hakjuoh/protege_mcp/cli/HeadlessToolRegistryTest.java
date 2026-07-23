@@ -58,12 +58,24 @@ class HeadlessToolRegistryTest {
                 .get("max_inbound_message_bytes"));
 
         for (String denied : new String[] {"write_import_lock", "run_release_gate",
-                "prepare_release", "export_audit_log"}) {
+                "prepare_release", "export_audit_log", "commit_materialization"}) {
             var result = specifications.stream().filter(specification ->
                     specification.tool().name().equals(denied)).findFirst().orElseThrow()
                     .callHandler().apply(null, new CallToolRequest(denied, Map.of()));
             assertEquals(Boolean.TRUE, result.isError(), denied);
             assertTrue(String.valueOf(result.structuredContent()).contains("missing capabilities"));
+            assertEquals("authorization_denied",
+                    ((Map<?, ?>) result.structuredContent()).get("code"));
+        }
+
+
+        var ontologyOnly = HeadlessToolRegistry.build(service,
+                Set.of(Capability.ONTOLOGY_READ.value()), 123, 456);
+        for (String denied : new String[] {"get_reasoner_capabilities", "validate_rules"}) {
+            var result = ontologyOnly.stream().filter(specification ->
+                    specification.tool().name().equals(denied)).findFirst().orElseThrow()
+                    .callHandler().apply(null, new CallToolRequest(denied, Map.of()));
+            assertEquals(Boolean.TRUE, result.isError(), denied);
             assertEquals("authorization_denied",
                     ((Map<?, ?>) result.structuredContent()).get("code"));
         }

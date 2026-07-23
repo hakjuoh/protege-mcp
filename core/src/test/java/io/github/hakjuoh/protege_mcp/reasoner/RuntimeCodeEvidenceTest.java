@@ -14,11 +14,13 @@ import java.net.URLConnection;
 import java.net.URLStreamHandler;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.jar.Attributes;
 import java.util.jar.JarEntry;
@@ -32,6 +34,46 @@ class RuntimeCodeEvidenceTest {
 
     @TempDir
     Path temp;
+
+    @Test
+    void evidenceCacheRetriesUnknownAndCachesOnlySuccessfulEvidence() {
+        AtomicInteger captures = new AtomicInteger();
+        RuntimeCodeEvidence.Evidence expected = new RuntimeCodeEvidence.Evidence(
+                "sha256:" + "a".repeat(64), List.of("scope/**"), 1);
+        RuntimeCodeEvidence.EvidenceCache cache = new RuntimeCodeEvidence.EvidenceCache(type ->
+                new RuntimeCodeEvidence.CachedEvidence(
+                        captures.incrementAndGet() == 1
+                                ? RuntimeCodeEvidence.Evidence.unknown() : expected,
+                        List.of(), true));
+
+        assertEquals(RuntimeCodeEvidence.Evidence.unknown(),
+                cache.get(RuntimeCodeEvidenceTest.class).evidence());
+        assertEquals(expected, cache.get(RuntimeCodeEvidenceTest.class).evidence());
+        assertEquals(expected, cache.get(RuntimeCodeEvidenceTest.class).evidence());
+        assertEquals(2, captures.get());
+    }
+
+    @Test
+    void codeSourcePinRejectsSameSizeTamperingWithRestoredModificationTime()
+            throws Exception {
+        Path container = temp.resolve("reviewed.jar");
+        byte[] reviewed = bytes(1, 2, 3, 4);
+        byte[] tampered = bytes(4, 3, 2, 1);
+        Files.write(container, reviewed);
+        FileTime originalTime = Files.getLastModifiedTime(container);
+        RuntimeCodeEvidence.CodeSourcePin original = RuntimeCodeEvidence.pin(
+                RuntimeCodeEvidenceTest.class, container.toUri().toURL());
+
+        Files.write(container, tampered);
+        Files.setLastModifiedTime(container, originalTime);
+        RuntimeCodeEvidence.CodeSourcePin changed = RuntimeCodeEvidence.pin(
+                RuntimeCodeEvidenceTest.class, container.toUri().toURL());
+
+        assertEquals(original.bytes(), changed.bytes());
+        assertEquals(original.modifiedMillis(), changed.modifiedMillis());
+        assertNotEquals(original.contentDigest(), changed.contentDigest());
+        assertNotEquals(original, changed);
+    }
 
     @Test
     void mixedDirectNestedAndMultiReleaseClassesAreAllAttestedDeterministically()

@@ -2835,6 +2835,71 @@
       "additionalProperties" : false
     }
   }, {
+    "name" : "materialize_inferences",
+    "description" : "Preview exact supported inference categories in an isolated reasoner and publish a private immutable 30-minute artifact without changing live state.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "categories" : {
+          "type" : "array",
+          "items" : { "type" : "string", "enum" : [ "subclass_axioms", "equivalent_class_axioms", "class_assertions", "property_hierarchy_axioms", "object_property_assertions", "data_property_assertions" ] },
+          "minItems" : 1,
+          "maxItems" : 6,
+          "uniqueItems" : true
+        },
+        "destination" : {
+          "type" : "object",
+          "properties" : {
+            "kind" : { "type" : "string", "enum" : [ "new_ontology", "project_file", "active_source" ] },
+            "identifier" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 }
+          },
+          "required" : [ "kind", "identifier" ],
+          "additionalProperties" : false
+        },
+        "provenance" : {
+          "type" : "object",
+          "properties" : {
+            "generator" : { "type" : "string", "minLength" : 1, "maxLength" : 512 },
+            "purpose" : { "type" : "string", "minLength" : 1, "maxLength" : 1024 }
+          },
+          "required" : [ "generator", "purpose" ],
+          "additionalProperties" : false
+        },
+        "limits" : {
+          "type" : "object",
+          "properties" : {
+            "max_axioms_per_category" : { "type" : "integer", "minimum" : 1, "maximum" : 50000 },
+            "max_axioms_total" : { "type" : "integer", "minimum" : 1, "maximum" : 50000 },
+            "max_bytes" : { "type" : "integer", "minimum" : 1024, "maximum" : 67108864 },
+            "timeout_ms" : { "type" : "integer", "minimum" : 1, "maximum" : 3600000 }
+          },
+          "required" : [ "max_axioms_per_category", "max_axioms_total", "max_bytes", "timeout_ms" ],
+          "additionalProperties" : false
+        },
+        "policy_path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 }
+      },
+      "required" : [ "categories", "destination", "provenance", "limits" ],
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "commit_materialization",
+    "description" : "Commit one owner-local materialization artifact after rechecking its complete input identity, policy, confirmation, destination, and verified digest.",
+    "input_schema" : {
+      "type" : "object",
+      "properties" : {
+        "artifact_id" : { "type" : "string", "pattern" : "^[A-Za-z0-9._-]{1,128}$" },
+        "artifact_fingerprint" : { "type" : "string", "pattern" : "^sha256:[0-9a-f]{64}$" },
+        "confirm" : { "type" : "boolean", "const" : true },
+        "allow_source" : { "type" : "boolean" },
+        "collision_mode" : { "type" : "string", "enum" : [ "reject", "merge", "replace" ] },
+        "overwrite" : { "type" : "boolean" },
+        "expected_target_digest" : { "type" : "string", "pattern" : "^sha256:[0-9a-f]{64}$" },
+        "policy_path" : { "type" : "string", "minLength" : 1, "maxLength" : 4096 }
+      },
+      "required" : [ "artifact_id", "artifact_fingerprint", "confirm" ],
+      "additionalProperties" : false
+    }
+  }, {
     "name" : "run_reasoner",
     "description" : "Run the reasoner selected in Protégé (classify) and wait for completion. Reports the resulting status and unsatisfiable-class count, and warns when the ontology has SWRL rules the selected reasoner silently ignores (ELK).",
     "input_schema" : {
@@ -3974,6 +4039,41 @@
   }, {
     "name" : "accept_reuse_proposal",
     "description" : "Explicitly accept one scoped reuse proposal after rechecking expiry, fingerprint, model and mapping revisions, canonical target identities, project policy, authorization, and confirmation. Reuse is a receipt, mapping is one CAS, and mint-plus-mapping joins a started ontology commit through receipt recording before reporting a bounded resumable partial result if the mapping step does not complete.",
+    "input_schema" : {
+      "type" : "object",
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "start_job",
+    "description" : "Start an asynchronous job.",
+    "input_schema" : {
+      "type" : "object",
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "get_job",
+    "description" : "Get an asynchronous job.",
+    "input_schema" : {
+      "type" : "object",
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "cancel_job",
+    "description" : "Cancel an asynchronous job.",
+    "input_schema" : {
+      "type" : "object",
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "list_jobs",
+    "description" : "List asynchronous jobs.",
+    "input_schema" : {
+      "type" : "object",
+      "additionalProperties" : false
+    }
+  }, {
+    "name" : "export_job_artifact",
+    "description" : "Export an asynchronous job artifact.",
     "input_schema" : {
       "type" : "object",
       "additionalProperties" : false

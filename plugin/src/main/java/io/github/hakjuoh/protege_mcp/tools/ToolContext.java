@@ -8,6 +8,15 @@ import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
 import io.github.hakjuoh.protege_mcp.external.DefaultExternalProviderGateway;
 import io.github.hakjuoh.protege_mcp.external.ExternalProviderGateway;
 import io.github.hakjuoh.protege_mcp.external.ReuseProposalStore;
+import io.github.hakjuoh.protege_mcp.reasoner.MaterializationArtifactStore;
+import io.github.hakjuoh.protege_mcp.reasoner.MaterializationService;
+import io.github.hakjuoh.protege_mcp.jobs.JobDigests;
+import io.github.hakjuoh.protege_mcp.jobs.JobAdmission;
+import io.github.hakjuoh.protege_mcp.jobs.JobOwner;
+import io.github.hakjuoh.protege_mcp.jobs.JobService;
+import io.github.hakjuoh.protege_mcp.jobs.JobStartResult;
+import io.github.hakjuoh.protege_mcp.jobs.JobSubmission;
+import io.github.hakjuoh.protege_mcp.jobs.JobType;
 
 /**
  * Everything a tool handler needs: the EDT-marshalling {@link OntologyAccess} and the owning
@@ -34,9 +43,16 @@ public final class ToolContext {
     private final WorkspaceRevisionTracker revisions = new WorkspaceRevisionTracker();
     private final ChangeSetStore changeSets = new ChangeSetStore();
     private final WorkspaceAudit audit;
+    private final WindowJobRuntime jobRuntime;
+    private final ReasonerCancellationProbe reasonerCancellation =
+            new ReasonerCancellationProbe();
     private final PrincipalExecutionGate executions = new PrincipalExecutionGate();
     private final ExternalProviderGateway externalProviders;
     private final ReuseProposalStore reuseProposals;
+    private final MaterializationService materializations = new MaterializationService(
+            java.time.Clock.systemUTC());
+    private final MaterializationArtifactStore materializationArtifacts =
+            new MaterializationArtifactStore(java.time.Clock.systemUTC(), 32, 128L * 1024 * 1024);
     private final AtomicBoolean disposalStarted = new AtomicBoolean();
 
     public ToolContext(OntologyAccess access, McpServerController controller) {
@@ -62,6 +78,7 @@ public final class ToolContext {
         this.reuseProposals = java.util.Objects.requireNonNull(
                 reuseProposals, "reuseProposals");
         this.audit = new WorkspaceAudit(this);
+        this.jobRuntime = new WindowJobRuntime(audit);
     }
 
     public OntologyAccess access() {
@@ -116,6 +133,23 @@ public final class ToolContext {
         return executions;
     }
 
+    JobService jobs() {
+        return jobRuntime.service();
+    }
+
+    JobAdmission reserveJob(io.github.hakjuoh.protege_mcp.policy.ProjectPolicy policy,
+            JobOwner owner, JobType type, String idempotencyKey) {
+        return jobRuntime.reserve(policy, owner, type, idempotencyKey);
+    }
+
+    JobStartResult startJob(JobSubmission submission, JobAdmission admission) {
+        return jobRuntime.start(submission, admission);
+    }
+
+    ReasonerCancellationProbe reasonerCancellation() {
+        return reasonerCancellation;
+    }
+
     ExternalProviderGateway externalProviders() {
         return externalProviders;
     }
@@ -124,13 +158,24 @@ public final class ToolContext {
         return reuseProposals;
     }
 
+    MaterializationService materializations() {
+        return materializations;
+    }
+
+    MaterializationArtifactStore materializationArtifacts() {
+        return materializationArtifacts;
+    }
+
     public int revokeExternalClient(String clientId) {
-        return externalProviders.revokeClient(clientId) + reuseProposals.revokeClient(clientId);
+        return externalProviders.revokeClient(clientId) + reuseProposals.revokeClient(clientId)
+                + jobs().revokeClient(JobDigests.digest(clientId));
     }
 
     public int revokeExternalGrant(String clientId, String grantId) {
         return externalProviders.revokeGrant(clientId, grantId)
-                + reuseProposals.revokeGrant(clientId, grantId);
+                + reuseProposals.revokeGrant(clientId, grantId)
+                + jobs().revokeGrant(
+                        JobDigests.digest(clientId), JobDigests.digest(grantId));
     }
 
     /**
@@ -149,6 +194,7 @@ public final class ToolContext {
         // Stop accepting handlers immediately. Waiting with an active handler could deadlock the
         // EDT or block server stop/restart, so only an already-drained context cleans synchronously.
         executions.beginShutdown();
+        jobRuntime.close();
         if (javax.swing.SwingUtilities.isEventDispatchThread() || !executions.isDrained()) {
             Thread cleanup = new Thread(this::disposeAfterDrain,
                     "protege-mcp-tool-context-dispose");
@@ -172,6 +218,7 @@ public final class ToolContext {
         } catch (RuntimeException ignored) {
             // Best effort during shutdown; proposals are memory-only and no longer reachable.
         }
+        materializationArtifacts.clear();
         try {
             access.compute(mm -> {
                 sparqlCache.dispose();

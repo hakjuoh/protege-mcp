@@ -2,7 +2,9 @@ package io.github.hakjuoh.protege_mcp.core.workspace;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -35,12 +37,14 @@ public final class WorkspaceSnapshot implements AutoCloseable {
     private final String importLockDigest;
     private final Path temporaryRoot;
     private final ProjectPolicyLoader.PolicySourcePin policySourcePin;
+    private final ProjectRootIdentity projectRootIdentity;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     WorkspaceSnapshot(ProjectPolicy policy, OWLOntologyManager manager, OWLOntology root,
             List<WorkspaceSource> sources, Map<String, List<Path>> capturedAssets,
             ModelRevision revision, String closureFingerprint, String importLockDigest,
-            Path temporaryRoot, ProjectPolicyLoader.PolicySourcePin policySourcePin) {
+            Path temporaryRoot, ProjectPolicyLoader.PolicySourcePin policySourcePin,
+            ProjectRootIdentity projectRootIdentity) {
         this.policy = java.util.Objects.requireNonNull(policy, "policy");
         this.manager = java.util.Objects.requireNonNull(manager, "manager");
         this.root = java.util.Objects.requireNonNull(root, "root");
@@ -57,6 +61,8 @@ public final class WorkspaceSnapshot implements AutoCloseable {
         this.temporaryRoot = temporaryRoot.toAbsolutePath().normalize();
         this.policySourcePin = java.util.Objects.requireNonNull(
                 policySourcePin, "policySourcePin");
+        this.projectRootIdentity = java.util.Objects.requireNonNull(
+                projectRootIdentity, "projectRootIdentity");
     }
 
     public ProjectPolicy policy() {
@@ -109,6 +115,24 @@ public final class WorkspaceSnapshot implements AutoCloseable {
         return policySourcePin.isCurrent();
     }
 
+    Path projectRootPath() {
+        return projectRootIdentity.path();
+    }
+
+    boolean projectRootCurrent() {
+        return projectRootIdentity.isCurrent();
+    }
+
+    static ProjectRootIdentity captureProjectRoot(Path root) throws IOException {
+        Path canonical = root.toRealPath();
+        BasicFileAttributes attributes = Files.readAttributes(canonical,
+                BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.isDirectory() || attributes.isSymbolicLink()) {
+            throw new IOException("project root is not a real directory");
+        }
+        return new ProjectRootIdentity(canonical, attributes.fileKey());
+    }
+
     @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) {
@@ -133,6 +157,25 @@ public final class WorkspaceSnapshot implements AutoCloseable {
     private void ensureOpen() {
         if (closed()) {
             throw new IllegalStateException("workspace snapshot is closed");
+        }
+    }
+
+    record ProjectRootIdentity(Path path, Object fileKey) {
+        ProjectRootIdentity {
+            path = path.toAbsolutePath().normalize();
+        }
+
+        boolean isCurrent() {
+            if (fileKey == null) return false;
+            try {
+                BasicFileAttributes current = Files.readAttributes(path,
+                        BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                return current.isDirectory() && !current.isSymbolicLink()
+                        && fileKey.equals(current.fileKey())
+                        && path.toRealPath().equals(path);
+            } catch (IOException | RuntimeException changed) {
+                return false;
+            }
         }
     }
 }

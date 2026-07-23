@@ -116,7 +116,7 @@ jobs:
         run: |
           if [ -f performance/baseline-v1.json ]; then
             mvn -B -pl plugin -am \
-              -Dtest=PerformanceBaselineTest \
+              -Dtest=PerformanceBaselineTest,MaterializationScaleTest,MaterializationLiveScaleTest \
               -Dsurefire.failIfNoSpecifiedTests=false \
               -Dprotege.performance=true \
               -Dprotege.performance.enforce=true \
@@ -130,7 +130,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: performance-results-${{ steps.project.outputs.version }}
-          path: plugin/target/performance-results.json
+          path: |
+            plugin/target/performance-results.json
+            core/target/materialization-performance-results.json
+            plugin/target/materialization-live-performance-results.json
           if-no-files-found: warn
 
       - name: Locate plugin release asset

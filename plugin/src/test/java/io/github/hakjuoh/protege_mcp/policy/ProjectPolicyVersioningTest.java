@@ -165,8 +165,11 @@ class ProjectPolicyVersioningTest {
                 + "  retained_per_principal: 4\n"
                 + "  retained_per_backend: 2\n");
         ProjectPolicy jobs = ProjectPolicyLoader.load(quotas, null);
-        assertTrue(jobs.valid(), () -> "active and terminal-retention quotas tighten independently: "
-                + jobs.issues());
+        assertFalse(jobs.valid());
+        assertTrue(jobs.issues().stream().anyMatch(
+                issue -> "job_retention_below_active".equals(issue.code())));
+        assertTrue(jobs.issues().stream().anyMatch(
+                issue -> "job_backend_retention_below_principal".equals(issue.code())));
 
         Path unknownProvider = temp.resolve("unknown-provider.yaml");
         ProjectPolicyFixtures.writePolicy(unknownProvider,

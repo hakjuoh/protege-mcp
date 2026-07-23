@@ -22,6 +22,7 @@ import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
 import org.semanticweb.owlapi.reasoner.structural.StructuralReasonerFactory;
 
+import io.github.hakjuoh.protege_mcp.core.workspace.WorkspaceTransaction;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 
 @ResourceLock(Resources.SYSTEM_PROPERTIES)
@@ -158,6 +159,116 @@ class HeadlessToolServiceContractTest {
     }
 
     @Test
+    void knownPartialMutationReceiptIsNotReclassifiedAsUnknown() {
+        HeadlessExecutionException receipt = new HeadlessExecutionException(
+                "materialization_backup_published", "known backup side effect",
+                Map.of("effects_prevented", false, "outcome_known", true,
+                        "backup_verified", true, "target_preserved", true),
+                false, null);
+        HeadlessExecutionException unknown = new HeadlessExecutionException(
+                "materialization_backup_published", "unverified backup side effect",
+                Map.of("effects_prevented", false, "outcome_known", false),
+                false, null);
+
+        assertTrue(HeadlessToolService.mutationOutcomeKnown(receipt));
+        assertFalse(HeadlessToolService.mutationOutcomeKnown(unknown));
+    }
+
+    @Test
+    void backupSideEffectMappingPreservesVerifiedAndUnknownFacts() {
+        WorkspaceTransaction.BackupSideEffect verified =
+                new WorkspaceTransaction.BackupSideEffect(
+                        Path.of("backup.bak"), true, true, true,
+                        "sha256:" + "a".repeat(64), true, true);
+        HeadlessExecutionException known = HeadlessMaterializationService.backupApplied(
+                new WorkspaceTransaction.BackupAppliedException(
+                        verified, new IOException("target move failed")));
+        assertEquals("materialization_backup_published", known.code());
+        assertEquals(true, known.details().get("outcome_known"));
+        assertEquals(true, known.details().get("backup_verified"));
+        assertEquals(true, known.details().get("target_preserved"));
+        assertTrue(HeadlessToolService.mutationOutcomeKnown(known));
+
+        WorkspaceTransaction.BackupSideEffect detached =
+                new WorkspaceTransaction.BackupSideEffect(
+                        Path.of("backup.bak"), false, false, false,
+                        null, false, false);
+        HeadlessExecutionException uncertain = HeadlessMaterializationService.backupApplied(
+                new WorkspaceTransaction.BackupAppliedException(
+                        detached, new IOException("anchor detached")));
+        assertEquals(false, uncertain.details().get("outcome_known"));
+        assertFalse(uncertain.details().containsKey("target_preserved"));
+        assertFalse(uncertain.details().containsKey("backup_sha256"));
+        assertFalse(HeadlessToolService.mutationOutcomeKnown(uncertain));
+    }
+
+    @Test
+    void guardedReplacementMappingPreservesConcurrentTargetAndRetainedEvidence() {
+        String displaced = "sha256:" + "a".repeat(64);
+        String concurrent = "sha256:" + "b".repeat(64);
+        String intended = "sha256:" + "c".repeat(64);
+        WorkspaceTransaction.GuardedReplacementSideEffect receipt =
+                new WorkspaceTransaction.GuardedReplacementSideEffect(
+                        Path.of("target.ofn"), true, true, true, true, intended, true,
+                        Path.of("private/displaced"), true, displaced, true,
+                        true, true, concurrent, false, false,
+                        Path.of("private/staged"), intended,
+                        null, false, false, false, null);
+
+        HeadlessExecutionException mapped = HeadlessMaterializationService.guardedReplacement(
+                new WorkspaceTransaction.GuardedReplacementException(
+                        receipt, new IOException("concurrent target")));
+
+        assertEquals("materialization_guarded_replacement_incomplete", mapped.code());
+        assertEquals(true, mapped.details().get("outcome_known"));
+        assertEquals(false, mapped.details().get("effects_prevented"));
+        assertEquals(true, mapped.details().get("source_moved"));
+        assertEquals(true, mapped.details().get("staged_state_known"));
+        assertEquals(true, mapped.details().get("displaced_state_known"));
+        assertEquals(displaced, mapped.details().get("displaced_sha256"));
+        assertEquals(concurrent, mapped.details().get("target_sha256"));
+        assertEquals(intended, mapped.details().get("intended_target_sha256"));
+        assertEquals(false, mapped.details().get("publication_applied"));
+        assertTrue(HeadlessToolService.mutationOutcomeKnown(mapped));
+    }
+
+    @Test
+    void workspaceRecoveryMappingNeverClaimsEffectsWerePrevented() {
+        String restored = "sha256:" + "d".repeat(64);
+        WorkspaceTransaction.OrphanRecoverySideEffect receipt =
+                new WorkspaceTransaction.OrphanRecoverySideEffect(
+                        true, true, true, true, restored, true, restored, 1);
+
+        HeadlessExecutionException mapped = HeadlessMaterializationService.orphanRecoveryApplied(
+                new WorkspaceTransaction.OrphanRecoveryAppliedException(receipt, null));
+
+        assertEquals("materialization_workspace_recovery_applied", mapped.code());
+        assertEquals(false, mapped.details().get("effects_prevented"));
+        assertEquals(true, mapped.details().get("outcome_known"));
+        assertEquals(true, mapped.details().get("retry_requires_state_check"));
+        assertEquals(true, mapped.details().get("target_restored"));
+        assertEquals(restored, mapped.details().get("target_sha256"));
+        assertTrue(HeadlessToolService.mutationOutcomeKnown(mapped));
+    }
+
+    @Test
+    void ambiguousRecoveryMappingProvidesAnOperatorRunbook() {
+        WorkspaceTransaction.AmbiguousRecoverySideEffect receipt =
+                new WorkspaceTransaction.AmbiguousRecoverySideEffect(2,
+                        List.of(Path.of("private-a"), Path.of("private-b")));
+
+        HeadlessExecutionException mapped = HeadlessMaterializationService.ambiguousRecovery(
+                new WorkspaceTransaction.AmbiguousRecoveryException(receipt, null));
+
+        assertEquals("materialization_workspace_recovery_ambiguous", mapped.code());
+        assertEquals(true, mapped.details().get("effects_prevented"));
+        assertEquals(true, mapped.details().get("manual_intervention_required"));
+        assertEquals(2, mapped.details().get("evidence_count"));
+        assertTrue(mapped.details().get("resolution").toString().contains("Stop all writers"));
+        assertTrue(HeadlessToolService.mutationOutcomeKnown(mapped));
+    }
+
+    @Test
     void auditInitializationFailureIsClassifiedBeforeExecution(@TempDir Path temp) throws Exception {
         withHome(temp, () -> {
             System.setProperty("user.home", "");
@@ -260,6 +371,229 @@ class HeadlessToolServiceContractTest {
                     "expected_mapping_revision", longAdded.get("mapping_revision"),
                     "mapping_id", longId, "confirm", true));
             assertEquals(1, longRemoved.get("record_count"));
+            return null;
+        });
+    }
+
+    @Test
+    void materializationPreviewIsPrivateAndCommitIsVerifiedAtomicAndIdempotent(
+            @TempDir Path temp) throws Exception {
+        withHome(temp.resolve("home"), () -> {
+            Path policy = writeMappingProject(temp);
+            Files.writeString(temp.resolve("ontology.ttl"), """
+                    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+                    <https://example.org/ontology> a owl:Ontology .
+                    <https://example.org/ontology#A> a owl:Class ;
+                        rdfs:subClassOf <https://example.org/ontology#B> .
+                    <https://example.org/ontology#B> a owl:Class ;
+                        rdfs:subClassOf <https://example.org/ontology#C> .
+                    <https://example.org/ontology#C> a owl:Class .
+                    """);
+            Files.createDirectories(temp.resolve("artifacts"));
+            HeadlessToolService service = new HeadlessToolService(policy,
+                    new org.semanticweb.HermiT.ReasonerFactory(),
+                    Clock.fixed(java.time.Instant.parse("2026-07-22T12:00:00Z"),
+                            java.time.ZoneOffset.UTC));
+            Map<String, Object> request = Map.of(
+                    "categories", List.of("subclass_axioms"),
+                    "destination", Map.of("kind", "project_file",
+                            "identifier", "artifacts/inferred.ofn"),
+                    "provenance", Map.of("generator", "protege-mcp-test",
+                            "purpose", "headless materialization contract"),
+                    "limits", Map.of("max_axioms_per_category", 100,
+                            "max_axioms_total", 100, "max_bytes", 1_048_576,
+                            "timeout_ms", 10_000));
+
+            Map<String, Object> preview = execute(service, "materialize_inferences", request);
+            assertEquals(true, preview.get("preview_only"), preview::toString);
+            assertEquals(false, preview.get("live_state_changed"), preview::toString);
+            assertFalse(Files.exists(temp.resolve("artifacts/inferred.ofn")));
+            @SuppressWarnings("unchecked")
+            Map<String, Object> artifact = (Map<String, Object>) preview.get("artifact");
+            Map<String, Object> commit = new LinkedHashMap<>();
+            commit.put("artifact_id", artifact.get("artifact_id"));
+            commit.put("artifact_fingerprint", artifact.get("artifact_fingerprint"));
+
+            HeadlessExecutionException unconfirmed = assertThrows(
+                    HeadlessExecutionException.class,
+                    () -> execute(service, "commit_materialization", commit));
+            assertEquals("confirmation_required", unconfirmed.code());
+            assertFalse(Files.exists(temp.resolve("artifacts/inferred.ofn")));
+
+            commit.put("confirm", true);
+            Map<String, Object> committed = execute(
+                    service, "commit_materialization", commit);
+            assertEquals(true, committed.get("committed"), committed::toString);
+            assertEquals("committed", committed.get("status"));
+            assertTrue(Files.isRegularFile(temp.resolve("artifacts/inferred.ofn")));
+            assertTrue(String.valueOf(committed.get("target_digest")).startsWith("sha256:"));
+
+            Map<String, Object> repeated = execute(
+                    service, "commit_materialization", commit);
+            assertEquals(false, repeated.get("committed"), repeated::toString);
+            assertEquals("noop", repeated.get("status"));
+            assertEquals(committed.get("target_digest"), repeated.get("target_digest"));
+
+            Map<String, Object> collisionRequest = new LinkedHashMap<>(request);
+            collisionRequest.put("destination", Map.of("kind", "project_file",
+                    "identifier", "artifacts/collision.ofn"));
+            Map<String, Object> collisionPreview = execute(
+                    service, "materialize_inferences", collisionRequest);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> collisionArtifact =
+                    (Map<String, Object>) collisionPreview.get("artifact");
+            Path collisionFile = temp.resolve("artifacts/collision.ofn");
+            Files.writeString(collisionFile, """
+                    Ontology(<urn:test:existing>
+                      SubClassOf(<https://example.org/ontology#A> <https://example.org/ontology#C>)
+                    )
+                    """);
+            String collisionDigest = io.github.hakjuoh.protege_mcp.core.release.ArtifactStore
+                    .sha256(Files.readAllBytes(collisionFile));
+            Map<String, Object> collisionCommit = new LinkedHashMap<>();
+            collisionCommit.put("artifact_id", collisionArtifact.get("artifact_id"));
+            collisionCommit.put("artifact_fingerprint",
+                    collisionArtifact.get("artifact_fingerprint"));
+            collisionCommit.put("confirm", true);
+            collisionCommit.put("overwrite", true);
+            collisionCommit.put("expected_target_digest", collisionDigest);
+            HeadlessExecutionException collision = assertThrows(
+                    HeadlessExecutionException.class,
+                    () -> execute(service, "commit_materialization", collisionCommit));
+            assertEquals("materialization_provenance_collision", collision.code());
+            assertEquals(collisionDigest,
+                    io.github.hakjuoh.protege_mcp.core.release.ArtifactStore
+                            .sha256(Files.readAllBytes(collisionFile)));
+
+            collisionCommit.put("collision_mode", "merge");
+            Map<String, Object> merged = execute(
+                    service, "commit_materialization", collisionCommit);
+            assertEquals(true, merged.get("committed"), merged::toString);
+            assertFalse(collisionDigest.equals(merged.get("target_digest")));
+
+            collisionCommit.put("expected_target_digest", merged.get("target_digest"));
+            Map<String, Object> repeatedMerge = execute(
+                    service, "commit_materialization", collisionCommit);
+            assertEquals(false, repeatedMerge.get("committed"), repeatedMerge::toString);
+            assertEquals("noop", repeatedMerge.get("status"));
+
+            Map<String, Object> replaceRequest = new LinkedHashMap<>(request);
+            replaceRequest.put("destination", Map.of("kind", "project_file",
+                    "identifier", "artifacts/replace.ofn"));
+            Map<String, Object> replacePreview = execute(
+                    service, "materialize_inferences", replaceRequest);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> replaceArtifact =
+                    (Map<String, Object>) replacePreview.get("artifact");
+            Path replaceFile = temp.resolve("artifacts/replace.ofn");
+            Files.writeString(replaceFile, """
+                    Ontology(<urn:test:replace>
+                      Annotation(<http://www.w3.org/2000/01/rdf-schema#comment> "keep")
+                      Declaration(Class(<https://example.org/ontology#Unrelated>))
+                      SubClassOf(<https://example.org/ontology#A> <https://example.org/ontology#C>)
+                    )
+                    """);
+            String replaceDigest = io.github.hakjuoh.protege_mcp.core.release.ArtifactStore
+                    .sha256(Files.readAllBytes(replaceFile));
+            Map<String, Object> replaced = execute(service, "commit_materialization", Map.of(
+                    "artifact_id", replaceArtifact.get("artifact_id"),
+                    "artifact_fingerprint", replaceArtifact.get("artifact_fingerprint"),
+                    "confirm", true,
+                    "overwrite", true,
+                    "expected_target_digest", replaceDigest,
+                    "collision_mode", "replace"));
+            assertEquals(true, replaced.get("committed"), replaced::toString);
+            var loadedManager = org.semanticweb.owlapi.apibinding.OWLManager
+                    .createOWLOntologyManager();
+            var loaded = loadedManager.loadOntologyFromOntologyDocument(replaceFile.toFile());
+            assertEquals("urn:test:replace",
+                    loaded.getOntologyID().getOntologyIRI().get().toString());
+            assertTrue(loaded.containsAxiom(loadedManager.getOWLDataFactory()
+                    .getOWLDeclarationAxiom(loadedManager.getOWLDataFactory().getOWLClass(
+                            org.semanticweb.owlapi.model.IRI.create(
+                                    "https://example.org/ontology#Unrelated")))));
+            assertTrue(loaded.getAnnotations().stream().anyMatch(annotation ->
+                    annotation.getValue().asLiteral().isPresent()
+                            && "keep".equals(annotation.getValue().asLiteral().get()
+                                    .getLiteral())));
+            var expectedLogical = loadedManager.getOWLDataFactory().getOWLSubClassOfAxiom(
+                    loadedManager.getOWLDataFactory().getOWLClass(
+                            org.semanticweb.owlapi.model.IRI.create(
+                                    "https://example.org/ontology#A")),
+                    loadedManager.getOWLDataFactory().getOWLClass(
+                            org.semanticweb.owlapi.model.IRI.create(
+                                    "https://example.org/ontology#C")));
+            List<org.semanticweb.owlapi.model.OWLAxiom> logicalForms = loaded.getAxioms().stream()
+                    .filter(axiom -> axiom.equalsIgnoreAnnotations(expectedLogical)).toList();
+            assertEquals(1, logicalForms.size());
+            assertTrue(logicalForms.get(0).isAnnotated(), logicalForms::toString);
+
+            Map<String, Object> linkRequest = new LinkedHashMap<>(request);
+            linkRequest.put("destination", Map.of("kind", "project_file",
+                    "identifier", "artifacts/link.ofn"));
+            Map<String, Object> linkPreview = execute(
+                    service, "materialize_inferences", linkRequest);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> linkArtifact =
+                    (Map<String, Object>) linkPreview.get("artifact");
+            Path link = temp.resolve("artifacts/link.ofn");
+            String sourceDigest = io.github.hakjuoh.protege_mcp.core.release.ArtifactStore
+                    .sha256(Files.readAllBytes(temp.resolve("ontology.ttl")));
+            try {
+                Files.createSymbolicLink(link, Path.of("../ontology.ttl"));
+            } catch (UnsupportedOperationException | IOException unsupported) {
+                Assumptions.abort("symbolic links are unavailable: " + unsupported);
+            }
+            HeadlessExecutionException unsafeLink = assertThrows(
+                    HeadlessExecutionException.class,
+                    () -> execute(service, "commit_materialization", Map.of(
+                            "artifact_id", linkArtifact.get("artifact_id"),
+                            "artifact_fingerprint", linkArtifact.get("artifact_fingerprint"),
+                            "confirm", true)));
+            assertEquals("materialization_destination_invalid", unsafeLink.code());
+            assertEquals(sourceDigest,
+                    io.github.hakjuoh.protege_mcp.core.release.ArtifactStore
+                            .sha256(Files.readAllBytes(temp.resolve("ontology.ttl"))));
+
+            Map<String, Object> oversizedRequest = new LinkedHashMap<>(request);
+            oversizedRequest.put("destination", Map.of("kind", "project_file",
+                    "identifier", "artifacts/oversized.ofn"));
+            Map<String, Object> oversizedPreview = execute(
+                    service, "materialize_inferences", oversizedRequest);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> oversizedArtifact =
+                    (Map<String, Object>) oversizedPreview.get("artifact");
+            Path oversizedTarget = temp.resolve("artifacts/oversized.ofn");
+            Files.writeString(oversizedTarget, "x".repeat(1_048_577));
+            HeadlessExecutionException oversized = assertThrows(
+                    HeadlessExecutionException.class,
+                    () -> execute(service, "commit_materialization", Map.of(
+                            "artifact_id", oversizedArtifact.get("artifact_id"),
+                            "artifact_fingerprint", oversizedArtifact.get(
+                                    "artifact_fingerprint"),
+                            "confirm", true)));
+            assertEquals("materialization_bound_exceeded", oversized.code());
+            assertEquals(1_048_577L, Files.size(oversizedTarget));
+
+            Map<String, Object> changedRequest = new LinkedHashMap<>(request);
+            changedRequest.put("destination", Map.of("kind", "project_file",
+                    "identifier", "artifacts/stale.ofn"));
+            Map<String, Object> changedPreview = execute(
+                    service, "materialize_inferences", changedRequest);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> changedArtifact =
+                    (Map<String, Object>) changedPreview.get("artifact");
+            Files.writeString(temp.resolve("ro-crate-metadata.json"), "\n",
+                    java.nio.file.StandardOpenOption.APPEND);
+            HeadlessExecutionException changed = assertThrows(
+                    HeadlessExecutionException.class,
+                    () -> execute(service, "commit_materialization", Map.of(
+                            "artifact_id", changedArtifact.get("artifact_id"),
+                            "artifact_fingerprint", changedArtifact.get("artifact_fingerprint"),
+                            "confirm", true)));
+            assertEquals("materialization_input_changed", changed.code());
+            assertFalse(Files.exists(temp.resolve("artifacts/stale.ofn")));
             return null;
         });
     }

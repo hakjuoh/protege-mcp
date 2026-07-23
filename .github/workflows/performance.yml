@@ -25,7 +25,7 @@ jobs:
       - name: Run versioned performance regression gate
         run: >-
           mvn -B -pl plugin -am
-          -Dtest=PerformanceBaselineTest
+          -Dtest=PerformanceBaselineTest,MaterializationScaleTest,MaterializationLiveScaleTest
           -Dsurefire.failIfNoSpecifiedTests=false
           -Dprotege.performance=true
           -Dprotege.performance.enforce=true
@@ -36,5 +36,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: performance-results
-          path: plugin/target/performance-results.json
+          path: |
+            plugin/target/performance-results.json
+            core/target/materialization-performance-results.json
+            plugin/target/materialization-live-performance-results.json
           if-no-files-found: warn

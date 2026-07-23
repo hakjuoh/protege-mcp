@@ -14,8 +14,6 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.semanticweb.owlapi.reasoner.OWLReasonerFactory;
-import org.semanticweb.owlapi.reasoner.BufferingMode;
-import org.semanticweb.owlapi.reasoner.SimpleConfiguration;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,6 +28,7 @@ import io.github.hakjuoh.protege_mcp.core.audit.AuditFacts;
 import io.github.hakjuoh.protege_mcp.core.audit.AuditLog;
 import io.github.hakjuoh.protege_mcp.core.audit.AuditSettings;
 import io.github.hakjuoh.protege_mcp.core.qc.HeadlessProjectQcService;
+import io.github.hakjuoh.protege_mcp.core.qc.RdfQueryService;
 import io.github.hakjuoh.protege_mcp.core.release.HeadlessReleaseGateService;
 import io.github.hakjuoh.protege_mcp.core.release.HeadlessReleaseService;
 import io.github.hakjuoh.protege_mcp.core.workspace.FilesystemProjectWorkspace;
@@ -44,17 +43,13 @@ import io.github.hakjuoh.protege_mcp.sssom.SssomPolicies;
 import io.github.hakjuoh.protege_mcp.sssom.SssomStoreException;
 import io.github.hakjuoh.protege_mcp.sssom.SssomToolService;
 import io.github.hakjuoh.protege_mcp.sssom.SssomValidationPolicy;
-import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityRegistry;
 import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityReport;
-import io.github.hakjuoh.protege_mcp.reasoner.ReasonerIdentity;
 import io.github.hakjuoh.protege_mcp.reasoner.RuleValidationService;
 
 /** Serialized application-service adapter behind the project-confined stdio tool subset. */
 public final class HeadlessToolService {
 
     private static final ObjectMapper JSON = ContractJson.mapper();
-    private static final ReasonerCapabilityRegistry REASONER_PROFILES =
-            new ReasonerCapabilityRegistry();
     private static final Set<String> CONFIRMED_MAPPING_MUTATIONS = Set.of(
             "add_mapping", "remove_mapping", "import_sssom", "export_sssom");
     private static final Map<String, ToolSchemaValidator.Compiled> INPUT_CONTRACTS =
@@ -77,6 +72,8 @@ public final class HeadlessToolService {
     private final OWLReasonerFactory reasonerFactory;
     private final Clock clock;
     private final String workspaceId = "stdio-" + UUID.randomUUID();
+    private FilesystemProjectWorkspace projectWorkspace;
+    private final HeadlessMaterializationService materializations;
     private Path cachedAuditRoot;
     private AuditSettings cachedAuditSettings;
     private AuditLog cachedAuditLog;
@@ -88,6 +85,8 @@ public final class HeadlessToolService {
         this.policyPath = policyPath.toAbsolutePath().normalize();
         this.reasonerFactory = reasonerFactory;
         this.clock = clock.withZone(ZoneOffset.UTC);
+        this.materializations = new HeadlessMaterializationService(
+                this.policyPath, reasonerFactory, this.clock, this::workspace);
     }
 
     public Path policyPath() {
@@ -102,7 +101,7 @@ public final class HeadlessToolService {
         Set<String> capabilities = effectiveCapabilities == null ? Set.of()
                 : Set.copyOf(effectiveCapabilities);
         HeadlessToolCatalog.Definition definition = HeadlessToolCatalog.definition(tool);
-        requireMappingConfirmation(tool, args);
+        requireMutationConfirmation(tool, args);
         List<String> inputViolations = INPUT_CONTRACTS.get(tool).violations(args);
         if (!inputViolations.isEmpty()) {
             throw new HeadlessExecutionException("invalid_request",
@@ -139,6 +138,8 @@ public final class HeadlessToolService {
                 case "validate_project_policy" -> policyResult(loadPolicy());
                 case "get_reasoner_capabilities" -> reasonerCapabilities();
                 case "validate_rules" -> validateRules(args);
+                case "materialize_inferences" -> materializations.preview(args);
+                case "commit_materialization" -> materializations.commit(args);
                 case "list_mappings", "add_mapping", "remove_mapping", "import_sssom",
                         "export_sssom", "validate_mappings" -> mapping(tool, args);
                 case "run_project_qc" -> runProjectQc(args);
@@ -152,13 +153,14 @@ public final class HeadlessToolService {
             result = canonicalResult(tool, rawResult, mutation);
         } catch (IOException | RuntimeException failure) {
             try {
-                boolean prevented = failure instanceof HeadlessExecutionException typed
-                        && Boolean.TRUE.equals(typed.details().get("effects_prevented"));
+                boolean prevented = effectsPrevented(failure);
+                boolean outcomeKnown = mutationOutcomeKnown(failure);
                 audit.log().append(event(tool, AuditEvent.Outcome.FAILED, actor, audit.ontologyIri(),
-                        mutation && prevented ? Boolean.FALSE : null, null,
+                        mutation && prevented ? Boolean.FALSE
+                                : mutation && outcomeKnown ? Boolean.TRUE : null, null,
                         Map.of("failure_type", failure.getClass().getSimpleName(),
                                 "effects_prevented", prevented,
-                                "outcome_unknown", mutation && !prevented),
+                                "outcome_unknown", mutation && !prevented && !outcomeKnown),
                         confirmations, null));
             } catch (RuntimeException auditFailure) {
                 String originalCode = failure instanceof HeadlessExecutionException typed
@@ -172,8 +174,7 @@ public final class HeadlessToolService {
                                 "retry_requires_state_check", mutation),
                         false, auditFailure);
             }
-            if (mutation && !(failure instanceof HeadlessExecutionException typed
-                    && Boolean.TRUE.equals(typed.details().get("effects_prevented")))) {
+            if (mutation && !effectsPrevented(failure) && !mutationOutcomeKnown(failure)) {
                 throw withOutcomeEvidence(tool, failure);
             }
             throw failure;
@@ -237,6 +238,16 @@ public final class HeadlessToolService {
         details.put("retry_requires_state_check", true);
         details.remove("effects_prevented");
         return new HeadlessExecutionException(code, message, details, false, failure);
+    }
+
+    static boolean mutationOutcomeKnown(Exception failure) {
+        return failure instanceof HeadlessExecutionException typed
+                && Boolean.TRUE.equals(typed.details().get("outcome_known"));
+    }
+
+    private static boolean effectsPrevented(Exception failure) {
+        return failure instanceof HeadlessExecutionException typed
+                && Boolean.TRUE.equals(typed.details().get("effects_prevented"));
     }
 
     /** Attribute an authorization refusal that never enters {@link #execute}. */
@@ -318,25 +329,7 @@ public final class HeadlessToolService {
     }
 
     private ReasonerCapabilityReport reasonerProfile(ProjectPolicy policy) {
-        String name;
-        try {
-            name = reasonerFactory.getReasonerName();
-        } catch (RuntimeException failure) {
-            name = reasonerFactory.getClass().getSimpleName();
-        }
-        ReasonerIdentity identity = ReasonerIdentity.capture(
-                reasonerFactory.getClass().getName(), name, reasonerFactory,
-                new SimpleConfiguration(reasoningTimeoutMillis(policy)), BufferingMode.BUFFERING,
-                "headless_policy_reasoning_configuration");
-        return REASONER_PROFILES.report(identity);
-    }
-
-    private static long reasoningTimeoutMillis(ProjectPolicy policy) {
-        Object value = object(policy.effective().get("reasoning")).get("timeout_ms");
-        if (value instanceof Number number && number.longValue() > 0) {
-            return number.longValue();
-        }
-        return 120_000L;
+        return HeadlessReasonerProfiles.report(reasonerFactory, policy);
     }
 
     private Map<String, Object> mapping(String tool, Map<String, Object> args) {
@@ -400,11 +393,12 @@ public final class HeadlessToolService {
         }
     }
 
-    private static void requireMappingConfirmation(String tool, Map<String, Object> args) {
-        if (CONFIRMED_MAPPING_MUTATIONS.contains(tool)
+    private static void requireMutationConfirmation(String tool, Map<String, Object> args) {
+        if ((CONFIRMED_MAPPING_MUTATIONS.contains(tool)
+                || "commit_materialization".equals(tool))
                 && !Boolean.TRUE.equals(args.get("confirm"))) {
             throw new HeadlessExecutionException("confirmation_required",
-                    "Mapping filesystem mutations require confirm=true.",
+                    "This filesystem mutation requires confirm=true.",
                     Map.of("effects_prevented", true), false, null);
         }
     }
@@ -681,8 +675,11 @@ public final class HeadlessToolService {
     private record AuditState(AuditLog log, Path projectRoot, String ontologyIri) {
     }
 
-    private FilesystemProjectWorkspace workspace() {
-        return new FilesystemProjectWorkspace(policyPath);
+    private synchronized FilesystemProjectWorkspace workspace() {
+        if (projectWorkspace == null) {
+            projectWorkspace = new FilesystemProjectWorkspace(policyPath);
+        }
+        return projectWorkspace;
     }
 
     private ProjectPolicy loadPolicy() {

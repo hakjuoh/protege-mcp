@@ -12,7 +12,7 @@ class ToolCapabilityCatalogTest {
 
     @Test
     void completeCatalogUsesOnlyPublicCapabilitiesAndOneSharedImplicationRule() {
-        assertEquals(97, ToolCapabilityCatalog.names().size());
+        assertEquals(104, ToolCapabilityCatalog.names().size());
         for (String name : ToolCapabilityCatalog.names()) {
             Set<String> required = ToolCapabilityCatalog.required(name);
             assertFalse(required.isEmpty(), name);
@@ -27,5 +27,24 @@ class ToolCapabilityCatalogTest {
         assertEquals(providerRead, ToolCapabilityCatalog.required("search_external_terms"));
         assertEquals(providerRead, ToolCapabilityCatalog.required("inspect_external_term"));
         assertEquals(providerRead, ToolCapabilityCatalog.required("propose_term_reuse"));
+        Set<String> materializationCommit = Set.of(
+                Capability.ONTOLOGY_ADMIN.value(), Capability.ONTOLOGY_CURATE.value(),
+                Capability.FILESYSTEM_PROJECT_READ.value());
+        assertEquals(materializationCommit,
+                ToolCapabilityCatalog.required("commit_materialization"));
+        assertFalse(CapabilityAuthorizer.missing(Set.of(
+                        Capability.ONTOLOGY_ADMIN.value()),
+                ToolCapabilityCatalog.required("commit_materialization")).isEmpty());
+        Set<String> jobRead = Set.of(Capability.ONTOLOGY_READ.value());
+        Set<String> jobStart = Set.of(Capability.ONTOLOGY_READ.value(),
+                Capability.FILESYSTEM_PROJECT_READ.value());
+        Set<String> jobExport = Set.of(Capability.ONTOLOGY_READ.value(),
+                Capability.FILESYSTEM_PROJECT_READ.value(),
+                Capability.FILESYSTEM_PROJECT_WRITE.value());
+        assertEquals(jobStart, ToolCapabilityCatalog.required("start_job"));
+        assertEquals(jobRead, ToolCapabilityCatalog.required("get_job"));
+        assertEquals(jobRead, ToolCapabilityCatalog.required("cancel_job"));
+        assertEquals(jobRead, ToolCapabilityCatalog.required("list_jobs"));
+        assertEquals(jobExport, ToolCapabilityCatalog.required("export_job_artifact"));
     }
 }

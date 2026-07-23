@@ -72,8 +72,17 @@ public final class VerifiedOntologyRoundTrip {
 
     /** Serialize one asserted ontology document and prove its isolated reload is normalized-identical. */
     public static Result serialize(OWLOntology source, OWLDocumentFormat format) throws IOException {
+        return serialize(source, format, MAX_ARTIFACT_BYTES);
+    }
+
+    /** Serialize with an incremental caller-specific byte bound before reload or heap publication. */
+    public static Result serialize(OWLOntology source, OWLDocumentFormat format,
+            long maximumBytes) throws IOException {
         if (source == null || format == null) {
             throw new IllegalArgumentException("source and format must not be null");
+        }
+        if (maximumBytes < 1 || maximumBytes > MAX_ARTIFACT_BYTES) {
+            throw new IllegalArgumentException("maximumBytes is outside serialization bounds");
         }
         if (OwlDocumentSemantics.hasAnonymousIndividuals(source)) {
             throw new IllegalArgumentException("verified serialization does not support anonymous "
@@ -85,9 +94,18 @@ public final class VerifiedOntologyRoundTrip {
             snapshotManager = createManager();
             OWLOntology snapshot = copy(source, format, snapshotManager);
             Path artifact = directory.resolve("ontology.bin");
-            try {
-                snapshotManager.saveOntology(snapshot, format, IRI.create(artifact.toUri()));
+            try (OutputStream raw = Files.newOutputStream(artifact);
+                    BoundedOutputStream bounded =
+                            new BoundedOutputStream(raw, maximumBytes)) {
+                snapshotManager.saveOntology(snapshot, format,
+                        new StreamDocumentTarget(bounded));
+                if (bounded.exceeded()) throw new ArtifactSizeException(maximumBytes);
+                bounded.flush();
+            } catch (ArtifactSizeException exceeded) {
+                throw exceeded;
             } catch (OWLOntologyStorageException | RuntimeException error) {
+                ArtifactSizeException exceeded = sizeFailure(error);
+                if (exceeded != null) throw exceeded;
                 throw new IOException("could not serialize ontology: "
                         + privatePathMessage(message(error), directory, artifact), error);
             }
@@ -98,16 +116,38 @@ public final class VerifiedOntologyRoundTrip {
             }
             byte[] bytes;
             try (InputStream input = Files.newInputStream(artifact)) {
-                bytes = input.readNBytes(Math.toIntExact(MAX_ARTIFACT_BYTES + 1));
+                bytes = input.readNBytes(Math.toIntExact(maximumBytes + 1));
             }
-            if (bytes.length > MAX_ARTIFACT_BYTES) {
-                throw new IOException("serialized ontology exceeds " + MAX_ARTIFACT_BYTES + " bytes");
+            if (bytes.length > maximumBytes) {
+                throw new ArtifactSizeException(maximumBytes);
             }
             return new Result(bytes, ArtifactStore.sha256(bytes), bytes.length, verification);
         } finally {
             if (snapshotManager != null) removeAll(snapshotManager);
             deleteTree(directory);
         }
+    }
+
+    /** Explicit size refusal used by adapters to preserve their structured bound error. */
+    public static final class ArtifactSizeException extends IOException {
+        private static final long serialVersionUID = 1L;
+        private final long maximumBytes;
+
+        ArtifactSizeException(long maximumBytes) {
+            super("serialized ontology exceeds " + maximumBytes + " bytes");
+            this.maximumBytes = maximumBytes;
+        }
+
+        public long maximumBytes() {
+            return maximumBytes;
+        }
+    }
+
+    private static ArtifactSizeException sizeFailure(Throwable failure) {
+        for (Throwable current = failure; current != null; current = current.getCause()) {
+            if (current instanceof ArtifactSizeException exceeded) return exceeded;
+        }
+        return null;
     }
 
     private static OWLOntology copy(OWLOntology source, OWLDocumentFormat format,
@@ -277,6 +317,54 @@ public final class VerifiedOntologyRoundTrip {
         @Override
         public void close() throws IOException {
             expected.close();
+        }
+    }
+
+    private static final class BoundedOutputStream extends OutputStream {
+        private final OutputStream delegate;
+        private final long maximumBytes;
+        private long written;
+        private boolean exceeded;
+
+        BoundedOutputStream(OutputStream delegate, long maximumBytes) {
+            this.delegate = delegate;
+            this.maximumBytes = maximumBytes;
+        }
+
+        @Override
+        public void write(int value) throws IOException {
+            requireCapacity(1);
+            delegate.write(value);
+            written++;
+        }
+
+        @Override
+        public void write(byte[] bytes, int offset, int length) throws IOException {
+            java.util.Objects.checkFromIndexSize(offset, length, bytes.length);
+            requireCapacity(length);
+            delegate.write(bytes, offset, length);
+            written += length;
+        }
+
+        @Override
+        public void flush() throws IOException {
+            delegate.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
+
+        private void requireCapacity(int additional) throws ArtifactSizeException {
+            if (additional < 0 || additional > maximumBytes - written) {
+                exceeded = true;
+                throw new ArtifactSizeException(maximumBytes);
+            }
+        }
+
+        boolean exceeded() {
+            return exceeded;
         }
     }
 }

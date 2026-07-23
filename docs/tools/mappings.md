@@ -14,7 +14,8 @@ Protégé server requires an explicit path below the active ontology document di
 local-admin compatibility permission. Headless stdio always requires a valid project policy.
 
 The canonical file is a bounded TSV with a YAML comment header. Every write uses a caller-supplied
-`expected_mapping_revision`, an inter-process project lock, validation before commit, atomic replacement,
+`expected_mapping_revision`, an inter-process project lock, validation before commit, guarded no-overwrite
+hard-link publication,
 and a verified backup when replacing an existing file. Mapping revisions are SHA-256 digests of canonical
 bytes. Read cursors and exports are bound to that revision, so a concurrent edit returns a conflict instead
 of mixing pages or exporting a source state different from the one the caller reviewed.

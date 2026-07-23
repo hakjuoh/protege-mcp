@@ -26,18 +26,13 @@ import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyLoaderConfiguration;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
-import org.semanticweb.owlapi.reasoner.BufferingMode;
-import org.semanticweb.owlapi.reasoner.SimpleConfiguration;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 
 import io.github.hakjuoh.protege_mcp.contracts.ContractJson;
-import io.github.hakjuoh.protege_mcp.contracts.Finding;
-import io.github.hakjuoh.protege_mcp.contracts.FindingSeverity;
 import io.github.hakjuoh.protege_mcp.contracts.GateStatus;
-import io.github.hakjuoh.protege_mcp.contracts.StageStatus;
 import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.core.diff.SemanticDiffService;
 import io.github.hakjuoh.protege_mcp.core.headless.HeadlessReleaseResults;
@@ -45,10 +40,6 @@ import io.github.hakjuoh.protege_mcp.core.headless.HeadlessToolService;
 import io.github.hakjuoh.protege_mcp.core.owl.OwlParsingErrors;
 import io.github.hakjuoh.protege_mcp.core.qc.HeadlessProjectQcService;
 import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcReport;
-import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcRequest;
-import io.github.hakjuoh.protege_mcp.core.qc.ProjectQcStageReport;
-import io.github.hakjuoh.protege_mcp.core.qc.QcStageExecution;
-import io.github.hakjuoh.protege_mcp.core.qc.QcStageVerdict;
 import io.github.hakjuoh.protege_mcp.core.release.ArtifactStore;
 import io.github.hakjuoh.protege_mcp.core.release.HeadlessReleaseService;
 import io.github.hakjuoh.protege_mcp.core.release.ReleaseReports;
@@ -57,9 +48,6 @@ import io.github.hakjuoh.protege_mcp.core.workspace.ImportLockService;
 import io.github.hakjuoh.protege_mcp.core.workspace.WorkspaceSnapshot;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
-import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityRegistry;
-import io.github.hakjuoh.protege_mcp.reasoner.ReasonerIdentity;
-import io.github.hakjuoh.protege_mcp.reasoner.RuleValidationService;
 
 /**
  * Java 17 headless surface proving the core has no Protege runtime dependency.
@@ -189,29 +177,13 @@ public final class Main {
         FilesystemProjectWorkspace workspace = new FilesystemProjectWorkspace(policyPath);
         var factory = new org.semanticweb.HermiT.ReasonerFactory();
         final HeadlessProjectQcService.Result qc;
-        Map<String, Object> ruleValidation;
         try (WorkspaceSnapshot snapshot = workspace.capture()) {
             qc = HeadlessProjectQcService.runCaptured(workspace, snapshot, factory, 25,
                     LocalDate.now(ZoneOffset.UTC));
-            long timeoutMillis = reasoningTimeoutMillis(snapshot.policy());
-            ReasonerIdentity identity = ReasonerIdentity.capture(factory.getClass().getName(),
-                    factory.getReasonerName(), factory, new SimpleConfiguration(timeoutMillis),
-                    BufferingMode.BUFFERING, "headless_policy_reasoning_configuration");
-            var capabilities = new ReasonerCapabilityRegistry().report(identity);
-            try {
-                ruleValidation = RuleValidationService.validate(
-                        RuleValidationService.capture(RuleValidationService.snapshot(
-                                snapshot.closure(), true)), capabilities, 0,
-                        RuleValidationService.MAX_PAGE);
-            } catch (RuleValidationService.BudgetExceededException exceeded) {
-                ruleValidation = ruleValidationFailure(exceeded);
-            }
         }
-        ProjectQcReport combined = withRuleValidation(qc.report(), ruleValidation);
+        ProjectQcReport combined = qc.report();
         Map<String, Object> result = new LinkedHashMap<>(qc.output());
-        result.putAll(combined.toMap());
         result.put("scope", "project_qc");
-        result.put("rule_validation", ruleValidation);
         recordNoNetwork(opts, result);
         if (noExternal) result.put("no_external_paths", true);
         switch (format) {
@@ -228,118 +200,6 @@ public final class Main {
             case FAIL -> 1;
             case ERROR -> 3;
         };
-    }
-
-    private static ProjectQcReport withRuleValidation(ProjectQcReport report,
-            Map<String, Object> validation) {
-        boolean executionError = validation.containsKey("error_code");
-        boolean compatible = Boolean.TRUE.equals(validation.get("compatible"));
-        List<Finding> stageFindings = ruleFindings(validation, compatible, executionError);
-        Map<String, Object> stageDetails = new LinkedHashMap<>();
-        stageDetails.put("compatible", compatible);
-        for (String key : List.of("total_rules", "unsupported_rules", "unknown_rules",
-                "untested_rules", "incompatible_rule_count", "snapshot_fingerprint",
-                "error_code", "budget", "maximum", "observed")) {
-            if (validation.get(key) != null) stageDetails.put(key, validation.get(key));
-        }
-        QcStageExecution execution = new QcStageExecution("rules",
-                executionError ? QcStageVerdict.ERROR
-                        : compatible ? QcStageVerdict.PASS : QcStageVerdict.FAIL,
-                executionError ? validationErrorMessage(validation) : null,
-                stageDetails);
-        ProjectQcStageReport stage = new ProjectQcStageReport(execution, true, true,
-                executionError ? StageStatus.ERROR
-                        : compatible ? StageStatus.PASS : StageStatus.FAIL,
-                executionError ? validationErrorMessage(validation) : null,
-                stageFindings);
-        List<ProjectQcStageReport> stages = new ArrayList<>(report.stages());
-        stages.add(stage);
-        List<Finding> findings = new ArrayList<>(report.findings());
-        findings.addAll(stageFindings);
-        GateStatus gate = report.gate() == GateStatus.ERROR || executionError
-                ? GateStatus.ERROR : compatible ? report.gate() : GateStatus.FAIL;
-        ProjectQcRequest request = report.request();
-        List<String> requiredStages = new ArrayList<>(request.requiredStages());
-        if (!requiredStages.contains("rules")) requiredStages.add("rules");
-        List<String> snapshotStages = new ArrayList<>(request.snapshotStages());
-        if (!snapshotStages.contains("rules")) snapshotStages.add("rules");
-        ProjectQcRequest combinedRequest = new ProjectQcRequest(request.policyLoaded(),
-                request.policyVersion(), request.policyDigest(), requiredStages,
-                request.failOn(), request.fingerprint(), request.selectedReasoner(),
-                request.snapshotConsistent(), request.preconditionError(),
-                request.snapshotMode(), snapshotStages, request.sameValidationSnapshot(),
-                request.closureFingerprint());
-        return new ProjectQcReport(gate, combinedRequest, stages, findings,
-                report.stagesRan() + 1, report.stagesSkipped(),
-                report.rdfDatasetFingerprint(), report.rdfDatasetIdentity(),
-                report.missingRequiredStages());
-    }
-
-    private static List<Finding> ruleFindings(Map<String, Object> validation,
-            boolean compatible, boolean executionError) {
-        if (compatible) return List.of();
-        if (executionError) {
-            return List.of(new Finding("swrl.rules.validation_error", "rule_validation",
-                    FindingSeverity.ERROR, validationErrorMessage(validation),
-                    null, null, null, null, null, Map.of(
-                            "error_code", validation.get("error_code"),
-                            "budget", validation.get("budget"),
-                            "maximum", validation.get("maximum"),
-                            "observed", validation.get("observed"))));
-        }
-        List<Finding> findings = new ArrayList<>();
-        Object raw = validation.get("incompatible_rule_summaries");
-        if (raw instanceof List<?> summaries) {
-            for (Object item : summaries) {
-                if (!(item instanceof Map<?, ?> summary)) continue;
-                String ruleId = String.valueOf(summary.get("rule_id"));
-                findings.add(new Finding("swrl.rule.incompatible", "rule_validation",
-                        FindingSeverity.ERROR,
-                        "SWRL rule " + ruleId + " has unsupported, unknown, or untested coverage.",
-                        null, null, null, null, null, Map.of(
-                                "rule_id", ruleId,
-                                "status", String.valueOf(summary.get("status")),
-                                "finding_count", summary.get("finding_count"),
-                                "finding_codes", summary.get("finding_codes"),
-                                "incompatible_predicates",
-                                summary.get("incompatible_predicates"))));
-            }
-        }
-        if (!findings.isEmpty()) return List.copyOf(findings);
-        return List.of(new Finding("swrl.rules.incompatible", "rule_validation",
-                FindingSeverity.ERROR,
-                "SWRL validation found unsupported, unknown, or untested rule coverage.",
-                null, null, null, null, null, Map.of()));
-    }
-
-    private static String validationErrorMessage(Map<String, Object> validation) {
-        return String.valueOf(validation.get("error_code")) + ": "
-                + String.valueOf(validation.get("message"));
-    }
-
-    private static Map<String, Object> ruleValidationFailure(
-            RuleValidationService.BudgetExceededException exceeded) {
-        Map<String, Object> failure = new LinkedHashMap<>();
-        failure.put("completed", false);
-        failure.put("compatible", false);
-        failure.put("error_code", "rule_validation_budget_exceeded");
-        failure.put("message", exceeded.getMessage());
-        failure.put("budget", exceeded.budget());
-        failure.put("maximum", exceeded.maximum());
-        failure.put("observed", exceeded.observed());
-        failure.put("effects_prevented", true);
-        return Map.copyOf(failure);
-    }
-
-    private static long reasoningTimeoutMillis(ProjectPolicy policy) {
-        Object rawReasoning = policy.effective().get("reasoning");
-        if (rawReasoning instanceof Map<?, ?> reasoning) {
-            Object rawTimeout = reasoning.get("timeout_ms");
-            if (rawTimeout instanceof Number timeout && timeout.longValue() > 0) {
-                return timeout.longValue();
-            }
-        }
-        return 120_000L;
     }
 
     private static int renderInvalidPolicy(ProjectPolicy policy, String format, Options opts,

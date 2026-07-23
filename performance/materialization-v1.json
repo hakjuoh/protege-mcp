@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "produced_axioms": 50000,
+  "maximum_live_axioms": 500,
+  "baseline_elapsed_ms": 1500,
+  "baseline_model_thread_stall_ms": 50,
+  "maximum_incremental_heap_bytes": 536870912,
+  "maximum_elapsed_ms": 120000,
+  "maximum_model_thread_stall_ms": 100,
+  "maximum_cancellation_ms": 5000,
+  "maximum_regression_factor": 2.0,
+  "minimum_noise_floor_ms": 250.0
+}

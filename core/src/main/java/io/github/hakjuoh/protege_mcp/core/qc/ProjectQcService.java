@@ -73,10 +73,8 @@ public final class ProjectQcService {
                 status = StageStatus.ERROR;
                 ran++;
                 gateError = true;
-                Finding finding = commonFinding(execution.stage() + ".execution", execution.stage(),
-                        FindingSeverity.ERROR, execution.message(), execution.details());
-                findings.add(finding);
-                stageFindings.add(finding);
+                stageFindings.addAll(executionFindings(execution));
+                findings.addAll(stageFindings);
                 message = execution.message();
             } else if (execution.verdict() == QcStageVerdict.SKIPPED) {
                 status = isRequired ? StageStatus.ERROR : StageStatus.SKIPPED;
@@ -97,11 +95,8 @@ public final class ProjectQcService {
                     gateFail = true;
                 }
                 if (execution.verdict() != QcStageVerdict.PASS) {
-                    Finding finding = commonFinding(execution.stage() + ".finding", execution.stage(),
-                            execution.verdict().severity(), execution.stage() + " reported "
-                                    + execution.verdict().legacyVerdict(), execution.details());
-                    findings.add(finding);
-                    stageFindings.add(finding);
+                    stageFindings.addAll(reportedFindings(execution));
+                    findings.addAll(stageFindings);
                 }
             }
             reports.add(new ProjectQcStageReport(execution, true, isRequired, status, message,
@@ -159,5 +154,46 @@ public final class ProjectQcService {
             String message, Map<String, Object> details) {
         return new Finding(id, source, severity, message == null ? id : message,
                 null, null, null, id, null, details == null ? Map.of() : details);
+    }
+
+    private static List<Finding> executionFindings(QcStageExecution execution) {
+        if ("rules".equals(execution.stage())) {
+            return List.of(commonFinding("swrl.rules.validation_error", "rule_validation",
+                    FindingSeverity.ERROR, execution.message(), execution.details()));
+        }
+        return List.of(commonFinding(execution.stage() + ".execution", execution.stage(),
+                FindingSeverity.ERROR, execution.message(), execution.details()));
+    }
+
+    private static List<Finding> reportedFindings(QcStageExecution execution) {
+        if (!"rules".equals(execution.stage())) {
+            return List.of(commonFinding(execution.stage() + ".finding", execution.stage(),
+                    execution.verdict().severity(), execution.stage() + " reported "
+                            + execution.verdict().legacyVerdict(), execution.details()));
+        }
+        List<Finding> ruleFindings = new ArrayList<>();
+        Object raw = execution.details() == null ? null
+                : execution.details().get("incompatible_rule_summaries");
+        if (raw instanceof List<?> summaries) {
+            for (Object item : summaries) {
+                if (!(item instanceof Map<?, ?> summary)) continue;
+                String ruleId = String.valueOf(summary.get("rule_id"));
+                Map<String, Object> details = new LinkedHashMap<>();
+                for (String key : List.of("rule_id", "status", "finding_count",
+                        "finding_codes", "incompatible_predicates")) {
+                    if (summary.get(key) != null) details.put(key, summary.get(key));
+                }
+                ruleFindings.add(commonFinding("swrl.rule.incompatible",
+                        "rule_validation", FindingSeverity.ERROR,
+                        "SWRL rule " + ruleId
+                                + " has unsupported, unknown, or untested coverage.",
+                        details));
+            }
+        }
+        if (!ruleFindings.isEmpty()) return List.copyOf(ruleFindings);
+        return List.of(commonFinding("swrl.rules.incompatible", "rule_validation",
+                FindingSeverity.ERROR,
+                "SWRL validation found unsupported, unknown, or untested rule coverage.",
+                execution.details()));
     }
 }

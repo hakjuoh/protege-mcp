@@ -1,7 +1,8 @@
 # Protégé MCP 0.8.0 Plan and Later Roadmap
 
-> Status: only work that is not implemented is tracked here. Delivered behavior belongs in
-> [`CHANGELOG.md`](CHANGELOG.md), the user manual, and [`DESIGN.md`](DESIGN.md).
+> Status: 0.8.0 implementation plan. Delivered slices remain here as release-contract context and are
+> marked below; shipped behavior also belongs in [`CHANGELOG.md`](CHANGELOG.md), the user manual, and
+> [`DESIGN.md`](DESIGN.md).
 >
 > The milestone names below preserve the identifiers used before the 0.7.1 re-baseline. M6B external
 > term reuse and SSSOM mapping plus all of M8N are committed to the 0.8.0 scope; the remaining milestone
@@ -66,9 +67,9 @@ workflow.
 | Capability | Live plugin | Headless stdio | One-shot CLI | Ownership |
 | --- | --- | --- | --- | --- |
 | External provider search/inspect/proposal | Yes | No | No | Provider-neutral contracts/SPI in `core`; credential, HTTPS, cache, and live-workspace adapters in `plugin` |
-| SSSOM list/add/remove/import/export/validate | Yes | Yes | Import/export/validate commands | SSSOM records, parser, validator, and transactional store contract in `core`; EDT/revision capture in `plugin`; filesystem lock/atomic replacement in headless adapters |
+| SSSOM list/add/remove/import/export/validate | Yes | Yes | Import/export/validate commands | SSSOM records, parser, validator, and transactional store contract in `core`; EDT/revision capture in `plugin`; filesystem lock/guarded no-overwrite publication in headless adapters |
 | Reasoner capabilities and rule validation | Yes | Yes | Validation command | Exact capability vocabulary and validation in `core`; installed-reasoner discovery/configuration capture in adapters |
-| Inference materialization | Yes | Yes | Synchronous preview/file command | Snapshot computation and reports in `core`; one-Undo ontology commit in `plugin`; atomic project-file publication in headless adapters |
+| Inference materialization | Yes | Yes | Synchronous preview/file command | Snapshot computation and reports in `core`; one model-manager broadcast with one Undo unit for active-source axiom commits and a separate non-Undo ontology-creation lifecycle; atomic project-file publication in headless adapters |
 | Asynchronous jobs | Yes | No in 0.8.0 | No | State machine/contracts in `core`; one per-window in-memory runtime in `plugin` |
 
 The headless stdio surface remains bounded and offline. It does not receive credentialed external-provider
@@ -85,9 +86,10 @@ Implementation proceeds in this order:
 3. Add the SSSOM parser/validator and read-only round trip, then transactional mapping mutations.
 4. Add the provider SPI, one checked-in fake, the OLS4 REST profile, centralized egress/credential/cache
    enforcement, and the three provider tools.
-5. Add exact reasoner/SWRL capabilities and rule validation.
-6. Add materialization preview/artifacts, then explicit ontology/file commit paths.
-7. Add the job contracts/runtime with classification, project QC, semantic diff, and materialization jobs.
+5. **Delivered:** add exact reasoner/SWRL capabilities and rule validation.
+6. **Delivered:** add materialization preview/artifacts, then explicit ontology/file commit paths.
+7. **Delivered:** add the job contracts/runtime with classification, project QC, semantic diff, and
+   materialization jobs.
 8. Complete cross-surface, performance, packaged-plugin, and live Protégé evidence.
 
 Each numbered implementation slice includes production code, adversarial and regression tests, docs, and
@@ -186,7 +188,8 @@ Version 0.8.0 supports SSSOM 1.0 TSV. The canonical store is one policy-v2-decla
 (default `.protege-mcp/mappings.sssom.tsv`), never ontology axioms. Mapping writes therefore do not enter the
 Protégé Undo stack or alter the ontology revision; they use a separate SHA-256 mapping revision included in
 complete job/proposal input identity. Every mutation requires the expected mapping revision and uses the same
-advisory project lock in both live and headless adapters plus temporary-file verification, atomic replacement,
+advisory project lock in both live and headless adapters plus temporary-file verification, guarded
+no-overwrite hard-link publication,
 and backup/recovery. Concurrent or stale
 writes fail with `mapping_revision_conflict` and change nothing.
 
@@ -335,12 +338,14 @@ the materialization job through the same owner-scoped contract. A preview expire
 the job artifact quotas and cleanup. Commit consumes its
 fingerprint and rechecks the complete input identity, policy, dynamic authorization, confirmation, cancellation,
 and destination revision under one commit permit. The default destination is a new ontology/file; the active
-source ontology is rejected unless `allow_source=true` is explicit and policy permits it. Plugin ontology
-commit is one Undo unit. File output uses project lock, verified serialization, temporary-file digest, atomic
+source ontology is rejected unless `allow_source=true` is explicit and policy permits it. Plugin axiom changes
+use one model-manager broadcast; active-source commits are one Undo unit, while a newly created ontology is
+reported separately because ontology creation itself is not an Undo-stack operation. File output uses project lock, verified serialization, temporary-file digest, atomic
 replacement, and backup. Generated axioms use a stable provenance IRI derived from source, reasoner, category,
 and content digests. Per-run timestamps and job/preview ids live in report/audit rather than axiom identity.
 Recommitting the same preview or stable materialization is a no-op for an existing logical axiom plus
-provenance-id pair; a different provenance digest is a collision requiring explicit merge/replace. All
+provenance-id pair when no alternate form remains; explicit merge may no-op while retaining alternates.
+A different provenance digest is a collision requiring explicit merge/replace. All
 asserted/inferred collisions are reported before commit.
 
 ### 6.2 Common job model
@@ -550,7 +555,8 @@ Before a deferred track begins, create its applicable ADRs:
 - Unit and property tests cover state machines, canonical fingerprints, authorization, redaction, bounds,
   ordering, and fail-closed aggregation.
 - Cross-component tests use the same fixtures through the shared core and every applicable adapter.
-- Filesystem and network tests cover atomic replacement, symlinks, redirects, DNS/address changes, timeouts,
+- Filesystem and network tests cover guarded file publication, atomic directory replacement, symlinks,
+  redirects, DNS/address changes, timeouts,
   retries, checksum mismatch, oversized bodies, secret-bearing errors, and remote drift.
 - Reasoner-specific expectations name the engine/configuration and never become general OWL claims.
 - External adapter tests use in-process fakes by default; licensed/vendor suites are opt-in, scheduled, or
@@ -572,7 +578,7 @@ The 0.8.0 release evidence additionally requires:
   two workspaces, executor rejection, non-interruptible-profile rejection, delayed-but-bounded reasoner,
   late result, retention, and every idempotency-key case.
 - Materialization fixtures for every category and support state, inference explosion, whole-category discard,
-  source refusal, preview/commit drift, one-Undo plugin commit, atomic headless output, provenance, idempotence,
+  source refusal, preview/commit drift, one-Undo active-source commit, non-Undo new-ontology creation, atomic headless output, provenance, idempotence,
   and serialization/fingerprint verification.
 - Immutable 0.7.2 and 0.8.0 tool/prompt/input/output/error/policy/job snapshots and cross-surface conformance.
   New `core` and `plugin` packages require at least 80% line/75% branch coverage and new `cli` adapters 75%/70%;

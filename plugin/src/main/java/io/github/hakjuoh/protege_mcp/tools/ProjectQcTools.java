@@ -74,6 +74,10 @@ final class ProjectQcTools {
             int version = ((Number) policy.effective().get("version")).intValue();
             Map<String, Object> result = QcSuiteTools.strictResult(execution, config.requiredStages,
                     config.failOn, version, policy.digest(), true);
+            execution.results.stream()
+                    .filter(stage -> "rules".equals(stage.stage) && stage.summary != null)
+                    .findFirst()
+                    .ifPresent(stage -> result.put("rule_validation", stage.summary));
             enforceImportIntegrity(policy, execution, result, lockMode, accessRules);
             result.put("project_id", policy.effective().get("project_id"));
             result.put("policy_path", policy.path().toString());
@@ -83,6 +87,157 @@ final class ProjectQcTools {
             return Tools.ok(result);
         } catch (ToolArgException | IllegalArgumentException e) {
             return Tools.ok(configurationError(ctx, policy, "qc_configuration_invalid", e.getMessage()));
+        }
+    }
+
+    /**
+     * Resolve policy/assets and capture the complete detached QC snapshot before job admission.
+     * Configuration failures are synchronous and typed; an admitted job never refetches ontology
+     * content or policy assets during computation.
+     */
+    static CapturedJob captureJob(ToolContext ctx, Map<String, Object> arguments,
+            DirectAccessPolicy.Rules accessRules) {
+        ProjectPolicyTools.PolicyContext live = ctx.access().compute(ProjectPolicyTools::capture);
+        ProjectPolicy policy = accessRules.policy();
+        if (!policy.loaded() || !policy.valid() || policy.digest() == null
+                || policy.projectRoot() == null) {
+            throw new ToolArgException("job_policy_required",
+                    "A valid project policy is required for an asynchronous project-QC job.",
+                    Map.of("effects_prevented", true), false);
+        }
+        if (live.activeOntologyIri() == null) {
+            throw new ToolArgException("job_active_ontology_anonymous",
+                    "The active ontology must have an ontology IRI for project QC.",
+                    Map.of("effects_prevented", true), false);
+        }
+        try {
+            LockMode lockMode = LockMode.parse(Tools.optString(arguments, "lock_mode"));
+            String preflightBefore = RevisionTools.preflightDigest(policy);
+            String importLockDigest = RevisionTools.digestImportLock(policy);
+            QcRunConfig config = config(policy, live, arguments);
+            QcSuiteTools.CapturedExecution captured =
+                    QcSuiteTools.capture(ctx, config, Collections.emptyList(),
+                            importLockDigest, policy.digest());
+            try {
+                String preflightAfter = RevisionTools.preflightDigest(policy);
+                if (!preflightBefore.equals(preflightAfter)) {
+                    throw new ToolArgException("job_input_changed",
+                            "Project policy assets changed while project-QC inputs were captured.",
+                            Map.of("effects_prevented", true), true);
+                }
+                Map<String, Object> integrity = captureImportIntegrity(
+                        policy, captured, lockMode, accessRules);
+                return new CapturedJob(policy, config, lockMode, accessRules, captured,
+                        importLockDigest, preflightAfter, integrity);
+            } catch (RuntimeException | LinkageError rejected) {
+                QcSuiteTools.discard(captured);
+                throw rejected;
+            }
+        } catch (ToolArgException known) {
+            throw known;
+        } catch (IllegalArgumentException invalid) {
+            throw new ToolArgException("job_qc_configuration_invalid",
+                    invalid.getMessage(), Map.of("effects_prevented", true), false);
+        }
+    }
+
+    /** Evaluate only the detached data retained by {@link #captureJob}. */
+    static Map<String, Object> runJob(CapturedJob job) {
+        try {
+            QcSuiteExecution execution = QcSuiteTools.execute(job.captured);
+            int version = ((Number) job.policy.effective().get("version")).intValue();
+            Map<String, Object> result = QcSuiteTools.strictResult(execution,
+                    job.config.requiredStages, job.config.failOn, version,
+                    job.policy.digest(), true);
+            execution.results.stream()
+                    .filter(stage -> "rules".equals(stage.stage) && stage.summary != null)
+                    .findFirst().ifPresent(stage ->
+                            result.put("rule_validation", stage.summary));
+            applyCapturedIntegrity(job.importIntegrity, result);
+            result.put("project_id", job.policy.effective().get("project_id"));
+            result.put("policy_path", job.policy.path().toString());
+            result.put("project_root", job.policy.projectRoot().toString());
+            result.put("resolved_assets", assetJson(job.policy));
+            result.put("surface", "start_job");
+            return result;
+        } finally {
+            QcSuiteTools.discard(job.captured);
+        }
+    }
+
+    private static Map<String, Object> captureImportIntegrity(ProjectPolicy policy,
+            QcSuiteTools.CapturedExecution captured, LockMode lockMode,
+            DirectAccessPolicy.Rules accessRules) {
+        Map<String, Object> evidence = new LinkedHashMap<>();
+        evidence.put("gate", "pass");
+        evidence.put("findings", new ArrayList<Map<String, Object>>());
+        enforceImportIntegrity(
+                policy, captured.identityExecution(), evidence, lockMode, accessRules);
+        return evidence;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void applyCapturedIntegrity(
+            Map<String, Object> evidence, Map<String, Object> result) {
+        Object capturedFindings = evidence.get("findings");
+        if (capturedFindings instanceof List<?> rows && !rows.isEmpty()) {
+            List<Map<String, Object>> findings =
+                    (List<Map<String, Object>>) result.computeIfAbsent(
+                            "findings", ignored -> new ArrayList<Map<String, Object>>());
+            for (Object row : rows) {
+                findings.add(new LinkedHashMap<>((Map<String, Object>) row));
+            }
+        }
+        if ("error".equals(evidence.get("gate"))) result.put("gate", "error");
+        if (evidence.containsKey("import_lock_verification")) {
+            result.put("import_lock_verification",
+                    evidence.get("import_lock_verification"));
+        }
+    }
+
+    /** Release an admitted capture when the runtime never invokes it. */
+    static void discardJob(CapturedJob job) {
+        if (job != null) QcSuiteTools.discard(job.captured);
+    }
+
+    static final class CapturedJob {
+        private final ProjectPolicy policy;
+        private final QcRunConfig config;
+        private final LockMode lockMode;
+        private final DirectAccessPolicy.Rules accessRules;
+        private final QcSuiteTools.CapturedExecution captured;
+        private final String importLockDigest;
+        private final String preflightAssetDigest;
+        private final Map<String, Object> importIntegrity;
+
+        private CapturedJob(ProjectPolicy policy, QcRunConfig config, LockMode lockMode,
+                DirectAccessPolicy.Rules accessRules,
+                QcSuiteTools.CapturedExecution captured, String importLockDigest,
+                String preflightAssetDigest, Map<String, Object> importIntegrity) {
+            this.policy = policy;
+            this.config = config;
+            this.lockMode = lockMode;
+            this.accessRules = accessRules;
+            this.captured = captured;
+            this.importLockDigest = importLockDigest;
+            this.preflightAssetDigest = preflightAssetDigest;
+            this.importIntegrity = importIntegrity;
+        }
+
+        ProjectPolicy policy() {
+            return policy;
+        }
+
+        QcSuiteTools.CapturedExecution captured() {
+            return captured;
+        }
+
+        String preflightAssetDigest() {
+            return preflightAssetDigest;
+        }
+
+        String importLockDigest() {
+            return importLockDigest;
         }
     }
 
@@ -99,6 +254,7 @@ final class ProjectQcTools {
             // by another validated construction path in the future.
             required.add("reasoner");
         }
+        required.add("rules");
         if (required.isEmpty()) {
             throw new ToolArgException("validation.required_stages must not be empty for project QC.");
         }

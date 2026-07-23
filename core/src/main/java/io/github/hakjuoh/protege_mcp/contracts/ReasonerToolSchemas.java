@@ -7,12 +7,14 @@ import java.util.Map;
 import java.util.Set;
 
 import io.github.hakjuoh.protege_mcp.reasoner.ReasonerCapabilityReport;
+import io.github.hakjuoh.protege_mcp.reasoner.MaterializationCategory;
 
 /** Strict shared contracts for reasoner capability and non-executing rule validation tools. */
 public final class ReasonerToolSchemas {
 
     public static final Set<String> NAMES = Set.of(
-            "get_reasoner_capabilities", "validate_rules");
+            "get_reasoner_capabilities", "validate_rules",
+            "materialize_inferences", "commit_materialization");
     private static final Map<String, String> DESCRIPTIONS = Map.of(
             "get_reasoner_capabilities",
             "Report the selected reasoner identity and fail-closed OWL/SWRL capabilities "
@@ -20,7 +22,13 @@ public final class ReasonerToolSchemas {
             "validate_rules",
             "Validate every captured SWRL atom and built-in without executing rules. Reports "
                     + "body-variable safety separately from reasoner-profile DL-safety evidence "
-                    + "with bounded snapshot-bound pagination.");
+                    + "with bounded snapshot-bound pagination.",
+            "materialize_inferences",
+            "Preview exact supported inference categories in an isolated reasoner and publish "
+                    + "a private immutable 30-minute artifact without changing live state.",
+            "commit_materialization",
+            "Commit one owner-local materialization artifact after rechecking its complete input "
+                    + "identity, policy, confirmation, destination, and verified digest.");
     private static final List<String> SUPPORT = List.of(
             "supported", "unsupported", "unknown", "untested");
 
@@ -30,11 +38,15 @@ public final class ReasonerToolSchemas {
     public static Map<String, Object> input(String name) {
         requireName(name);
         if ("get_reasoner_capabilities".equals(name)) return object(Map.of(), List.of());
-        return object(Map.of(
-                "include_imports", Map.of("type", "boolean"),
-                "offset", integer(0, 2_000),
-                "limit", integer(1, 10),
-                "snapshot_fingerprint", digest()), List.of());
+        if ("validate_rules".equals(name)) {
+            return object(Map.of(
+                    "include_imports", Map.of("type", "boolean"),
+                    "offset", integer(0, 2_000),
+                    "limit", integer(1, 10),
+                    "snapshot_fingerprint", digest()), List.of());
+        }
+        if ("materialize_inferences".equals(name)) return materializationInput();
+        return commitInput();
     }
 
     public static String description(String name) {
@@ -44,8 +56,164 @@ public final class ReasonerToolSchemas {
 
     public static Map<String, Object> output(String name) {
         requireName(name);
-        return "get_reasoner_capabilities".equals(name)
-                ? capabilityReport() : validationReport();
+        return switch (name) {
+            case "get_reasoner_capabilities" -> capabilityReport();
+            case "validate_rules" -> validationReport();
+            case "materialize_inferences" -> materializationReport();
+            case "commit_materialization" -> materializationCommit();
+            default -> throw new IllegalArgumentException("unknown reasoner tool " + name);
+        };
+    }
+
+    private static Map<String, Object> materializationInput() {
+        List<String> categories = java.util.Arrays.stream(MaterializationCategory.values())
+                .map(MaterializationCategory::value).toList();
+        Map<String, Object> destination = object(Map.of(
+                "kind", enumString(List.of("new_ontology", "project_file", "active_source")),
+                "identifier", string(1, 4096)), List.of("kind", "identifier"));
+        Map<String, Object> provenance = object(Map.of(
+                "generator", string(1, 512),
+                "purpose", string(1, 1024)), List.of("generator", "purpose"));
+        Map<String, Object> limits = object(Map.of(
+                "max_axioms_per_category", integer(1, 50_000),
+                "max_axioms_total", integer(1, 50_000),
+                "max_bytes", integer(1024, 67_108_864),
+                "timeout_ms", integer(1, 3_600_000)), List.of(
+                        "max_axioms_per_category", "max_axioms_total",
+                        "max_bytes", "timeout_ms"));
+        return object(Map.of(
+                "categories", array(enumString(categories), 1, categories.size(), true),
+                "destination", destination,
+                "provenance", provenance,
+                "limits", limits,
+                "policy_path", string(1, 4096)), List.of(
+                        "categories", "destination", "provenance", "limits"));
+    }
+
+    private static Map<String, Object> commitInput() {
+        return object(Map.of(
+                "artifact_id", Map.of("type", "string", "pattern",
+                        "^[A-Za-z0-9._-]{1,128}$"),
+                "artifact_fingerprint", digest(),
+                "confirm", Map.of("type", "boolean", "const", true),
+                "allow_source", Map.of("type", "boolean"),
+                "collision_mode", enumString(List.of("reject", "merge", "replace")),
+                "overwrite", Map.of("type", "boolean"),
+                "expected_target_digest", digest(),
+                "policy_path", string(1, 4096)), List.of(
+                        "artifact_id", "artifact_fingerprint", "confirm"));
+    }
+
+    private static Map<String, Object> materializationReport() {
+        List<String> categories = java.util.Arrays.stream(MaterializationCategory.values())
+                .map(MaterializationCategory::value).toList();
+        Map<String, Object> category = object(Map.of(
+                "category", enumString(categories),
+                "status", enumString(List.of("produced", "empty")),
+                "supported", Map.of("type", "boolean", "const", true),
+                "enumerated_axioms", integer(0, 50_000),
+                "produced_axioms", integer(0, 50_000),
+                "asserted_collisions", integer(0, 50_000),
+                "canonical_bytes", integer(0, 67_108_864),
+                "truncated", Map.of("type", "boolean", "const", false),
+                "content_digest", digest(),
+                "provenance_iri", string(1, 512)), List.of(
+                        "category", "status", "supported", "enumerated_axioms",
+                        "produced_axioms", "asserted_collisions", "canonical_bytes",
+                        "truncated", "content_digest", "provenance_iri"));
+        Map<String, Object> artifact = object(Map.of(
+                "artifact_id", Map.of("type", "string", "pattern",
+                        "^[A-Za-z0-9._-]{1,128}$"),
+                "artifact_fingerprint", digest(),
+                "artifact_digest", digest(),
+                "materialization_digest", digest(),
+                "created_at", string(1, 64),
+                "expires_at", string(1, 64),
+                "axiom_count", integer(0, 50_000),
+                "canonical_bytes", integer(0, 67_108_864)), List.of(
+                        "artifact_id", "artifact_fingerprint", "artifact_digest",
+                        "materialization_digest", "created_at", "expires_at",
+                        "axiom_count", "canonical_bytes"));
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("status", Map.of("type", "string", "const", "ready"));
+        properties.put("preview_only", Map.of("type", "boolean", "const", true));
+        properties.put("complete", Map.of("type", "boolean", "const", true));
+        properties.put("requested_categories", array(enumString(categories), 1, 6, true));
+        properties.put("supported_categories", array(enumString(categories), 1, 6, true));
+        properties.put("produced_categories", array(enumString(categories), 0, 6, true));
+        properties.put("skipped_categories", array(enumString(categories), 0, 6, true));
+        properties.put("categories", array(category, 1, 6, true));
+        properties.put("asserted_collision_count", integer(0, 50_000));
+        properties.put("input_identity", materializationIdentity());
+        properties.put("provenance", object(Map.of(
+                "generator", string(1, 512), "purpose", string(1, 1024)),
+                List.of("generator", "purpose")));
+        properties.put("destination_plan", object(Map.of(
+                "kind", enumString(List.of("new_ontology", "project_file", "active_source")),
+                "identifier", string(1, 4096)), List.of("kind", "identifier")));
+        properties.put("limits", object(Map.of(
+                "max_axioms_per_category", integer(1, 50_000),
+                "max_axioms_total", integer(1, 50_000),
+                "max_bytes", integer(1024, 67_108_864),
+                "timeout_ms", integer(1, 3_600_000)), List.of(
+                        "max_axioms_per_category", "max_axioms_total",
+                        "max_bytes", "timeout_ms")));
+        properties.put("artifact", artifact);
+        properties.put("live_state_changed", Map.of("type", "boolean", "const", false));
+        return object(properties, new ArrayList<>(properties.keySet()));
+    }
+
+    private static Map<String, Object> materializationIdentity() {
+        Map<String, Object> revision = object(Map.of(
+                "workspace_id", Map.of("type", "string", "pattern",
+                        "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"),
+                "session_revision", integer(0, Long.MAX_VALUE),
+                "semantic_fingerprint", digest(),
+                "document_fingerprint", digest()), List.of(
+                        "workspace_id", "session_revision", "semantic_fingerprint",
+                        "document_fingerprint"));
+        Map<String, Object> optionalDigest = Map.of("anyOf", List.of(
+                digest(), Map.of("type", "null")));
+        Map<String, Object> optionalPath = Map.of("anyOf", List.of(
+                string(1, 4096), Map.of("type", "null")));
+        return object(Map.of(
+                "model_revision", revision,
+                "closure_fingerprint", digest(),
+                "import_lock_digest", optionalDigest,
+                "mapping_revision", optionalDigest,
+                "policy_digest", digest(),
+                "policy_asset_digest", digest(),
+                "policy_path", optionalPath,
+                "reasoner", identity()), List.of(
+                        "model_revision", "closure_fingerprint", "import_lock_digest",
+                        "mapping_revision", "policy_digest", "policy_asset_digest",
+                        "policy_path", "reasoner"));
+    }
+
+    private static Map<String, Object> materializationCommit() {
+        Map<String, Object> properties = new LinkedHashMap<>();
+        properties.put("status", enumString(List.of("committed", "noop")));
+        properties.put("committed", Map.of("type", "boolean"));
+        properties.put("artifact_id", Map.of("type", "string", "pattern",
+                "^[A-Za-z0-9._-]{1,128}$"));
+        properties.put("artifact_fingerprint", digest());
+        properties.put("artifact_digest", digest());
+        properties.put("materialization_digest", digest());
+        properties.put("destination", object(Map.of(
+                "kind", enumString(List.of("new_ontology", "project_file", "active_source")),
+                "identifier", string(1, 4096)), List.of("kind", "identifier")));
+        properties.put("added_axioms", integer(0, 50_000));
+        properties.put("existing_axioms", integer(0, 50_000));
+        properties.put("asserted_collision_count", integer(0, 50_000));
+        properties.put("single_undo", Map.of("type", "boolean"));
+        properties.put("target_digest", digest());
+        properties.put("new_revision", materializationIdentity().get("properties")
+                instanceof Map<?, ?> all ? ((Map<?, ?>) all).get("model_revision") : Map.of());
+        return object(properties, List.of(
+                "status", "committed", "artifact_id", "artifact_fingerprint",
+                "artifact_digest", "materialization_digest", "destination",
+                "added_axioms", "existing_axioms", "asserted_collision_count",
+                "single_undo"));
     }
 
     private static Map<String, Object> capabilityReport() {

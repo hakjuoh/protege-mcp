@@ -218,9 +218,9 @@ class IsolatedReasonerQcTest {
         QcSuiteExecution execution = QcSuiteTools.execute(context,
                 inferredInvariantsProjectConfig());
 
-        assertEquals(List.of("invariants"),
+        assertEquals(List.of("invariants", "rules"),
                 execution.results.stream().map(result -> result.stage).toList(),
-                "a successful inferences-only run must not add a phantom reasoner stage");
+                "automatic rule validation is distinct from a phantom reasoner stage");
         assertEquals("pass", QcSuiteTools.strictResult(execution, Set.of("invariants"),
                 "error", 1, null, true).get("gate"));
     }

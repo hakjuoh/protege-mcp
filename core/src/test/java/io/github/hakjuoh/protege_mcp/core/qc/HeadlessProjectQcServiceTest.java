@@ -64,14 +64,16 @@ class HeadlessProjectQcServiceTest {
 
         assertEquals(GateStatus.PASS, result.report().gate(), result.output()::toString);
         assertEquals(List.of("interoperability", "reasoner", "profile", "governance",
-                        "structural", "invariants", "cqs", "shacl"),
+                        "structural", "invariants", "cqs", "shacl", "rules"),
                 result.report().stages().stream().map(stage -> stage.execution().stage()).toList());
-        assertEquals(8, result.report().stagesRan());
+        assertEquals(9, result.report().stagesRan());
         assertEquals(Boolean.TRUE, result.output().get("snapshot_consistent"));
         assertEquals("headless", result.output().get("surface"));
         assertTrue(String.valueOf(result.output().get("rdf_dataset_fingerprint"))
                 .startsWith("sha256:"));
         assertEquals(QcStageVerdict.PASS, stage(result, "cqs").verdict());
+        assertEquals(true, ((Map<?, ?>) result.output().get("rule_validation"))
+                .get("compatible"));
     }
 
     @Test
@@ -190,6 +192,22 @@ class HeadlessProjectQcServiceTest {
         assertTrue(stage(result, "reasoner").message().contains("IGNORES rules"));
         assertFalse(result.report().request().requiredStages().contains("reasoner"),
                 "the error must surface even when only inferred CQ data scheduled reasoning");
+    }
+
+    @Test
+    void swrlRulesWithoutAHeadlessReasonerFailClosed() throws Exception {
+        writeRuleRoot();
+        Path policy = writePolicy("[structural]", "");
+
+        HeadlessProjectQcService.Result result = HeadlessProjectQcService.run(
+                new FilesystemProjectWorkspace(policy), null, 25,
+                LocalDate.of(2026, 7, 19));
+
+        assertEquals(GateStatus.ERROR, result.report().gate());
+        assertEquals(QcStageVerdict.ERROR, stage(result, "rules").verdict());
+        assertEquals("rule_validation_reasoner_unavailable",
+                stage(result, "rules").details().get("error_code"));
+        assertTrue(result.report().request().requiredStages().contains("rules"));
     }
 
     private static QcStageExecution stage(HeadlessProjectQcService.Result result, String name) {

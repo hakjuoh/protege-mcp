@@ -37,6 +37,15 @@ public final class HeadlessAccess {
         }
     }
 
+    /** Test model manager routed through the production Swing EDT gateway. */
+    public static OntologyAccess overSwingEdt(OWLModelManager mm) {
+        try {
+            return new OntologyAccess(kitOver(mm), 30_000L);
+        } catch (Exception e) {
+            throw new IllegalStateException("could not build a Swing-routed OntologyAccess", e);
+        }
+    }
+
     /**
      * Like {@link #over}, but every dispatch from {@code firstStalledDispatch} (1-based) onward
      * starts its body only after {@code stallMillis} on a background thread, while the access's

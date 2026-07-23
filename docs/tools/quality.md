@@ -150,6 +150,10 @@ deduplicated order; multiple SHACL graphs are unioned without using Jena's URL r
 convention/path is loaded fail-closed. Every `validation.required_stages` entry must run against the one
 captured ontology revision. Every stage reads one private, no-network copy; one configuration-equivalent
 private reasoner supplies the logical verdict and any requested inferred query graph.
+The bounded non-executing `rules` stage is always included: an empty rule corpus passes, while a non-empty
+SWRL corpus fails closed when no exact reviewed reasoner profile is available. Policy configuration decides
+which other stages are required; `rules` is automatically required for project-QC gating on both live and
+headless surfaces and is never silently omitted from the report.
 The policy's required reasoner is compared against the selection captured at the snapshot boundary with
 the shared reasoner-reference resolution rule (see `set_reasoner`): a version-less policy name such as
 `HermiT` matches the installed `HermiT 1.4.3.456`, while a full display name pins the exact version.

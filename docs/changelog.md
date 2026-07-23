@@ -24,6 +24,27 @@ each section is also published as the body of its
 ## [Unreleased]
 
 ### Added
+- Added the adapter-neutral core of the 0.8 public job runtime. Closed job/result types, complete immutable
+  input identity, exact owner/grant isolation, 15-minute idempotency, bounded admission/retention/artifacts,
+  monotonic cancellation, and adapter-held publication leases now form reusable contracts for the live
+  plugin. Guard leases span audit intent, the commit CAS, irreversible work, and terminal publication;
+  missing leases fail closed, cancellation audit never blocks the tombstone path, and progress audit is
+  capped with terminal emitted/suppressed summaries.
+- Added the live-only `start_job`, `get_job`, `cancel_job`, `list_jobs`, and
+  `export_job_artifact` tools over one bounded two-worker runtime per Protégé window. Classification,
+  project QC, asserted semantic diff, and inference-materialization adapters capture immutable inputs before
+  admission; rejected, duplicate, cancelled, and shutdown tasks release those captures. Exact owner/grant and
+  workspace isolation, revocation cancellation, policy-driven quotas, verified private artifacts, guarded
+  atomic export, and publication-time authorization/revision checks apply throughout. Structural
+  classification explicitly reports unsupported consistency/satisfiability evidence, and materialization
+  fails rather than treating structural traversal as semantic consistency proof.
+- Added preview-first `materialize_inferences` and explicit `commit_materialization` to the live and
+  headless surfaces. Six closed categories fail atomically on unsupported evidence or bounds; owner-local
+  artifacts expire after 30 minutes and bind the complete source, policy, reasoner, provenance, destination,
+  and content identity. Live commits create new ontologies through the Protégé model-manager lifecycle and
+  use one Undo unit for active-source axiom changes, while headless commits use verified
+  serialization, a project lock, backup, and guarded no-overwrite hard-link publication. Exact repeated
+  commits are no-ops.
 - Added `get_reasoner_capabilities` and `validate_rules` to the live and headless surfaces. Reports
   bind to one exact reviewed tuple of factory id/class SHA-256, every class in explicit runtime package
   scopes (including inner classes, Apache Axiom, and replacement-layout AutomataLib), scope count,
@@ -40,7 +61,8 @@ each section is also published as the body of its
   copies a small coherent immutable-axiom snapshot on the model
   thread, and performs runtime-code/configuration identity plus canonicalization off-thread,
   and returns detached DTOs; all incompatible rules remain identifiable beyond the ten-row detail page.
-  Headless stdio and one-shot `validate` reuse the same service and transport-sized result contract.
+  Plugin project QC, headless project QC, one-shot `validate`/`release`, and headless stdio reuse the same
+  automatic rule-validation semantics and transport-sized result contract.
 - Added project-governed `search_external_terms` and `inspect_external_term` tools for one exact OLS4
   provider at a time. Owner-only endpoint bindings, strict HTTPS egress, credential-generation and
   project-bound caching, opaque principal/grant/workspace cursors, bounded typed evidence, final
@@ -87,6 +109,10 @@ each section is also published as the body of its
   use their own revision instead of perturbing ordinary ontology preflight.
 
 ### Tests
+- Added deterministic core job tests for every legal job type and terminal path, type/result mismatches,
+  idempotency and quotas, owner/revocation isolation, cancellation at guard/audit/commit barriers,
+  null and exceptional-release leases, scheduler rejection, progress suppression, artifact cleanup,
+  JSON round trips, and shutdown/late-output fencing.
 - Added exact-version/configuration/runtime-code-tuple mutants, official Protege HermiT/ELK capture, real HermiT inference
   and built-in rejection, structural and ELK hierarchy/assertion/property-chain/consistency/satisfiability/
   incremental fixtures, closed vocabulary/allowlist schemas, every global corpus/render budget, worst-case
@@ -196,15 +222,16 @@ intentionally skipped opt-in performance test.
 - CLI `validate` now captures one offline project snapshot and runs the policy-required subset of the
   eight QC stages with the bundled HermiT, emitting portable JSON, Markdown, JUnit, or SARIF evidence
   with strict gate exit codes.
-- CLI `imports lock` previews or atomically installs deterministic local-import locks, rejects source drift
+- CLI `imports lock` previews or guardedly installs deterministic local-import locks, rejects source drift
   and project escapes, preserves replacement backups, and never trusts an old lock checksum while updating.
 - CLI `release` now runs the shared full-QC/release gate offline, verifies optional baseline bundles, and
   either previews every checksummed artifact or publishes the complete release directory through guarded
   atomic replacement with a verified backup. Concurrent source/output changes and failed commits cannot
   expose a partial bundle; command results contain only project-relative paths.
-- CLI `serve --transport stdio --project FILE` now exposes an eight-tool project-confined headless MCP
-  surface for policy validation, full QC, import-lock verification/generation, release gate/preparation,
-  and audit export. It shares the plugin's 84-tool capability declaration, lists every unavailable live tool explicitly,
+- CLI `serve --transport stdio --project FILE` now exposes an eighteen-tool project-confined headless MCP
+  surface for policy validation, reasoner/rule inspection, inference materialization, SSSOM mappings, full
+  QC, import-lock verification/generation, release gate/preparation, and audit export. It shares the plugin's
+  99-tool capability declaration, lists every unavailable live tool explicitly,
   defaults mutations to dry-run, stays offline, caps inbound/outbound JSON-RPC lines, and keeps stdout clean.
 - Public MCP descriptions are validated to reject internal roadmap/decision identifiers, keeping tool
   documentation focused on supported behavior rather than repository planning codes.
@@ -462,7 +489,8 @@ tools**; guided prompts remain 11.
   memory-only isolated preflight, exact expected-revision commits, policy/asset revalidation, post-confirmation
   read-only checks, and one-broadcast Undo logging. `create_terms` and `create_properties` can use the same path.
 - **Verified artifacts and semantic release evidence:** `save_ontology` adds strict temporary serialize/reload,
-  exact annotated-axiom/header comparison, atomic replacement, backups, checksums, and final live-revision checks.
+  exact annotated-axiom/header comparison, guarded no-overwrite publication, backups, checksums, and final
+  live-revision checks.
   `semantic_diff` classifies asserted header/entity/rename/annotation/lifecycle/axiom changes and conservative
   compatibility without pretending inferred comparison ran.
 - **Deterministic import dependency controls:** `write_import_lock`, `verify_import_lock`, and `validate_catalog`

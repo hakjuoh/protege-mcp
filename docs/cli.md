@@ -50,7 +50,8 @@ differently, but they cannot change the gate or portable identities.
 
 `imports lock` captures the same offline closure and emits a deterministic version-1 lock candidate for
 every resolved local import. `--dry-run` returns the complete candidate without writing. A write uses a
-checksum-guarded sibling stage and atomic replacement; replacing a lock preserves a verified backup.
+checksum-guarded sibling stage and guarded no-overwrite hard-link publication; replacing a lock preserves a
+verified backup.
 `--output` must remain within an existing directory under the project root. A policy-declared lock that
 does not exist may be bootstrapped from local module/catalog mappings. When updating an existing lock,
 its paths may be used only to discover local documents; its old checksums are not trusted and are replaced
@@ -99,6 +100,8 @@ only the project-confined headless operations that share completed core services
 - `validate_project_policy`
 - `get_reasoner_capabilities`
 - `validate_rules`
+- `materialize_inferences`
+- `commit_materialization`
 - `list_mappings`
 - `add_mapping`
 - `remove_mapping`
@@ -133,7 +136,7 @@ Changing `reasoning.timeout_ms` changes the complete runtime identity but not th
 profile when every inference-relevant setting remains identical.
 
 Stdio authentication is the operating system's child-process boundary. The default local profile contains
-the exact capabilities needed by the sixteen supported tools, including `server:admin` for the fixed
+the exact capabilities needed by the eighteen supported tools, including `server:admin` for the fixed
 `export_audit_log` operation, but it has no network or external-filesystem authority. `--capabilities`
 can narrow it further with a comma- or whitespace-separated list of
 exact public scopes, for example:
