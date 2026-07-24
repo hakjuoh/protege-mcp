@@ -105,13 +105,15 @@ final class SecureTargetAnchor implements AutoCloseable {
         SecureDirectoryStream<Path> current = rootHandle;
         boolean complete = false;
         try {
-            for (Path component : relativeParent) {
-                SecureDirectoryStream<Path> next = current.newDirectoryStream(
-                        Path.of(component.toString()), LinkOption.NOFOLLOW_LINKS);
-                if (current != rootHandle) current.close();
-                current = next;
+            if (!relativeParent.toString().isEmpty()) {
+                for (Path component : relativeParent) {
+                    SecureDirectoryStream<Path> next = current.newDirectoryStream(
+                            Path.of(component.toString()), LinkOption.NOFOLLOW_LINKS);
+                    if (current != rootHandle) current.close();
+                    current = next;
+                }
             }
-            Object parentFileKey = attributes(current, Path.of(".")).fileKey();
+            Object parentFileKey = attributes(current).fileKey();
             complete = true;
             return new SecureTargetAnchor(root, rootHandle, current, parent,
                     relativeParent, parentFileKey, normalized.getFileName(),
@@ -1048,6 +1050,13 @@ final class SecureTargetAnchor implements AutoCloseable {
         return view.readAttributes();
     }
 
+    private static BasicFileAttributes attributes(SecureDirectoryStream<Path> stream)
+            throws IOException {
+        BasicFileAttributeView view = stream.getFileAttributeView(BasicFileAttributeView.class);
+        if (view == null) throw new IOException("basic directory attributes are unavailable");
+        return view.readAttributes();
+    }
+
     private void requireAttached() throws IOException {
         for (DirectoryIdentity identity : lexicalDirectories) {
             BasicFileAttributes current = Files.readAttributes(identity.path(),
@@ -1074,13 +1083,15 @@ final class SecureTargetAnchor implements AutoCloseable {
         }
         SecureDirectoryStream<Path> current = rootDirectory;
         try {
-            for (Path component : relativeParent) {
-                SecureDirectoryStream<Path> next = current.newDirectoryStream(
-                        Path.of(component.toString()), LinkOption.NOFOLLOW_LINKS);
-                if (current != rootDirectory) current.close();
-                current = next;
+            if (!relativeParent.toString().isEmpty()) {
+                for (Path component : relativeParent) {
+                    SecureDirectoryStream<Path> next = current.newDirectoryStream(
+                            Path.of(component.toString()), LinkOption.NOFOLLOW_LINKS);
+                    if (current != rootDirectory) current.close();
+                    current = next;
+                }
             }
-            Object currentKey = attributes(current, Path.of(".")).fileKey();
+            Object currentKey = attributes(current).fileKey();
             if (!java.util.Objects.equals(parentFileKey, currentKey)) {
                 throw new IOException("transaction target directory changed after authorization");
             }

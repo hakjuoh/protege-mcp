@@ -38,7 +38,7 @@ final class RuntimeCodeEvidence {
 
     private static final Limits PRODUCTION_LIMITS = new Limits(24L * 1024 * 1024,
             64L * 1024 * 1024, 128L * 1024 * 1024, 4 * 1024 * 1024,
-            6_000, 150_000, 5_000L);
+            6_000, 150_000, 15_000L);
     private static final long MAX_PIN_BYTES = 512L * 1024 * 1024;
     private static final Set<String> OSGI_RESOURCE_PROTOCOLS = Set.of(
             "bundle", "bundleresource", "bundleentry");
