@@ -129,6 +129,7 @@ public final class ToolRegistry {
                 safeOutput, safeError, required));
         ToolSchemaValidator.Compiled successContract = ToolSchemaValidator.compile(safeOutput);
         ToolSchemaValidator.Compiled failureContract = ToolSchemaValidator.compile(safeError);
+        ToolSchemaValidator.Compiled inputContract = ToolSchemaValidator.compile(safeInput);
         BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> guarded =
                 (exchange, request) -> Tools.guard(() -> {
                     AuthenticatedPrincipal principal = principal(exchange);
@@ -137,6 +138,16 @@ public final class ToolRegistry {
                     PrincipalExecutionGate.Lease lease = null;
                     try {
                         requireAuthorized(principal, name, required);
+                        if (request != null) {
+                            List<String> inputViolations = inputContract.violations(arguments);
+                            if (!inputViolations.isEmpty()) {
+                                throw new ToolArgException("invalid_request",
+                                        "Tool '" + name
+                                                + "' arguments violate the advertised input schema.",
+                                        Map.of("violations", inputViolations,
+                                                "effects_prevented", true), false);
+                            }
+                        }
                         if (executions != null) {
                             lease = executions.acquire(principal);
                         }

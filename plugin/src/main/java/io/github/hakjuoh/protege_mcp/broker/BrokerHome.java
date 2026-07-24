@@ -6,6 +6,8 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.LinkOption;
+import java.nio.file.attribute.PosixFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
@@ -95,6 +97,7 @@ public final class BrokerHome {
                 Files.createDirectories(dir);
             }
         }
+        verifyOwnerOnly(dir, DIR_PERMS, "broker home directory");
     }
 
     /**
@@ -107,6 +110,7 @@ public final class BrokerHome {
         Path file = secretFile();
         for (int attempt = 0; attempt < 3; attempt++) {
             if (Files.exists(file)) {
+                verifyOwnerOnly(file, FILE_PERMS, "broker directory secret");
                 String existing = Files.readString(file, StandardCharsets.UTF_8).trim();
                 if (!existing.isEmpty()) {
                     return existing;
@@ -203,6 +207,28 @@ public final class BrokerHome {
             Files.setPosixFilePermissions(file, FILE_PERMS);
         } catch (UnsupportedOperationException ignored) {
             // non-POSIX file system - the directory ACL is the only guard there
+        }
+    }
+
+    /** Existing trust roots are never repaired silently: an insecure owner must fail closed. */
+    private static void verifyOwnerOnly(Path file, Set<PosixFilePermission> expected,
+            String description) throws IOException {
+        if (!Files.getFileStore(file).supportsFileAttributeView("posix")) {
+            return;
+        }
+        if (Files.isSymbolicLink(file)) {
+            throw new IOException(description + " must not be a symbolic link: " + file);
+        }
+        PosixFileAttributes attributes = Files.readAttributes(file, PosixFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.permissions().equals(expected)) {
+            throw new IOException(description + " must be owner-only: " + file);
+        }
+        Path userHome = Path.of(System.getProperty("user.home"));
+        if (Files.exists(userHome, LinkOption.NOFOLLOW_LINKS)
+                && !Files.getOwner(userHome, LinkOption.NOFOLLOW_LINKS).getName()
+                        .equals(attributes.owner().getName())) {
+            throw new IOException(description + " is owned by a different user: " + file);
         }
     }
 }

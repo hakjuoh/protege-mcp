@@ -148,6 +148,26 @@ class McpSession:
             raise HarnessFailure(f"{name} returned an empty response")
         return structured_tool_result(response)
 
+    def list_tools(self) -> list[dict[str, Any]]:
+        if not self.session_id:
+            raise HarnessFailure("MCP session is not initialized")
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self.next_id,
+            "method": "tools/list",
+            "params": {},
+        }
+        self.next_id += 1
+        _, response, _ = http_json(
+            "POST", self.url, self.token, payload, self.session_id
+        )
+        if response is None or "error" in response:
+            raise HarnessFailure(f"tools/list failed: {response!r}")
+        tools = (response.get("result") or {}).get("tools")
+        if not isinstance(tools, list):
+            raise HarnessFailure(f"tools/list returned no tool array: {response!r}")
+        return tools
+
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -170,7 +190,8 @@ def wait_for_instances(base_url: str, token: str, deadline_seconds: int) -> list
     raise HarnessFailure(f"two Protégé windows did not register before the deadline: {last}")
 
 
-def run(base_url: str, token: str, report_path: pathlib.Path) -> None:
+def run(base_url: str, token: str, report_path: pathlib.Path,
+        policy_path: str | None = None) -> None:
     try:
         http_json("GET", f"{base_url}/instances", None)
         raise HarnessFailure("unauthenticated /instances request unexpectedly succeeded")
@@ -252,6 +273,125 @@ def run(base_url: str, token: str, report_path: pathlib.Path) -> None:
         if iri == "http://example.org/live-a"
     )
     target = sessions[target_window]
+    advertised_tools = target.list_tools()
+    advertised_names = {tool.get("name") for tool in advertised_tools}
+    required_names = {
+        "search_external_terms",
+        "list_mappings",
+        "materialize_inferences",
+        "start_job",
+    }
+    require(len(advertised_tools) == 104,
+            f"packaged server advertised {len(advertised_tools)} tools instead of 104")
+    require(required_names.issubset(advertised_names),
+            f"packaged server omitted 0.8 tools: {sorted(required_names - advertised_names)}")
+
+    provider_disabled = target.call(
+        "search_external_terms", {
+            "provider_id": "ols", "query": "cell", "policy_path": policy_path
+        }
+    ) if policy_path else target.call(
+        "search_external_terms", {"provider_id": "ols", "query": "cell"}
+    )
+    require(provider_disabled.get("code") in {
+        "provider_policy_required", "invalid_project_policy", "provider_not_declared"
+    },
+            f"provider was not fail-closed without policy: {provider_disabled}")
+
+    mapping_path = "mappings.sssom.tsv"
+    empty_mapping_args = {"path": mapping_path} if not policy_path else {
+        "policy_path": policy_path
+    }
+    empty_mappings = target.call("list_mappings", empty_mapping_args)
+    mapping = {
+        "subject_id": "http://example.org/live-a#Dog",
+        "predicate_id": "skos:exactMatch",
+        "object_id": "http://example.org/external/Cell",
+        "mapping_justification": "semapv:ManualMappingCuration",
+    }
+    add_mapping_args = {
+        "expected_mapping_revision": empty_mappings["mapping_revision"],
+        "mapping": mapping,
+        "mapping_set_id": "http://example.org/live-mappings",
+        "license": "https://creativecommons.org/licenses/by/4.0/",
+        "confirm": True,
+    }
+    if policy_path:
+        add_mapping_args["policy_path"] = policy_path
+    else:
+        add_mapping_args["path"] = mapping_path
+    added_mapping = target.call("add_mapping", add_mapping_args)
+    require(added_mapping.get("committed") is True,
+            f"live mapping add did not commit: {added_mapping}")
+    listed_args = {"path": mapping_path} if not policy_path else {
+        "policy_path": policy_path
+    }
+    listed_mappings = target.call("list_mappings", listed_args)
+    require(len(listed_mappings.get("items", [])) == 1,
+            f"live mapping list did not expose the added row: {listed_mappings}")
+    mapping_id = listed_mappings["items"][0]["mapping_id"]
+    remove_mapping_args = {
+        "expected_mapping_revision": listed_mappings["mapping_revision"],
+        "mapping_id": mapping_id,
+        "confirm": True,
+    }
+    if policy_path:
+        remove_mapping_args["policy_path"] = policy_path
+    else:
+        remove_mapping_args["path"] = mapping_path
+    removed_mapping = target.call("remove_mapping", remove_mapping_args)
+    require(removed_mapping.get("record_count") == 0,
+            f"live mapping remove did not complete: {removed_mapping}")
+
+    materialization = None
+    job = None
+    if policy_path:
+        target.call("set_reasoner", {"reasoner": "HermiT"})
+        materialization = target.call("materialize_inferences", {
+            "categories": ["subclass_axioms"],
+            "destination": {
+                "kind": "new_ontology",
+                "identifier": "http://example.org/live-a-materialized",
+            },
+            "provenance": {
+                "generator": "protege-mcp-live-harness",
+                "purpose": "0.8.0 packaged smoke test",
+            },
+            "limits": {
+                "max_axioms_per_category": 100,
+                "max_axioms_total": 100,
+                "max_bytes": 1_048_576,
+                "timeout_ms": 120_000,
+            },
+            "policy_path": policy_path,
+        })
+        require(materialization.get("preview_only") is True
+                and materialization.get("live_state_changed") is False,
+                f"live materialization preview changed state: {materialization}")
+
+        accepted = target.call("start_job", {
+            "type": "project_qc",
+            "idempotency_key": "live-0.8.0-project-qc",
+            "request": {"lock_mode": "ignore", "policy_path": policy_path},
+        })
+        job_id = (accepted.get("job") or {}).get("job_id")
+        require(isinstance(job_id, str) and job_id,
+                f"live job acceptance omitted job_id: {accepted}")
+        deadline = time.monotonic() + 90
+        while True:
+            snapshot = target.call("get_job", {"job_id": job_id})
+            job = snapshot.get("job") or {}
+            if job.get("state") in {"succeeded", "failed", "cancelled"}:
+                break
+            if time.monotonic() >= deadline:
+                raise HarnessFailure(f"live project_qc job did not finish: {job}")
+            time.sleep(0.25)
+        require(job.get("state") == "succeeded", f"live project_qc job failed: {job}")
+        listed_jobs = target.call("list_jobs", {"limit": 10})
+        require(any(item.get("job_id") == job_id
+                    for item in listed_jobs.get("jobs", [])),
+                f"completed live job was absent from list_jobs: {listed_jobs}")
+
     term_iri = "http://example.org/live-a#HarnessTerm"
     created = target.call(
         "create_term",
@@ -312,6 +452,14 @@ def run(base_url: str, token: str, report_path: pathlib.Path) -> None:
         },
         "windows": ontology_by_window,
         "server_versions": sorted(server_versions),
+        "tool_count": len(advertised_tools),
+        "tool_checks": {
+            "required_0_8_tools_present": True,
+            "external_provider_fail_closed": True,
+            "mapping_add_list_remove": True,
+            "materialization_preview": materialization is not None,
+            "job_start_poll_list": job is not None,
+        },
         "session_pinning": {"ontology_before": pinned_before, "ontology_after": pinned_after},
         "write_and_undo": {
             "created_iri": term_iri,
@@ -333,8 +481,9 @@ def main() -> None:
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--token", required=True)
     parser.add_argument("--report", type=pathlib.Path, required=True)
+    parser.add_argument("--policy-path")
     args = parser.parse_args()
-    run(args.base_url.rstrip("/"), args.token, args.report)
+    run(args.base_url.rstrip("/"), args.token, args.report, args.policy_path)
 
 
 if __name__ == "__main__":

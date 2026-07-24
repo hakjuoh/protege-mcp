@@ -21,6 +21,7 @@ import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpAsyncServerExchange;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
+import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 
 class ToolRegistryTest {
 
@@ -87,6 +88,22 @@ class ToolRegistryTest {
         assertEquals("result_contract_violation",
                 ((Map<?, ?>) result.structuredContent()).get("code"));
         assertFalse(String.valueOf(result.structuredContent()).contains("wrong"));
+    }
+
+    @Test
+    void liveHandlerRejectsArgumentsThatDoNotMatchItsAdvertisedSchema() {
+        ToolRegistry registry = new ToolRegistry();
+        registry.tool("get_entity", (exchange, request) ->
+                Tools.ok(Map.of("entity", "should not execute")));
+
+        var result = registry.build().get(0).callHandler().apply(
+                ToolTestExchange.localAdmin(),
+                new CallToolRequest("get_entity", Map.of("entity", 42)));
+
+        assertEquals(Boolean.TRUE, result.isError());
+        Map<?, ?> error = (Map<?, ?>) result.structuredContent();
+        assertEquals("invalid_request", error.get("code"));
+        assertEquals(true, ((Map<?, ?>) error.get("details")).get("effects_prevented"));
     }
 
     @Test

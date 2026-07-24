@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.broker;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,6 +55,31 @@ class BrokerHomeTest {
                             || p.name().startsWith("OTHERS")),
                     "broker security state must be owner-only: " + file + " " + filePerms);
         }
+    }
+
+    @Test
+    void preexistingInsecureHomeIsRejectedInsteadOfRepaired() throws Exception {
+        BrokerHome home = home();
+        if (!Files.getFileStore(tmp).supportsFileAttributeView("posix")) return;
+        Files.createDirectories(home.dir());
+        Files.setPosixFilePermissions(home.dir(), Set.of(
+                PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
+                PosixFilePermission.OWNER_EXECUTE, PosixFilePermission.GROUP_READ));
+
+        assertThrows(java.io.IOException.class, home::ensureDirSecret);
+    }
+
+    @Test
+    void preexistingInsecureSecretIsRejectedInsteadOfTrusted() throws Exception {
+        BrokerHome home = home();
+        if (!Files.getFileStore(tmp).supportsFileAttributeView("posix")) return;
+        home.ensureDir();
+        Files.writeString(home.secretFile(), "secret");
+        Files.setPosixFilePermissions(home.secretFile(), Set.of(
+                PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
+                PosixFilePermission.GROUP_READ));
+
+        assertThrows(java.io.IOException.class, home::ensureDirSecret);
     }
 
     @Test

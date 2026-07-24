@@ -306,7 +306,7 @@ public final class McpServerController implements ManagedServer {
      * request outliving {@code stop()} can clobber the blob with a partial snapshot; a fallback-port
      * server is never hydrated, so it never persists at all (its OAuth state stays in memory).
      */
-    void persistOAuthState(String json) {
+    synchronized void persistOAuthState(String json) {
         if (!oauthPersistAllowed) {
             return;
         }
