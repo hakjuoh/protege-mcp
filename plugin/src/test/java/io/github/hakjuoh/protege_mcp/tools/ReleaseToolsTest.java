@@ -208,9 +208,8 @@ class ReleaseToolsTest {
         Map<String, Object> result = structured(callGate(ctx,
                 Map.of("policy_path", policy.toString(), "network", "   ")));
 
-        assertEquals("deny", result.get("network"));
-        assertEquals("error", result.get("gate"), () -> result.toString());
-        assertTrue(String.valueOf(result.get("findings")).contains("imports.remote_backed"));
+        assertEquals("invalid_request", result.get("code"));
+        assertEquals(true, result.get("details") instanceof Map, () -> result.toString());
     }
 
     @Test

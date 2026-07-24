@@ -139,7 +139,7 @@ class WriteProjectPolicyTemplateTest {
         for (Object invalid : List.of("garbage", "2", 2.9, 3, true)) {
             CallToolResult result = call(ctx, Map.of("version", invalid));
             assertEquals(Boolean.TRUE, result.isError(), () -> invalid + ": " + result.content());
-            assertTrue(String.valueOf(result.content()).contains("integer 1 or 2"),
+            assertTrue(String.valueOf(result.content()).contains("invalid_request"),
                     () -> invalid + ": " + result.content());
             assertFalse(Files.exists(temp.resolve(POLICY_RELATIVE)),
                     () -> "invalid version wrote a policy: " + invalid);

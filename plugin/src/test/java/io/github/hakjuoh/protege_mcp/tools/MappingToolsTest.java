@@ -102,7 +102,7 @@ class MappingToolsTest {
 
         CallToolResult unconfirmed = call(context, "add_mapping", add);
         assertEquals(Boolean.TRUE, unconfirmed.isError());
-        assertEquals("confirmation_required", structured(unconfirmed).get("code"));
+        assertEquals("invalid_request", structured(unconfirmed).get("code"));
         assertEquals(true, details(unconfirmed).get("effects_prevented"));
         assertFalse(Files.exists(project.resolve(".protege-mcp/mappings.sssom.tsv")));
 

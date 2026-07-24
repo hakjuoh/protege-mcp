@@ -88,7 +88,7 @@ class ExternalTermToolsTest {
                 "cursor", "opaque", "query", "changed"));
 
         assertEquals(Boolean.TRUE, result.isError());
-        assertEquals("provider_cursor_arguments_conflict", structured(result).get("code"));
+        assertEquals("invalid_request", structured(result).get("code"));
     }
 
     @Test
@@ -342,7 +342,7 @@ class ExternalTermToolsTest {
         CallToolResult refused = call(context, "propose_term_reuse", invalid);
 
         assertEquals(Boolean.TRUE, refused.isError());
-        assertEquals("reuse_operation_invalid", structured(refused).get("code"));
+        assertEquals("invalid_request", structured(refused).get("code"));
         assertEquals(0, gateway.inspectCalls);
 
         Map<String, Object> selfMap = proposalArgs("add_mapping");
@@ -376,7 +376,7 @@ class ExternalTermToolsTest {
         CallToolResult oversizedPaddingRefused = call(
                 context, "propose_term_reuse", oversizedPadding);
         assertEquals(Boolean.TRUE, oversizedPaddingRefused.isError());
-        assertEquals("reuse_operation_invalid",
+        assertEquals("invalid_request",
                 structured(oversizedPaddingRefused).get("code"));
         assertEquals(0, gateway.inspectCalls);
 

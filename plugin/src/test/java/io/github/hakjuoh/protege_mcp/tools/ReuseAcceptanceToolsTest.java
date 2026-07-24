@@ -94,7 +94,7 @@ class ReuseAcceptanceToolsTest {
         CallToolResult unconfirmed = call(fixture.context, Map.of(
                 "proposal_id", issued.id, "proposal_fingerprint", issued.fingerprint));
         assertEquals(Boolean.TRUE, unconfirmed.isError());
-        assertEquals("confirmation_required", structured(unconfirmed).get("code"));
+        assertEquals("invalid_request", structured(unconfirmed).get("code"));
 
         CallToolResult mismatch = call(fixture.context, arguments(
                 issued.id, "sha256:" + "0".repeat(64)));

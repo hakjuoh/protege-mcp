@@ -595,7 +595,7 @@ class ChangeSetToolsTest {
             CallToolResult apply = callRegistered(ctx, "apply_changes", applyArgs,
                     WriteTools::register);
             assertEquals(Boolean.TRUE, apply.isError(), () -> bad + ": " + apply.content());
-            assertTrue(String.valueOf(apply.content()).contains("timeout_ms must be"),
+            assertTrue(String.valueOf(apply.content()).contains("invalid_request"),
                     () -> bad + ": " + apply.content());
 
             Map<String, Object> termArgs = new LinkedHashMap<>();
@@ -605,7 +605,7 @@ class ChangeSetToolsTest {
             CallToolResult terms = callRegistered(ctx, "create_terms", termArgs,
                     CurationTools::register);
             assertEquals(Boolean.TRUE, terms.isError(), () -> bad + ": " + terms.content());
-            assertTrue(String.valueOf(terms.content()).contains("timeout_ms must be"),
+            assertTrue(String.valueOf(terms.content()).contains("invalid_request"),
                     () -> bad + ": " + terms.content());
 
             Map<String, Object> propArgs = new LinkedHashMap<>();
@@ -615,7 +615,7 @@ class ChangeSetToolsTest {
             CallToolResult props = callRegistered(ctx, "create_properties", propArgs,
                     CurationTools::register);
             assertEquals(Boolean.TRUE, props.isError(), () -> bad + ": " + props.content());
-            assertTrue(String.valueOf(props.content()).contains("timeout_ms must be"),
+            assertTrue(String.valueOf(props.content()).contains("invalid_request"),
                     () -> bad + ": " + props.content());
         }
         assertEquals(axiomsBefore, ontology.getAxiomCount(),

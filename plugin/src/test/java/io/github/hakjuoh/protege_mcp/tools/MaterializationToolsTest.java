@@ -141,7 +141,7 @@ class MaterializationToolsTest {
                 "artifact_id", artifact.get("artifact_id"),
                 "artifact_fingerprint", artifact.get("artifact_fingerprint")));
         assertEquals(true, unconfirmed.isError());
-        assertEquals("confirmation_required",
+        assertEquals("invalid_request",
                 ((Map<?, ?>) unconfirmed.structuredContent()).get("code"));
 
         Map<String, Object> committed = success(call(context, "commit_materialization", Map.of(

@@ -245,10 +245,8 @@ class ProjectQcLockModeTest {
 
     @Test
     void theLegacySuiteRefusesLockModeExplicitlyAndRejectsInvalidValues() {
-        // The server registers tools with input validation off, so the catalog enum is advisory:
-        // the legacy (no policy_path) run_qc_suite branch must itself reject an invalid value and
-        // must refuse verify/required explicitly — it performs no lock verification, and a silent
-        // pass would read as "the lock was checked".
+        // The live registry enforces the catalog enum before the legacy handler runs. The
+        // policy-backed path remains the supported surface for explicit lock verification.
         ToolContext ctx = new ToolContext(null, null);
         for (String mode : List.of("verify", "required")) {
             io.modelcontextprotocol.spec.McpSchema.CallToolResult refused =
@@ -262,7 +260,7 @@ class ProjectQcLockModeTest {
         io.modelcontextprotocol.spec.McpSchema.CallToolResult invalid =
                 callSuite(ctx, Map.of("lock_mode", "banana"));
         assertEquals(Boolean.TRUE, invalid.isError(), () -> String.valueOf(invalid.content()));
-        assertTrue(String.valueOf(invalid.content()).contains("Invalid lock_mode"),
+            assertTrue(String.valueOf(invalid.content()).contains("invalid_request"),
                 () -> String.valueOf(invalid.content()));
     }
 

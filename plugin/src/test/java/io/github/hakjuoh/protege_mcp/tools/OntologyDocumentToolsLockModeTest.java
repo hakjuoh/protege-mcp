@@ -258,7 +258,7 @@ class OntologyDocumentToolsLockModeTest {
         badLock.put("lock_mode", "maybe");
         CallToolResult lockRejected = call(ctx, "load_ontology", badLock);
         assertEquals(Boolean.TRUE, lockRejected.isError());
-        assertTrue(String.valueOf(lockRejected.content()).contains("Invalid lock_mode"),
+        assertTrue(String.valueOf(lockRejected.content()).contains("invalid_request"),
                 () -> String.valueOf(lockRejected.content()));
 
         Map<String, Object> badNetwork = new LinkedHashMap<>();
@@ -266,7 +266,7 @@ class OntologyDocumentToolsLockModeTest {
         badNetwork.put("network", "offline");
         CallToolResult networkRejected = call(ctx, "load_ontology", badNetwork);
         assertEquals(Boolean.TRUE, networkRejected.isError());
-        assertTrue(String.valueOf(networkRejected.content()).contains("Invalid network"),
+        assertTrue(String.valueOf(networkRejected.content()).contains("invalid_request"),
                 () -> String.valueOf(networkRejected.content()));
 
         // network=allow + lock_mode=verify end-to-end through the registered handler: a local
