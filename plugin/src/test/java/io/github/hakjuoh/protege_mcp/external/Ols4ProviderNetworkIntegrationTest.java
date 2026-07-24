@@ -15,8 +15,8 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.RecordedRequest;
+import mockwebserver3.MockResponse;
+import mockwebserver3.RecordedRequest;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -29,7 +29,7 @@ class Ols4ProviderNetworkIntegrationTest {
     @Test
     void adapterRunsThroughPinnedTlsExecutorForSearchRetryAndInspection() throws Exception {
         try (ProviderTlsFixture tls = new ProviderTlsFixture("127.0.0.1")) {
-            tls.server.enqueue(new MockResponse().setResponseCode(503).setBody("unavailable"));
+            tls.server.enqueue(new MockResponse.Builder().code(503).body("unavailable").build());
             tls.server.enqueue(json("""
                     {"response":{"numFound":1,"start":0,"docs":[
                       {"iri":"https://example.org/EFO_1","ontology_name":"efo",
@@ -84,12 +84,12 @@ class Ols4ProviderNetworkIntegrationTest {
             RecordedRequest retriedSearch = tls.server.takeRequest();
             RecordedRequest term = tls.server.takeRequest();
             RecordedRequest ontology = tls.server.takeRequest();
-            assertEquals("cell death", firstSearch.getRequestUrl().queryParameter("q"));
-            assertEquals("cell death", retriedSearch.getRequestUrl().queryParameter("q"));
-            assertEquals("efo", retriedSearch.getRequestUrl().queryParameter("ontology"));
-            assertTrue(term.getPath().contains("https%253A%252F%252Fexample.org%252FEFO_1"),
-                    term::getPath);
-            assertEquals("/ols4/api/ontologies/efo?lang=en", ontology.getPath());
+            assertEquals("cell death", firstSearch.getUrl().queryParameter("q"));
+            assertEquals("cell death", retriedSearch.getUrl().queryParameter("q"));
+            assertEquals("efo", retriedSearch.getUrl().queryParameter("ontology"));
+            assertTrue(term.getTarget().contains("https%253A%252F%252Fexample.org%252FEFO_1"),
+                    term::getTarget);
+            assertEquals("/ols4/api/ontologies/efo?lang=en", ontology.getTarget());
             assertEquals(4, gates.size());
             URI networkOrigin = URI.create("https://127.0.0.1:" + tls.server.getPort());
             assertTrue(gates.stream().allMatch(value -> value.equals(networkOrigin)));
@@ -97,7 +97,7 @@ class Ols4ProviderNetworkIntegrationTest {
     }
 
     private static MockResponse json(String body) {
-        return new MockResponse().setResponseCode(200)
-                .setHeader("Content-Type", "application/json").setBody(body);
+        return new MockResponse.Builder().code(200)
+                .setHeader("Content-Type", "application/json").body(body).build();
     }
 }

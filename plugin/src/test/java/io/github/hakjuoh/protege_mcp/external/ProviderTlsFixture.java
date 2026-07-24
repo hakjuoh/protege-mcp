@@ -4,7 +4,7 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.net.URI;
 
-import okhttp3.mockwebserver.MockWebServer;
+import mockwebserver3.MockWebServer;
 import okhttp3.tls.HandshakeCertificates;
 import okhttp3.tls.HeldCertificate;
 
@@ -27,7 +27,7 @@ final class ProviderTlsFixture implements AutoCloseable {
                 .heldCertificate(certificate).build();
         HandshakeCertificates clientCertificates = new HandshakeCertificates.Builder()
                 .addTrustedCertificate(certificate.certificate()).build();
-        server.useHttps(serverCertificates.sslSocketFactory(), false);
+        server.useHttps(serverCertificates.sslSocketFactory());
         server.start(InetAddress.getLoopbackAddress(), 0);
         engine = new PinnedHttpsEngine(clientCertificates.sslSocketFactory(),
                 clientCertificates.trustManager());
