@@ -126,11 +126,11 @@ public final class JobToolSchemas {
                                 "max_bytes", "timeout_ms")),
                 "policy_path", string(1, 4096)),
                 List.of("categories", "destination", "provenance", "limits"));
-        Map<String, Map<String, Object>> requests = Map.of(
-                "classification", classification,
-                "project_qc", projectQc,
-                "semantic_diff", semanticDiff,
-                "inference_materialization", materialization);
+        Map<String, Map<String, Object>> requests = new LinkedHashMap<>();
+        requests.put("classification", classification);
+        requests.put("project_qc", projectQc);
+        requests.put("semantic_diff", semanticDiff);
+        requests.put("inference_materialization", materialization);
         Map<String, Object> schema = object(Map.of(
                 "type", enumString(java.util.Arrays.stream(JobType.values())
                         .map(JobType::id).toList()),

@@ -191,6 +191,7 @@ class ReasonerCancellationProbeTest {
                 ReasonerCancellationProbeTest.class.getClassLoader(),
                 new Class<?>[] {OWLReasoner.class},
                 (proxy, method, args) -> switch (method.getName()) {
+                    case "getBufferingMode" -> BufferingMode.BUFFERING;
                     case "isConsistent", "interrupt", "dispose" ->
                             call.invoke(method.getName(), args);
                     case "toString" -> "TestReasoner";
