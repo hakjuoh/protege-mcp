@@ -60,7 +60,7 @@
         <jena.version>4.10.0</jena.version>
         <commons.csv.version>1.14.1</commons.csv.version>
         <!-- Keep commons-csv's transitive utilities converged with OWLAPI's graph. -->
-        <commons.io.version>2.20.0</commons.io.version>
+        <commons.io.version>2.22.0</commons.io.version>
         <commons.codec.version>1.22.0</commons.codec.version>
         <okhttp.version>4.12.0</okhttp.version>
 
