@@ -7,6 +7,9 @@
 > The milestone names below preserve the identifiers used before the 0.7.1 re-baseline. M6B external
 > term reuse and SSSOM mapping plus all of M8N are committed to the 0.8.0 scope; the remaining milestone
 > names identify deferred product tracks, not additional 0.8.0 commitments.
+>
+> Release-readiness evidence for 0.8.0 is complete: the cross-surface contracts, enforced performance
+> workloads, packaged plugin, and live Protégé/MCP smoke harness all pass locally.
 
 ## 1. Scope
 
@@ -90,7 +93,7 @@ Implementation proceeds in this order:
 6. **Delivered:** add materialization preview/artifacts, then explicit ontology/file commit paths.
 7. **Delivered:** add the job contracts/runtime with classification, project QC, semantic diff, and
    materialization jobs.
-8. Complete cross-surface, performance, packaged-plugin, and live Protégé evidence.
+8. **Delivered:** complete cross-surface, performance, packaged-plugin, and live Protégé evidence.
 
 Each numbered implementation slice includes production code, adversarial and regression tests, docs, and
 the applicable compatibility snapshots. Before its commit, three independent reviewers and `claude_review`

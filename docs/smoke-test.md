@@ -196,7 +196,7 @@ at the repository root so the project root spans all modules.
 | 85 | Bind two prefix names to one namespace, call `remove_prefix` for one name, and query using the survivor | only the requested name disappears; the same-namespace sibling and standard `rdf`/`rdfs`/`owl`/`xsd` prefixes remain usable |
 | 86 | Commit one multi-operation change set and call `undo_change` once | every committed operation is reverted together; an anomalous multi-entry history surfaces `undo_log_warning` |
 
-### 0.8.0 — governed SSSOM mapping sidecar
+### 0.8.0 — external reuse, mappings, reasoning, and jobs
 
 | # | Step | Expect |
 | --- | --- | --- |
