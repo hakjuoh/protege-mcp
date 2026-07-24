@@ -21,7 +21,7 @@ each section is also published as the body of its
 
 ---
 
-## [0.8.0] - 2026-07-23
+## [0.8.0] - 2026-07-24
 
 ### Added
 - Added the adapter-neutral core of the 0.8 public job runtime. Closed job/result types, complete immutable

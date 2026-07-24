@@ -5,7 +5,7 @@ All notable changes to **Protégé MCP** are documented here. The format is base
 [Semantic Versioning](https://semver.org/). Each release's section is published verbatim as the body of
 its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the release workflow.
 
-## [0.8.0] - 2026-07-23
+## [0.8.0] - 2026-07-24
 
 ### Added
 - Added the adapter-neutral core of the 0.8 public job runtime. Closed job/result types, complete immutable
