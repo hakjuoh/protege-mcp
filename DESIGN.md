@@ -1,6 +1,6 @@
 # Protégé MCP — Current Design
 
-> Architecture snapshot for release 0.7.2 plus the implemented, unreleased 0.8.0 slices. User-facing installation and operation are documented at
+> Architecture snapshot for release 0.8.0. User-facing installation and operation are documented at
 > <https://hakjuoh.github.io/protege-mcp/>. Historical feature delivery is recorded in
 > [`CHANGELOG.md`](CHANGELOG.md); unimplemented work is tracked in [`PLAN.md`](PLAN.md).
 
@@ -12,7 +12,7 @@ in-Protégé Ontology Assistant and a headless CLI for reproducible project vali
 
 The design has three execution surfaces:
 
-- The **live plugin** serves 99 MCP tools and 11 prompts over authenticated Streamable HTTP. Reads and writes
+- The **live plugin** serves 104 MCP tools and 11 prompts over authenticated Streamable HTTP. Reads and writes
   operate on the active `OWLModelManager`; ontology changes are visible immediately and join Protégé's Undo
   stack, except for the explicit document-format prefix-map operations described in section 7.3.
 - The **Ontology Assistant** drives an installed `claude` or `codex` CLI back through the live plugin's MCP
@@ -30,11 +30,11 @@ The Java 17 Maven reactor has three modules:
 
 | Module | Artifact | Responsibility |
 | --- | --- | --- |
-| `core` | `protege-mcp-core-0.7.2.jar` | Protégé-free contracts, policy, authorization metadata, audit primitives, OWL/QC/diff/release services, and headless workspace abstractions |
-| `plugin` | `protege-mcp-0.7.2.jar` | OSGi bundle: Protégé lifecycle/UI adapters, live tools/prompts, HTTP/OAuth server, shared broker, and Ontology Assistant |
-| `cli` | `protege-mcp-cli-0.7.2-all.jar` | Executable shaded CLI with OWLAPI, HermiT, headless workspace, release commands, and bounded stdio MCP server |
+| `core` | `protege-mcp-core-0.8.0.jar` | Protégé-free contracts, policy, authorization metadata, audit primitives, OWL/QC/diff/release services, and headless workspace abstractions |
+| `plugin` | `protege-mcp-0.8.0.jar` | OSGi bundle: Protégé lifecycle/UI adapters, live tools/prompts, HTTP/OAuth server, shared broker, and Ontology Assistant |
+| `cli` | `protege-mcp-cli-0.8.0-all.jar` | Executable shaded CLI with OWLAPI, HermiT, headless workspace, release commands, and bounded stdio MCP server |
 
-The current bundle version **`0.7.2`** and MCP server identity `SERVER_VERSION=0.7.2` are checked by
+The current bundle version **`0.8.0`** and MCP server identity `SERVER_VERSION=0.8.0` are checked by
 `scripts/check-version-consistency.sh` together with the POMs, plugin descriptor, CLI, and documentation.
 
 The dependency direction is:

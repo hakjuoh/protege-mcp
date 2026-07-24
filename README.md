@@ -30,6 +30,8 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 
 - **104 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
   govern, extract modules, run SWRL rules, SPARQL and SHACL, and reason.
+- **0.8.0 release capabilities** — governed SSSOM mappings, external-term reuse proposals, exact reasoner
+  capability reports, preview-first inference materialization, and bounded asynchronous jobs.
 - **Enforced project boundaries** (`0.6.1`) — direct paths are confined to the canonical project root
   with request-scoped filesystem capabilities, policy network/import controls block unapproved fetches,
   locked-import checksums are automatic gates, and verified rollback rejects a failing delta before it

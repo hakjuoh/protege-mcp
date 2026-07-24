@@ -12,7 +12,8 @@ All **104 tools** the MCP server exposes, grouped by task. Each category page do
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
-Version 0.7.2 adds exact prefix removal to the 84-tool v0.7.1 surface while retaining its deterministic
+Version 0.8.0 adds governed SSSOM mappings, external-term reuse proposals, reasoner/materialization
+controls, and bounded asynchronous jobs to the 85-tool v0.7.2 surface while retaining its deterministic
 preview, impact, release, project-boundary, audit, and isolated-preflight guarantees.
 
 ## Table of contents

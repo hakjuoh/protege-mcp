@@ -1,6 +1,6 @@
 # Testing & method-level coverage
 
-Tested source version: **`0.7.2`**.
+Tested source version: **`0.8.0`**.
 
 This document describes the headless unit-test suite added to make the codebase safe to refactor
 aggressively. Every pure/decision-making seam that can run without a live Protégé/OSGi/GUI runtime is

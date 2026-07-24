@@ -21,7 +21,7 @@ each section is also published as the body of its
 
 ---
 
-## [Unreleased]
+## [0.8.0] - 2026-07-23
 
 ### Added
 - Added the adapter-neutral core of the 0.8 public job runtime. Closed job/result types, complete immutable
@@ -39,12 +39,14 @@ each section is also published as the body of its
   classification explicitly reports unsupported consistency/satisfiability evidence, and materialization
   fails rather than treating structural traversal as semantic consistency proof.
 - Added preview-first `materialize_inferences` and explicit `commit_materialization` to the live and
-  headless surfaces. Six closed categories fail atomically on unsupported evidence or bounds; owner-local
-  artifacts expire after 30 minutes and bind the complete source, policy, reasoner, provenance, destination,
-  and content identity. Live commits create new ontologies through the Protégé model-manager lifecycle and
-  use one Undo unit for active-source axiom changes, while headless commits use verified
-  serialization, a project lock, backup, and guarded no-overwrite hard-link publication. Exact repeated
-  commits are no-ops.
+  headless surfaces. Six closed inference categories require exact supported capability evidence and are
+  discarded atomically on enumeration, timeout, count, or byte failure. Private owner-local artifacts bind
+  model, closure, import, mapping, policy, reasoner, destination, provenance, and verified content identities
+  and expire after 30 minutes. Live commits recheck the complete identity, create new ontologies through the
+  Protégé model-manager lifecycle, and apply active-source axiom changes as one Undo unit; headless commits reject project inputs, verify
+  serialization, take the project lock, preserve a checksum backup, and publish a project file through
+  guarded no-overwrite hard-link creation. Stable provenance IRIs and exact-pair idempotence make repeated
+  commits no-ops.
 - Added `get_reasoner_capabilities` and `validate_rules` to the live and headless surfaces. Reports
   bind to one exact reviewed tuple of factory id/class SHA-256, every class in explicit runtime package
   scopes (including inner classes, Apache Axiom, and replacement-layout AutomataLib), scope count,
