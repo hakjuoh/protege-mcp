@@ -35,8 +35,12 @@ public final class ReasonerCapabilityRegistry {
             "sha256:41d6c9cdd95485aeee392c6a247e6da22428ed92cad7a5ebbe60953a043f4239";
     private static final String HERMIT_MODULAR_CODE =
             "sha256:e2d7c9deb0b9400f4cd6b493e2fb4a7c4a0b090a432b7ccae7fd0854c9c8d755";
+    private static final String HERMIT_MODULAR_CODE_JAVA17 =
+            "sha256:43684926f814d6df47ee431700def9d3aedbc26ef1fea1bb2183dd1000f4c692";
     private static final String HERMIT_SHADED_CODE =
             "sha256:c928f88672398c60bcf6b4445a5c753cf41accb4ec0f993042292ba9a1e6d1c8";
+    private static final String HERMIT_SHADED_CODE_JAVA17 =
+            "sha256:965c59092c1ae92a7f3abd7e4cd545bf2d3e248a491cae279c87deb78f9c3cf7";
     private static final String STRUCTURAL_CODE =
             "sha256:6b9d0eb05e45400684f6f2802d6873b5557451676d52d6a809c21e85a51bbcf4";
     private static final String ELK_CODE =
@@ -76,7 +80,15 @@ public final class ReasonerCapabilityRegistry {
                     "org.semanticweb.owlapi.reasoner.SimpleConfiguration", "owlapi_standard",
                     SIMPLE_SEMANTIC, "BUFFERING"),
             variant(ProfileKind.HERMIT, "org.semanticweb.HermiT.ReasonerFactory",
+                    HERMIT_BINARY_DIGEST, HERMIT_SHADED_CODE_JAVA17, HERMIT_SHADED_CODE_SCOPES, 3_118,
+                    "org.semanticweb.owlapi.reasoner.SimpleConfiguration", "owlapi_standard",
+                    SIMPLE_SEMANTIC, "BUFFERING"),
+            variant(ProfileKind.HERMIT, "org.semanticweb.HermiT.ReasonerFactory",
                     HERMIT_BINARY_DIGEST, HERMIT_MODULAR_CODE, HERMIT_SHADED_CODE_SCOPES, 2_722,
+                    "org.semanticweb.owlapi.reasoner.SimpleConfiguration", "owlapi_standard",
+                    SIMPLE_SEMANTIC, "BUFFERING"),
+            variant(ProfileKind.HERMIT, "org.semanticweb.HermiT.ReasonerFactory",
+                    HERMIT_BINARY_DIGEST, HERMIT_MODULAR_CODE_JAVA17, HERMIT_SHADED_CODE_SCOPES, 2_722,
                     "org.semanticweb.owlapi.reasoner.SimpleConfiguration", "owlapi_standard",
                     SIMPLE_SEMANTIC, "BUFFERING"),
             variant(ProfileKind.STRUCTURAL,

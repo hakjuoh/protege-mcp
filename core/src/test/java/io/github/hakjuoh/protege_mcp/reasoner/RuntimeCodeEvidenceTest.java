@@ -76,6 +76,23 @@ class RuntimeCodeEvidenceTest {
     }
 
     @Test
+    void codeSourcePinSupportsExplodedClassDirectories() throws Exception {
+        Path classes = temp.resolve("classes");
+        Files.createDirectories(classes.resolve("rationals"));
+        Files.write(classes.resolve("rationals/Automaton.class"), bytes(1, 2, 3));
+        RuntimeCodeEvidence.CodeSourcePin original = RuntimeCodeEvidence.pin(
+                RuntimeCodeEvidenceTest.class, classes.toUri().toURL());
+
+        Files.write(classes.resolve("rationals/Automaton.class"), bytes(3, 2, 1));
+        RuntimeCodeEvidence.CodeSourcePin changed = RuntimeCodeEvidence.pin(
+                RuntimeCodeEvidenceTest.class, classes.toUri().toURL());
+
+        assertEquals(original.bytes(), changed.bytes());
+        assertNotEquals(original.contentDigest(), changed.contentDigest());
+        assertNotEquals(original, changed);
+    }
+
+    @Test
     void mixedDirectNestedAndMultiReleaseClassesAreAllAttestedDeterministically()
             throws Exception {
         byte[] nested = jar(Map.of("scope/Nested.class", bytes(3, 4, 5)));

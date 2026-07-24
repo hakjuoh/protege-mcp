@@ -256,22 +256,26 @@ final class RuntimeCodeEvidence {
             if (container == null) {
                 BasicFileAttributes attributes = Files.readAttributes(path,
                         BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                if (!attributes.isRegularFile() || attributes.isSymbolicLink()
-                        || attributes.fileKey() == null) {
+                if (attributes.isSymbolicLink() || attributes.fileKey() == null) return null;
+                if (attributes.isDirectory()) {
+                    container = pinDirectory(path, attributes, budget);
+                } else if (attributes.isRegularFile()) {
+                    String contentDigest = digestRegularFile(
+                            path, PRODUCTION_LIMITS.maxContainerBytes, budget);
+                    BasicFileAttributes after = Files.readAttributes(path,
+                            BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                    if (!attributes.fileKey().equals(after.fileKey())
+                            || attributes.size() != after.size()
+                            || !attributes.lastModifiedTime().equals(after.lastModifiedTime())) {
+                        return null;
+                    }
+                    container = new ContainerPin(String.valueOf(attributes.fileKey()),
+                            attributes.size(), attributes.lastModifiedTime().toMillis(),
+                            contentDigest);
+                } else {
                     return null;
                 }
-                String contentDigest = digestRegularFile(
-                        path, PRODUCTION_LIMITS.maxContainerBytes, budget);
-                BasicFileAttributes after = Files.readAttributes(path,
-                        BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                if (!attributes.fileKey().equals(after.fileKey())
-                        || attributes.size() != after.size()
-                        || !attributes.lastModifiedTime().equals(after.lastModifiedTime())) {
-                    return null;
-                }
-                container = new ContainerPin(String.valueOf(attributes.fileKey()),
-                        attributes.size(), attributes.lastModifiedTime().toMillis(),
-                        contentDigest);
+                if (container == null) return null;
                 containers.put(locationKey, container);
             }
             return new CodeSourcePin(anchor, locationKey, container.fileKey(),
@@ -283,6 +287,49 @@ final class RuntimeCodeEvidence {
             return null;
         }
         return null;
+    }
+
+    private static ContainerPin pinDirectory(Path root, BasicFileAttributes before,
+            PinBudget budget) throws IOException {
+        MessageDigest digest = sha256();
+        long bytes = 0;
+        try (var paths = Files.walk(root)) {
+            for (Path path : paths.sorted().toList()) {
+                if (path.equals(root)) continue;
+                BasicFileAttributes attributes = Files.readAttributes(path,
+                        BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (attributes.isSymbolicLink()) {
+                    throw new IOException("runtime-code directory contains a symbolic link");
+                }
+                if (!attributes.isRegularFile()) continue;
+                if (attributes.fileKey() == null) return null;
+                String relative = root.relativize(path).toString().replace(
+                        path.getFileSystem().getSeparator(), "/");
+                String contentDigest = digestRegularFile(
+                        path, PRODUCTION_LIMITS.maxContainerBytes, budget);
+                BasicFileAttributes after = Files.readAttributes(path,
+                        BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (!attributes.fileKey().equals(after.fileKey())
+                        || attributes.size() != after.size()
+                        || !attributes.lastModifiedTime().equals(after.lastModifiedTime())) {
+                    return null;
+                }
+                add(digest, relative);
+                add(digest, String.valueOf(attributes.fileKey()));
+                add(digest, String.valueOf(attributes.size()));
+                add(digest, String.valueOf(attributes.lastModifiedTime().toMillis()));
+                add(digest, contentDigest);
+                bytes = Math.addExact(bytes, attributes.size());
+            }
+        }
+        BasicFileAttributes after = Files.readAttributes(root,
+                BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!before.fileKey().equals(after.fileKey())
+                || !before.lastModifiedTime().equals(after.lastModifiedTime())) {
+            return null;
+        }
+        return new ContainerPin(String.valueOf(before.fileKey()), bytes,
+                before.lastModifiedTime().toMillis(), hex(digest));
     }
 
     private static String digestRegularFile(

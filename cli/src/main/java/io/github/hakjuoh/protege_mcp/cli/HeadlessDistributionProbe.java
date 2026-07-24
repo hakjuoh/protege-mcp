@@ -83,8 +83,10 @@ public final class HeadlessDistributionProbe {
                 "shaded HermiT runtime did not match the reviewed capability profile");
         require(identity.reviewedCodeClassCount() == 3_118,
                 "shaded HermiT reviewed class count changed");
-        require("sha256:c928f88672398c60bcf6b4445a5c753cf41accb4ec0f993042292ba9a1e6d1c8"
-                        .equals(identity.reviewedCodeDigest()),
+        require(Set.of(
+                "sha256:c928f88672398c60bcf6b4445a5c753cf41accb4ec0f993042292ba9a1e6d1c8",
+                "sha256:965c59092c1ae92a7f3abd7e4cd545bf2d3e248a491cae279c87deb78f9c3cf7")
+                        .contains(identity.reviewedCodeDigest()),
                 "shaded HermiT reviewed code digest changed");
     }
 
