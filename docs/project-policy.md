@@ -438,6 +438,12 @@ adds exact prefix removal, bringing the current surface to 85 tools + 11 prompts
 and headless snapshots now protect the complete pre-0.8 boundary in addition to the 0.5.0 compatibility
 checks.
 
+Version 0.8.0 adds 19 live-plugin tools — six SSSOM mapping tools, four external-term/reuse tools, four
+reasoner/materialization tools, and five asynchronous-job tools — bringing the live surface to 104 tools +
+11 prompts. The headless surface adds the six mapping tools and four synchronous reasoner/materialization
+tools, bringing it from eight tools to 18; external-provider networking and asynchronous jobs remain
+plugin-only. Immutable 0.8.0 plugin/headless snapshots protect both adapters' released contracts.
+
 Maintainers can generate a new historical baseline with:
 
 ```bash

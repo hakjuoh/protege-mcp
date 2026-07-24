@@ -160,6 +160,12 @@ The top-level [Prompts](../prompts/) guide packages these flows for one-click us
 `list_mappings` · `add_mapping` · `remove_mapping` · `import_sssom` · `export_sssom` ·
 `validate_mappings`
 
+### [External terms](external-terms.html)
+`search_external_terms` · `inspect_external_term` · `propose_term_reuse` · `accept_reuse_proposal`
+
+### [Asynchronous jobs](jobs.html)
+`start_job` · `get_job` · `cancel_job` · `list_jobs` · `export_job_artifact`
+
 ### Cross-cutting reference
 - [**Axiom types**](axiom-types.html) — the structured `axiom_type` operand catalog used by
   `add_axiom`, `remove_axiom`, `preview_changes`, `apply_changes`, `explain_entailment`, and

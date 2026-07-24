@@ -6,17 +6,18 @@ nav_order: 9
 # Commercial ontology platform interoperability
 {: .no_toc }
 
-Protégé MCP 0.7.2 can build and verify a release bundle for exchange with commercial ontology and
+Protégé MCP 0.8.0 can build and verify a release bundle for exchange with commercial ontology and
 knowledge-graph platforms, but it does **not** ship a vendor-specific connector. The supported boundary
-is a versioned RO-Crate project profile, deterministic offline project QC, import locking, release
-manifests/reports, verified file exchange, and user-maintained target automation. Live bidirectional
-synchronization, remote revision mapping, and cross-product transactions remain roadmap work.
+is a versioned RO-Crate project profile, deterministic offline project QC, import locking, governed SSSOM
+mapping sidecars, live-plugin OLS4 term evidence, release manifests/reports, verified file exchange, and
+user-maintained target automation. Live bidirectional synchronization, remote revision mapping, vendor
+publication, and cross-product transactions remain roadmap work.
 
-The Protégé MCP integration boundary was updated on **2026-07-20**; the external product landscape was
+The Protégé MCP integration boundary was updated on **2026-07-24**; the external product landscape was
 reviewed against the official sources below on **2026-07-15**. Vendor capabilities, editions, APIs, and
 licensing can change; an entry here is neither a compatibility certification nor an endorsement.
 
-## Current 0.7.2 boundary
+## Current 0.8.0 boundary
 
 | Capability | Portable today | Boundary or caveat |
 | --- | --- | --- |
@@ -27,16 +28,19 @@ licensing can change; an entry here is neither a compatibility certification nor
 | SPARQL invariants and competency questions | Usually | The SPARQL query is portable; Protégé MCP's CQ headers, aggregate contract, bounds, and required-stage behavior are not automatically understood by another product. |
 | Asserted semantic comparison | Yes | Export two documents and use `semantic_diff`, or the headless CLI `diff`. The headless comparison deliberately excludes imported axioms and does not perform inferred comparison. |
 | Policy validation in CI | Yes | The headless CLI `validate` runs the full offline project gate with the maintained HermiT baseline; reusable CI preserves JSON, JUnit, SARIF, import-lock, and release-preview evidence. Commercial products need not consume the YAML execution overlay. |
+| SSSOM mapping sidecar | Yes | `list_mappings`, `validate_mappings`, and the guarded import/export/mutation tools work through the live plugin and headless surfaces. The sidecar is a Protégé MCP governance/interchange record, not OWL equivalence axioms or a remote revision. |
+| External term evidence | Yes, live plugin only | The supported `ols4` profile provides policy-governed search/inspection and explicit reuse proposals. Provider networking is not exposed by headless stdio or the one-shot CLI, and no provider result publishes to a commercial platform. |
 | Verified release preparation | Yes, locally | `run_release_gate`/`prepare_release` and CLI `release` produce a checksum-verified ontology artifact, manifest, reports, policy snapshot, validation assets, and crate metadata through a failure-atomic workspace transaction. |
 | Target upload/publication | Manually or with user automation | Uploading a verified bundle through a vendor REST, RDF repository, command-line, or import interface is outside the product contract. An HTTP success is not semantic read-back verification. |
 | Fingerprint v2 and import lock | As attached evidence | These remain Protégé MCP contracts, distinct from the standard RDFC dataset fingerprint. A target may store them as release metadata but must not reinterpret them as its native revision or dependency lock. |
 | Workspace revision and change sets | No | `get_model_revision` and preview/commit/discard bind to one live Protégé workspace. They do not map to a remote product's transaction, branch, or approval id. |
 | MCP federation | No | An AI client may connect to Protégé MCP and another product's MCP server separately. MCP alone supplies neither atomic cross-server commit nor automatic synchronization. |
 
-The absence of a vendor adapter was rechecked in the 0.7.2 source: no TopBraid, metaphactory,
+The absence of a vendor adapter was rechecked in the 0.8.0 source: no TopBraid, metaphactory,
 PoolParty, GraphDB, Stardog, or Semaphore client is present. The headless CLI supports policy/full-QC
-validation, import-lock creation, release gate/preparation, asserted/manifest-backed diff, and eight
-project tools over stdio; none is a remote-platform publishing command.
+validation, reasoner/rule inspection, inference materialization, SSSOM mapping management, import-lock
+creation, release gate/preparation, asserted/manifest-backed diff, and eighteen project tools over stdio;
+none is a remote-platform publishing command.
 
 ## Recommended integration shape
 

@@ -59,6 +59,9 @@ Everything an AI client does flows through Protégé's own model manager, so:
   with one keystroke. The AI can never escalate past the gates you set.
 - **Reason and query.** Run the reasoner, explain entailments, find unsatisfiable classes, and run
   **SPARQL 1.1** over the active ontology and its imports — all through tools.
+- **Reuse and materialize with evidence.** Govern SSSOM mappings, inspect OLS4 terms through explicit
+  reuse proposals, validate SWRL rules against an exact reasoner profile, preview bounded inferences, and
+  run cancellable owner-scoped jobs where the live plugin supports them.
 - **Govern your project.** Audit modelling quality and **project-governance policy** (OWL 2 profile
   conformance, IRI policy, required annotations, module ownership / import layering), load persisted
   invariants/CQs/SHACL from a checked-in policy, and distinguish a validation failure from a check that
@@ -90,7 +93,7 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | [Prompts](prompts/) | The 11 guided workflows available to MCP clients. |
 | [Headless CLI](cli.html) | Run policy validation, full project QC, releases, and asserted semantic diff without Protégé. |
 | [Ontology CI](ci.html) | Gate your own ontology repository's PRs with the reusable, fork-safe workflow: full project QC with JSON/JUnit/SARIF evidence, a dry-run release preview, and the asserted diff. |
-| [Project policy & QC](project-policy.html) | Policy discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
+| [Project policy & QC](project-policy.html) | Policy v1/v2 discovery and validation, SSSOM/provider/job/materialization controls, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [RO-Crate & RDFC](interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
 | [Commercial platforms](commercial-platforms.html) | The supported exchange boundary, product-specific caveats, and requirements for future connectors. |
 | [Contributing](contributing.html) | Build from source, run the tests, project layout, and how to add a tool. |
