@@ -8,6 +8,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -63,6 +64,13 @@ public final class OAuthStore {
     static final long INACTIVE_CLIENT_TTL_MS = 60L * 24 * 3600 * 1000; // 60 days (2x access TTL)
     /** Margin under java.util.prefs' 8192-char per-value limit; above this we evict to fit. */
     private static final int PREFERENCES_MAX_PERSIST_CHARS = 8000;
+    /** Shared file/prefs hydration cap; callers must reject larger input before JSON parsing. */
+    public static final long MAX_PERSISTED_STATE_BYTES = 8L * 1024 * 1024;
+    private static final int MAX_PERSISTED_CLIENTS = 4_096;
+    private static final int MAX_PERSISTED_GRANTS = 8_192;
+    private static final int MAX_PERSISTED_STRING_LENGTH = 4_096;
+    private static final int MAX_PERSISTED_TOKEN_LENGTH = 512;
+    private static final int MAX_PERSISTED_REDIRECT_URIS = 16;
 
     private final SecureRandom random = new SecureRandom();
     private final ObjectMapper mapper = new ObjectMapper();
@@ -201,8 +209,8 @@ public final class OAuthStore {
         return code;
     }
 
-    /** Single-use: returns and removes the code, or null if unknown/expired (or null input). */
-    public AuthCode consumeAuthCode(String code) {
+    /** Test/support helper for unbound single-use removal; production token exchange uses redeemAuthCode. */
+    AuthCode consumeAuthCode(String code) {
         if (code == null) {
             return null;
         }
@@ -211,6 +219,36 @@ public final class OAuthStore {
             return null;
         }
         return a;
+    }
+
+    /**
+     * Atomically validate and consume an authorization code.
+     *
+     * <p>Invalid token-endpoint attempts must not consume a code: a malformed retry can come from
+     * a client recovering from a stale redirect, while a valid PKCE exchange still needs to be
+     * possible. The map computation makes validation and one-time removal one operation for
+     * concurrent token requests. Unknown and expired codes remain indistinguishable from a
+     * mismatch to the caller.
+     */
+    public AuthCode redeemAuthCode(String code, String clientId, String redirectUri,
+            String codeVerifier) {
+        if (code == null) {
+            return null;
+        }
+        AuthCode[] redeemed = new AuthCode[1];
+        codes.computeIfPresent(code, (ignored, candidate) -> {
+            if (candidate.expiresAt <= clock.getAsLong()) {
+                return null;
+            }
+            if (!java.util.Objects.equals(candidate.clientId, clientId)
+                    || !java.util.Objects.equals(candidate.redirectUri, redirectUri)
+                    || !PkceUtil.verifyS256(codeVerifier, candidate.codeChallenge)) {
+                return candidate;
+            }
+            redeemed[0] = candidate;
+            return null;
+        });
+        return redeemed[0];
     }
 
     // -------------------------------------------------------------- tokens
@@ -733,20 +771,51 @@ public final class OAuthStore {
         if (json == null || json.isEmpty()) {
             return;
         }
+        if (json.getBytes(StandardCharsets.UTF_8).length > MAX_PERSISTED_STATE_BYTES) {
+            log.warn("protege-mcp oauth: persisted state exceeds the {} byte bound; starting fresh",
+                    MAX_PERSISTED_STATE_BYTES);
+            return;
+        }
         try {
             JsonNode root = mapper.readTree(json);
-            for (JsonNode c : root.path("clients")) {
-                Set<String> uris = new LinkedHashSet<>();
-                for (JsonNode u : c.path("redirectUris")) {
-                    uris.add(u.asText());
+            JsonNode clientsNode = root.path("clients");
+            JsonNode accessTokensNode = root.path("accessTokens");
+            JsonNode refreshTokensNode = root.path("refreshTokens");
+            if (!root.isObject() || !clientsNode.isArray() || !accessTokensNode.isArray()
+                    || !refreshTokensNode.isArray()
+                    || clientsNode.size() > MAX_PERSISTED_CLIENTS
+                    || accessTokensNode.size() > MAX_PERSISTED_GRANTS
+                    || refreshTokensNode.size() > MAX_PERSISTED_GRANTS) {
+                throw new IllegalArgumentException("persisted OAuth state exceeds its schema bounds");
+            }
+            for (JsonNode c : clientsNode) {
+                if (!c.isObject()) {
+                    continue;
                 }
-                Client client = new Client(text(c, "clientId"), text(c, "clientName"), uris,
+                Set<String> uris = new LinkedHashSet<>();
+                JsonNode redirectUris = c.path("redirectUris");
+                if (!redirectUris.isArray() || redirectUris.size() > MAX_PERSISTED_REDIRECT_URIS) {
+                    continue;
+                }
+                for (JsonNode u : redirectUris) {
+                    if (!u.isTextual() || u.textValue().length() > MAX_PERSISTED_STRING_LENGTH) {
+                        uris.clear();
+                        break;
+                    }
+                    uris.add(u.textValue());
+                }
+                String clientId = boundedText(c, "clientId", MAX_PERSISTED_STRING_LENGTH);
+                String clientName = boundedText(c, "clientName", MAX_PERSISTED_STRING_LENGTH);
+                if (clientId == null || clientId.isBlank() || uris.isEmpty()) {
+                    continue;
+                }
+                Client client = new Client(clientId, clientName, uris,
                         c.path("registeredAt").asLong());
                 client.lastSeenAt.set(c.path("lastSeenAt").asLong(0L));
                 clients.put(client.clientId, client);
             }
-            loadGrants(root.path("accessTokens"), accessTokens);
-            loadGrants(root.path("refreshTokens"), refreshTokens);
+            loadGrants(accessTokensNode, accessTokens);
+            loadGrants(refreshTokensNode, refreshTokens);
             purgeExpired();
             log.info("protege-mcp oauth: restored {} client(s), {} access token(s) from preferences",
                     clients.size(), accessTokens.size());
@@ -757,19 +826,26 @@ public final class OAuthStore {
 
     private static void loadGrants(JsonNode array, Map<String, Grant> target) {
         for (JsonNode g : array) {
-            String token = text(g, "token");
-            if (token == null) {
+            if (!g.isObject()) {
                 continue;
             }
-            target.put(token, new Grant(text(g, "clientId"), text(g, "grantId"),
-                    text(g, "scope"), text(g, "resource"), g.path("expiresAt").asLong()));
+            String token = boundedText(g, "token", MAX_PERSISTED_TOKEN_LENGTH);
+            String clientId = boundedText(g, "clientId", MAX_PERSISTED_STRING_LENGTH);
+            String grantId = boundedText(g, "grantId", MAX_PERSISTED_STRING_LENGTH);
+            String scope = boundedText(g, "scope", MAX_PERSISTED_STRING_LENGTH);
+            String resource = boundedText(g, "resource", MAX_PERSISTED_STRING_LENGTH);
+            if (token == null || clientId == null || grantId == null) {
+                continue;
+            }
+            target.put(token, new Grant(clientId, grantId, scope, resource,
+                    g.path("expiresAt").asLong()));
         }
     }
 
-    /** Text value of a field, or null if the field is missing or JSON null. */
-    private static String text(JsonNode node, String field) {
-        JsonNode n = node.path(field);
-        return n.isNull() || n.isMissingNode() ? null : n.asText();
+    private static String boundedText(JsonNode node, String field, int maximum) {
+        JsonNode value = node.path(field);
+        return value.isTextual() && value.textValue().length() <= maximum
+                ? value.textValue() : null;
     }
 
     private void purgeExpired() {

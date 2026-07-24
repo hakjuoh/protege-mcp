@@ -308,6 +308,41 @@ class OAuthServletTest {
         return store.registerClient(List.of(redirectUri), "MyApp");
     }
 
+    private static FakeRequest authorizationPost(OAuthServlet oauth, OAuthStore.Client client,
+            String decision, String codeChallenge, String scope, String resource, String state)
+            throws IOException {
+        FakeRequest get = new FakeRequest().path("/authorize")
+                .param("client_id", client.clientId)
+                .param("redirect_uri", "http://127.0.0.1/cb")
+                .param("response_type", "code")
+                .param("code_challenge", codeChallenge)
+                .param("code_challenge_method", "S256");
+        if (scope != null) get.param("scope", scope);
+        if (resource != null) get.param("resource", resource);
+        if (state != null) get.param("state", state);
+        FakeResponse consent = new FakeResponse();
+        oauth.doGet(get, consent);
+        assertEquals(HttpServletResponse.SC_OK, consent.status, "test authorization GET succeeds");
+        String marker = "name=\"csrf_token\" value=\"";
+        int tokenStart = consent.body().indexOf(marker);
+        assertTrue(tokenStart >= 0, "consent page contains CSRF transaction token");
+        tokenStart += marker.length();
+        String csrfToken = consent.body().substring(tokenStart,
+                consent.body().indexOf('"', tokenStart));
+        FakeRequest post = new FakeRequest().path("/authorize")
+                .param("client_id", client.clientId)
+                .param("redirect_uri", "http://127.0.0.1/cb")
+                .param("response_type", "code")
+                .param("code_challenge", codeChallenge)
+                .param("code_challenge_method", "S256")
+                .param("decision", decision)
+                .param("csrf_token", csrfToken);
+        if (scope != null) post.param("scope", scope);
+        if (resource != null) post.param("resource", resource);
+        if (state != null) post.param("state", state);
+        return post;
+    }
+
     // =============================================================================================
     // constructor
     // =============================================================================================
@@ -458,16 +493,15 @@ class OAuthServletTest {
     }
 
     @Test
-    void registerFiltersNullElementsFromRedirectUris() throws IOException {
+    void registerRejectsNonStringRedirectUriElements() throws IOException {
         FakeRequest req = new FakeRequest().path("/register")
                 .jsonBody("{\"redirect_uris\":[null,\"http://127.0.0.1/cb\",null]}");
         FakeResponse resp = new FakeResponse();
         servlet(emptyStore()).doPost(req, resp);
 
-        assertEquals(HttpServletResponse.SC_CREATED, resp.status,
-                "null entries filtered, one real uri remains -> 201");
-        JsonNode out = MAPPER.readTree(resp.body());
-        assertEquals(1, out.path("redirect_uris").size(), "only the non-null uri kept");
+        assertEquals(HttpServletResponse.SC_BAD_REQUEST, resp.status,
+                "non-string redirect_uri entries are rejected");
+        assertEquals("invalid_redirect_uri", MAPPER.readTree(resp.body()).path("error").asText());
     }
 
     @Test
@@ -490,6 +524,75 @@ class OAuthServletTest {
         assertEquals(400, resp.status, "empty redirect_uris list -> 400");
         assertEquals("invalid_redirect_uri", MAPPER.readTree(resp.body()).path("error").asText(),
                 "invalid_redirect_uri error");
+    }
+
+    @Test
+    void registerRejectsNonLoopbackRedirectUri() throws IOException {
+        FakeRequest req = new FakeRequest().path("/register")
+                .jsonBody("{\"redirect_uris\":[\"https://example.com/cb\"]}");
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doPost(req, resp);
+
+        assertEquals(400, resp.status);
+        assertEquals("invalid_redirect_uri", MAPPER.readTree(resp.body()).path("error").asText());
+    }
+
+    @Test
+    void registerRejectsLoopbackRedirectUriWithUserInfo() throws IOException {
+        FakeRequest req = new FakeRequest().path("/register")
+                .jsonBody("{\"redirect_uris\":[\"http://attacker@127.0.0.1/cb\"]}");
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doPost(req, resp);
+
+        assertEquals(400, resp.status);
+        assertEquals("invalid_redirect_uri", MAPPER.readTree(resp.body()).path("error").asText());
+    }
+
+    @Test
+    void registerNullJsonBodyReturnsInvalidClientMetadata() throws IOException {
+        FakeRequest req = new FakeRequest().path("/register").jsonBody("null");
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doPost(req, resp);
+
+        assertEquals(400, resp.status);
+        assertEquals("invalid_client_metadata", MAPPER.readTree(resp.body()).path("error").asText());
+    }
+
+    @Test
+    void registerRejectsOversizedClientName() throws IOException {
+        String name = "x".repeat(257);
+        FakeRequest req = new FakeRequest().path("/register")
+                .jsonBody("{\"redirect_uris\":[\"http://127.0.0.1/cb\"],\"client_name\":\""
+                        + name + "\"}");
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doPost(req, resp);
+
+        assertEquals(400, resp.status);
+        assertEquals("invalid_client_metadata", MAPPER.readTree(resp.body()).path("error").asText());
+    }
+
+    @Test
+    void registerRejectsBodyThatExceedsTheParserBound() throws IOException {
+        String name = "x".repeat(70_000);
+        FakeRequest req = new FakeRequest().path("/register")
+                .jsonBody("{\"redirect_uris\":[\"http://127.0.0.1/cb\"],\"client_name\":\""
+                        + name + "\"}");
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doPost(req, resp);
+
+        assertEquals(400, resp.status, "oversized registration body is rejected while parsing");
+        assertEquals("invalid_client_metadata", MAPPER.readTree(resp.body()).path("error").asText());
+    }
+
+    @Test
+    void registerRejectsValidJsonPrefixWithOversizedSuffix() throws IOException {
+        FakeRequest req = new FakeRequest().path("/register")
+                .jsonBody("{\"redirect_uris\":[\"http://127.0.0.1/cb\"]}" + " ".repeat(70_000));
+        FakeResponse resp = new FakeResponse();
+        servlet(emptyStore()).doPost(req, resp);
+
+        assertEquals(400, resp.status, "valid JSON followed by an oversized suffix is rejected");
+        assertEquals("invalid_client_metadata", MAPPER.readTree(resp.body()).path("error").asText());
     }
 
     @Test
@@ -583,6 +686,25 @@ class OAuthServletTest {
         assertTrue(resp.redirect.contains("error=invalid_scope"), resp.redirect);
         assertTrue(resp.redirect.contains("state=s"), resp.redirect);
         assertFalse(resp.body().contains("Authorize access"));
+    }
+
+    @Test
+    void authorizeGetRejectsOversizedStateWithoutRetainingIt() throws IOException {
+        OAuthStore store = emptyStore();
+        OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
+        FakeRequest req = new FakeRequest().path("/authorize")
+                .param("client_id", c.clientId)
+                .param("redirect_uri", "http://127.0.0.1/cb")
+                .param("response_type", "code")
+                .param("code_challenge", s256("verifier-state-bound"))
+                .param("code_challenge_method", "S256")
+                .param("scope", "read")
+                .param("state", "s".repeat(2_049));
+        FakeResponse resp = new FakeResponse();
+        servlet(store).doGet(req, resp);
+
+        assertEquals("http://127.0.0.1/cb?error=invalid_request", resp.redirect,
+                "oversized state is rejected without reflecting it");
     }
 
     @Test
@@ -739,16 +861,11 @@ class OAuthServletTest {
     void authorizeDecisionAllowRedirectsWithCodeAndState() throws IOException {
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
-        FakeRequest req = new FakeRequest().path("/authorize")
-                .param("client_id", c.clientId)
-                .param("redirect_uri", "http://127.0.0.1/cb")
-                .param("decision", "allow")
-                .param("code_challenge", s256("verifier-xyz"))
-                .param("scope", "read")
-                .param("resource", "res")
-                .param("state", "state 1"); // space to check encoding
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "allow", s256("verifier-xyz"),
+                "read", "res", "state 1"); // space to check encoding
         FakeResponse resp = new FakeResponse();
-        servlet(store).doPost(req, resp);
+        oauth.doPost(req, resp);
 
         assertNotNull(resp.redirect, "allow -> redirect to callback");
         assertTrue(resp.redirect.startsWith("http://127.0.0.1/cb?code="),
@@ -758,22 +875,51 @@ class OAuthServletTest {
     }
 
     @Test
-    void authorizeDecisionRevalidatesScopeAgainstHiddenFieldTampering() throws IOException {
+    void authorizeDecisionRequiresOneTimeConsentTransaction() throws IOException {
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
+        OAuthServlet oauth = servlet(store);
         FakeRequest req = new FakeRequest().path("/authorize")
                 .param("client_id", c.clientId)
                 .param("redirect_uri", "http://127.0.0.1/cb")
                 .param("decision", "allow")
-                .param("code_challenge", s256("verifier"))
-                .param("scope", "server:root")
-                .param("state", "s");
+                .param("code_challenge", s256("v"));
+        FakeResponse resp = new FakeResponse();
+        oauth.doPost(req, resp);
+
+        assertEquals(HttpServletResponse.SC_BAD_REQUEST, resp.status);
+        assertNull(resp.redirect);
+    }
+
+    @Test
+    void authorizeDecisionCannotReuseConsentTransaction() throws IOException {
+        OAuthStore store = emptyStore();
+        OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "deny", s256("v"), null, null, null);
+        FakeResponse first = new FakeResponse();
+        oauth.doPost(req, first);
+        FakeResponse second = new FakeResponse();
+        oauth.doPost(req, second);
+
+        assertEquals(HttpServletResponse.SC_BAD_REQUEST, second.status);
+        assertNull(second.redirect);
+    }
+
+    @Test
+    void authorizeDecisionRevalidatesScopeAgainstHiddenFieldTampering() throws IOException {
+        OAuthStore store = emptyStore();
+        OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "allow", s256("verifier"), "read", null, "s")
+                .param("scope", "server:root");
         FakeResponse resp = new FakeResponse();
 
-        servlet(store).doPost(req, resp);
+        oauth.doPost(req, resp);
 
-        assertTrue(resp.redirect.contains("error=invalid_scope"), resp.redirect);
-        assertFalse(resp.redirect.contains("code="), "no authorization code is minted");
+        assertEquals(HttpServletResponse.SC_BAD_REQUEST, resp.status);
+        assertTrue(resp.body().contains("modified"), resp.body());
+        assertNull(resp.redirect, "no authorization code is minted");
     }
 
     @Test
@@ -781,15 +927,10 @@ class OAuthServletTest {
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
         String challenge = s256("my-verifier");
-        FakeRequest req = new FakeRequest().path("/authorize")
-                .param("client_id", c.clientId)
-                .param("redirect_uri", "http://127.0.0.1/cb")
-                .param("decision", "allow")
-                .param("code_challenge", challenge)
-                .param("scope", "read")
-                .param("resource", "res");
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "allow", challenge, "read", "res", null);
         FakeResponse resp = new FakeResponse();
-        servlet(store).doPost(req, resp);
+        oauth.doPost(req, resp);
 
         // Extract the code from the redirect and confirm it is a live auth code bound to our params.
         String redirect = resp.redirect;
@@ -811,13 +952,10 @@ class OAuthServletTest {
     void authorizeDecisionAllowWithoutStateOmitsStateParam() throws IOException {
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
-        FakeRequest req = new FakeRequest().path("/authorize")
-                .param("client_id", c.clientId)
-                .param("redirect_uri", "http://127.0.0.1/cb")
-                .param("decision", "allow")
-                .param("code_challenge", s256("v"));
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "allow", s256("v"), null, null, null);
         FakeResponse resp = new FakeResponse();
-        servlet(store).doPost(req, resp);
+        oauth.doPost(req, resp);
 
         assertNotNull(resp.redirect, "allow -> redirect");
         assertFalse(resp.redirect.contains("state="), "no state param when state absent");
@@ -827,13 +965,10 @@ class OAuthServletTest {
     void authorizeDecisionDenyRedirectsWithAccessDenied() throws IOException {
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
-        FakeRequest req = new FakeRequest().path("/authorize")
-                .param("client_id", c.clientId)
-                .param("redirect_uri", "http://127.0.0.1/cb")
-                .param("decision", "deny")
-                .param("state", "s");
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "deny", s256("v"), null, null, "s");
         FakeResponse resp = new FakeResponse();
-        servlet(store).doPost(req, resp);
+        oauth.doPost(req, resp);
 
         assertNotNull(resp.redirect, "deny -> redirect");
         assertTrue(resp.redirect.contains("error=access_denied"), "deny -> error=access_denied");
@@ -844,11 +979,11 @@ class OAuthServletTest {
     void authorizeDecisionMissingDecisionTreatedAsDeny() throws IOException {
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
-        FakeRequest req = new FakeRequest().path("/authorize")
-                .param("client_id", c.clientId)
-                .param("redirect_uri", "http://127.0.0.1/cb");
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "deny", s256("v"), null, null, null);
+        req.params.remove("decision");
         FakeResponse resp = new FakeResponse();
-        servlet(store).doPost(req, resp);
+        oauth.doPost(req, resp);
 
         assertTrue(resp.redirect.contains("error=access_denied"),
                 "any decision != 'allow' (including missing) -> access_denied");
@@ -1017,6 +1152,46 @@ class OAuthServletTest {
     }
 
     @Test
+    void invalidAuthorizationCodeAttemptsDoNotConsumeValidCode() throws IOException {
+        OAuthStore store = emptyStore();
+        OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
+        String verifier = "verifier-retryable";
+        String code = store.newAuthCode(c.clientId, "http://127.0.0.1/cb", s256(verifier), "s", "r");
+
+        FakeRequest wrongClient = new FakeRequest().path("/token")
+                .param("grant_type", "authorization_code").param("code", code)
+                .param("client_id", "wrong-client").param("redirect_uri", "http://127.0.0.1/cb")
+                .param("code_verifier", verifier);
+        FakeResponse wrongClientResponse = new FakeResponse();
+        servlet(store).doPost(wrongClient, wrongClientResponse);
+        assertEquals(400, wrongClientResponse.status, "wrong client is rejected");
+
+        FakeRequest wrongRedirect = new FakeRequest().path("/token")
+                .param("grant_type", "authorization_code").param("code", code)
+                .param("client_id", c.clientId).param("redirect_uri", "http://127.0.0.1/other")
+                .param("code_verifier", verifier);
+        FakeResponse wrongRedirectResponse = new FakeResponse();
+        servlet(store).doPost(wrongRedirect, wrongRedirectResponse);
+        assertEquals(400, wrongRedirectResponse.status, "wrong redirect is rejected");
+
+        FakeRequest wrongVerifier = new FakeRequest().path("/token")
+                .param("grant_type", "authorization_code").param("code", code)
+                .param("client_id", c.clientId).param("redirect_uri", "http://127.0.0.1/cb")
+                .param("code_verifier", "wrong-verifier");
+        FakeResponse wrongVerifierResponse = new FakeResponse();
+        servlet(store).doPost(wrongVerifier, wrongVerifierResponse);
+        assertEquals(400, wrongVerifierResponse.status, "wrong PKCE verifier is rejected");
+
+        FakeRequest valid = new FakeRequest().path("/token")
+                .param("grant_type", "authorization_code").param("code", code)
+                .param("client_id", c.clientId).param("redirect_uri", "http://127.0.0.1/cb")
+                .param("code_verifier", verifier);
+        FakeResponse validResponse = new FakeResponse();
+        servlet(store).doPost(valid, validResponse);
+        assertEquals(200, validResponse.status, "valid retry still redeems the code");
+    }
+
+    @Test
     void tokenAuthorizationCodeIsSingleUse() throws IOException {
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
@@ -1089,8 +1264,36 @@ class OAuthServletTest {
         JsonNode out = MAPPER.readTree(resp.body());
         assertEquals("unsupported_grant_type", out.path("error").asText(),
                 "unsupported_grant_type error");
-        assertEquals("password", out.path("error_description").asText(),
-                "the offending grant_type is echoed as the description");
+        assertEquals("The requested grant type is not supported.", out.path("error_description").asText(),
+                "unsupported grant type is not reflected in the response");
+    }
+
+    @Test
+    void tokenAndRevokeRejectOversizedPublicParameters() throws IOException {
+        String oversized = "x".repeat(513);
+        OAuthStore store = emptyStore();
+
+        FakeRequest refresh = new FakeRequest().path("/token")
+                .param("grant_type", "refresh_token").param("refresh_token", oversized);
+        FakeResponse refreshResponse = new FakeResponse();
+        servlet(store).doPost(refresh, refreshResponse);
+        assertEquals(400, refreshResponse.status, "oversized refresh token is rejected");
+        assertEquals("invalid_grant", MAPPER.readTree(refreshResponse.body()).path("error").asText());
+
+        FakeRequest revoke = new FakeRequest().path("/revoke").param("token", oversized);
+        FakeResponse revokeResponse = new FakeResponse();
+        servlet(store).doPost(revoke, revokeResponse);
+        assertEquals(200, revokeResponse.status, "oversized revoke token is safely ignored");
+
+        FakeRequest grant = new FakeRequest().path("/token")
+                .param("grant_type", "x".repeat(33));
+        FakeResponse grantResponse = new FakeResponse();
+        servlet(store).doPost(grant, grantResponse);
+        JsonNode grantError = MAPPER.readTree(grantResponse.body());
+        assertEquals(400, grantResponse.status, "oversized grant type is rejected");
+        assertEquals("unsupported_grant_type", grantError.path("error").asText());
+        assertEquals("The requested grant type is not supported.",
+                grantError.path("error_description").asText(), "grant type is not reflected");
     }
 
     @Test
@@ -1190,13 +1393,10 @@ class OAuthServletTest {
     void redirectEncodesSpaceAsPlusInState() throws IOException {
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
-        FakeRequest req = new FakeRequest().path("/authorize")
-                .param("client_id", c.clientId)
-                .param("redirect_uri", "http://127.0.0.1/cb")
-                .param("decision", "deny")
-                .param("state", "a b"); // space
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "deny", s256("v"), null, null, "a b");
         FakeResponse resp = new FakeResponse();
-        servlet(store).doPost(req, resp);
+        oauth.doPost(req, resp);
 
         assertTrue(resp.redirect.contains("state=a+b"),
                 "URLEncoder encodes space as + (application/x-www-form-urlencoded)");
@@ -1206,13 +1406,11 @@ class OAuthServletTest {
     void redirectEncodesReservedCharactersInState() throws IOException {
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
-        FakeRequest req = new FakeRequest().path("/authorize")
-                .param("client_id", c.clientId)
-                .param("redirect_uri", "http://127.0.0.1/cb")
-                .param("decision", "deny")
-                .param("state", "a/b&c=d");
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "deny", s256("v"), null, null,
+                "a/b&c=d");
         FakeResponse resp = new FakeResponse();
-        servlet(store).doPost(req, resp);
+        oauth.doPost(req, resp);
 
         assertTrue(resp.redirect.contains("state=a%2Fb%26c%3Dd"),
                 "slash, ampersand and equals are percent-encoded in the state value");
@@ -1224,13 +1422,10 @@ class OAuthServletTest {
         // confirm the code= param is present and decodes back to a live auth code.
         OAuthStore store = emptyStore();
         OAuthStore.Client c = register(store, "http://127.0.0.1/cb");
-        FakeRequest req = new FakeRequest().path("/authorize")
-                .param("client_id", c.clientId)
-                .param("redirect_uri", "http://127.0.0.1/cb")
-                .param("decision", "allow")
-                .param("code_challenge", s256("v"));
+        OAuthServlet oauth = servlet(store);
+        FakeRequest req = authorizationPost(oauth, c, "allow", s256("v"), null, null, null);
         FakeResponse resp = new FakeResponse();
-        servlet(store).doPost(req, resp);
+        oauth.doPost(req, resp);
 
         assertTrue(resp.redirect.contains("code=mcpa_"), "generated auth code present in redirect");
     }

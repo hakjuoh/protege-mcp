@@ -20,7 +20,7 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
 
-At the time of writing: **4,125 JUnit tests** (3,403 plugin, 68 standalone-CLI,
+At the time of writing: **4,141 JUnit tests** (3,419 plugin, 68 standalone-CLI,
 and 654 core tests), with zero failures/errors and three intentionally skipped opt-in performance tests,
 across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
 pure helpers of `ui`, the headless CLI, and the extractable `ro_crate` interoperability package. Coverage is

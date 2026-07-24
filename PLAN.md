@@ -8,8 +8,10 @@
 > term reuse and SSSOM mapping plus all of M8N are committed to the 0.8.0 scope; the remaining milestone
 > names identify deferred product tracks, not additional 0.8.0 commitments.
 >
-> Release-readiness evidence for 0.8.0 is complete: the cross-surface contracts, enforced performance
-> workloads, packaged plugin, and live Protégé/MCP smoke harness all pass locally.
+> Local release-candidate evidence for 0.8.0 is complete: the cross-surface contracts, enforced
+> performance workloads, packaged plugin, and live Protégé/MCP smoke harness pass locally. Public
+> release remains pending until the advertised GitHub asset is published and the environment-specific
+> positive jobs/materialization smoke evidence is available.
 
 ## 1. Scope
 

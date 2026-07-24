@@ -1,13 +1,21 @@
 package io.github.hakjuoh.protege_mcp.oauth;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -35,6 +43,26 @@ public class OAuthServlet extends HttpServlet {
     private final transient OAuthStore store;
     private final transient ObjectMapper mapper;
     private final transient GrantRevoker grantRevoker;
+    private final transient SecureRandom random = new SecureRandom();
+    private final transient ConcurrentMap<String, AuthorizationTransaction> pendingAuthorizations =
+            new ConcurrentHashMap<>();
+
+    private static final long AUTHORIZATION_TRANSACTION_TTL_MS = 5 * 60 * 1000L;
+    private static final int MAX_PENDING_AUTHORIZATIONS = 1024;
+    private static final int MAX_REDIRECT_URIS = 16;
+    private static final int MAX_REDIRECT_URI_LENGTH = 4096;
+    private static final int MAX_CLIENT_NAME_LENGTH = 256;
+    private static final int MAX_REGISTRATION_BODY_BYTES = 64 * 1024;
+    private static final int MAX_CLIENT_ID_LENGTH = 256;
+    private static final int MAX_CODE_LENGTH = 256;
+    private static final int MAX_STATE_LENGTH = 2048;
+    private static final int MAX_SCOPE_LENGTH = 4096;
+    private static final int MAX_RESOURCE_LENGTH = 4096;
+    private static final int MAX_CODE_CHALLENGE_LENGTH = 256;
+    private static final int MAX_CODE_VERIFIER_LENGTH = 256;
+    private static final int MAX_GRANT_TYPE_LENGTH = 32;
+    private static final int MAX_CSRF_TOKEN_LENGTH = 256;
+    private static final int MAX_TOKEN_LENGTH = 512;
 
     public OAuthServlet(OAuthStore store, ObjectMapper mapper, GrantRevoker grantRevoker) {
         this.store = java.util.Objects.requireNonNull(store, "store");
@@ -79,18 +107,31 @@ public class OAuthServlet extends HttpServlet {
     private void handleRegister(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         Map<String, Object> body;
         try {
-            body = mapper.readValue(req.getInputStream(), Map.class);
+            byte[] registrationBody = readBoundedBody(req.getInputStream(), MAX_REGISTRATION_BODY_BYTES);
+            if (registrationBody == null) {
+                OAuthSupport.writeError(resp, 400, "invalid_client_metadata",
+                        "Registration metadata exceeds the size limit.", mapper);
+                return;
+            }
+            body = mapper.readValue(registrationBody, Map.class);
         } catch (IOException e) {
             OAuthSupport.writeError(resp, 400, "invalid_client_metadata", "Body is not valid JSON.", mapper);
+            return;
+        }
+        if (body == null) {
+            OAuthSupport.writeError(resp, 400, "invalid_client_metadata", "Body must be a JSON object.", mapper);
             return;
         }
         List<String> redirectUris = new ArrayList<>();
         Object raw = body.get("redirect_uris");
         if (raw instanceof List) {
             for (Object o : (List<Object>) raw) {
-                if (o != null) {
-                    redirectUris.add(String.valueOf(o));
+                if (!(o instanceof String uri)) {
+                    OAuthSupport.writeError(resp, 400, "invalid_redirect_uri",
+                            "Every redirect_uri must be a string.", mapper);
+                    return;
                 }
+                redirectUris.add(uri);
             }
         }
         if (redirectUris.isEmpty()) {
@@ -98,8 +139,25 @@ public class OAuthServlet extends HttpServlet {
                     "At least one redirect_uri is required.", mapper);
             return;
         }
-        String clientName = body.get("client_name") == null ? "MCP client"
-                : String.valueOf(body.get("client_name"));
+        if (redirectUris.size() > MAX_REDIRECT_URIS
+                || redirectUris.stream().anyMatch(uri -> !validLoopbackRedirect(uri))) {
+            OAuthSupport.writeError(resp, 400, "invalid_redirect_uri",
+                    "Redirect URIs must be bounded loopback HTTP callbacks.", mapper);
+            return;
+        }
+        Object rawClientName = body.get("client_name");
+        String clientName = rawClientName == null ? "MCP client"
+                : rawClientName instanceof String value ? value : null;
+        if (clientName == null) {
+            OAuthSupport.writeError(resp, 400, "invalid_client_metadata",
+                    "client_name must be a string.", mapper);
+            return;
+        }
+        if (clientName.isBlank() || clientName.length() > MAX_CLIENT_NAME_LENGTH) {
+            OAuthSupport.writeError(resp, 400, "invalid_client_metadata",
+                    "client_name must be between 1 and 256 characters.", mapper);
+            return;
+        }
         OAuthStore.Client client = store.registerClient(redirectUris, clientName);
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -122,6 +180,14 @@ public class OAuthServlet extends HttpServlet {
         String codeChallenge = req.getParameter("code_challenge");
         String codeChallengeMethod = req.getParameter("code_challenge_method");
 
+        if (!bounded(clientId, MAX_CLIENT_ID_LENGTH)
+                || !bounded(redirectUri, MAX_REDIRECT_URI_LENGTH)
+                || !bounded(responseType, 32)
+                || !bounded(codeChallenge, MAX_CODE_CHALLENGE_LENGTH)
+                || !bounded(codeChallengeMethod, 16)) {
+            errorPage(resp, "Authorization request parameters are oversized.");
+            return;
+        }
         OAuthStore.Client client = clientId == null ? null : store.client(clientId);
         if (client == null || !client.allowsRedirect(redirectUri)) {
             // Never redirect to an unverified URI - show an error page instead.
@@ -132,25 +198,56 @@ public class OAuthServlet extends HttpServlet {
         // sweep cannot tell a user reading the consent page from an abandoned registration.
         store.noteClientActivity(clientId);
         if (!"code".equals(responseType)) {
-            redirectError(resp, redirectUri, "unsupported_response_type", req.getParameter("state"));
+            redirectError(resp, redirectUri, "unsupported_response_type", safeState(req));
             return;
         }
         if (codeChallenge == null || !"S256".equals(codeChallengeMethod)) {
-            redirectError(resp, redirectUri, "invalid_request", req.getParameter("state"));
+            redirectError(resp, redirectUri, "invalid_request", safeState(req));
+            return;
+        }
+        if (!bounded(req.getParameter("state"), MAX_STATE_LENGTH)
+                || !bounded(req.getParameter("scope"), MAX_SCOPE_LENGTH)
+                || !bounded(req.getParameter("resource"), MAX_RESOURCE_LENGTH)) {
+            redirectError(resp, redirectUri, "invalid_request", null);
             return;
         }
         if (!validScope(req.getParameter("scope"))) {
-            redirectError(resp, redirectUri, "invalid_scope", req.getParameter("state"));
+            redirectError(resp, redirectUri, "invalid_scope", safeState(req));
             return;
         }
-        consentPage(resp, req, client);
+        long expiresAt = System.currentTimeMillis() + AUTHORIZATION_TRANSACTION_TTL_MS;
+        String csrfToken;
+        synchronized (pendingAuthorizations) {
+            long now = System.currentTimeMillis();
+            pendingAuthorizations.entrySet().removeIf(entry -> entry.getValue().expiresAt < now);
+            if (pendingAuthorizations.size() >= MAX_PENDING_AUTHORIZATIONS) {
+                errorPage(resp, "Too many authorization requests are pending; try again shortly.");
+                return;
+            }
+            csrfToken = randomToken();
+            pendingAuthorizations.put(csrfToken, AuthorizationTransaction.from(req, expiresAt));
+        }
+        consentPage(resp, req, client, csrfToken);
     }
 
     private void handleAuthorizeDecision(HttpServletRequest req, HttpServletResponse resp)
             throws IOException {
-        String clientId = req.getParameter("client_id");
-        String redirectUri = req.getParameter("redirect_uri");
-        String state = req.getParameter("state");
+        String csrfToken = req.getParameter("csrf_token");
+        if (!bounded(csrfToken, MAX_CSRF_TOKEN_LENGTH)) {
+            errorPage(resp, "The authorization form is missing, expired or was modified.");
+            return;
+        }
+        AuthorizationTransaction transaction = csrfToken == null ? null
+                : pendingAuthorizations.remove(csrfToken);
+        if (transaction == null || transaction.expiresAt < System.currentTimeMillis()
+                || !transaction.matches(req)) {
+            errorPage(resp, "The authorization form is missing, expired or was modified.");
+            return;
+        }
+
+        String clientId = transaction.clientId;
+        String redirectUri = transaction.redirectUri;
+        String state = transaction.state;
 
         OAuthStore.Client client = clientId == null ? null : store.client(clientId);
         if (client == null || !client.allowsRedirect(redirectUri)) {
@@ -162,12 +259,8 @@ public class OAuthServlet extends HttpServlet {
             redirectError(resp, redirectUri, "access_denied", state);
             return;
         }
-        if (!validScope(req.getParameter("scope"))) {
-            redirectError(resp, redirectUri, "invalid_scope", state);
-            return;
-        }
-        String code = store.newAuthCode(clientId, redirectUri, req.getParameter("code_challenge"),
-                req.getParameter("scope"), req.getParameter("resource"));
+        String code = store.newAuthCode(clientId, redirectUri, transaction.codeChallenge,
+                transaction.scope, transaction.resource);
         StringBuilder url = new StringBuilder(redirectUri);
         url.append(redirectUri.contains("?") ? '&' : '?');
         url.append("code=").append(enc(code));
@@ -181,26 +274,43 @@ public class OAuthServlet extends HttpServlet {
 
     private void handleToken(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         String grantType = req.getParameter("grant_type");
+        if (!bounded(grantType, MAX_GRANT_TYPE_LENGTH)) {
+            OAuthSupport.writeError(resp, 400, "unsupported_grant_type",
+                    "The requested grant type is not supported.", mapper);
+            return;
+        }
         OAuthStore.Tokens tokens;
         if ("authorization_code".equals(grantType)) {
-            OAuthStore.AuthCode authCode = store.consumeAuthCode(req.getParameter("code"));
-            if (authCode == null
-                    || !authCode.clientId.equals(req.getParameter("client_id"))
-                    || !authCode.redirectUri.equals(req.getParameter("redirect_uri"))
-                    || !PkceUtil.verifyS256(req.getParameter("code_verifier"), authCode.codeChallenge)) {
+            if (!bounded(req.getParameter("code"), MAX_CODE_LENGTH)
+                    || !bounded(req.getParameter("client_id"), MAX_CLIENT_ID_LENGTH)
+                    || !bounded(req.getParameter("redirect_uri"), MAX_REDIRECT_URI_LENGTH)
+                    || !bounded(req.getParameter("code_verifier"), MAX_CODE_VERIFIER_LENGTH)) {
+                OAuthSupport.writeError(resp, 400, "invalid_grant",
+                        "Authorization code parameters are oversized.", mapper);
+                return;
+            }
+            OAuthStore.AuthCode authCode = store.redeemAuthCode(req.getParameter("code"),
+                    req.getParameter("client_id"), req.getParameter("redirect_uri"),
+                    req.getParameter("code_verifier"));
+            if (authCode == null) {
                 OAuthSupport.writeError(resp, 400, "invalid_grant",
                         "Authorization code, client, redirect URI or PKCE verifier did not match.", mapper);
                 return;
             }
             tokens = store.issueTokens(authCode.clientId, authCode.scope, authCode.resource);
         } else if ("refresh_token".equals(grantType)) {
+            if (!bounded(req.getParameter("refresh_token"), MAX_TOKEN_LENGTH)) {
+                OAuthSupport.writeError(resp, 400, "invalid_grant", "Refresh token is oversized.", mapper);
+                return;
+            }
             tokens = store.refresh(req.getParameter("refresh_token"));
             if (tokens == null) {
                 OAuthSupport.writeError(resp, 400, "invalid_grant", "Unknown refresh token.", mapper);
                 return;
             }
         } else {
-            OAuthSupport.writeError(resp, 400, "unsupported_grant_type", grantType, mapper);
+            OAuthSupport.writeError(resp, 400, "unsupported_grant_type",
+                    "The requested grant type is not supported.", mapper);
             return;
         }
 
@@ -220,8 +330,14 @@ public class OAuthServlet extends HttpServlet {
     private void handleRevoke(HttpServletRequest req, HttpServletResponse resp) {
         // Public client, single user: accept the token and drop it. RFC 7009 mandates a 200 response
         // whether or not the token was recognised, so unknown/expired tokens are not distinguished.
+        String token = req.getParameter("token");
+        if (!bounded(token, MAX_TOKEN_LENGTH)) {
+            resp.setStatus(HttpServletResponse.SC_OK);
+            resp.setHeader("Cache-Control", "no-store");
+            return;
+        }
         try {
-            OAuthStore.RevokedGrant revoked = store.revokeTokenGrant(req.getParameter("token"),
+            OAuthStore.RevokedGrant revoked = store.revokeTokenGrant(token,
                     identity -> grantRevoker.prepare(identity.clientId(), identity.grantId()));
             if (revoked != null) {
                 grantRevoker.revoke(revoked.clientId(), revoked.grantId());
@@ -243,7 +359,8 @@ public class OAuthServlet extends HttpServlet {
 
     // ------------------------------------------------------------------ HTML + helpers
 
-    private void consentPage(HttpServletResponse resp, HttpServletRequest req, OAuthStore.Client client)
+    private void consentPage(HttpServletResponse resp, HttpServletRequest req, OAuthStore.Client client,
+            String csrfToken)
             throws IOException {
         Set<String> requested = AuthenticatedPrincipal.capabilitiesForScope(
                 req.getParameter("scope"));
@@ -272,6 +389,8 @@ public class OAuthServlet extends HttpServlet {
                         .append(OAuthSupport.htmlEscape(kv[1])).append("\"/>");
             }
         }
+        inputs.append("<input type=\"hidden\" name=\"csrf_token\" value=\"")
+                .append(OAuthSupport.htmlEscape(csrfToken)).append("\"/>");
         String html = "<!doctype html><html><head><meta charset=\"utf-8\">"
                 + "<title>protege-mcp authorization</title><style>"
                 + "body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f5f5f7;"
@@ -296,7 +415,61 @@ public class OAuthServlet extends HttpServlet {
         resp.setStatus(HttpServletResponse.SC_OK);
         resp.setContentType("text/html;charset=utf-8");
         resp.setHeader("Cache-Control", "no-store");
+        resp.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'");
         resp.getWriter().write(html);
+    }
+
+    private String randomToken() {
+        byte[] bytes = new byte[32];
+        random.nextBytes(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
+    private static boolean validLoopbackRedirect(String redirectUri) {
+        if (redirectUri == null || redirectUri.length() > MAX_REDIRECT_URI_LENGTH) {
+            return false;
+        }
+        try {
+            URI uri = new URI(redirectUri);
+            String host = uri.getHost();
+            return "http".equalsIgnoreCase(uri.getScheme())
+                    && uri.getUserInfo() == null
+                    && uri.getFragment() == null
+                    && ("localhost".equalsIgnoreCase(host)
+                            || "127.0.0.1".equals(host)
+                            || "[::1]".equals(host)
+                            || "::1".equals(host));
+        } catch (URISyntaxException invalid) {
+            return false;
+        }
+    }
+
+    private record AuthorizationTransaction(String clientId, String redirectUri, String responseType,
+            String codeChallenge, String codeChallengeMethod, String state, String scope, String resource,
+            long expiresAt) {
+
+        static AuthorizationTransaction from(HttpServletRequest req, long expiresAt) {
+            return new AuthorizationTransaction(req.getParameter("client_id"),
+                    req.getParameter("redirect_uri"), req.getParameter("response_type"),
+                    req.getParameter("code_challenge"), req.getParameter("code_challenge_method"),
+                    req.getParameter("state"), req.getParameter("scope"), req.getParameter("resource"),
+                    expiresAt);
+        }
+
+        boolean matches(HttpServletRequest req) {
+            return equal(clientId, req.getParameter("client_id"))
+                    && equal(redirectUri, req.getParameter("redirect_uri"))
+                    && equal(responseType, req.getParameter("response_type"))
+                    && equal(codeChallenge, req.getParameter("code_challenge"))
+                    && equal(codeChallengeMethod, req.getParameter("code_challenge_method"))
+                    && equal(state, req.getParameter("state"))
+                    && equal(scope, req.getParameter("scope"))
+                    && equal(resource, req.getParameter("resource"));
+        }
+
+        private static boolean equal(String left, String right) {
+            return java.util.Objects.equals(left, right);
+        }
     }
 
     private static boolean validScope(String scope) {
@@ -327,5 +500,43 @@ public class OAuthServlet extends HttpServlet {
 
     private static String enc(String s) {
         return URLEncoder.encode(s, StandardCharsets.UTF_8);
+    }
+
+    private static boolean bounded(String value, int maximum) {
+        return value == null || value.length() <= maximum;
+    }
+
+    private static String safeState(HttpServletRequest req) {
+        String state = req.getParameter("state");
+        return bounded(state, MAX_STATE_LENGTH) ? state : null;
+    }
+
+    /** Reads within the allowed memory bound and rejects an oversized body before JSON parsing. */
+    private static byte[] readBoundedBody(InputStream input, int maximumBytes) throws IOException {
+        ByteArrayOutputStream body = new ByteArrayOutputStream(Math.min(maximumBytes, 8192));
+        byte[] buffer = new byte[8192];
+        int total = 0;
+        while (true) {
+            int count = input.read(buffer);
+            if (count < 0) {
+                return body.toByteArray();
+            }
+            if (count == 0) {
+                int value = input.read();
+                if (value < 0) {
+                    return body.toByteArray();
+                }
+                if (++total > maximumBytes) {
+                    return null;
+                }
+                body.write(value);
+                continue;
+            }
+            total += count;
+            if (total > maximumBytes) {
+                return null;
+            }
+            body.write(buffer, 0, count);
+        }
     }
 }

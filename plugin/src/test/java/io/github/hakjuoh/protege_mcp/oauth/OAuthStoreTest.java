@@ -65,6 +65,16 @@ class OAuthStoreTest {
         return new OAuthStore(() -> "tok", () -> null, save == null ? s -> {} : save, true, clock::get);
     }
 
+    private static String challenge(String verifier) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(verifier.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new AssertionError(impossible);
+        }
+    }
+
     // ------------------------------------------------------------- constructor / load
 
     @Test
@@ -114,6 +124,19 @@ class OAuthStoreTest {
     void loadWithInvalidJsonIsCaughtAndStoreStartsFresh() {
         OAuthStore s = new OAuthStore(() -> "tok", () -> "{ this is not json", x -> {});
         assertTrue(s.listClients().isEmpty(), "malformed JSON swallowed, empty store");
+    }
+
+    @Test
+    void oversizedPersistedStateIsRejectedUsingUtf8ByteBound() {
+        String multibytePadding = "é".repeat((int) (OAuthStore.MAX_PERSISTED_STATE_BYTES / 2) + 1);
+        String json = "{\"padding\":\"" + multibytePadding
+                + "\",\"clients\":[],\"accessTokens\":[],\"refreshTokens\":[]}";
+        assertTrue(json.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
+                        > OAuthStore.MAX_PERSISTED_STATE_BYTES,
+                "fixture exceeds the byte bound even though its character count is lower");
+
+        OAuthStore s = new OAuthStore(() -> "tok", () -> json, x -> {});
+        assertTrue(s.listClients().isEmpty(), "oversized UTF-8 state is rejected before parsing");
     }
 
     @Test
@@ -407,6 +430,22 @@ class OAuthStoreTest {
         String code = s.newAuthCode("cid", "http://a/cb", "chal", "read", "res");
         assertNotNull(s.consumeAuthCode(code), "first consume returns the code");
         assertNull(s.consumeAuthCode(code), "second consume returns null (single-use)");
+    }
+
+    @Test
+    void redeemAuthCodeAllowsOnlyOneConcurrentValidExchange() throws Exception {
+        OAuthStore s = store("tok");
+        String verifier = "concurrent-verifier";
+        String code = s.newAuthCode("cid", "http://a/cb", challenge(verifier), "read", "res");
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> s.redeemAuthCode(code, "cid", "http://a/cb", verifier));
+            var second = pool.submit(() -> s.redeemAuthCode(code, "cid", "http://a/cb", verifier));
+            int successful = (first.get() == null ? 0 : 1) + (second.get() == null ? 0 : 1);
+            assertEquals(1, successful, "one-time redemption is atomic for concurrent requests");
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test

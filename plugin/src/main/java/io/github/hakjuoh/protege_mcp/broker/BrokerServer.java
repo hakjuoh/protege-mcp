@@ -205,7 +205,13 @@ public final class BrokerServer {
     private String readOauthState() {
         try {
             Path file = home.oauthFile();
-            return Files.exists(file) ? Files.readString(file, StandardCharsets.UTF_8) : null;
+            if (!Files.exists(file)) {
+                return null;
+            }
+            if (Files.size(file) > OAuthStore.MAX_PERSISTED_STATE_BYTES) {
+                throw new IOException("OAuth state exceeds its byte bound");
+            }
+            return Files.readString(file, StandardCharsets.UTF_8);
         } catch (IOException e) {
             return null; // unreadable state = start fresh; OAuthStore logs and continues
         }

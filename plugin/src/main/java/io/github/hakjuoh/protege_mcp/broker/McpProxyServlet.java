@@ -13,6 +13,10 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import jakarta.servlet.http.HttpServlet;
 import jakarta.servlet.http.HttpServletRequest;
@@ -47,17 +51,17 @@ public final class McpProxyServlet extends HttpServlet {
      */
     private static final long KEEPALIVE_MS = 10_000;
     private static final byte[] KEEPALIVE_COMMENT = ": keep-alive\n\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-    private static final java.util.concurrent.ScheduledExecutorService KEEPALIVE =
-            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "protege-mcp-broker-sse-keepalive");
-                t.setDaemon(true);
-                return t;
-            });
+    private final ScheduledExecutorService keepalive = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "protege-mcp-broker-sse-keepalive");
+        t.setDaemon(true);
+        return t;
+    });
 
     /** Hop-by-hop and container-managed headers that must not be forwarded either way. */
     private static final Set<String> SKIP_HEADERS = Set.of(
             "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer",
-            "transfer-encoding", "upgrade", "host", "content-length", "expect", "date");
+            "transfer-encoding", "upgrade", "host", "content-length", "expect", "date",
+            "authorization", "cookie");
 
     private final InstanceRegistry registry;
     private final ActiveProxyRequests activeRequests;
@@ -75,6 +79,12 @@ public final class McpProxyServlet extends HttpServlet {
     McpProxyServlet(InstanceRegistry registry, ActiveProxyRequests activeRequests) {
         this.registry = registry;
         this.activeRequests = activeRequests;
+    }
+
+    @Override
+    public void destroy() {
+        keepalive.shutdownNow();
+        super.destroy();
     }
 
     @Override
@@ -171,9 +181,9 @@ public final class McpProxyServlet extends HttpServlet {
 
         OutputStream out = resp.getOutputStream();
         Object writeLock = new Object();
-        java.util.concurrent.ScheduledFuture<?> watchdog = null;
+        ScheduledFuture<?> watchdog = null;
         if (sse) {
-            watchdog = KEEPALIVE.scheduleWithFixedDelay(() -> {
+            watchdog = keepalive.scheduleWithFixedDelay(() -> {
                 synchronized (writeLock) {
                     try {
                         out.write(KEEPALIVE_COMMENT);
@@ -182,7 +192,7 @@ public final class McpProxyServlet extends HttpServlet {
                         closeQuietly(in); // unblocks the pump's read → thread + backend released
                     }
                 }
-            }, KEEPALIVE_MS, KEEPALIVE_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+            }, KEEPALIVE_MS, KEEPALIVE_MS, TimeUnit.MILLISECONDS);
         }
 
         boolean upstreamFailed = false;

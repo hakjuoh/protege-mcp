@@ -72,6 +72,14 @@ final class WindowJobRuntime implements AutoCloseable {
         // JobService selectively interrupts only OPEN jobs. A worker that already won the
         // commit/publication fence must be allowed to finish its irreversible section.
         workers.shutdown();
+        try {
+            if (!workers.awaitTermination(JobService.CANCELLATION_GRACE.toMillis(), TimeUnit.MILLISECONDS)) {
+                workers.shutdownNow();
+            }
+        } catch (InterruptedException interrupted) {
+            workers.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     record Settings(int workers, JobRuntimeConfig config) {

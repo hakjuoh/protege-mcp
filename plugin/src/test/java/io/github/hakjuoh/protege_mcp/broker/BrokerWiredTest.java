@@ -253,6 +253,8 @@ class BrokerWiredTest {
                 "the broker must replace, not forward, a client-supplied principal");
         assertFalse(backend.lastHeaders.containsKey(
                 InternalApiServlet.SECRET_HEADER.toLowerCase(java.util.Locale.ROOT)));
+        assertFalse(backend.lastHeaders.containsKey("authorization"),
+                "the client bearer token must not be forwarded to the backend: " + backend.lastHeaders);
     }
 
     @Test
