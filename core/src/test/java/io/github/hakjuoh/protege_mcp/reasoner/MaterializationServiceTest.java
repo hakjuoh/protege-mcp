@@ -185,7 +185,7 @@ class MaterializationServiceTest {
         assertEquals(500, envelope.path("maximum_live_axioms").asInt());
         assertEquals(512L * 1024 * 1024,
                 envelope.path("maximum_incremental_heap_bytes").asLong());
-        assertEquals(100, envelope.path("maximum_model_thread_stall_ms").asInt());
+        assertEquals(250, envelope.path("maximum_model_thread_stall_ms").asInt());
         assertEquals(5_000, envelope.path("maximum_cancellation_ms").asInt());
         assertEquals(2.0, envelope.path("maximum_regression_factor").asDouble());
         assertEquals(250.0, envelope.path("minimum_noise_floor_ms").asDouble());
