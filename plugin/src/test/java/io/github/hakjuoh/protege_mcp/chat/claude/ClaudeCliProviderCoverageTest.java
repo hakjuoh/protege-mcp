@@ -60,9 +60,11 @@ class ClaudeCliProviderCoverageTest {
     }
 
     @Test
-    void listModelsHasDocumentedAliasesInOrder() {
-        assertEquals(List.of("", "opus", "sonnet", "haiku", "fable"), provider.listModels(),
-                "listModels() must be the documented aliases in order, blank first");
+    void listModelsStartsWithCliDefaultAndUsesOnlyDiscoveredValues() {
+        List<String> models = provider.listModels();
+        assertEquals("", models.get(0), "the first entry is the blank (CLI-default) model");
+        assertTrue(models.stream().allMatch(model -> model != null),
+                "the locally discovered catalog contains only non-null values");
     }
 
     @Test

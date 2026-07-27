@@ -77,6 +77,31 @@ class ChatHistoryTest {
     }
 
     @Test
+    void anInterruptedTurnIsHandedOffAgainAndTheOverlapIsDeclared() {
+        // Stopping a turn leaves its question unsynced on purpose: the killed CLI's session state is not
+        // readable from here, and claiming it took the question loses the question if it did not. The same
+        // native session is resumed alongside the handoff, so the question can genuinely arrive twice -
+        // once in the session's own history and once below. What must not happen is the provider reading
+        // the second copy as a new question and answering it again, so the preamble says the overlap is
+        // possible instead of asserting the session missed everything in the transcript.
+        ChatHistory history = new ChatHistory();
+        history.setSessionId("codex", "codex-thread");
+        history.addUser("codex", "reclassify the whole ontology");
+        // The turn is stopped: no assistant entry, no markSynced.
+
+        String handoff = history.handoffFor("codex");
+
+        assertEquals("codex-thread", history.sessionId("codex"),
+                "the session is still resumed - dropping it would lose every turn before this one");
+        assertTrue(handoff.contains("reclassify the whole ontology"),
+                "and the interrupted question is owed to the next turn: " + handoff);
+        assertTrue(handoff.contains("interrupted before it finished"),
+                "the preamble admits the transcript may overlap this session: " + handoff);
+        assertTrue(handoff.contains("not to be answered again"),
+                "and says what to do about it, so a stopped instruction is not run twice: " + handoff);
+    }
+
+    @Test
     void clearDropsTranscriptSessionsAndCursors() {
         ChatHistory history = new ChatHistory();
         history.setSessionId("codex", "thread");

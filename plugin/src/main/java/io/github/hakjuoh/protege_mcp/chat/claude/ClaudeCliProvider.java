@@ -2,6 +2,7 @@ package io.github.hakjuoh.protege_mcp.chat.claude;
 
 import io.github.hakjuoh.protege_mcp.chat.AssistantSteering;
 import io.github.hakjuoh.protege_mcp.chat.ChatListener;
+import io.github.hakjuoh.protege_mcp.chat.ChatModelCatalog;
 import io.github.hakjuoh.protege_mcp.chat.ChatProcess;
 import io.github.hakjuoh.protege_mcp.chat.ChatProvider;
 import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
@@ -32,6 +33,13 @@ public final class ClaudeCliProvider implements ChatProvider {
 
     public static final String EXECUTABLE = "claude";
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    /** How the CLI prefixes a diagnostic it is going to carry on past. */
+    private static final String WARNING_PREFIX = "Warning:";
+    /** The reasoning options this provider can put on the command line, as the CLI spells them. */
+    private static final String EFFORT_OPTION = "--effort";
+    private static final String THINKING_OPTION = "--thinking-display";
+    /** A warning is one line in practice; the cap only stops a pathological stderr reaching the view. */
+    private static final int MAX_WARNING_CHARS = 400;
 
     @Override
     public String id() {
@@ -50,8 +58,12 @@ public final class ClaudeCliProvider implements ChatProvider {
 
     @Override
     public List<String> listModels() {
-        // Claude Code has no "list models" command; these are the documented aliases. "" = CLI default.
-        return List.of("", "opus", "sonnet", "haiku", "fable");
+        return ChatModelCatalog.pickerModels(McpConfig.prefs(), id());
+    }
+
+    @Override
+    public List<String> reasoningEfforts() {
+        return ChatModelCatalog.claudeReasoningEfforts();
     }
 
     @Override
@@ -87,7 +99,8 @@ public final class ClaudeCliProvider implements ChatProvider {
                     } catch (IOException ignored) {
                         // best-effort cleanup; deleteOnExit is the backstop
                     }
-                    finishTurn(exit, stderr, parser.errorReported(), request.showReasoning(), listener);
+                    finishTurn(exit, stderr, parser.errorReported(), parser.answered(),
+                            request.showReasoning(), !request.reasoningEffort().isBlank(), listener);
                 });
     }
 
@@ -97,27 +110,160 @@ public final class ClaudeCliProvider implements ChatProvider {
      * API or policy refusal): repeating it would only add noise. For a CLI that died without one
      * (unknown option, not logged in), the exit line is the only diagnostic — including the
      * Show-reasoning hint, whose unknown-option rejection happens at argv parse, before any
-     * stream-json exists. Package-private for unit testing.
+     * stream-json exists.
+     *
+     * <p>A turn that exits cleanly, reports nothing anywhere and produces no reply is reported too. It is
+     * the one turn nothing else in the transcript accounts for: no reply to read, no error from the stream,
+     * no warning to quote — and left silent it is a blank exchange the user is given no reason for.
+     * Package-private for unit testing.
      */
-    static void finishTurn(int exit, String stderr, boolean streamErrorSeen, boolean showReasoning,
-            ChatListener listener) {
-        if (exit != 0 && !streamErrorSeen) {
-            listener.onError(failureMessage(exit, stderr, showReasoning));
+    static void finishTurn(int exit, String stderr, boolean streamErrorSeen, boolean answered,
+            boolean showReasoning, boolean effortRequested, ChatListener listener) {
+        if (exit != 0) {
+            if (!streamErrorSeen) {
+                listener.onError(failureMessage(exit, stderr, showReasoning, effortRequested));
+            }
+        } else if (answered || !streamErrorSeen) {
+            // Only a run that SUCCEEDED can have silently dropped an option (see
+            // ignoredOptionWarning). A failing turn already has its own diagnostic - either the error
+            // line above or the one the stream surfaced - and a note saying the turn ran on the CLI's
+            // own setting would contradict it. A clean exit is not proof on its own: the stream can
+            // report the failure itself and exit 0, and then only a reply tells the two apart. A clean
+            // exit that reported nothing and still said nothing is reported here, because nothing else
+            // reports it at all - in the wording such a turn earns, which is not "it ran anyway".
+            String notice = ignoredOptionWarning(stderr, showReasoning, effortRequested, answered);
+            if (notice != null) {
+                listener.onNotice(notice);
+            } else if (!answered) {
+                // Nothing else has anything to say about this turn: it exited 0, the stream reported no
+                // failure, there is no warning to quote, and no reply arrived. Said as an error rather
+                // than a note, because that is what it is: a question that went unanswered with nothing
+                // else in the transcript to say so.
+                listener.onError(CliSupport.describeSilentTurn("claude"));
+            }
         }
         listener.onComplete(exit);
     }
 
     /**
-     * The transcript error for a failed run. When the failure is the reasoning opt-in flag itself —
-     * a claude CLI too old to know {@code --thinking-display} rejects the whole invocation — the raw
-     * "unknown option" alone gives the user no way to connect it to the checkbox, and the persisted
-     * preference would fail every following turn too; name the way out. Package-private for testing.
+     * The warning a successful run printed about a reasoning option <em>this turn passed</em>, as a
+     * transcript notice, or {@code null} when there is none to report. A current claude CLI handles an
+     * {@code --effort} value it does not know by warning on stderr and running at its own effort
+     * anyway: exit 0, a complete reply, and nothing in the stream to say the value the user picked was
+     * dropped — so the reply looks like it came from the requested effort when it did not. The warning
+     * is the only evidence, and its wording is not part of any contract, so it is surfaced verbatim
+     * rather than matched.
+     *
+     * <p>Only a warning that names the option this turn actually passed is reported. Warnings on a
+     * CLI's stderr are routine — an available update, a deprecated setting, a login shell's own rc
+     * output — and blaming the reasoning controls for one of those would accuse the user's picker of
+     * something it did not do, on a turn that was fine.
+     *
+     * <p>What the note says the turn did depends on whether it answered. A clean exit with nothing in
+     * the stream and no reply is a turn that produced nothing, and describing that as having run at the
+     * CLI's own effort would credit an answer the transcript does not have — on a turn that has no other
+     * diagnostic at all. The warning itself is still the user's only evidence, so it is still reported.
+     * Package-private for testing.
      */
-    static String failureMessage(int exit, String stderr, boolean showReasoning) {
+    static String ignoredOptionWarning(String stderr, boolean showReasoning, boolean effortRequested,
+            boolean answered) {
+        if (stderr == null || (!showReasoning && !effortRequested)) {
+            return null;
+        }
+        StringBuilder warnings = new StringBuilder();
+        boolean aboutEffort = false;
+        for (String line : stderr.split("\\R")) {
+            String trimmed = line.trim();
+            if (!trimmed.startsWith(WARNING_PREFIX) || !namesPassedOption(trimmed,
+                    showReasoning, effortRequested)) {
+                continue;
+            }
+            aboutEffort |= effortRequested && namesOption(trimmed, EFFORT_OPTION);
+            if (warnings.length() > 0) {
+                warnings.append(' ');
+            }
+            warnings.append(trimmed);
+            if (warnings.length() >= MAX_WARNING_CHARS) {
+                break;
+            }
+        }
+        if (warnings.length() == 0) {
+            return null;
+        }
+        String text = warnings.length() > MAX_WARNING_CHARS
+                ? warnings.substring(0, MAX_WARNING_CHARS) + "…"
+                : warnings.toString();
+        if (!answered) {
+            return "[note] claude reported: " + text + (aboutEffort
+                    ? " The turn produced no reply, so pick one of the values it lists or reset the "
+                            + "effort picker to (default)."
+                    : " The turn produced no reply.");
+        }
+        return "[note] claude reported: " + text + (aboutEffort
+                ? " The turn ran on the CLI's own effort, so pick one of the values it lists or reset "
+                        + "the effort picker to (default)."
+                : " The turn ran on the CLI's own reasoning setting, not the one this turn asked for.");
+    }
+
+    /** Whether a warning line is about one of the reasoning options this turn put on the command. */
+    private static boolean namesPassedOption(String warning, boolean showReasoning,
+            boolean effortRequested) {
+        return (effortRequested && namesOption(warning, EFFORT_OPTION))
+                || (showReasoning && namesOption(warning, THINKING_OPTION));
+    }
+
+    /**
+     * Whether a diagnostic names this option and not a longer one that begins with it. A CLI option ends
+     * where its name does, so {@code --effortless} is a different setting from {@code --effort}, and
+     * matching it as a substring would tell the user to reset an effort picker a warning about some other
+     * flag never mentioned - or claim the CLI cannot take the option it took. A trailing {@code =}, quote,
+     * comma or space all end the name, which is how every diagnostic that does mean this option writes it.
+     */
+    private static boolean namesOption(String text, String option) {
+        int from = 0;
+        while (true) {
+            int at = text.indexOf(option, from);
+            if (at < 0) {
+                return false;
+            }
+            int after = at + option.length();
+            if (after >= text.length() || !isOptionNameChar(text.charAt(after))) {
+                return true;
+            }
+            from = at + 1;
+        }
+    }
+
+    private static boolean isOptionNameChar(char c) {
+        return c == '-' || c == '_' || Character.isLetterOrDigit(c);
+    }
+
+    /**
+     * The transcript error for a failed run. When the failure is a reasoning opt-in flag itself — a
+     * claude CLI too old to know {@code --thinking-display} or {@code --effort} rejects the whole
+     * invocation — the raw "unknown option" alone gives the user no way to connect it to the control
+     * that set it, and the persisted preference would fail every following turn too; name the way
+     * out. Each hint is gated on that flag actually having been passed, so a CLI that merely prints
+     * the flag name in some other diagnostic does not send the user chasing a control they never
+     * touched. Package-private for testing.
+     */
+    static String failureMessage(int exit, String stderr, boolean showReasoning,
+            boolean effortRequested) {
         String msg = CliSupport.describeFailure("claude", exit, stderr);
-        if (showReasoning && stderr != null && stderr.contains("--thinking-display")) {
-            msg += " This claude CLI does not support the reasoning opt-in — untick 'Show reasoning' "
-                    + "and resend, or update the CLI.";
+        boolean thinkingRejected = showReasoning && stderr != null
+                && namesOption(stderr, THINKING_OPTION);
+        boolean effortRejected = effortRequested && stderr != null
+                && namesOption(stderr, EFFORT_OPTION);
+        if (thinkingRejected || effortRejected) {
+            msg += " This claude CLI does not support the reasoning option — ";
+            if (thinkingRejected && effortRejected) {
+                msg += "untick 'Show reasoning' and reset the effort picker to (default)";
+            } else if (thinkingRejected) {
+                msg += "untick 'Show reasoning'";
+            } else {
+                msg += "reset the effort picker to (default)";
+            }
+            msg += " and resend, or update the CLI.";
         }
         return msg;
     }
@@ -161,8 +307,12 @@ public final class ClaudeCliProvider implements ChatProvider {
             // thinking_delta text. The flag is accepted but undocumented on current CLIs and only
             // passed when the user opted in; a CLI too old to know it fails the turn with a clear
             // "unknown option" error rather than silently showing nothing.
-            cmd.add("--thinking-display");
+            cmd.add(THINKING_OPTION);
             cmd.add("summarized");
+        }
+        if (req.reasoningEffort() != null && !req.reasoningEffort().isBlank()) {
+            cmd.add(EFFORT_OPTION);
+            cmd.add(req.reasoningEffort().trim());
         }
         List<java.io.File> attachmentDirs = req.attachmentDirectories();
         if (!attachmentDirs.isEmpty()) {

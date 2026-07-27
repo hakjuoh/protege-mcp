@@ -27,6 +27,20 @@ public interface ChatProvider {
      */
     List<String> listModels();
 
+    /**
+     * Reasoning effort values for this CLI, with a blank first entry delegating to its own config. A
+     * provider that does not override this advertises no effort levels of its own, so the picker offers
+     * only that default — never another CLI's levels.
+     */
+    default List<String> reasoningEfforts() {
+        return List.of("");
+    }
+
+    /** Reasoning efforts for a selected model; implementations may narrow this by model metadata. */
+    default List<String> reasoningEfforts(String model) {
+        return reasoningEfforts();
+    }
+
     /** The model selected by default (blank = the CLI's own default). */
     String defaultModel();
 

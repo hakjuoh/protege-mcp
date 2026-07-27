@@ -19,12 +19,12 @@ jobs:
     permissions:
       contents: read
     # Pin by full commit SHA in production: v-tags in hakjuoh/protege-mcp are occasionally re-cut
-    # (moved), so `@v0.7.2` is NOT an immutable reference.
-    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.7.2
+    # (moved), so `@v0.8.0` is NOT an immutable reference.
+    uses: hakjuoh/protege-mcp/.github/workflows/ontology-ci.yml@v0.8.0
     with:
       project: .protege-mcp/project.yaml
       # The OBO edit file (matches root_artifact in the paired obo.yaml policy).
       ontology: example-edit.owl
-      cli_version: '0.7.2'
+      cli_version: '0.8.0'
       release_check: true
       diff_check: false

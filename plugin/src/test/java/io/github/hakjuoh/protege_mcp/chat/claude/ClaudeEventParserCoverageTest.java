@@ -137,6 +137,23 @@ class ClaudeEventParserCoverageTest {
         assertEquals(0, listener.text.length());
     }
 
+    @Test
+    void aStreamedReplyIsWhatMakesTheTurnAnswered() {
+        newParser();
+        assertFalse(parser.answered(), "nothing has been said yet");
+        parser.accept(streamDelta("text_delta", "text", "hello"));
+        assertTrue(parser.answered(), "text the user can read is an answer, whatever else was reported");
+    }
+
+    @Test
+    void aReplyOfNothingButWhitespaceIsNotAnAnswer() {
+        // Nothing reaches the screen, so nothing here can turn a turn the stream reported as failed into
+        // one that ran: the completion handler asks this question to tell a refusal from a dropped option.
+        newParser();
+        parser.accept(streamDelta("text_delta", "text", "   "));
+        assertFalse(parser.answered(), "blank text is not something the user can read");
+    }
+
     // --------------------------------------------- stream_event: content_block_delta / thinking
 
     @Test

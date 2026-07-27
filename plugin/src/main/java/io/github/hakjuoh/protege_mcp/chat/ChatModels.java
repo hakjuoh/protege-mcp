@@ -19,6 +19,13 @@ public final class ChatModels {
                 : McpConfig.KEY_CHAT_MODEL_CLAUDE;
     }
 
+    /** The preference key holding a provider's last reasoning-effort selection. */
+    public static String reasoningEffortPrefKey(String providerId) {
+        return "codex".equals(providerId)
+                ? McpConfig.KEY_CHAT_REASONING_EFFORT_CODEX
+                : McpConfig.KEY_CHAT_REASONING_EFFORT_CLAUDE;
+    }
+
     /**
      * Normalize a model combo-box selection to the id passed to the provider: a null/blank selection or the
      * "use the CLI's default" label ({@code defaultLabel}) becomes {@code ""} (meaning the CLI's own
@@ -27,5 +34,10 @@ public final class ChatModels {
     public static String normalizeModel(String selectedItem, String defaultLabel) {
         String s = selectedItem == null ? "" : selectedItem.trim();
         return (s.isEmpty() || s.equals(defaultLabel)) ? "" : s;
+    }
+
+    /** Normalize a reasoning-effort selection; blank means the CLI's own configured default. */
+    public static String normalizeReasoningEffort(String selectedItem, String defaultLabel) {
+        return normalizeModel(selectedItem, defaultLabel);
     }
 }

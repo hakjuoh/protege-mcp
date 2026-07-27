@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongPredicate;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -172,7 +173,15 @@ public final class BrokerServer {
 
     private void maintain() {
         try {
-            registry.reap(staleMs, pid -> ProcessHandle.of(pid).map(ProcessHandle::isAlive).orElse(false));
+            LongPredicate pidAlive = pid -> ProcessHandle.of(pid).map(ProcessHandle::isAlive)
+                    .orElse(false);
+            int reaped = registry.reap(staleMs, pidAlive);
+            if (reaped > 0) {
+                // A reap is either a crashed instance or one whose heartbeats stalled; both are
+                // invisible from the instance side, so leave a trace in the broker log.
+                System.out.println("protege-mcp-broker: dropped " + reaped
+                        + " instance registration(s): heartbeat stale or process gone");
+            }
             OAuthStore store = oauthStore;
             if (store != null) {
                 // The broker has no clients view; time-based cleanup of dead OAuth registrations
@@ -181,6 +190,9 @@ public final class BrokerServer {
                 backendRevocations.replayOAuthRevocations(store);
             }
             backendRevocations.retryPending();
+            // After the retry, so an endpoint that came back was offered this tick's fence before its
+            // obligation is answered by the registration that made it reachable again.
+            backendRevocations.dischargeSettledObligations(pidAlive);
             // The linger is the user's preference, delivered with every register/heartbeat - the
             // spawn-time value only covers the window before the first registration.
             if (registry.sealIfShouldExit(registry.effectiveLingerMs(lingerMs), bootGraceMs,

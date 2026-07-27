@@ -20,16 +20,20 @@ import org.protege.editor.core.prefs.Preferences;
 /**
  * Method-level tests for {@link McpConfig}.
  *
- * <p>{@link McpConfig#prefs()} is backed by Protégé's {@code PreferencesManager}, which in a headless
- * JVM resolves to a real {@code java.util.prefs} store shared across the process. To stay deterministic
- * and side-effect-free, each test snapshots and restores every preference key it may touch. The
- * {@code generateToken()} helper is exercised via reflection so its RFC-4648-url-safe token
- * shape can be asserted directly.
+ * <p>{@link McpConfig#prefs()} names the very node a live Protégé reads and writes, so the test JVM
+ * redirects {@code java.util.prefs} to {@code testing.InMemoryPreferencesFactory} (see the surefire
+ * configuration in {@code plugin/pom.xml}) and nothing here can reach the user's settings. That store
+ * is still shared by every test in the fork, so each test snapshots and restores every preference key
+ * it may touch. The {@code generateToken()} helper is exercised via reflection so its
+ * RFC-4648-url-safe token shape can be asserted directly.
  */
 class McpConfigTest {
 
     /** URL-safe base64 (RFC 4648) alphabet, no padding — the shape of a generated bearer token. */
     private static final String TOKEN_PATTERN = "[A-Za-z0-9_-]+";
+
+    /** Key the usability probe writes; removed again so the node is left exactly as it was found. */
+    private static final String PROBE_KEY = "__mcpconfig_test_probe__";
 
     private Preferences prefs;
     private int savedPort;
@@ -101,9 +105,13 @@ class McpConfigTest {
         assertEquals("chatProvider", McpConfig.KEY_CHAT_PROVIDER);
         assertEquals("chatModelClaude", McpConfig.KEY_CHAT_MODEL_CLAUDE);
         assertEquals("chatModelCodex", McpConfig.KEY_CHAT_MODEL_CODEX);
+        assertEquals("chatModelsClaude", McpConfig.KEY_CHAT_MODELS_CLAUDE);
+        assertEquals("chatModelsCodex", McpConfig.KEY_CHAT_MODELS_CODEX);
         assertEquals("chatClaudePath", McpConfig.KEY_CHAT_CLAUDE_PATH);
         assertEquals("chatCodexPath", McpConfig.KEY_CHAT_CODEX_PATH);
         assertEquals("chatShowThinking", McpConfig.KEY_CHAT_SHOW_THINKING);
+        assertEquals("chatReasoningEffortClaude", McpConfig.KEY_CHAT_REASONING_EFFORT_CLAUDE);
+        assertEquals("chatReasoningEffortCodex", McpConfig.KEY_CHAT_REASONING_EFFORT_CODEX);
         assertEquals("chatAllowWrites", McpConfig.KEY_CHAT_ALLOW_WRITES);
     }
 
@@ -117,10 +125,13 @@ class McpConfigTest {
     @Test
     void prefsReturnsUsableStore() {
         Preferences p = McpConfig.prefs();
-        p.putString("__mcpconfig_test_probe__", "hello");
-        assertEquals("hello", p.getString("__mcpconfig_test_probe__", ""),
+        p.putString(PROBE_KEY, "hello");
+        assertEquals("hello", p.getString(PROBE_KEY, ""),
                 "prefs() must return a writable/readable preferences node");
-        p.putString("__mcpconfig_test_probe__", "");
+        // Protégé removes a key when the value is null; storing "" keeps the probe in the store.
+        p.putString(PROBE_KEY, null);
+        assertEquals("", p.getString(PROBE_KEY, ""),
+                "the probe must be removed, not left behind as a blank value");
     }
 
     // ---- generateToken() (via reflection) --------------------------------------------------------

@@ -59,6 +59,11 @@ host are Java 17 bytecode, and the OSGi manifest declares
     <li>External-term discovery is paired with explicit, evidence-bound reuse proposals; reasoner capability
         reports, rule validation, preview-first inference materialization, and bounded asynchronous jobs are
         available with fail-closed authorization and cancellation fencing.</li>
+    <li>The Ontology Assistant adds a reasoning-effort picker beside its model picker and a user-managed
+        model catalog under <b>Settings &#9656; Ontology Assistant</b>. The plugin hard-codes no model
+        ids: until you save your own catalog it starts from the model you already had selected plus the
+        CLI's own local metadata, and <code>(default)</code> leaves the model and the effort to the
+        CLI's configuration.</li>
     <li>The public surface is <b>104 tools and 11 prompts</b>; the plugin, headless CLI, contracts, and
         documentation report the same 0.8.0 version.</li>
 </ul>

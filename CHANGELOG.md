@@ -7,6 +7,11 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
 
 ## [0.8.0] - 2026-07-24
 
+**The 0.8.0 release expands Protégé MCP to 104 live tools and 11 prompts with governed ontology-engineering workflows.**
+It adds bounded asynchronous jobs, preview-first inference materialization, exact reasoner and rule capability
+evidence, project-governed SSSOM mappings, and evidence-bound external-term reuse, while tightening authorization,
+policy, filesystem/network boundaries, OAuth revocation, cross-adapter contracts, and release evidence.
+
 ### Added
 - Added the adapter-neutral core of the 0.8 public job runtime. Closed job/result types, complete immutable
   input identity, exact owner/grant isolation, 15-minute idempotency, bounded admission/retention/artifacts,
@@ -70,10 +75,91 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
 - Made OAuth RFC 7009 grant revocation linearizable with refresh and crash-safe in broker mode.
   Owner-only `~/.protege-mcp/revocations.json` is a bounded write-ahead journal: backend fences are
   retried across unavailable/later windows and broker restarts, stale OAuth state is replayed before
-  serving, persistence failures fail closed, and a sealed quiescent shutdown compacts the journal.
+  serving, persistence failures fail closed, and a sealed shutdown — the idle one, and equally the one a
+  newer plugin's window asks an older broker for, which is the likelier of the two — compacts the journal
+  under the registry monitor that excludes registration, having first written down everything the memory it
+  is about to end was holding, and does not seal at all if that could not be written — unless
+  an endpoint was released on age alone rather than proven stopped, which is a fence still owed and is
+  recorded in the journal itself, so the restart that ends this broker's memory of it cannot let a
+  successor's own quiet shutdown compact the obligation away — and a successor asked whether that
+  credential is fenced everywhere answers that it is not, rather than reporting every window acknowledged
+  with no window left to have acknowledged anything. What is recorded is the endpoint itself, named by its
+  window id and carrying the OS pid that owned it, and it is recorded whether or not a tombstone happened
+  to be pending at that shutdown, because the fence is owed to every revocation that comes after it —
+  including ones no broker has made yet. Two incarnations of one window are one record here where the
+  generation that watched them go counted two, because what a successor can prove is about the window and
+  not about which of its incarnations served. The pid is what lets the record be discharged rather than only
+  kept: the obligation is settled when the OS no longer has that process, or when that same window of it is
+  a fence target here again — registered live, or still held in quarantine, either of which a fanout
+  reaches. A window the journal names and this registry names again — one that came back and was
+  released unproven a second time before the pass that would have discharged the record ran — is one
+  window owing one fence, counted by the record that outlives this broker rather than by both, since
+  a result that counted it twice would report one unfenced window as two. The same overlap one step
+  nearer settles the same way: a window the journal names that is a fence target of this very
+  revocation is counted once, by the target the fence went to rather than by the record the next
+  pass would discharge on exactly the reachability that fence just proved. This generation's own
+  aged-out obligations answer to that same proof and are discharged by it: a maintenance pass that
+  finds the OS has reaped the process an aged record was owed for stops reporting that record, since
+  otherwise one instance that wedged, aged out and later exited would leave every revocation this
+  broker was asked for afterwards answering unconfirmed with nothing anywhere left to fence — the
+  latch this whole journal exists to avoid. A record that stood for a process rather than a window
+  is only one of however many of its windows overflowed onto it, so what is still counted for the
+  others stands: over-reporting what is unfenced keeps revocations unconfirmed, which is the safe
+  way to be wrong about it. Another window of the same process registering settles nothing, because
+  a registration is not a report that the endpoints it does not name have stopped; a pid still
+  running somewhere unregistered stays owed. An obligation past the bound on how many windows one
+  generation can name travels as the process that owed it — one entry per process, however many of
+  its windows overflowed — because the pid is all there is left to say about such a window and also
+  the whole of what settles it: what would otherwise be a count no journal could hand on becomes a
+  record a successor can both state and discharge, and one that only the process being gone answers,
+  since a record that never said which window overflowed cannot recognise that window coming back.
+  The journal climbs that same ladder on its own account, and it has to, because its bounds are its
+  own: a file carrying what earlier generations left has less room than this generation's naming
+  bound implies, so an obligation this file cannot name is folded onto its pid however few this
+  broker itself has named. Folding makes the same trade the registry's does, and it is a trade: the
+  record keeps the proof that always eventually arrives, that process ending, and gives up the one a
+  named record also has, that window becoming a fence target here again — an entry that no longer
+  says which window it is about cannot recognise that window coming back. What that costs is time,
+  since such an obligation stands until its process does, and a revocation waiting on the later
+  proof answers unconfirmed for longer rather than confirmed sooner. An obligation neither bound can
+  take refuses the write — and with it the shutdown that asked for it, which leaves the obligation
+  in the memory that still fences it rather than ending having dropped it. Past that bound as well —
+  every window named and every process entry taken — the endpoint is not released at all: its record
+  stays in the revocation-only quarantine, a fence target this broker still sends to and still
+  reports unacknowledged, which is what it was before either bound existed and more than any note
+  about it could be, since a backend that is still listening actually receives the fence. It is held
+  under the same bounded quarantine capacity as every other retired endpoint and leaves it as soon
+  as its process is gone, and this broker does not idle-exit while it holds one: retention is a cost
+  a bound may impose, and forgetting an endpoint that was never proven stopped is not. One endpoint
+  per process is held this way and only one, because the pid being gone is equally the proof for
+  every other endpoint of that process: the next window of a process already holding one is released
+  and counted like any other overflow, so what is retained grows with the machine's processes rather
+  than with its windows and the ordinary quarantine keeps draining around it. Those released windows
+  are counted under the pid whose record they deferred to, so the proof that finally releases that
+  record settles them as well: they are the one release nothing else here writes down, and a count
+  nothing is filed under is a count nothing can ever take back - a broker that reached this state
+  once would answer every revocation asked of it afterwards unconfirmed, for the rest of its life,
+  with nothing anywhere left to fence. A record nothing could clear would be a latch instead — every
+  revocation this machine made again would answer unconfirmed, the journal could never be compacted,
+  and it would fill to capacity and start refusing revocations outright. What a record of a whole
+  process waits on is that pid, and a pid is the operating system's to reuse: a machine that hands
+  the same number to some long-lived process leaves the record standing until that process ends or
+  the machine restarts, and every revocation until then answers unconfirmed rather than confirming a
+  fence nothing proved. That is the direction such a record has to fail in, and where it ends is a
+  refusal too — the journal's own capacity, reached by revocations it never managed to settle,
+  refuses the next one rather than dropping what it is holding. It is read as exactly one document:
+  a file carrying a second one after it — corruption, or a rewrite truncated onto a longer previous
+  version — fails closed instead of loading that prefix and silently dropping every tombstone the
+  rest of the file records, and an `unattested` entry that is not a record this broker could act on
+  — a bare flag or a count in place of the endpoints, an entry with no window id, or one whose pid
+  is missing, fractional, or not a positive number — is not a journal it can read either, since
+  coercing one would record an obligation nothing could ever settle; the `unattested_processes` list
+  that carries the ones past the naming bound is held to the same reading, a list of positive
+  integral pids and nothing else; an empty list of either says what an absent one says.
   Heartbeat-stale, unregistered, removed, or replaced live-process endpoint incarnations remain in a
-  bounded revocation-only quarantine until PID death, without remaining routable; version takeover
-  cannot discard that quarantine.
+  bounded revocation-only quarantine until PID death or the end of a bounded retention window, without
+  remaining routable; version takeover cannot discard that quarantine, and an endpoint retired again
+  after serving again is retained from that later retirement.
 - Froze the complete 0.7.2 plugin and headless MCP contracts before expanding the 0.8 surface. Every
   tool now advertises an output schema and a common bounded, recursively sanitized typed-error schema;
   new tools must declare a narrow recursive output contract and both adapters validate and snapshot
@@ -93,6 +179,126 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
   capture pins its source and parent directory and shares one byte snapshot between version inference and
   validation; bounded module reads likewise prevent declared assets from exhausting memory. SSSOM sidecars
   use their own revision instead of perturbing ordinary ontology preflight.
+- The Ontology Assistant gained a **reasoning-effort picker** beside its model picker and a user-managed
+  **model catalog** under **Settings ▸ Ontology Assistant**. The effort is remembered per provider and
+  applied per turn (`claude --effort`, `codex -c model_reasoning_effort`); Codex narrows the offered
+  levels to those the selected model advertises in the local CLI metadata — including at `(default)`,
+  where the top-level `model` of `~/.codex/config.toml` is the one that will run, in every spelling Codex
+  itself runs it that fits on the assignment's own line: the key bare or quoted, the value in any of TOML's
+  four string syntaxes, and a basic string's escapes resolved, because `model = "gpt-\u0035"` runs gpt-5 —
+  while a literal `'…'` value takes no escapes at all, and a value whose `"""` or `'''` body carries on to the
+  next line, legal TOML though it is, narrows nothing: every level is offered, as for a profile, rather than
+  a guess at what the continuation holds. A config whose
+  model lives under a profile table, or that selects a profile at all — bare key or quoted, since TOML
+  makes `"profile"` the same key, and whatever its value is spelled like, a `"""…"""` one written over two
+  lines included, because assigning the key at all is what hands the decision away — offers every level
+  instead of guessing which table wins, and only genuine top-level keys are read (a `model` line inside a
+  multi-line string value is text, an escaped `\"""` inside such a value is more of its body rather than
+  its end — while a literal `'''` value, which takes no escapes, does end at the first delimiter —
+  a `'''` or `"""` inside a comment opens nothing, a bracketed array
+  element is not a table header even when an array written over several lines gives it a line of its own,
+  such an array is over once its `]` is read even where that bracket shares the line that ended a
+  string element of it — so a top-level `model` written under it still narrows —
+  a `]` inside a quoted table name does not stop that header from being
+  one, and a byte-order mark is not part of a key or of a table header wherever an editor left it) — while models
+  the metadata marks as
+  unlisted or unavailable over the API contribute none, where marking it means the field carrying the kind of
+  value it is supposed to carry: a visibility that is not a string, or an availability flag that is not a
+  boolean, is a cache written to a schema this build does not know and has said nothing about that model, so
+  it is offered rather than hidden by a coerced reading no error message could ever explain — as does an
+  entry whose id, or a level whose
+  name, is not a string in that metadata at all, rather than the number it holds being offered as one, and
+  as does a level whose name is not a name at all: an effort is one bare config token the CLI parses as a
+  word, so a sentence, a value carrying a newline, an over-long one, or one written outside plain ASCII
+  letters and digits is not offered, and the offered levels are bounded in number exactly as the models
+  are, since a picker is a list a user chooses from and not a rendering of whatever a metadata file holds —
+  and `(default)` sends no flag
+  so the CLI's own configuration decides. A model no local metadata describes is offered every level
+  current Codex releases accept, since a level missing from the picker is one no error message would
+  explain. Which levels a model actually supports remains the model's
+  business, so a refusal is reported as such: a turn that fails on the exact effort value it asked for,
+  and a run that completed after warning it dropped the option, both add a transcript note
+  naming the effort picker, because neither the API error nor the CLI warning mentions it. A diagnostic
+  that spells the setting out in prose is one of those however it words the refusal — "does not support
+  reasoning effort 'max'" as much as "invalid reasoning effort" — since the note is about the control that
+  sent the value and not about the sentence that came back, while a text that merely mentions reasoning
+  effort without refusing anything is not a complaint about it — the override key itself echoed back into a
+  log or config line names the setting exactly as prose does and is held to the same test, since a CLI
+  printing the option it was given has refused nothing, and the wording of refusal has to sit on the line
+  that names the setting, a diagnostic being a stream's errors and a CLI's stderr arriving as lines rather
+  than as one sentence: an echoed override beside an unrelated line that refuses a mistyped model id is not
+  this picker's failure, and neither is one that lands on that very line: a text that names the model as
+  what it refuses has not refused the effort, however much of the effort's own configuration it echoed
+  alongside, while a text that refuses both is still the user's to act on here. And the ways a
+  refusal words itself are read
+  broadly, a value called unknown, unrecognized, out of range, unavailable, not available or not enabled for
+  the model or the account, not permitted, or simply rejected among them, because a
+  wording the list misses is a note the user never gets. The note is worded for
+  what happened, since a turn that answered anyway was not refused whichever channel carried the
+  complaint, the reply being what decides that and not the diagnostic — a reply of nothing but whitespace
+  is not one, and a turn that said nothing is never told it ran on the CLI's own effort or answered
+  anyway, whatever its exit code and whether or not its stream said why — a clean exit that reported
+  nothing and produced nothing is the one turn this note is the whole account of, so it reports the reply
+  as missing rather than promising one — and without naming who refused the
+  value or promising the diagnostic lists what to pick instead, since the same diagnostic covers a Codex
+  release whose own parser does not know the setting at all: it names no value, accepts none, and the way
+  out it always leaves is the picker's own `(default)`. A failure
+  about anything else — a mistyped model id, say — is never blamed on the picker, nor is a warning about
+  some other option whose name merely begins the way this turn's does, since an option name ends where the
+  CLI's own does; and a diagnostic that
+  refuses the one value both the model and the effort picker are set to is reported as exactly that, since
+  nothing in such a text decides between them, so the note names both controls and says to change one at a
+  time rather than sending the user to one they may never have touched. The catalog is an
+  ordered, duplicate-free list per provider
+  with add/update/delete/reorder editing, bootstrapped until first saved from the model already selected
+  plus that CLI's own local metadata; a saved empty list deliberately means "send no model argument", and
+  metadata that is missing or oversized contributes nothing, as does a JSON file that cannot be parsed,
+  leaving just the model that was already selected — `(default)` alone only when nothing was selected
+  either. The Codex
+  configuration that seeding reads is read as configuration and not as prose, on the same terms as the
+  narrowing above: a `model` line inside a comment or inside a multi-line string body seeds no model, and
+  an escaped quote inside a value is a character of the id rather than the end of it, so a half-read
+  value is never offered as an id of its own. It has no all-or-nothing step of its own, being read line by
+  line rather than parsed: a value left unterminated seeds nothing itself while the assignments around it
+  are still read, so no stray bracket empties the picker. A profile's model is seeded whichever way
+  TOML spells it, `profiles.work.model = "…"` and the inline `profiles.work = { model = "…" }`
+  exactly like the table form under `[profiles.work]`, and a model id used as a key seeds itself in
+  every spelling TOML gives that one entry: a key under a `[models]` table, quoted or bare and whether it
+  is assigned or dotted into, a `[models."gpt-…"]` header, and the top-level `models."gpt-…" = { … }` and
+  `models = { "gpt-…" = … }` forms. The key form is read only where model configuration lives, under
+  `models` itself, since a table keyed by ids for some other purpose is not offering them:
+  `[tui.model_availability_nux]` keys real ids to count how often each was mentioned, `[[models]]` is an
+  array of tables this release configures nothing in, and the keys under `[models."gpt-…"]` itself are
+  that one model's settings rather than further ids. A key that stops short of the id it was meant to name
+  seeds nothing rather than the part before the dot, an unquoted `gpt-5.5-codex` being two keys; and a
+  table keyed by something that is not a model, a project path that happens to contain `gpt-`
+  included, seeds nothing either way. The file is read once through its lines, so no run of blank
+  lines in it can hold up the window while a picker is filled. Editing is keyboard-complete
+  (**Enter** applies the field as **Add**/**Update**, while an empty field leaves **Enter** to the
+  dialog's own OK button), every staged edit says it is not stored until **OK**, and an Ontology
+  Assistant that is already open rebuilds its pickers when the catalog is saved instead of waiting
+  for the view to be reopened — every open view, since one that fails to rebuild is logged and
+  skipped rather than stopping the refresh of the views after it.
+
+### Changed
+- The Ontology Assistant's model pickers no longer offer ids hard-coded by the plugin
+  (`opus`/`sonnet`/`haiku`/`fable`, `gpt-5.5`/`gpt-5.4`/`o3`); they offer the per-provider catalog above.
+  An upgrade keeps the model you had selected by seeding the catalog with it, so no turn silently moves
+  to a different model; a model the catalog no longer contains falls back to `(default)` instead of
+  being sent to the CLI.
+- The Assistant view now selects the first installed CLI when the remembered provider is no longer
+  available, instead of opening with no provider and an empty model picker.
+- The credential store's extended-ACL reading on macOS, which costs a process because this JVM has no ACL
+  view there, is now asked for far less often: an answer is kept against the moment the kernel last changed
+  that inode, a file's directory is read in the same pass as the file whenever it is not already known, and
+  a path this store just created inside a directory it has already read as clean is not stripped, since
+  macOS gives a new file an ACL only by inheritance. What is refused is unchanged. An answer is only ever
+  reused for the very inode it was about while that inode's status-change time still matches, which every
+  change to an ACL moves; a pass covering more than one path holds every line of the answer to exactly the
+  rule a path read on its own is held to, and so comes back clean for all of them or as no verdict at all,
+  in which case the path being checked is read again by itself; and a store directory that did inherit
+  entries from a parent this store does not own is stripped and then read again, which is what refuses one
+  that could not be.
 
 ### Tests
 - Added deterministic core job tests for every legal job type and terminal path, type/result mismatches,
@@ -118,6 +324,281 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
   RO-Crate capture, mutation-sensitive post-size-check RO-Crate growth, oversized
   sparse-module, output-collision, rejected-secret non-reflection, and
   shaded-distribution smoke coverage.
+- Added headless Assistant coverage for model-catalog trimming, de-duplication, saved order, the
+  explicit empty catalog, the upgrade seed, catalog bounds, control-character and trailing-garbage
+  metadata rejection, TOML literal strings, every spelling of a `model` key Codex accepts (quoted key,
+  one-line `"""…"""` and `'''…'''` values, a basic string's escapes resolved against a literal string's
+  that are not, and a value whose body carries on to the next line, which narrows nothing), and discovery
+  from a temporary metadata root; for the
+  reasoning-effort argv of both CLIs and the flag-gated older-CLI rejection message; and for the
+  preferences editor's Add/Update, per-row delete, reorder, and non-primary-click semantics.
+- Added Assistant coverage for the Enter-key application path (including the empty field that must leave
+  Enter to the dialog's OK button), the staged-until-OK feedback wording, per-model Codex effort narrowing
+  from the configured model and from listed/API-available metadata entries, the catalog notification an
+  open view follows and must stop following on teardown, and both refused-effort diagnostics — the failing
+  Codex turn and the warning-only `claude` run whose note is held back until the reply is closed, and for
+  two events flushed onto one line, which are both delivered, against a malformed remainder that must not
+  retract the event before it.
+- Pinned the broker registry's recoverable-gap semantics: a session pinned to a quarantined window
+  survives a stale reap while its process lives, is forgotten once the quarantine is evicted, and
+  same-pid re-registration neither exhausts process capacity nor discards retired endpoints; a pid-less
+  registration is rejected end to end over the internal API. A quarantine is held for its whole retention
+  window and released after it even while the liveness probe keeps answering "alive"; an endpoint retired
+  a second time is retained from that retirement rather than the first, and a full quarantine of expired
+  endpoints is drained by the very window close its capacity bound was refusing — unless what fills it are
+  the records nothing can record an obligation for, which are held rather than aged out, and then that
+  window close, heartbeat or registration is answered as this API's own "service unavailable" instead: a
+  state that only the exit of the processes holding those records ends — a reap releases what a pid it reads
+  gone was holding, and no reap before that one releases anything, because ageing is the whole of what a
+  held record is being kept from — and one whose cost is a retry, where granting the call would have cost
+  an endpoint that was never proven stopped. Nothing the registry cannot take
+  right now — no room in the quarantine, no room in the process table, a registry sealed for a shutdown a
+  successor will follow — reaches the caller as a container-rendered server error any more. An endpoint released on
+  age alone stays owed for the life of the broker — named in every later fanout, unconfirmed, and still
+  counted once the bound on remembered ids stops naming them — unless the fanout that lost it out from
+  under it already held its acknowledgement, which is counted once, as fenced, and still owed to the next
+  credential. An endpoint that comes back and is released again is that same single obligation — one that
+  registers again after its record aged out included, which is one window rather than that live
+  window plus a nameless aged-out obligation — a result cannot report a fence as confirmed while
+  still counting a window as owed it, a journal that records an obligation from a generation now
+  gone still counts it — one window, owed and unconfirmable, against the same journal without that
+  record which confirms with none. The record is written by a broker that had no tombstone pending
+  at all, the obligation being the endpoint's rather than some credential's, and a credential minted
+  afterwards is unconfirmed on it; it names the window and carries the pid that can settle it; two
+  incarnations of that one window are one record where the generation that watched them go counted
+  two; and it is settled two ways and only those — the OS no longer having that pid, and that same
+  window being a fence target here again, live or quarantined — while another window of that process
+  registering leaves it owed, as does one still running unregistered, after which the quiet shutdown
+  may compact the tombstone at last and the next credential is fenced everywhere. A record whose
+  window is a fence target of the very revocation carrying it is that second settlement arriving in
+  the same pass, and is counted once — the one window the fence went to, not that window and a
+  record about it as well. A journal whose record of what is owed is a bare flag, a count, an entry
+  with no window id, or one whose pid is missing, zero, negative, fractional or a string fails
+  closed, as does a list longer than a generation could have named, while an empty list loads
+  exactly as an absent one does. A journal with a second document appended fails closed rather than
+  loading the prefix, and a window that registers after a revocation has already returned is fenced
+  by the durable retry that follows it. A registration or
+  heartbeat that would collapse a duplicate window id, that carries more windows than the bound, or that
+  names an endpoint no request can be addressed to — an impossible port, a secret no HTTP header can carry —
+  is refused whole: this payload is a process's entire window set, so keeping the entries that did parse
+  would retire a window that is still serving on the word of one that could not. A payload that names no
+  window list at all — the field absent, or holding something that is not a list — is refused on those same
+  terms rather than read as a process reporting no windows: an empty list is a set the broker was told, a
+  missing one is a set it was told nothing about, and retiring every window on it would silently unregister
+  a process that asked for nothing of the kind. An explicit empty list still means exactly that and is
+  accepted.
+  It is a bad request over the internal API rather than a server error, and leaves the window set
+  already reported untouched, as is a window id another live process already holds, while that same id from
+  the process that owns it is that process reporting its own window and is accepted, while an acknowledgement held for an endpoint released on age alone survives
+  every later retry of that same tombstone.
+- Added the negative oracles for the Assistant's notes and the catalog: a warning about an option the turn
+  never passed, a failed turn that must not also be told it ran on the CLI default, a rejected model id
+  that must not be blamed on the effort picker, a refused value matched whole rather than as a prefix
+  (`'high.foo'`, `highest`, and a dotted setting name are not a refusal of `high`), an option name likewise
+  matched at its own boundary so a warning about `--effortless` is not one about `--effort` while all four
+  spellings of the real option still are, the override key echoed back in a config or debug line that names
+  the setting without refusing it and must produce no note, that same echoed key beside an unrelated line
+  refusing a mistyped model id — either order, and across the two channels a turn reports through — which
+  must produce none either while a refusal on the line that names the setting still does, that key on the
+  very line that refuses the model — either order again — which is that model's failure and not this
+  picker's, against the line that refuses both and the one that refuses the effort for a named model, which
+  are this picker's, an effort the API calls unavailable, not available, or not enabled for the account,
+  which must be read as refused as surely as an invalid one is, a cache entry whose
+  visibility is a number or whose API-availability flag is not a boolean, which must stay offered and narrow
+  its levels like any other rather than being hidden by a coerced reading, against the entry that does say
+  hidden or unavailable and still is, a level whose name is prose, a newline, an
+  over-long or a non-ASCII string that must reach no picker and a metadata file of two hundred levels
+  bounded to the offered few, a turn that answered
+  and must be told its effort was ignored rather than refused — including one that reported the rejection
+  in the event stream and answered anyway, against a reply from a turn that then died and is a refusal
+  still, and against one whose stream failed and answered nothing, which must be told nothing about an
+  effort it never ran at, and against one that exited cleanly, reported nothing anywhere and said nothing
+  either, which must be told its reply is missing rather than that it answered at the CLI's own setting —
+  both ways a reply reaches the transcript, that same silent turn with no warning to quote either, which
+  must still be given a plain account of itself in both providers, against the ones the stream's own error
+  and a non-zero exit already account for, which must not be told twice, and reasoning, an error, and a reply
+  of nothing but whitespace that are not one, a
+  model under an inactive profile table that must not narrow the effort list, the same under a quoted
+  `"profile"` key, the same again where that profile's value is a `"""…"""` one and where it is written
+  over two lines, a `model` line inside a
+  multi-line TOML string, an escaped delimiter inside such a value and one on its opening line that must
+  not be read as its end, an array whose `]` shares the line that closed a string element of it that must
+  still end the array so the key under it is read, both of those readings again for the ids the catalog
+  offers — where a `model`
+  written inside a string body must not be offered as a model, one written in a body reopened on the very
+  line that closed the previous body must not either, and an escaped quote must not offer the part
+  of the value before it as an id of its own — a cache entry whose id is a number and a level whose
+  name is one, neither of which may reach a picker, a literal `'''` value that ends at every
+  delimiter because it takes no escapes, a bracketed array element, and a multi-line delimiter
+  inside a comment that must not be read as configuration, a table header whose quoted name contains
+  `]` that must still end the top-level keys, a multi-line array whose element lines must not end
+  them — and the header after it that must — a bracket inside a string value that must not swallow
+  the keys after it, a model id keyed under a table that is not `[models]` — one under the table
+  Codex keys by real ids to count how often each was mentioned, and one under a project path,
+  neither of which may be offered while the same key under `[models]` is — and a `[models]` table
+  that comes back after another table, whose keys must be read again, every spelling of one of that
+  table's entries — a bare key, a quoted key dotted into, a bare-keyed header, and the top-level dotted
+  and inline forms, all of which must be offered — against what only looks like one, a `[[models]]`
+  element's keys, an unquoted `gpt-5.5-codex` that is two keys, and a `models."gpt-…"` under another
+  table, none of which may be, a byte-order-marked config and
+  cache that must still be read while a mark before a later table header or `profile` key must not
+  hide either of them, a note that must not name who refused the value nor promise it lists one to
+  pick, the complete effort fallback list, a duplicate failure line
+  reported once while two failing items sharing a message are both reported, a runaway error loop elided
+  once, the newest failure still classifiable past both bounds — including a reprinted preamble, at and
+  under the remembered bound, whose decisive tail must not be treated as already kept — one huge failure
+  truncated at the kept-text bound, a turn with no failure at all that must classify nothing, a stream
+  failure that answered nothing on a turn that still exited 0 that must not become conversation history
+  while one that recovered and answered must, a turn that answered nothing and reported nothing either,
+  which must leave its question owed to the next handoff rather than marked accepted, a credential whose renewal fails that must still fence its
+  turn's grant, an aged-out endpoint that must still block confirmation
+  when a live endpoint carries the same window id, more endpoints owed a fence than the broker can name
+  that must still be counted whole — and a broker that sends only their names, whose list is then all
+  there is to count — an obligation past that bound that must travel to a successor as the process that
+  owed it, one entry per process however many of its windows overflowed, still owed while that pid lives
+  and while other windows of it register, settled by its death, and carried in a pid list held to the same
+  fail-closed reading as the named records, one past that second bound as well, which nothing can record
+  and must therefore keep its endpoint — a fence still sent to it, its window still reported
+  unacknowledged, this broker still refusing to idle out or shut down while it holds one, and the record
+  released only by that process dying — against the process already recorded, whose next unnamable window
+  must fold onto the entry already there rather than pin an endpoint over it, and against the process
+  already holding such a record, whose next one must be released and counted instead of pinning a second
+  endpoint over it, two of its windows ageing out in the same pass included, so what is held grows with
+  processes and not with windows; a registration, a heartbeat that retires a window and a window close that
+  the quarantine has no room for, each of which must be answered as this API's own "service unavailable"
+  rather than as a server error and must leave the registration it refused exactly as it was, against those
+  same three calls while there is room; a shutdown asked for over that API rather than timed out, which must
+  write this generation's obligations down before it acknowledges the exit, leaving a successor unable to
+  report that endpoint fenced, against the journal whose own bounds are full, where the obligation must
+  travel as its process while a pid entry can still be written and the write and the seal must both be
+  refused when neither can — the registry left unsealed, the journal left exactly as it was, and the fence
+  still owed here; and a broken open view that must not stop the refresh of the next one.
+- The plugin's test JVM now runs against an in-memory `java.util.prefs` store rather than the real user
+  preference tree, so a full `mvn verify` can no longer read or write the settings a live Protégé owns.
+- Added macOS extended-ACL tests, which run only there: an entry granted on a store file, or on the store
+  directory, after that path was read clean is still refused on the next reading of it and still refuses the
+  write; a store directory and a file inside one, each carrying an entry before either was ever read, are
+  refused by the reading that is about them rather than by the pass that covered them together; and a store
+  created under a directory carrying inheritable entries is stripped, read, and usable, with nothing left
+  on the file written into it.
+
+### Fixed
+- OkHttp 5's Kotlin runtime is now declared as an explicit embedded dependency and its root package
+  cannot become a mandatory OSGi import, so the Protégé 5.6.6 bundle starts correctly on Java 17.
+- A shared-broker instance whose heartbeats merely stalled no longer loses its clients' sessions. A stale
+  reap of a process that is still alive quarantines its endpoints so it can come back, and session pins
+  are now kept for exactly that long, instead of being dropped in the same pass and turning a recoverable
+  gap into a permanent `session_window_closed`. Pins are also dropped when a quarantine is finally
+  evicted, so nothing survives a window that is gone for good.
+- Re-registering the same Protégé process now replaces that process's own earlier registration instead of
+  accumulating one per registration, so a window that reconnects repeatedly can no longer exhaust the
+  broker's process capacity and lock out other instances. A registration without an OS pid is refused
+  outright (`invalid_pid`) rather than being stored as an unidentifiable entry, and every reap is logged
+  with its cause, since it is invisible from the instance side. A payload whose window list could only be
+  held incompletely is refused the same way (`invalid_windows`) instead of being absorbed: a second entry
+  reusing a window id used to overwrite the first and a list past the per-process bound was truncated, either
+  way leaving a live endpoint the broker could neither route to nor fence while a revocation still reported
+  every window it knew about acknowledged. A payload carrying no window list at all is refused on the same
+  terms rather than read as an empty set, which would have retired every window the sending process still
+  had serving — the same silent unregistration, reached by saying nothing instead of by saying something
+  unusable. A window id another live process already holds is refused on
+  the same terms: an id names one endpoint for the whole broker, so a collision would leave routing — and
+  every session pinned by that id — deciding between two endpoints on map order, and would advertise both
+  under one path. Protégé windows carry random ids, so nothing honest collides; a broker spoken to by
+  something else cannot quietly take a live session over. The list is indexed before anything is retired or replaced, so a
+  refused register or heartbeat leaves the window set that instance last reported intact.
+- A quarantined endpoint is now also released after 30 minutes, not only when its OS process is observed
+  to have died. An operating system reuses process ids, so a quarantine whose pid had been handed to some
+  other program stayed "alive" forever: the broker kept the retired endpoint, kept refusing to idle-exit,
+  and held a slot against `MAX_PROCESSES` for as long as the machine was up. Retention runs from the
+  latest retirement of that endpoint, so a window that comes back and closes again keeps its full
+  revocation fence, and an exhausted quarantine releases what has expired rather than refusing the
+  registrations and window closes whose own release pass would have drained it — except for records
+  expiry is deliberately not allowed to release, which keep their slots and make that refusal the
+  answer until their processes are gone. An endpoint let go on
+  age alone was never observed to stop, so every later revocation still reports it unacknowledged and the
+  internal API answers 503 instead of `revoked`: the bound is about the broker's memory, lifetime, and
+  routing, and changes nothing about what a commit fence is allowed to claim. A record can also age out
+  while the fence request to it is in flight, and the acknowledgement that arrives after it still counts —
+  proof does not expire with the record it came through, so that window is reported once, as fenced, rather
+  than counted twice and left unconfirmable for good, while the obligation stays owed for every other
+  credential, none of which was ever fenced there. A process that dies while its own fence is in flight
+  reads the other way round: a pid the OS reports dead is this registry's one proof that a backend
+  stopped, so its endpoints are dropped rather than retired and the fanout that was mid-conversation
+  with them drops them too — a window whose process the kernel has already reaped is not owed a fence
+  that has nowhere left to land, where the call that watched it die used to report it unacknowledged
+  and answer 503 for it. The pass that reads a pid dead settles that before anything ages out, so a
+  retirement crossing the 30-minute bound in the very tick that proves its process gone is released as the
+  death it is, rather than minted into a nameable obligation the broker would then report unacknowledged
+  for the rest of its life. That proof also outlives the record across the retries
+  that follow: a tombstone is re-sent for as long as it lives, and forgetting the acknowledgement when the
+  endpoint's record was finally released turned a fence that demonstrably landed into an obligation no later
+  retry could ever meet. One endpoint is one obligation however often it comes
+  back and is released again, so a window that reconnects and stalls repeatedly is owed a fence once rather
+  than once per release — including across the release itself: equal credentials are the same live endpoint
+  by construction, so an endpoint whose record aged out and then registered again is counted once while the
+  broker can still name it, as the live target it now is, instead of as that target plus a nameless
+  aged-out obligation that no fence could ever discharge; past the bound on remembered names a repeat is
+  counted again, which overstates what is unfenced rather than understating it. How many windows are owed is
+  counted rather than measured off the ids the broker can still name, so past that bound the number the
+  management view reports is the whole obligation and not the part of it that still has a name; a broker
+  from an earlier release, which sends only the names, is read the way it always was. A fence counts as
+  confirmed only when every counted window acknowledged it, not merely when no unacknowledged window could
+  still be named, so an obligation past that bound can never be reported as a clean revocation, and only
+  the boolean the fence contract defines counts as one: a reply answering with the string `"true"`, with
+  `1`, or with any other shape is a reply this broker does not recognise, which is not a backend that
+  installed a fence, and is read exactly as the malformed ones already were. An obligation like that also
+  outlives the broker's own idle exit — the durable tombstones are kept rather than compacted away while
+  one stands, because an empty registry says nothing is registered now and not that everything it once
+  held has stopped, so a backend that comes back is fenced by the next broker instead of meeting a journal
+  that was cleared on its behalf. An endpoint a fence request cannot even be built for is refused at
+  registration on the terms every unreachable entry already met — a port past the highest one a URL can
+  name, or an id or secret carrying characters no HTTP header can — and one somehow still held is reported
+  as the unacknowledged window it is, instead of failing the whole fanout on an unhandled error that,
+  the tombstone being durable already, would repeat on every retry and take the rest of that broker
+  maintenance pass with it.
+- A Codex turn that fails repeatedly no longer grows the error text the transcript keeps past its 4,000
+  character bound, and the same failure line arriving many times in one turn is reported once instead of
+  being repeated per event — keyed to the failing item, so two things going wrong with the same generic
+  message are still both reported. A turn in a retry loop reports its failures up to a bound and then one
+  line stating that the rest are not shown, and the newest failure stays available to the exit path that
+  decides what the turn failed on, however much noise preceded it. One long enough to need cutting is kept
+  from both ends: a Codex release refusing the setting outright says so in its first words, while an API
+  refusing the value says it behind a status line and a JSON envelope.
+- Two Assistant CLI events flushed onto a single line are now both delivered. Only the first JSON value on
+  a line was read, so anything sharing it was dropped without trace — a `result` or `turn.completed` there
+  took the turn's usage and its ending with it, and a text delta took part of the reply. A malformed
+  remainder still leaves the values before it delivered rather than discarding the whole line.
+- An Assistant turn that answered nothing is no longer recorded as the conversation, however cleanly it
+  ended. Recording one marked that provider as having seen the turn, so the question its own session may
+  never have accepted was dropped from the handoff for good — and a turn can end with no reply and nothing
+  filed against it either: a CLI that complains about a refused reasoning effort on stderr and exits 0
+  leaves a note and no reply, which every other test read as a completed turn. A turn becomes history when
+  it completed, was not stopped, and answered. A reply is the whole of the evidence that the question was
+  taken, and it counts even on a turn that reported a failure first, because Codex surfaces the failures of
+  a retry loop as it goes and a turn can report one, recover, and still answer. That reading is cautious on
+  purpose, and being cautious means a provider can be handed a question its own resumed session already
+  holds — a stopped turn is left unsynced by the same rule, and the session it was killed in is not
+  readable from here. So the handoff now says the overlap is possible and what to do with it: anything the
+  provider recognises is the same turn rather than a new one and is not to be answered again, rather than
+  the transcript arriving under a claim that the session missed all of it. Being wrong the other way is the
+  one that cannot be undone — a question dropped from the handoff because a session this side cannot read
+  was assumed to have taken it is gone from the conversation, where one that arrives twice is context.
+- An Assistant turn that ended without an answer and without saying why now says so. A CLI that exits 0,
+  reports nothing in its stream, prints no warning worth quoting and produces no reply left a blank
+  exchange with no account of it anywhere — and, being a clean turn by every test, was filed as the
+  conversation's reply, so the question went to the other provider as one already answered. Both CLIs
+  now report it, as an error rather than a note, because a question that went unanswered is what it is.
+  A turn that has an account already — its stream's own error, a non-zero exit, or the note naming the
+  effort picker — is not told a second time.
+- An Assistant credential whose lease lapses mid-turn is now revoked the way every other end of a turn
+  revokes it, instead of the view dropping its reference. A tool invocation issued under that grant can
+  still be inside a commit fence, and the credential carries the principal that expiry cleanup takes away
+  with the token — so dropping it left that execution to finish on a turn the view had given up on.
+- The stderr used to describe a failed turn is now read under the same lock its reader thread appends
+  with. The wait for that reader can time out — a grandchild process inheriting stderr keeps the stream
+  open — and reading the buffer mid-append can throw, which skipped the completion handler entirely and
+  left the turn spinning with the input disabled until Protégé was restarted.
 
 ## [0.7.2] - 2026-07-20
 

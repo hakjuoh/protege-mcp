@@ -52,12 +52,20 @@ public final class McpConfig {
     public static final String KEY_CHAT_MODEL_CLAUDE = "chatModelClaude";
     /** Last model picked for the Codex provider (blank = the CLI's own default). */
     public static final String KEY_CHAT_MODEL_CODEX = "chatModelCodex";
+    /** User-managed Claude model ids; a stored empty value deliberately means no explicit models. */
+    public static final String KEY_CHAT_MODELS_CLAUDE = "chatModelsClaude";
+    /** User-managed Codex model ids; a stored empty value deliberately means no explicit models. */
+    public static final String KEY_CHAT_MODELS_CODEX = "chatModelsCodex";
     /** Optional absolute path / dir override when the {@code claude} CLI is not on the GUI's PATH. */
     public static final String KEY_CHAT_CLAUDE_PATH = "chatClaudePath";
     /** Optional absolute path / dir override when the {@code codex} CLI is not on the GUI's PATH. */
     public static final String KEY_CHAT_CODEX_PATH = "chatCodexPath";
     /** Whether the chat should show the model's reasoning ("thinking") in the transcript. */
     public static final String KEY_CHAT_SHOW_THINKING = "chatShowThinking";
+    /** Selected Claude reasoning effort; blank delegates to Claude Code's configured default. */
+    public static final String KEY_CHAT_REASONING_EFFORT_CLAUDE = "chatReasoningEffortClaude";
+    /** Selected Codex reasoning effort; blank delegates to Codex's configured default. */
+    public static final String KEY_CHAT_REASONING_EFFORT_CODEX = "chatReasoningEffortCodex";
     /** Whether Assistant turn principals may request the bounded project/ontology write profile. */
     public static final String KEY_CHAT_ALLOW_WRITES = "chatAllowWrites";
 

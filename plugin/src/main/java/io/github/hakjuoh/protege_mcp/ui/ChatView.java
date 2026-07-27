@@ -84,6 +84,7 @@ import io.github.hakjuoh.protege_mcp.chat.ChatModels;
 import io.github.hakjuoh.protege_mcp.chat.CliSupport;
 import io.github.hakjuoh.protege_mcp.chat.ChatListener;
 import io.github.hakjuoh.protege_mcp.chat.ChatMarkdown;
+import io.github.hakjuoh.protege_mcp.chat.ChatModelCatalog;
 import io.github.hakjuoh.protege_mcp.chat.ChatProcess;
 import io.github.hakjuoh.protege_mcp.chat.ChatProvider;
 import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
@@ -115,6 +116,7 @@ public class ChatView extends AbstractOWLViewComponent {
     private static final long serialVersionUID = 1L;
 
     private static final String MODEL_DEFAULT_LABEL = "(default)";
+    private static final String EFFORT_DEFAULT_LABEL = "(default)";
     private static final String INTRO = "Ask about the active ontology, or ask for edits. The assistant "
             + "runs your local CLI and edits through Protégé's MCP server (changes appear in the GUI and "
             + "can be undone).\n";
@@ -148,6 +150,7 @@ public class ChatView extends AbstractOWLViewComponent {
     private JButton newChatButton;
     private JComboBox<ChatProvider> providerCombo;
     private JComboBox<String> modelCombo;
+    private JComboBox<String> effortCombo;
     private JCheckBox confirmEdits;
     private JCheckBox showThinking;
     private JLabel statusLabel;
@@ -159,14 +162,24 @@ public class ChatView extends AbstractOWLViewComponent {
     /** One visible conversation; each native CLI session tracks how far through it it has seen. */
     private final ChatHistory conversationHistory = new ChatHistory();
     private String activeModel;
+    private String activeReasoningEffort;
     /** Model items are rebuilt programmatically during provider changes; those events are not user changes. */
     private boolean suppressModelEvents;
+    private boolean suppressEffortEvents;
+    /** Rebuilds the pickers when the Preferences panel saves a catalog, so an open view stays truthful. */
+    private Runnable catalogListener;
 
     private volatile ChatProcess currentProcess;
     private volatile String sessionId;
     private volatile Integer completedExit;
     private volatile ChatUsage lastUsage;
     private volatile ChatUsage liveUsage;
+    /**
+     * A provider note for the turn in flight, rendered once the reply is closed. Deferred rather than
+     * enqueued: a chunk of another kind arriving before the turn ends would close the assistant
+     * segment early and cost the final reply its copy-as-Markdown button.
+     */
+    private volatile String pendingNotice;
     private boolean atTurnStartOfLine = true;
     // Kind of the last rendered transcript chunk (EDT-only). Reasoning streams as many small deltas
     // that virtually never end with a newline, so line breaks are inserted at the RUN boundaries —
@@ -249,6 +262,32 @@ public class ChatView extends AbstractOWLViewComponent {
             setInputEnabled(false);
         }
         refreshStatus();
+
+        // Registered last: everything the callback rebuilds now exists, so a catalog saved while this
+        // view is open cannot arrive before the pickers it refreshes.
+        followCatalogEdits();
+    }
+
+    /**
+     * Keeps this view's pickers in step with the model catalog. The pickers are built once, when the
+     * view opens, so without this a list edited in Preferences would not appear until Protege was
+     * restarted. Package-private so the wiring itself is testable headlessly.
+     */
+    void followCatalogEdits() {
+        catalogListener = this::refreshModelPickers;
+        ChatModelCatalog.addChangeListener(catalogListener);
+    }
+
+    /**
+     * Stops following catalog edits. Mandatory on teardown: the catalog's listener list is static, so
+     * a registration left behind would keep this view (and its Swing tree) alive for the rest of the
+     * Protege session and rebuild pickers nobody is showing.
+     */
+    void stopFollowingCatalogEdits() {
+        if (catalogListener != null) {
+            ChatModelCatalog.removeChangeListener(catalogListener);
+            catalogListener = null;
+        }
     }
 
     private JComponent buildControlBar() {
@@ -279,6 +318,10 @@ public class ChatView extends AbstractOWLViewComponent {
                     currentProvider = p;
                 }
             }
+            if (currentProvider == null) {
+                currentProvider = available.get(0);
+                McpConfig.prefs().putString(McpConfig.KEY_CHAT_PROVIDER, currentProvider.id());
+            }
             if (currentProvider != null) {
                 providerCombo.setSelectedItem(currentProvider);
             }
@@ -304,6 +347,16 @@ public class ChatView extends AbstractOWLViewComponent {
         }
         Dimension mc = modelCombo.getPreferredSize();
         modelCombo.setPreferredSize(new Dimension(132, mc.height));
+
+        effortCombo = new JComboBox<>();
+        effortCombo.setToolTipText("Reasoning effort ((default) = the CLI's configured default)");
+        effortCombo.addActionListener(e -> onReasoningEffortChanged());
+        if (currentProvider != null) {
+            populateReasoningEfforts(currentProvider);
+            activeReasoningEffort = selectedReasoningEffort();
+        }
+        Dimension ec = effortCombo.getPreferredSize();
+        effortCombo.setPreferredSize(new Dimension(104, ec.height));
 
         newChatButton = new JButton("New chat");
         newChatButton.addActionListener(e -> startNewConversation(true));
@@ -421,6 +474,7 @@ public class ChatView extends AbstractOWLViewComponent {
             east.add(providerCombo);
         }
         east.add(modelCombo);
+        east.add(effortCombo);
         east.add(sendSlot);
 
         JPanel controlRow = new JPanel(new BorderLayout());
@@ -885,8 +939,7 @@ public class ChatView extends AbstractOWLViewComponent {
     private void selectProvider(ChatProvider p) {
         currentProvider = p;
         McpConfig.prefs().putString(McpConfig.KEY_CHAT_PROVIDER, p.id());
-        populateModels(p);
-        activeModel = selectedModel();
+        refreshModelPickers();
         sessionId = conversationHistory.sessionId(p.id());
         append(Kind.SYSTEM, "Provider: " + p.displayName()
                 + (sessionId != null && !sessionId.isBlank()
@@ -894,16 +947,34 @@ public class ChatView extends AbstractOWLViewComponent {
                         : " — joining the shared conversation; prior turns will be handed off.\n"));
     }
 
+    /**
+     * Rebuilds both pickers from what is stored now. Used on a provider change and whenever the
+     * Preferences panel saves a catalog: an id the user just deleted must leave the picker, and a
+     * selection that went with it falls back to the CLI default rather than lingering as a value the
+     * next turn would still run on.
+     */
+    private void refreshModelPickers() {
+        if (currentProvider == null || modelCombo == null || effortCombo == null) {
+            return;
+        }
+        populateModels(currentProvider);
+        activeModel = selectedModel();
+        populateReasoningEfforts(currentProvider);
+        activeReasoningEffort = selectedReasoningEffort();
+    }
+
     private void populateModels(ChatProvider p) {
         boolean previousSuppression = suppressModelEvents;
         suppressModelEvents = true;
         try {
             modelCombo.removeAllItems();
-            for (String m : p.listModels()) {
+            List<String> models = p.listModels();
+            for (String m : models) {
                 modelCombo.addItem(m.isEmpty() ? MODEL_DEFAULT_LABEL : m);
             }
             String saved = McpConfig.prefs().getString(modelPrefKey(p), "");
-            modelCombo.setSelectedItem(saved.isEmpty() ? MODEL_DEFAULT_LABEL : saved);
+            boolean validSaved = !saved.isEmpty() && models.contains(saved);
+            modelCombo.setSelectedItem(validSaved ? saved : MODEL_DEFAULT_LABEL);
         } finally {
             suppressModelEvents = previousSuppression;
         }
@@ -919,6 +990,8 @@ public class ChatView extends AbstractOWLViewComponent {
         }
         activeModel = selected;
         McpConfig.prefs().putString(modelPrefKey(currentProvider), selected);
+        populateReasoningEfforts(currentProvider);
+        activeReasoningEffort = selectedReasoningEffort();
         append(Kind.SYSTEM, "Model: " + (selected.isEmpty() ? MODEL_DEFAULT_LABEL : selected)
                 + (sessionId == null || sessionId.isBlank()
                         ? ".\n"
@@ -933,6 +1006,47 @@ public class ChatView extends AbstractOWLViewComponent {
     private String selectedModel() {
         Object sel = modelCombo.getSelectedItem();
         return ChatModels.normalizeModel(sel == null ? null : sel.toString(), MODEL_DEFAULT_LABEL);
+    }
+
+    private void populateReasoningEfforts(ChatProvider p) {
+        boolean previousSuppression = suppressEffortEvents;
+        suppressEffortEvents = true;
+        try {
+            effortCombo.removeAllItems();
+            List<String> efforts = p.reasoningEfforts(selectedModel());
+            for (String effort : efforts) {
+                effortCombo.addItem(effort.isEmpty() ? EFFORT_DEFAULT_LABEL : effort);
+            }
+            String saved = McpConfig.prefs().getString(
+                    ChatModels.reasoningEffortPrefKey(p.id()), "");
+            boolean validSaved = !saved.isEmpty() && efforts.contains(saved);
+            effortCombo.setSelectedItem(validSaved ? saved : EFFORT_DEFAULT_LABEL);
+        } finally {
+            suppressEffortEvents = previousSuppression;
+        }
+    }
+
+    private void onReasoningEffortChanged() {
+        if (suppressEffortEvents || currentProvider == null) {
+            return;
+        }
+        String selected = selectedReasoningEffort();
+        if (Objects.equals(activeReasoningEffort, selected)) {
+            return;
+        }
+        activeReasoningEffort = selected;
+        McpConfig.prefs().putString(ChatModels.reasoningEffortPrefKey(currentProvider.id()), selected);
+        append(Kind.SYSTEM, "Reasoning effort: "
+                + (selected.isEmpty() ? EFFORT_DEFAULT_LABEL : selected)
+                + (sessionId == null || sessionId.isBlank()
+                        ? ".\n"
+                        : " — continuing this provider's conversation.\n"));
+    }
+
+    private String selectedReasoningEffort() {
+        Object selected = effortCombo.getSelectedItem();
+        return ChatModels.normalizeReasoningEffort(
+                selected == null ? null : selected.toString(), EFFORT_DEFAULT_LABEL);
     }
 
     private void startNewConversation(boolean clearTranscript) {
@@ -1020,6 +1134,7 @@ public class ChatView extends AbstractOWLViewComponent {
         completedExit = null;
         lastUsage = null;
         liveUsage = null;
+        pendingNotice = null;
         currentProcess = null;
         final int turn = ++turnSeq;   // identifies this turn so a late handle-publish can't bleed across turns
         activeTurn = turn;
@@ -1035,6 +1150,7 @@ public class ChatView extends AbstractOWLViewComponent {
 
         ChatProvider provider = currentProvider;
         String model = selectedModel();
+        String reasoningEffort = selectedReasoningEffort();
         String resume = conversationHistory.sessionId(providerId);
         // Read the toggle here, on the EDT: the providers add their CLI-side opt-in flag from it
         // (no CLI sends reasoning text unless asked), so it snapshots per turn like the model does.
@@ -1056,7 +1172,7 @@ public class ChatView extends AbstractOWLViewComponent {
                 McpEndpoint endpoint = new McpEndpoint(
                         controller.getEndpointUrl(), credential.token());
                 ChatRequest req = new ChatRequest(model, prompt, resume, endpoint, turnAttachments,
-                        reasoningOn, handoffContext);
+                        reasoningOn, handoffContext, reasoningEffort);
                 ChatProcess proc = provider.startTurn(req, uiListener(providerId));
                 // Publish on the EDT: if this turn already finalized (a fast turn) or the user hit Stop during
                 // the launch window, publishProcess cancels the freshly-spawned process instead of leaking it.
@@ -1143,7 +1259,12 @@ public class ChatView extends AbstractOWLViewComponent {
         if (credential != null && now >= nextAssistantCredentialRenewal) {
             McpServerController controller = activeAssistantController;
             if (controller == null || !controller.renewAssistantCredential(credential.token())) {
-                activeAssistantCredential = null;
+                // The lease is gone, but a tool invocation issued under its grant may still be inside a
+                // commit fence. Revoke it the way every other lifecycle path does — the credential object
+                // carries the principal that expiry cleanup takes away with the token, so the fence is
+                // still applied — rather than dropping the reference and leaving that execution to finish
+                // on a turn the view has already given up on.
+                revokeActiveAssistantCredential();
                 turnStopped = true;
                 enqueue(Kind.ERROR, "\nThe Assistant MCP credential expired or its server restarted; "
                         + "start a new turn.\n");
@@ -1202,8 +1323,15 @@ public class ChatView extends AbstractOWLViewComponent {
 
             @Override
             public void onError(String message) {
-                // No "[error]" prefix: the ERROR kind already renders in the error color.
+                // No "[error]" prefix: the ERROR kind already renders in the error color. Nothing else
+                // needs telling: whether the turn becomes the conversation turns on the reply, and a
+                // turn that reported a failure and still answered is the conversation either way.
                 enqueue(Kind.ERROR, "\n" + message + "\n");
+            }
+
+            @Override
+            public void onNotice(String message) {
+                pendingNotice = message;
             }
 
             @Override
@@ -1275,8 +1403,10 @@ public class ChatView extends AbstractOWLViewComponent {
         // unless the user stopped the turn: deltas drained past the [stopped] marker are a tail
         // fragment, not "the reply", so they stay button-less (still right-click copyable).
         closeAssistantSegment(!turnStopped);
-        if (exit == 0 && !turnStopped && activeTurnProviderId != null) {
-            conversationHistory.addAssistant(activeTurnProviderId, activeTurnAssistant.toString());
+        String reply = activeTurnAssistant.toString();
+        if (isConversationHistory(exit, turnStopped, !reply.isBlank())
+                && activeTurnProviderId != null) {
+            conversationHistory.addAssistant(activeTurnProviderId, reply);
             conversationHistory.markSynced(activeTurnProviderId);
         }
         activeTurnProviderId = null;
@@ -1297,6 +1427,8 @@ public class ChatView extends AbstractOWLViewComponent {
         if (!atTurnStartOfLine) {
             append(Kind.SYSTEM, "\n");
         }
+        // After the reply is closed, so the note reads as being about the turn rather than part of it.
+        renderPendingNotice();
         ChatUsage u = lastUsage;
         if (u != null) {
             usageLabel.setText(formatUsage(u));
@@ -1304,6 +1436,41 @@ public class ChatView extends AbstractOWLViewComponent {
         setInputEnabled(true);
         showStop(false);
         input.requestFocusInWindow();
+    }
+
+    /**
+     * Whether the turn that just finished becomes conversation history — recorded as the reply and
+     * marked as already known to the active provider's native session.
+     *
+     * <p>Only a turn that ran to completion and answered qualifies. A clean exit is not enough on its
+     * own, because marking a provider synced is a claim about a session this side cannot see: it drops
+     * the question from every later handoff, so if that session never took it — or never existed — the
+     * question is lost from the conversation for good. A reply is the whole of the evidence that it was
+     * taken, so a turn that answered nothing is not filed however cleanly it exited and whatever account
+     * of itself it left: an empty reply is not the conversation's reply either. A stopped turn is treated
+     * the same way, and for the same reason: what reached the transcript is a fragment, and the killed
+     * CLI's session state is unknown.
+     *
+     * <p>A reply that arrived after a reported failure still counts. Codex surfaces the errors of a retry
+     * loop as it goes, so a turn can print a failure, recover, and answer; the text proves the question
+     * was taken, and dropping such a turn would hide a real reply from the other provider and ask this
+     * one again. Package-private for testing.
+     */
+    static boolean isConversationHistory(int exit, boolean stopped, boolean replied) {
+        return exit == 0 && !stopped && replied;
+    }
+
+    /**
+     * Renders the note the provider left for the turn just finished, once. It is held until here
+     * rather than streamed: a non-assistant chunk arriving mid-reply closes the assistant segment,
+     * which would cost the final reply its copy-as-Markdown button. Package-private for testing.
+     */
+    void renderPendingNotice() {
+        String notice = pendingNotice;
+        pendingNotice = null;
+        if (notice != null && !notice.isBlank()) {
+            append(Kind.SYSTEM, notice.strip() + "\n");
+        }
     }
 
     private void revokeActiveAssistantCredential() {
@@ -1733,7 +1900,7 @@ public class ChatView extends AbstractOWLViewComponent {
     /** Enable/disable every control that mutates conversation state (everything but Stop). */
     private void setInputEnabled(boolean enabled) {
         for (Component comp : new Component[] {
-                sendButton, attachButton, input, newChatButton, providerCombo, modelCombo
+                sendButton, attachButton, input, newChatButton, providerCombo, modelCombo, effortCombo
         }) {
             if (comp != null) {
                 comp.setEnabled(enabled);
@@ -1743,6 +1910,8 @@ public class ChatView extends AbstractOWLViewComponent {
 
     @Override
     protected void disposeOWLView() {
+        // First, so a catalog saved during teardown cannot rebuild pickers this method is dismantling.
+        stopFollowingCatalogEdits();
         if (statusTimer != null) {
             statusTimer.stop();
             statusTimer = null;

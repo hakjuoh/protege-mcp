@@ -59,6 +59,34 @@ class ClaudeEventParserTest {
     }
 
     @Test
+    void twoEventsOnOneLineAreBothDelivered() {
+        // A missing newline between two flushed events is not a reason to lose one of them: the second
+        // here carries the whole result - usage, session, and the end of the turn - and stopping at the
+        // first value would drop it silently while the reply looked complete.
+        RecordingChatListener listener = new RecordingChatListener();
+        new ClaudeEventParser(listener).accept(
+                "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\","
+                + "\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}}"
+                + "{\"type\":\"result\",\"session_id\":\"s\",\"usage\":{\"input_tokens\":7,"
+                + "\"output_tokens\":9}}");
+
+        assertEquals("hi", listener.text.toString());
+        assertEquals("s", listener.sessionId);
+        assertNotNull(listener.usage, "the second event on the line still ends the turn");
+        assertEquals(9, listener.usage.outputTokens());
+    }
+
+    @Test
+    void aValueThatFollowsAGoodOneWithoutBeingJsonLeavesTheFirstDelivered() {
+        RecordingChatListener listener = new RecordingChatListener();
+        new ClaudeEventParser(listener).accept(
+                "{\"type\":\"result\",\"is_error\":true,\"result\":\"boom\",\"session_id\":\"s\"} {\"trunc");
+
+        assertTrue(listener.errors.contains("boom"),
+                "a malformed remainder must not retract what the line already reported");
+    }
+
+    @Test
     void surfacesErrorResult() {
         RecordingChatListener listener = new RecordingChatListener();
         new ClaudeEventParser(listener).accept(

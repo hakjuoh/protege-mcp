@@ -19,15 +19,19 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
   Jetty 12, Jakarta Servlet 6.1, Apache Jena ARQ and Jackson are all on the test classpath.
 - The suite is **deterministic** (verified across repeated runs). OS-specific behaviour (POSIX
   login-shell wrapping, executable-bit semantics) is guarded with JUnit `Assumptions`.
+- The plugin's test JVM installs an **in-memory `java.util.prefs` store** (`InMemoryPreferencesFactory`,
+  set as `java.util.prefs.PreferencesFactory` by surefire), so every test that goes through Protégé
+  `Preferences` is isolated from the real user preference tree: a full `mvn verify` cannot read or write
+  the settings a running Protégé owns. Tests take their node from `TestPreferences.cleared()`.
 
-At the time of writing: **4,141 JUnit tests** (3,419 plugin, 68 standalone-CLI,
-and 654 core tests), with zero failures/errors and three intentionally skipped opt-in performance tests,
+At the time of writing: **4,384 JUnit tests** (3,661 plugin, 68 standalone-CLI,
+and 655 core tests), with zero failures/errors and three intentionally skipped opt-in performance tests,
 across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
 pure helpers of `ui`, the headless CLI, and the extractable `ro_crate` interoperability package. Coverage is
 measured by **JaCoCo** (`mvn verify`). The plugin's `tools`/`server`/`oauth` layers, the core contract
 and headless service/catalog boundary, and the CLI headless registry each have explicit regression floors; the
 EDT/subprocess-bound `ui`/`chat` surfaces are intentionally not gated. The current whole-module reports
-are core 78.51% line / 61.27% branch, plugin 71.36% / 64.13%, and CLI 73.93% / 64.62%.
+are core 81.94% line / 63.90% branch, plugin 76.06% / 66.32%, and CLI 73.13% / 64.65%.
 
 Historical correction: the `v0.5.0` tag's copy of this page still said 2,044, but that tag's verified
 release commit records the actual clean run as **2,488 tests**. The count above comes from the current
@@ -51,10 +55,11 @@ boundary rather than indicating an unnoticed partial load.
 
 ## Public-contract and policy-schema harnesses
 
-- `PublicContractSnapshotTest` pins both the immutable 0.5.0 baseline (66 tool registrations and 11
-  prompt registrations); the current 85-tool runtime surface is checked against it, allowing only
-  reviewed additive drift, while the complete 0.7.2 plugin baseline freezes all 85 tools and 11 prompts
-  before the 0.8 additions. `HeadlessContractSnapshotTest` separately freezes the eight-tool 0.7.2
+- `PublicContractSnapshotTest` pins the immutable 0.5.0 baseline (66 tool registrations and 11
+  prompt registrations); the current 104-tool runtime surface is checked against it, allowing only
+  reviewed additive drift. Two later baselines freeze whole surfaces: 0.7.2 with all 85 tools and 11
+  prompts before the 0.8 additions, and 0.8.0 with all 104 tools and 11 prompts, which the live contract
+  must match exactly. `HeadlessContractSnapshotTest` separately freezes the eight-tool 0.7.2
   stdio surface. The tool goldens combine all MCP registration metadata and input schemas with
   the manual's documented result fields; prompt goldens also render every template with deterministic
   sentinel arguments. Compatibility checks allow additive optional surface while rejecting

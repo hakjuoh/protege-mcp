@@ -45,6 +45,17 @@ final class OwnerOnlyFiles {
             PosixFilePermission.OTHERS_WRITE, PosixFilePermission.OTHERS_EXECUTE);
     private static final ConcurrentHashMap<Path, ReentrantLock> JVM_LOCKS = new ConcurrentHashMap<>();
     private static final long LOCK_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(2);
+    /**
+     * Inodes whose extended-ACL state has already been read as owner-only, keyed by the identity that
+     * reading was about and stamped with the moment the kernel last changed that inode's metadata. This
+     * JVM has no ACL view on macOS, so the answer costs a process, and the answer is asked for several
+     * times per store operation; the kernel moves the status-change time for every change to an inode's
+     * ACL, so a stamp that still matches is that same answer arriving without the process. It stands in
+     * for nothing else: the owner and mode checks around it read the live file on every call, and an
+     * inode whose stamp has moved for any reason at all is read again rather than assumed.
+     */
+    private static final ConcurrentHashMap<String, Long> MAC_ACL_VERIFIED = new ConcurrentHashMap<>();
+    private static final int MAC_ACL_VERIFIED_BOUND = 4_096;
 
     private OwnerOnlyFiles() { }
 
@@ -67,7 +78,16 @@ final class OwnerOnlyFiles {
                 } catch (UnsupportedOperationException unsupported) {
                     Files.createDirectory(path);
                 }
-                applyOwnerOnly(path, true);
+                applyOwnerOnly(path, true, true);
+                try {
+                    requireDirectory(path);
+                } catch (IOException inherited) {
+                    // This store's own parent is not its to vouch for: a directory created under one that
+                    // carries inheritable entries starts out carrying them too. Strip what was inherited
+                    // and let the reading below be the one that says whether it worked, which is what the
+                    // strip has always been followed by.
+                    applyOwnerOnly(path, true, false);
+                }
             }
             requireDirectory(path);
             return path.toRealPath(LinkOption.NOFOLLOW_LINKS);
@@ -118,7 +138,7 @@ final class OwnerOnlyFiles {
         try {
             if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) requireFile(target);
             temporary = Files.createTempFile(directory, ".provider-", ".tmp");
-            applyOwnerOnly(temporary, false);
+            applyOwnerOnly(temporary, false, true);
             try (OpenedFile opened = openChannel(directory, temporary.getFileName().toString(),
                     StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING)) {
                 FileChannel channel = opened.channel();
@@ -308,6 +328,7 @@ final class OwnerOnlyFiles {
     }
 
     private static void createLockFile(Path lock) throws IOException {
+        boolean created = true;
         try {
             try {
                 Files.createFile(lock, PosixFilePermissions.asFileAttribute(FILE_PERMISSIONS));
@@ -315,9 +336,11 @@ final class OwnerOnlyFiles {
                 Files.createFile(lock);
             }
         } catch (java.nio.file.FileAlreadyExistsException raced) {
-            // Another process created the stable lock inode; verify it before opening.
+            // Another process created the stable lock inode; verify it before opening, and strip it like
+            // any other inode this store found rather than made.
+            created = false;
         }
-        applyOwnerOnly(lock, false);
+        applyOwnerOnly(lock, false, created);
     }
 
     private static FileLock acquire(FileChannel channel, long deadline) throws IOException {
@@ -389,6 +412,21 @@ final class OwnerOnlyFiles {
     }
 
     private static void applyOwnerOnly(Path path, boolean directory) throws IOException {
+        applyOwnerOnly(path, directory, false);
+    }
+
+    /**
+     * @param created inside a store directory this operation has already read as free of extended ACLs, and
+     *     created by this call rather than found. macOS gives a new file an ACL only by inheriting one from
+     *     its directory, so there is nothing for such a path to have inherited and the removal below would
+     *     be a process spent proving it. Nothing is taken on trust: every caller verifies the path it just
+     *     created, so a directory that acquired an inheritable entry in between is refused there instead of
+     *     being repaired here, which is the same answer this store gives for an ACL on any file it did not
+     *     create. A path found rather than created, or one whose directory was not read first, is still
+     *     stripped.
+     */
+    private static void applyOwnerOnly(Path path, boolean directory, boolean created)
+            throws IOException {
         boolean enforced = false;
         if (Files.getFileStore(path).supportsFileAttributeView("posix")) {
             Files.setPosixFilePermissions(path,
@@ -403,7 +441,7 @@ final class OwnerOnlyFiles {
                     .setPermissions(EnumSet.allOf(AclEntryPermission.class)).build();
             view.setAcl(List.of(entry));
             enforced = true;
-        } else if (enforced && isMacOs()) {
+        } else if (enforced && isMacOs() && !created) {
             removeMacAcl(path);
         }
         if (!enforced) throw new IOException("no enforceable permission model");
@@ -456,12 +494,99 @@ final class OwnerOnlyFiles {
     }
 
     private static void verifyMacAclAbsent(Path path) throws IOException {
-        String output = runMacCommand(List.of("/bin/ls", "-lde", "--", path.toString()), true);
-        String normalized = output.stripTrailing();
-        int separator = normalized.indexOf(' ');
-        String permissions = separator < 0 ? normalized : normalized.substring(0, separator);
-        if (normalized.contains("\n") || !permissions.matches("[-d][rwx-]{9}@?")) {
+        AclStamp stamp = aclStamp(path);
+        if (isStamped(stamp)) return;
+        Path parent = path.getParent();
+        AclStamp above = parent == null ? null : aclStamp(parent);
+        if (isStamped(above)) above = null;
+        if (above != null && readsBatchOwnerOnly(List.of(path, parent))) {
+            // The directory this file is in is read whenever it is not already known, because the reading
+            // costs a process and one process can answer for both. Every line of that answer is held to
+            // exactly the rule a path read on its own is held to, so a clean batch passes this file on the
+            // same terms it would have been passed alone and saves the directory its own later reading. A
+            // batch that comes back anything but clean is not a verdict on either path: the requested one
+            // is read on its own below and the directory is left to the check that is about it — which is
+            // where a directory that is not owner-only has always been refused.
+            remember(stamp);
+            remember(above);
+            return;
+        }
+        if (!readsOwnerOnly(List.of(path))) {
             throw new IOException("extended ACL state is not owner-only");
+        }
+        // The stamp was taken before the reading, so an ACL set between the two is either what the
+        // reading just refused or a change that moves the stamp past the one being kept here.
+        remember(stamp);
+    }
+
+    /**
+     * Whether every path named has no extended ACL, asked of all of them in one process. The rule each is
+     * held to is the single-path one: one line, whose mode field is a plain POSIX one, since {@code ls}
+     * prints an extra line per ACL entry and a mode ending in {@code +} for a file that has any. A batch
+     * that answers for more than one path answers only as a whole — {@code ls} orders its own output, so a
+     * line that fails cannot be attributed — and the caller above re-reads paths individually rather than
+     * treating that as a verdict.
+     */
+    private static boolean readsOwnerOnly(List<Path> paths) throws IOException {
+        List<String> command = new java.util.ArrayList<>(List.of("/bin/ls", "-lde", "--"));
+        paths.forEach(path -> command.add(path.toString()));
+        String[] lines = runMacCommand(command, true).stripTrailing().split("\n", -1);
+        if (lines.length != paths.size()) return false;
+        for (String line : lines) {
+            int separator = line.indexOf(' ');
+            String permissions = separator < 0 ? line : line.substring(0, separator);
+            if (!permissions.matches("[-d][rwx-]{9}@?")) return false;
+        }
+        return true;
+    }
+
+    /**
+     * The batch above, held to answering or not answering. A helper that cannot report on every path it was
+     * given — one of them gone by the time it looked, a helper that failed or timed out — has said nothing
+     * about the requested path either, so it is read on its own and fails there if that is what it is.
+     */
+    private static boolean readsBatchOwnerOnly(List<Path> paths) {
+        try {
+            return readsOwnerOnly(paths);
+        } catch (IOException unavailable) {
+            return false;
+        }
+    }
+
+    private static boolean isStamped(AclStamp stamp) {
+        if (stamp == null) return false;
+        Long verified = MAC_ACL_VERIFIED.get(stamp.identity());
+        return verified != null && verified.longValue() == stamp.statusChange();
+    }
+
+    private static void remember(AclStamp stamp) {
+        if (stamp == null) return;
+        if (MAC_ACL_VERIFIED.size() >= MAC_ACL_VERIFIED_BOUND) MAC_ACL_VERIFIED.clear();
+        MAC_ACL_VERIFIED.put(stamp.identity(), stamp.statusChange());
+    }
+
+    /**
+     * What the reading above was about and when the kernel last changed it. The identity carries the path
+     * as well as the inode so a number the filesystem hands out again cannot answer for the file that had
+     * it, and the whole stamp is absent — never assumed — on any platform or path that cannot produce one,
+     * which leaves the reading to happen.
+     */
+    private record AclStamp(String identity, long statusChange) { }
+
+    private static AclStamp aclStamp(Path path) {
+        try {
+            java.util.Map<String, Object> attributes = Files.readAttributes(
+                    path, "unix:dev,ino,ctime", LinkOption.NOFOLLOW_LINKS);
+            Object device = attributes.get("dev");
+            Object inode = attributes.get("ino");
+            if (!(device instanceof Number) || !(inode instanceof Number)
+                    || !(attributes.get("ctime") instanceof java.nio.file.attribute.FileTime changed)) {
+                return null;
+            }
+            return new AclStamp(device + ":" + inode + ":" + path,
+                    changed.to(TimeUnit.NANOSECONDS));
+        } catch (IOException | RuntimeException unavailable) {
+            return null;
         }
     }
 

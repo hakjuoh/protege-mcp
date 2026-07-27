@@ -36,6 +36,14 @@ public interface ChatListener {
     default void onError(String message) {
     }
 
+    /**
+     * Something the turn should have done but silently did not — the CLI ignoring an option is the
+     * case this exists for. Unlike {@link #onError}, the turn itself succeeded, so the note belongs
+     * after the reply rather than in the error color; a listener may show it once per turn.
+     */
+    default void onNotice(String message) {
+    }
+
     /** The provider process exited; {@code exitCode} is 0 on success ({@code -1} if unknown). */
     default void onComplete(int exitCode) {
     }

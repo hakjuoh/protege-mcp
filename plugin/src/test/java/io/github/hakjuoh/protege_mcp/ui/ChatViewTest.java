@@ -33,7 +33,16 @@ import io.github.hakjuoh.protege_mcp.chat.ChatProcess;
 import io.github.hakjuoh.protege_mcp.chat.ChatProvider;
 import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
 import io.github.hakjuoh.protege_mcp.chat.ChatUsage;
+import io.github.hakjuoh.protege_mcp.chat.ChatModelCatalog;
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
+import io.github.hakjuoh.protege_mcp.oauth.OAuthStore;
+import io.github.hakjuoh.protege_mcp.server.McpServerController;
+import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
+import io.github.hakjuoh.protege_mcp.tools.ToolArgException;
+import io.github.hakjuoh.protege_mcp.tools.ToolContext;
+import io.github.hakjuoh.protege_mcp.testing.TestPreferences;
+
+import org.protege.editor.core.prefs.Preferences;
 
 /**
  * Method-level tests for the pure/testable helpers of {@link ChatView}.
@@ -59,6 +68,63 @@ class ChatViewTest {
         assertFalse(first.contains("provider-secret-session"));
         assertEquals("turn-7", ChatView.chatIdentity("claude", null, 7));
         assertNotNull(first);
+    }
+
+    @Test
+    void aRenewalThatFailsStillFencesTheTurnsGrant() throws Exception {
+        // The lease can lapse mid-turn (expired credential, restarted server). Dropping the reference
+        // would leave a tool invocation issued under that grant running on a turn the view has already
+        // given up on, so the failed renewal must revoke the credential like every other lifecycle path:
+        // the credential object still carries the principal that expiry cleanup takes with the token.
+        McpServerController controller = new McpServerController(new OntologyAccess(null));
+        OAuthStore store = new OAuthStore(() -> null, () -> null, ignored -> { });
+        ToolContext context = new ToolContext(null, controller);
+        setControllerField(controller, "oauthStore", store);
+        setControllerField(controller, "toolContext", context);
+        setControllerRunning(controller, true);
+        McpServerController.AssistantCredential credential =
+                controller.issueAssistantCredential("codex", "turn-1", true);
+        // What a lapsed lease looks like from the view: renewAssistantCredential refuses.
+        setControllerRunning(controller, false);
+        assertFalse(controller.renewAssistantCredential(credential.token()));
+
+        ChatView v = wiredInstance();
+        setField(v, "workingLabel", new javax.swing.JLabel(" "));
+        setField(v, "turnStartMillis", System.currentTimeMillis());
+        setField(v, "activeAssistantCredential", credential);
+        setField(v, "activeAssistantController", controller);
+        setField(v, "nextAssistantCredentialRenewal", 0L);
+        Method tick = ChatView.class.getDeclaredMethod("tickWorking");
+        tick.setAccessible(true);
+        tick.invoke(v);
+
+        assertNull(getField(v, "activeAssistantCredential"), "the lapsed credential is not kept");
+        assertTrue((Boolean) getField(v, "turnStopped"), "the turn is over either way");
+        // Revocation runs off the EDT, so wait for the fence rather than racing it.
+        boolean fenced = false;
+        for (int attempt = 0; attempt < 200 && !fenced; attempt++) {
+            try {
+                context.executions().acquire(credential.principal()).close();
+                Thread.sleep(10);
+            } catch (ToolArgException refused) {
+                fenced = true;
+            }
+        }
+        assertTrue(fenced, "the grant of a turn whose credential lapsed must still be fenced");
+    }
+
+    private static void setControllerField(McpServerController controller, String name, Object value)
+            throws Exception {
+        Field field = McpServerController.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(controller, value);
+    }
+
+    private static void setControllerRunning(McpServerController controller, boolean running)
+            throws Exception {
+        Field field = McpServerController.class.getDeclaredField("running");
+        field.setAccessible(true);
+        field.setBoolean(controller, running);
     }
 
     // ------------------------------------------------------------------ reflection plumbing
@@ -546,6 +612,49 @@ class ChatViewTest {
     }
 
     @Test
+    void onlyACompletedTurnThatAnsweredBecomesConversationHistory() {
+        assertTrue(ChatView.isConversationHistory(0, false, true),
+                "a clean turn that answered is the conversation");
+        assertFalse(ChatView.isConversationHistory(0, false, false),
+                "a turn that answered nothing is not: an empty reply is not the conversation's reply, "
+                        + "and marking the provider synced would drop the question from every later "
+                        + "handoff on the strength of a session that may never have taken it");
+        assertFalse(ChatView.isConversationHistory(1, false, true), "a non-zero exit is not");
+        assertFalse(ChatView.isConversationHistory(0, true, true),
+                "a stopped turn is a fragment");
+        assertFalse(ChatView.isConversationHistory(0, true, false),
+                "stopping outranks a reply-less turn too");
+    }
+
+    @Test
+    void aTurnThatAnsweredNothingLeavesTheQuestionForTheNextHandoff() throws Exception {
+        // The user-visible half of the rule, through the real history: a turn that produced no reply -
+        // a warning-only effort refusal, say, which reports a note and exits 0 - must leave the question
+        // unsynced, or the next turn hands off nothing and it is gone from the conversation for good.
+        io.github.hakjuoh.protege_mcp.chat.ChatHistory history =
+                new io.github.hakjuoh.protege_mcp.chat.ChatHistory();
+        history.addUser("codex", "which classes are unsatisfiable?");
+
+        if (ChatView.isConversationHistory(0, false, false)) {
+            history.addAssistant("codex", "");
+            history.markSynced("codex");
+        }
+
+        assertTrue(history.handoffFor("codex").contains("which classes are unsatisfiable?"),
+                "the unanswered question is still owed to the next turn");
+
+        io.github.hakjuoh.protege_mcp.chat.ChatHistory answered =
+                new io.github.hakjuoh.protege_mcp.chat.ChatHistory();
+        answered.addUser("codex", "which classes are unsatisfiable?");
+        if (ChatView.isConversationHistory(0, false, true)) {
+            answered.addAssistant("codex", "none of them");
+            answered.markSynced("codex");
+        }
+        assertEquals("", answered.handoffFor("codex"),
+                "a turn that answered is the provider's own session history, not a handoff");
+    }
+
+    @Test
     void uiListenerOnThinkingEnqueuesThinkingChunk() throws Exception {
         ChatView v = wiredInstance();
         ChatListener l = invokeUiListener(v);
@@ -554,6 +663,52 @@ class ChatViewTest {
         assertNotNull(chunk, "thinking is always enqueued off-EDT (render decided later)");
         assertEquals("THINKING", chunkKind(chunk), "thinking chunk uses Kind.THINKING");
         assertEquals("reasoning", chunkText(chunk), "thinking carries verbatim text");
+    }
+
+    @Test
+    void uiListenerOnNoticeIsHeldBackInsteadOfEnqueued() throws Exception {
+        // A notice rendered as it arrives would land inside the reply and close the assistant
+        // segment, and the final reply would lose its copy-as-Markdown button. It waits for the turn.
+        ChatView v = wiredInstance();
+        ChatListener l = invokeUiListener(v);
+        l.onAssistantText("the reply");
+        l.onNotice("[note] the effort was refused");
+
+        assertEquals(1, queueOf(v).size(), "the notice must not enter the render queue");
+        assertEquals("ASSISTANT", chunkKind(queueOf(v).peek()));
+        assertEquals("[note] the effort was refused", getField(v, "pendingNotice"));
+    }
+
+    @Test
+    void aTurnsNoticeIsRenderedAfterTheReplyAndOnlyOnce() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        io.github.hakjuoh.protege_mcp.chat.AssistantSegment segment =
+                new io.github.hakjuoh.protege_mcp.chat.AssistantSegment();
+        ChatView v = affordanceInstance(pane, segment);
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "pendingNotice", "[note] the effort was refused\n");
+
+        v.renderPendingNotice();
+
+        javax.swing.text.StyledDocument doc = pane.getStyledDocument();
+        assertEquals("[note] the effort was refused\n", doc.getText(0, doc.getLength()));
+        assertNull(getField(v, "pendingNotice"), "a note belongs to one turn, not the next");
+
+        v.renderPendingNotice();
+        assertEquals("[note] the effort was refused\n", doc.getText(0, doc.getLength()),
+                "the next turn must not repeat the previous turn's note");
+    }
+
+    @Test
+    void aTurnWithNothingToNoteRendersNothing() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        ChatView v = affordanceInstance(pane, new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "pendingNotice", "   ");
+
+        v.renderPendingNotice();
+
+        assertEquals(0, pane.getStyledDocument().getLength(), "a blank note is not a note");
     }
 
     private static ChatListener invokeUiListener(ChatView v) throws Exception {
@@ -609,6 +764,116 @@ class ChatViewTest {
 
         assertEquals("keep-me-too", getField(v, "sessionId"));
         assertEquals("opus", getField(v, "activeModel"));
+    }
+
+    @Test
+    void assistantModelPickerUsesTheSavedPreferencesOrder() throws Exception {
+        Preferences preferences = TestPreferences.cleared();
+        ChatModelCatalog.save(preferences, "codex", List.of("third", "first", "second"));
+        ChatView v = bareInstance();
+        javax.swing.JComboBox<String> models = new javax.swing.JComboBox<>();
+        setField(v, "modelCombo", models);
+        Method populate = ChatView.class.getDeclaredMethod("populateModels", ChatProvider.class);
+        populate.setAccessible(true);
+        populate.invoke(v, catalogProvider(preferences));
+        assertEquals(List.of("(default)", "third", "first", "second"), items(models));
+    }
+
+    @Test
+    void anOpenAssistantPicksUpAModelListEditedInPreferences() throws Exception {
+        // The picker is built once, when the view opens. Without the catalog notification an edit
+        // made in Preferences would not appear until Protégé was restarted, and the user would be
+        // left picking from a list that no longer matches what they just saved.
+        Preferences preferences = TestPreferences.cleared();
+        ChatModelCatalog.save(preferences, "codex", List.of("first"));
+        ChatView v = bareInstance();
+        javax.swing.JComboBox<String> models = new javax.swing.JComboBox<>();
+        javax.swing.JComboBox<String> efforts = new javax.swing.JComboBox<>();
+        setField(v, "modelCombo", models);
+        setField(v, "effortCombo", efforts);
+        setField(v, "currentProvider", catalogProvider(preferences));
+        followCatalog(v);
+        try {
+            assertEquals(List.of("(default)", "first"), items(models));
+
+            editCatalogAndDeliver(preferences, List.of("first", "second"));
+
+            assertEquals(List.of("(default)", "first", "second"), items(models));
+        } finally {
+            unfollowCatalog(v);
+        }
+    }
+
+    @Test
+    void aDisposedAssistantStopsListeningForCatalogEdits() throws Exception {
+        // A closed view still registered would keep its combo boxes - and the view itself - alive for
+        // as long as Protégé runs, and would touch Swing state nobody is showing.
+        Preferences preferences = TestPreferences.cleared();
+        ChatModelCatalog.save(preferences, "codex", List.of("first"));
+        ChatView v = bareInstance();
+        javax.swing.JComboBox<String> models = new javax.swing.JComboBox<>();
+        javax.swing.JComboBox<String> efforts = new javax.swing.JComboBox<>();
+        setField(v, "modelCombo", models);
+        setField(v, "effortCombo", efforts);
+        setField(v, "currentProvider", catalogProvider(preferences));
+        followCatalog(v);
+        unfollowCatalog(v);
+        assertNull(getField(v, "catalogListener"), "the view must not hold a stale registration");
+
+        models.removeAllItems();
+        editCatalogAndDeliver(preferences, List.of("first", "second"));
+
+        assertEquals(List.of(), items(models),
+                "a disposed view must not be repopulated - the emptied picker stays empty");
+    }
+
+    /** A provider whose picker list comes from the supplied preferences rather than the real home. */
+    private static ChatProvider catalogProvider(Preferences preferences) {
+        return new ChatProvider() {
+            @Override public String id() { return "codex"; }
+            @Override public String displayName() { return "Codex"; }
+            @Override public boolean isAvailable() { return true; }
+            @Override public List<String> listModels() {
+                return ChatModelCatalog.pickerModels(preferences, id());
+            }
+            @Override public String defaultModel() { return ""; }
+            @Override public ChatProcess startTurn(ChatRequest request, ChatListener listener) {
+                throw new UnsupportedOperationException();
+            }
+        };
+    }
+
+    private static List<String> items(javax.swing.JComboBox<String> combo) {
+        List<String> displayed = new ArrayList<>();
+        for (int i = 0; i < combo.getItemCount(); i++) {
+            displayed.add(combo.getItemAt(i));
+        }
+        return List.copyOf(displayed);
+    }
+
+    /** The registration {@code initialiseOWLView} performs, plus the initial build of the pickers. */
+    private static void followCatalog(ChatView v) throws Exception {
+        v.followCatalogEdits();
+        refreshPickers(v);
+    }
+
+    private static void refreshPickers(ChatView v) throws Exception {
+        Method refresh = ChatView.class.getDeclaredMethod("refreshModelPickers");
+        refresh.setAccessible(true);
+        refresh.invoke(v);
+    }
+
+    /** The unregistration {@code disposeOWLView} performs. */
+    private static void unfollowCatalog(ChatView v) {
+        v.stopFollowingCatalogEdits();
+    }
+
+    /** Saves an edited catalog and lets the notification reach listeners on the EDT. */
+    private static void editCatalogAndDeliver(Preferences preferences, List<String> models)
+            throws Exception {
+        ChatModelCatalog.save(preferences, "codex", models);
+        ChatModelCatalog.fireChanged();
+        javax.swing.SwingUtilities.invokeAndWait(() -> { /* drain the EDT queue */ });
     }
 
     // ------------------------------------------------------------------ activeAttachments

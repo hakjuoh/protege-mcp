@@ -57,6 +57,34 @@ class CodexEventParserTest {
     }
 
     @Test
+    void twoEventsOnOneLineAreBothDelivered() {
+        // A missing newline between two flushed events must not cost one of them. Here the reply and the
+        // turn.completed that carries its usage share a line; stopping at the first value would leave the
+        // turn without the usage readout it reports, silently.
+        RecordingChatListener listener = new RecordingChatListener();
+        new CodexEventParser(listener).accept(
+                "{\"type\":\"item.completed\",\"item\":{\"id\":\"m\",\"type\":\"agent_message\","
+                + "\"text\":\"answer\"}}"
+                + "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":6,"
+                + "\"cached_input_tokens\":1}}");
+
+        assertEquals("answer", listener.text.toString());
+        assertNotNull(listener.usage, "the second event on the line still reports the turn's usage");
+        assertEquals(6, listener.usage.outputTokens());
+    }
+
+    @Test
+    void aMalformedRemainderLeavesTheEventBeforeItDelivered() {
+        RecordingChatListener listener = new RecordingChatListener();
+        new CodexEventParser(listener).accept(
+                "{\"type\":\"item.completed\",\"item\":{\"id\":\"m\",\"type\":\"agent_message\","
+                + "\"text\":\"answer\"}} {\"trunc");
+
+        assertEquals("answer", listener.text.toString(),
+                "a malformed remainder must not retract what the line already delivered");
+    }
+
+    @Test
     void ignoresUnknownAndMalformedLines() {
         RecordingChatListener listener = new RecordingChatListener();
         CodexEventParser parser = new CodexEventParser(listener);

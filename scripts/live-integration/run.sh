@@ -86,6 +86,27 @@ PY
 fi
 test -s "$PLUGIN_JAR"
 
+# On a Multi-Release bundle, Felix (Java 9+) substitutes any
+# META-INF/versions/<N>/OSGI-INF/MANIFEST.MF for the main manifest's
+# Import-Package/Require-Capability. A supplement inlined from a third-party jar
+# (okhttp-jvm ships one demanding a mandatory `kotlin` import) therefore replaces the
+# bundle's computed imports and the bundle can never resolve inside Protégé. Fail fast
+# with the cause instead of timing out on bundle activation below. The entry list is
+# captured into a variable first: `unzip | grep -q` would let grep's early exit
+# SIGPIPE unzip, and under pipefail the pipeline then reports 141 exactly when a
+# supplement IS present, silently skipping this guard.
+command -v unzip >/dev/null
+PLUGIN_JAR_ENTRIES=$(unzip -Z1 "$PLUGIN_JAR")
+if grep -Eq '^META-INF/versions/[0-9]+/OSGI-INF/MANIFEST\.MF$' <<<"$PLUGIN_JAR_ENTRIES"; then
+  echo "The plugin bundle contains an OSGi multi-release manifest supplement" \
+    "(META-INF/versions/<N>/OSGI-INF/MANIFEST.MF), inlined from an embedded dependency." \
+    "Felix would substitute it for the bundle's own Import-Package and the bundle cannot" \
+    "resolve. Exclude the supplement from the embed (see the Embed-Dependency comment in" \
+    "plugin/pom.xml)." >&2
+  exit 1
+fi
+unset PLUGIN_JAR_ENTRIES
+
 ARCHIVE=${PROTEGE_ARCHIVE:-"$WORK/$PROTEGE_ARCHIVE_NAME"}
 if [ ! -f "$ARCHIVE" ]; then
   curl --fail --location --retry 3 --output "$ARCHIVE" "$PROTEGE_ARCHIVE_URL"

@@ -61,6 +61,13 @@ public final class ChatHistory {
     /**
      * Render the turns this provider has not seen. The newest content wins when the safety cap is
      * reached, mirroring context compaction while keeping the command line comfortably bounded.
+     *
+     * <p>"Has not seen" is what this side can know, and it is deliberately the cautious reading: a turn is
+     * only ever counted as seen once it completed and answered, so a turn the user stopped is handed off
+     * again even though the native session being resumed alongside it may well hold that question already.
+     * The alternative is to claim a session this side cannot read took the question, and be wrong about it
+     * — which loses the question from the conversation for good. So the preamble says the overlap is
+     * possible and what to do with it, rather than asserting the session missed everything below.
      */
     public synchronized String handoffFor(String providerId) {
         ProviderState state = state(providerId);
@@ -90,9 +97,12 @@ public final class ChatHistory {
         String body = truncated
                 ? transcript.substring(transcript.length() - MAX_HANDOFF_CHARS)
                 : transcript.toString();
-        return "The visible conversation continued while this CLI session was not active. "
-                + "Incorporate the missing transcript below into the existing conversation and answer the "
-                + "user's new message normally. Do not repeat or summarize the transcript unless asked.\n\n"
+        return "The visible conversation continued while this CLI session was not active, or a turn it "
+                + "was given was interrupted before it finished - so part of the transcript below may "
+                + "already be in this session. Incorporate whatever is missing into the existing "
+                + "conversation and answer the user's new message normally. Anything you recognise is the "
+                + "same turn rather than a new one, and is not to be answered again. Do not repeat or "
+                + "summarize the transcript unless asked.\n\n"
                 + "<provider-handoff>\n"
                 + (truncated ? "[Earlier handoff content was compacted; the newest content follows.]\n" : "")
                 + body

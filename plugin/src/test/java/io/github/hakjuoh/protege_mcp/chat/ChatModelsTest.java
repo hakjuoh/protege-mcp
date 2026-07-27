@@ -26,6 +26,14 @@ class ChatModelsTest {
     }
 
     @Test
+    void reasoningEffortPreferenceKeysStayProviderSpecific() {
+        assertEquals(McpConfig.KEY_CHAT_REASONING_EFFORT_CLAUDE,
+                ChatModels.reasoningEffortPrefKey("claude"));
+        assertEquals(McpConfig.KEY_CHAT_REASONING_EFFORT_CODEX,
+                ChatModels.reasoningEffortPrefKey("codex"));
+    }
+
+    @Test
     void normalizeModelTreatsNullAsCliDefault() {
         assertEquals("", ChatModels.normalizeModel(null, "Default (CLI decides)"));
     }

@@ -13,9 +13,9 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import okhttp3.mockwebserver.MockResponse;
-import okhttp3.mockwebserver.MockWebServer;
-import okhttp3.mockwebserver.RecordedRequest;
+import mockwebserver3.MockResponse;
+import mockwebserver3.MockWebServer;
+import mockwebserver3.RecordedRequest;
 
 import org.junit.jupiter.api.Test;
 
@@ -39,8 +39,8 @@ class PinnedHttpsEngineTest {
     @Test
     void realTlsRequestUsesPinnedDnsHeadersAndBoundedMetadata() throws Exception {
         try (ProviderTlsFixture fixture = new ProviderTlsFixture()) {
-            fixture.server.enqueue(new MockResponse().setResponseCode(200)
-                    .setHeader("Retry-After", "2").setBody("{\"ok\":true}"));
+            fixture.server.enqueue(new MockResponse.Builder().code(200)
+                    .setHeader("Retry-After", "2").body("{\"ok\":true}").build());
             ProviderNetworkExecutor.RawResponse response = fixture.engine.get(
                     fixture.uri("/api/search?q=sensitive"),
                     Map.of("Accept", "application/json", "Authorization", "Bearer canary"),
@@ -49,9 +49,9 @@ class PinnedHttpsEngineTest {
             assertArrayEquals("{\"ok\":true}".getBytes(StandardCharsets.UTF_8), response.body());
             RecordedRequest request = fixture.server.takeRequest();
             org.junit.jupiter.api.Assertions.assertEquals(
-                    "/api/search?q=sensitive", request.getPath());
+                    "/api/search?q=sensitive", request.getTarget());
             org.junit.jupiter.api.Assertions.assertEquals(
-                    "Bearer canary", request.getHeader("Authorization"));
+                    "Bearer canary", request.getHeaders().get("Authorization"));
             org.junit.jupiter.api.Assertions.assertEquals("2", response.headers().get("retry-after"));
         }
     }
@@ -59,9 +59,10 @@ class PinnedHttpsEngineTest {
     @Test
     void realTlsRedirectIsReturnedWithoutFollowingTheLocation() throws Exception {
         try (ProviderTlsFixture fixture = new ProviderTlsFixture()) {
-            fixture.server.enqueue(new MockResponse().setResponseCode(302)
-                    .setHeader("Location", "https://attacker.invalid/token"));
-            fixture.server.enqueue(new MockResponse().setResponseCode(200).setBody("must not read"));
+            fixture.server.enqueue(new MockResponse.Builder().code(302)
+                    .setHeader("Location", "https://attacker.invalid/token").build());
+            fixture.server.enqueue(new MockResponse.Builder().code(200)
+                    .body("must not read").build());
             ProviderNetworkExecutor.RawResponse response = fixture.engine.get(
                     fixture.uri("/api"), Map.of(),
                     new InetAddress[] {InetAddress.getLoopbackAddress()});
@@ -75,14 +76,14 @@ class PinnedHttpsEngineTest {
     @Test
     void realTlsRejectsOversizedAndAmbiguousResponsesWithoutRetryClassification() throws Exception {
         try (ProviderTlsFixture fixture = new ProviderTlsFixture()) {
-            fixture.server.enqueue(new MockResponse().setResponseCode(429)
-                    .addHeader("Retry-After", "1").addHeader("Retry-After", "2"));
+            fixture.server.enqueue(new MockResponse.Builder().code(429)
+                    .addHeader("Retry-After", "1").addHeader("Retry-After", "2").build());
             assertThrows(ProviderNetworkExecutor.InvalidResponseException.class,
                     () -> fixture.engine.get(fixture.uri("/ambiguous"), Map.of(),
                             new InetAddress[] {InetAddress.getLoopbackAddress()}));
 
-            fixture.server.enqueue(new MockResponse().setResponseCode(200).setChunkedBody(
-                    "x".repeat(ProviderResponse.MAX_BODY_BYTES + 1), 8_192));
+            fixture.server.enqueue(new MockResponse.Builder().code(200).chunkedBody(
+                    "x".repeat(ProviderResponse.MAX_BODY_BYTES + 1), 8_192).build());
             assertThrows(ProviderNetworkExecutor.InvalidResponseException.class,
                     () -> fixture.engine.get(fixture.uri("/oversized"), Map.of(),
                             new InetAddress[] {InetAddress.getLoopbackAddress()}));
@@ -104,7 +105,7 @@ class PinnedHttpsEngineTest {
             try {
                 System.setProperty("https.proxyHost", "127.0.0.1");
                 System.setProperty("https.proxyPort", "1");
-                fixture.server.enqueue(new MockResponse().setResponseCode(200).setBody("{}"));
+                fixture.server.enqueue(new MockResponse.Builder().code(200).body("{}").build());
                 assertEquals(200, fixture.engine.get(fixture.uri("/direct"), Map.of(),
                         new InetAddress[] {InetAddress.getLoopbackAddress()}).status());
             } finally {

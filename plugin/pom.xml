@@ -36,8 +36,16 @@
              so sensitive queries and credential headers never enter a third-party logging sink. -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp</artifactId>
+            <artifactId>okhttp-jvm</artifactId>
             <version>${okhttp.version}</version>
+        </dependency>
+        <!-- OkHttp 5 uses Kotlin runtime classes. This is intentionally direct and compile-scoped
+             so the pinned stdlib is deterministically inlined into the bundle and every kotlin.*
+             reference from okhttp/okio resolves bundle-locally, without any kotlin OSGi import. -->
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId>
+            <artifactId>kotlin-stdlib</artifactId>
+            <version>${kotlin.version}</version>
         </dependency>
 
         <!-- ===================================================================== -->
@@ -195,7 +203,7 @@
         </dependency>
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>mockwebserver</artifactId>
+            <artifactId>mockwebserver3</artifactId>
             <version>${okhttp.version}</version>
             <scope>test</scope>
         </dependency>
@@ -279,8 +287,20 @@
                         <!-- Inline every compile-scope jar (the whole MCP + Jetty stack) into the
                              bundle so a single bundle classloader resolves all reflective / lazily
                              bound dependencies. provided-scope (Protege/OWLAPI/guava/slf4j) is not
-                             embedded. -->
-                        <Embed-Dependency>*;scope=compile;inline=true</Embed-Dependency>
+                             embedded.
+
+                             okhttp-jvm is inlined by an explicit path filter because the full jar
+                             ships an OSGi multi-release manifest supplement
+                             (META-INF/versions/9/OSGI-INF/MANIFEST.MF). On a Multi-Release bundle,
+                             Felix on Java 9+ SUBSTITUTES that supplement's Import-Package /
+                             Require-Capability for the main manifest's, so inlining it verbatim
+                             replaces this bundle's computed imports with okhttp's own (a mandatory
+                             bare `kotlin` import that no Protégé bundle exports — the bundle then
+                             fails to resolve no matter what Import-Package below says). Everything
+                             okhttp needs at runtime lives under okhttp3/** (classes plus the
+                             public-suffix database); the excluded remainder is only build-time
+                             metadata (module-info, GraalVM/ProGuard hints, the supplement). -->
+                        <Embed-Dependency>okhttp-jvm;inline=okhttp3/**,*;scope=compile;inline=true;groupId=!com.squareup.okhttp3</Embed-Dependency>
                         <Embed-Transitive>true</Embed-Transitive>
 
                         <!-- Honour jackson/reactor/snakeyaml META-INF/versions/* overlays. -->
@@ -288,6 +308,12 @@
 
                         <!-- Export only our own API. -->
                         <Export-Package>io.github.hakjuoh.protege_mcp;version=${project.version}</Export-Package>
+
+                        <!-- Deliberately NO <Private-Package> override: maven-bundle-plugin's
+                             default keeps this module's own packages in the bundle, and an explicit
+                             value REPLACES that default (a kotlin-only value silently drops the
+                             whole plugin layer and turns it into optional self-imports). The Kotlin
+                             runtime is already private content via the inlined kotlin-stdlib. -->
 
                         <!-- Do NOT import the inlined libraries (they now live inside this bundle).
                              DO import the Protege / OWLAPI / Swing / AWT / Eclipse-registry runtime
@@ -309,6 +335,7 @@
                             !com.apicatalog.*,
                             !okhttp3.*,
                             !okio.*,
+                            !kotlin,
                             !kotlin.*,
                             org.protege.editor.core.*,
                             org.protege.editor.owl.*,
@@ -358,6 +385,13 @@
                 <version>3.5.6</version>
                 <configuration>
                     <workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+                    <!-- Protege's PreferencesManager is a facade over java.util.prefs, so an
+                         unqualified test run reads and writes the store a live Protege owns.
+                         Redirect the forked JVM to the in-memory store instead; the guard test in
+                         io.github.hakjuoh.protege_mcp.testing fails loudly if this stops applying. -->
+                    <systemPropertyVariables>
+                        <java.util.prefs.PreferencesFactory>io.github.hakjuoh.protege_mcp.testing.InMemoryPreferencesFactory</java.util.prefs.PreferencesFactory>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
 

@@ -154,7 +154,15 @@ public final class CliSupport {
                 } catch (InterruptedException ignored) {
                     Thread.currentThread().interrupt();
                 }
-                completionHandler.accept(exit, errBuf.toString());
+                // Read under the same lock the drain appends with: that join can time out (a grandchild
+                // inheriting stderr keeps the stream open), and reading a StringBuilder mid-append can
+                // throw. A throw here would skip the completion handler entirely, leaving the turn
+                // spinning with its input disabled until Protégé restarts.
+                String stderr;
+                synchronized (errBuf) {
+                    stderr = errBuf.toString();
+                }
+                completionHandler.accept(exit, stderr);
             }
         }, "protege-chat-agent");
         worker.setDaemon(true);
@@ -272,6 +280,19 @@ public final class CliSupport {
         }
         String base = name + " exited with code " + exit;
         return tail.isEmpty() ? base + "." : base + ": " + tail;
+    }
+
+    /**
+     * The account of a turn that had none: the CLI exited cleanly, said nothing anywhere, and produced no
+     * reply. Nothing else in the transcript describes such a turn — there is no exit code to report, no
+     * stream error to quote, no reply to read — so without this the user is left with a blank exchange and
+     * no reason for it. It names the CLI, because which one went quiet is the first thing worth knowing,
+     * and points at the one place that can say more than the plugin can see.
+     */
+    public static String describeSilentTurn(String name) {
+        return "The '" + name + "' CLI exited without an answer and without reporting why. Send the "
+                + "message again; if it keeps happening, run " + name + " in a terminal to see what it "
+                + "reports.";
     }
 
     private static void ensureHome(Map<String, String> env) {

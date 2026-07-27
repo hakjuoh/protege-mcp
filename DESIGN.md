@@ -348,7 +348,9 @@ the turn. The MCP credential is passed through an owner-only config file or envi
 secret command-line argument.
 
 The CLI handles model authentication, conversation state, and context compaction. The plugin stores neither
-provider API keys nor a duplicate model conversation engine.
+provider API keys nor a duplicate model conversation engine. It also hard-codes no model identifiers: each
+provider's picker offers the user's saved catalog, bootstrapped before first save from that CLI's own local
+metadata, and an empty catalog or a blank reasoning effort simply omits the corresponding CLI argument.
 
 ## 11. Headless CLI and stdio MCP
 

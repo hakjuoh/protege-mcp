@@ -6,6 +6,7 @@ import io.github.hakjuoh.protege_mcp.chat.ChatUsage;
 import java.util.function.Consumer;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.MappingIterator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /**
@@ -37,6 +38,12 @@ final class ClaudeEventParser implements Consumer<String> {
     // Read by the provider's completion handler to decide if the generic exit-code line would be a
     // duplicate. Plain field: line parsing and process completion run on the same worker thread.
     private boolean errorReported;
+    /**
+     * Whether any assistant text reached the listener. A run that reported a failure and answered anyway
+     * ran; one that reported a failure and said nothing is a failed turn whatever its exit code, and a
+     * note claiming it ran at the CLI's own setting would describe a reply that is not there.
+     */
+    private boolean answered;
 
     ClaudeEventParser(ChatListener listener) {
         this.listener = listener;
@@ -47,12 +54,21 @@ final class ClaudeEventParser implements Consumer<String> {
         if (line == null || line.isBlank()) {
             return;
         }
-        JsonNode node;
-        try {
-            node = MAPPER.readTree(line);
-        } catch (java.io.IOException e) {
-            return;
+        // One line is normally one event, but nothing in the pipe guarantees a newline was flushed between
+        // two of them. Reading only the first value would silently drop whatever followed it on the line -
+        // a result event among them takes the turn's usage and its ending with it, and a text delta takes
+        // part of the reply - so every value is handled in order, and a malformed remainder still leaves
+        // the values before it delivered rather than discarding the line whole.
+        try (MappingIterator<JsonNode> events = MAPPER.readerFor(JsonNode.class).readValues(line)) {
+            while (events.hasNextValue()) {
+                handleEvent(events.nextValue());
+            }
+        } catch (java.io.IOException notJson) {
+            // Not JSON, or not any more: the rest of the line is dropped.
         }
+    }
+
+    private void handleEvent(JsonNode node) {
         switch (node.path("type").asText()) {
             case "system" -> {
                 if ("init".equals(node.path("subtype").asText())) {
@@ -75,7 +91,7 @@ final class ClaudeEventParser implements Consumer<String> {
                     case "text_delta" -> {
                         String t = delta.path("text").asText("");
                         if (!t.isEmpty()) {
-                            listener.onAssistantText(t);
+                            emitAssistant(t);
                         }
                     }
                     case "thinking_delta" -> {
@@ -141,6 +157,21 @@ final class ClaudeEventParser implements Consumer<String> {
     /** Whether an error already reached the listener via the stream (see {@link #errorReported}). */
     boolean errorReported() {
         return errorReported;
+    }
+
+    /** Whether the turn produced a reply, whatever else it reported (see {@link #answered}). */
+    boolean answered() {
+        return answered;
+    }
+
+    /**
+     * Emit assistant text, recording that this turn answered. Whitespace alone does not count: the view
+     * decides the same question the same way when it keeps a turn as conversation history, and a turn
+     * whose whole reply was blank has nothing in it to call an answer.
+     */
+    private void emitAssistant(String text) {
+        answered |= !text.isBlank();
+        listener.onAssistantText(text);
     }
 
     private void emitSessionId(String id) {

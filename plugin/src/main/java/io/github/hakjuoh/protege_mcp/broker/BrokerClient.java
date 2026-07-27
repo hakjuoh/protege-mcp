@@ -169,8 +169,7 @@ public final class BrokerClient {
             if (resp.statusCode() == 503) {
                 JsonNode result = MAPPER.readTree(resp.body());
                 if (result.has("unacknowledged_window_ids")) {
-                    throw new IncompleteRevocationException(
-                            result.path("unacknowledged_window_ids").size());
+                    throw new IncompleteRevocationException(unacknowledgedWindows(result));
                 }
                 throw new IOException("broker client revocation is unavailable: "
                         + result.path("error").asText("service_unavailable"));
@@ -226,6 +225,16 @@ public final class BrokerClient {
         public int unacknowledgedWindows() {
             return unacknowledgedWindows;
         }
+    }
+
+    /**
+     * How many windows a partial revocation left owed a fence. The broker counts them for us, because the
+     * ids it can still name come from a bounded set and measuring that list would understate the total.
+     * An older broker that only lists them is read the way it always was — its list is all it knows.
+     */
+    private static int unacknowledgedWindows(JsonNode result) {
+        int listed = result.path("unacknowledged_window_ids").size();
+        return Math.max(result.path("unacknowledged_windows").asInt(listed), listed);
     }
 
     private static ArrayNode windowsJson(List<InstanceRegistry.Window> windows) {

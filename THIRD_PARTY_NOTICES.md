@@ -18,7 +18,7 @@ metadata and source distributions. Major runtime components include:
   BSD-3-Clause. The existing `jcl-over-slf4j` bridge supplies the Commons Logging API under its published
   license without redistributing HermiT's older implementation.
 - Apache Jena and Apache Commons components (Apache-2.0)
-- OkHttp 4.12.0, Okio 3.6.0, and the Kotlin standard library used by the
+- OkHttp 5.4.0, Okio 3.17.0, and the Kotlin standard library 2.1.21 used by the
   pinned provider HTTPS executor (Apache-2.0)
 - Jackson, SnakeYAML, NetworkNT JSON Schema Validator, Guava, and Jetty (Apache-2.0 or EPL/Apache
   dual-license terms published by their respective projects)

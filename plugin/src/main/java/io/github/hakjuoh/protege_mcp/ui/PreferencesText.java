@@ -17,6 +17,9 @@ final class PreferencesText {
      */
     static final int HELP_TEXT_WIDTH_PX = 420;
 
+    /** Swing's 96-to-72 DPI scaling applied to {@link #HELP_TEXT_WIDTH_PX}. */
+    static final int HELP_TEXT_DISPLAY_WIDTH_PX = 560;
+
     /**
      * Prepare a help string for {@code PreferencesLayoutPanel.addHelpText}, which puts the string
      * verbatim into a single-line {@link javax.swing.JLabel}: without this, a long help text never

@@ -19,28 +19,36 @@ import java.util.Set;
  *        adds its opt-in flag only when this is set — display-side filtering alone would never
  *        see any reasoning.
  * @param handoffContext provider-neutral conversation turns this CLI session has not seen
+ * @param reasoningEffort provider-specific effort, or blank to use the CLI's configured default
  */
 public record ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
-        List<ChatAttachment> attachments, boolean showReasoning, String handoffContext) {
+        List<ChatAttachment> attachments, boolean showReasoning, String handoffContext,
+        String reasoningEffort) {
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint) {
-        this(model, prompt, sessionId, endpoint, List.of(), false, "");
+        this(model, prompt, sessionId, endpoint, List.of(), false, "", "");
     }
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
             List<ChatAttachment> attachments) {
-        this(model, prompt, sessionId, endpoint, attachments, false, "");
+        this(model, prompt, sessionId, endpoint, attachments, false, "", "");
     }
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
             List<ChatAttachment> attachments, boolean showReasoning) {
-        this(model, prompt, sessionId, endpoint, attachments, showReasoning, "");
+        this(model, prompt, sessionId, endpoint, attachments, showReasoning, "", "");
+    }
+
+    public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
+            List<ChatAttachment> attachments, boolean showReasoning, String handoffContext) {
+        this(model, prompt, sessionId, endpoint, attachments, showReasoning, handoffContext, "");
     }
 
     public ChatRequest {
         prompt = prompt == null ? "" : prompt;
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         handoffContext = handoffContext == null ? "" : handoffContext;
+        reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
     }
 
     /**

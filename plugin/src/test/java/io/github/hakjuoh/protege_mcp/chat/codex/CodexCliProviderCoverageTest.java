@@ -52,11 +52,11 @@ class CodexCliProviderCoverageTest {
     }
 
     @Test
-    void listModelsReturnsTheKnownIdsWithBlankFirst() {
+    void listModelsReturnsOnlyDiscoveredIdsWithBlankFirst() {
         List<String> models = provider().listModels();
-        assertEquals(List.of("", "gpt-5.5", "gpt-5.4", "o3"), models,
-                "listModels() offers the blank default plus common ids");
         assertEquals("", models.get(0), "the first entry is the blank (CLI-default) model");
+        assertTrue(models.stream().allMatch(model -> model != null),
+                "the locally discovered catalog contains non-null values");
     }
 
     @Test

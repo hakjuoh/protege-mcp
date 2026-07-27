@@ -10,6 +10,7 @@ public final class RecordingChatListener implements ChatListener {
     public final StringBuilder thinking = new StringBuilder();
     public final List<String> tools = new ArrayList<>();
     public final List<String> errors = new ArrayList<>();
+    public final List<String> notices = new ArrayList<>();
     public final List<ChatUsage> liveUsages = new ArrayList<>();
     public String sessionId;
     public ChatUsage usage;
@@ -48,6 +49,11 @@ public final class RecordingChatListener implements ChatListener {
     @Override
     public void onError(String message) {
         errors.add(message);
+    }
+
+    @Override
+    public void onNotice(String message) {
+        notices.add(message);
     }
 
     @Override

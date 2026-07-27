@@ -2,6 +2,8 @@ package io.github.hakjuoh.protege_mcp.chat.codex;
 
 import io.github.hakjuoh.protege_mcp.chat.RecordingChatListener;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -501,6 +503,273 @@ class CodexEventParserCoverageTest {
         parser(l).accept("{\"type\":\"item.completed\"}");
         assertEquals(0, l.text.length());
         assertTrue(l.errors.isEmpty());
+    }
+
+    // ---- what the stream said, kept for the exit path ----------------------------------------
+
+    @Test
+    void streamErrorsAreKeptSoTheExitPathCanClassifyThem() {
+        // finishTurn has to decide whether the failure was the reasoning effort being refused, and
+        // the only evidence is the error the stream carried - stderr is empty on this path.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+
+        p.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"error\",\"message\":\"first\"}}");
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"Invalid value: 'max'.\"}}");
+
+        assertTrue(p.errorReported());
+        assertEquals("first\nInvalid value: 'max'.", p.errorText(),
+                "every error the stream reported, in order");
+        assertEquals(2, l.errors.size(), "the user still sees each one as it arrives");
+    }
+
+    @Test
+    void anErrorLoopCannotGrowTheKeptTextWithoutBound() {
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        for (int i = 0; i < 40; i++) {
+            // Distinct each time, so this measures the length bound and not the repeat suppression.
+            p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + i + "e".repeat(500)
+                    + "\"}}");
+        }
+        assertTrue(p.errorText().length() <= 4_001,
+                "the kept text must stop AT the cap, not at the first error to cross it: "
+                        + p.errorText().length());
+        assertEquals(CodexEventParser.MAX_DISTINCT_ERRORS + 1, l.errors.size(),
+                "every failure up to the reporting bound, then the line that says the rest are not shown");
+        assertEquals(CodexEventParser.FURTHER_ERRORS_NOTE, l.errors.get(l.errors.size() - 1));
+    }
+
+    @Test
+    void aRunawayErrorLoopIsElidedOnceRatherThanFloodingTheTranscript() {
+        // A CLI stuck in a retry loop can emit thousands of distinct failures. Every one of them
+        // reaching the transcript pushes the reply out of reach and pins the UI redrawing them, so past
+        // the bound they are dropped - but visibly, because a silent drop reads as "that was all".
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        for (int i = 0; i < 500; i++) {
+            p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"failure " + i + "\"}}");
+        }
+        assertEquals(CodexEventParser.MAX_DISTINCT_ERRORS + 1, l.errors.size());
+        assertEquals(1, l.errors.stream()
+                        .filter(CodexEventParser.FURTHER_ERRORS_NOTE::equals).count(),
+                "the elision is announced once, not once per dropped failure");
+        assertEquals("failure 0", l.errors.get(0), "the earliest failures are the ones kept");
+        assertTrue(p.errorReported());
+    }
+
+    @Test
+    void theNewestFailureStaysClassifiablePastBothBounds() {
+        // The refusal that names what went wrong is the last failure, not the first. Once the kept text
+        // is full - or reporting has saturated - the exit path would otherwise classify a turn on
+        // nothing but the noise that came before it.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + "e".repeat(10_000) + "\"}}");
+        for (int i = 0; i < CodexEventParser.MAX_DISTINCT_ERRORS + 5; i++) {
+            p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"noise " + i + "\"}}");
+        }
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"Invalid value: 'max'.\"}}");
+
+        assertFalse(p.errorText().contains("Invalid value: 'max'."),
+                "the kept text is full, so the decisive message is not in it");
+        assertTrue(p.classifiableErrorText().contains("Invalid value: 'max'."),
+                "what the exit path classifies must still carry the newest failure");
+        assertTrue(CodexCliProvider.effortRejection("max", p.classifiableErrorText()),
+                "and that is what lets the refused effort be named");
+    }
+
+    @Test
+    void aReprintedPreambleDoesNotHideTheTailThatDecidesTheTurn() {
+        // A retry loop reprints one preamble, so the newest failure opens with text the kept budget
+        // already spent - and what says the turn was refused is only in the tail after it. Sharing a
+        // prefix with something kept must not count as being kept.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        String preamble = "stream disconnected while retrying: " + "x".repeat(200);
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + preamble + "\"}}");
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"filler " + "y".repeat(3_800)
+                + "\"}}");
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + preamble
+                + " Invalid value: 'max'.\"}}");
+
+        assertTrue(p.errorText().contains(preamble), "the preamble itself was kept, early on");
+        assertFalse(p.errorText().contains("Invalid value: 'max'."),
+                "the budget was gone by the time the decisive failure arrived");
+        assertTrue(CodexCliProvider.effortRejection("max", p.classifiableErrorText()),
+                "so the refused effort can still be named from what the exit path classifies");
+    }
+
+    @Test
+    void aPreambleAsLongAsTheRememberedBoundStillDoesNotHideTheDecisiveTail() {
+        // The same retry loop, with a preamble at the bound on what is remembered of the newest failure.
+        // Cutting that failure to its first MAX_LAST_ERROR_CHARS leaves exactly the preamble the earlier
+        // attempt already spent the kept budget on, so neither the kept text nor the remembered copy may
+        // be the whole story on its own.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        String preamble = "stream disconnected while retrying: " + "x".repeat(1_200);
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + preamble + "\"}}");
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"filler " + "y".repeat(3_800)
+                + "\"}}");
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + preamble
+                + " Invalid value: 'max'. Supported values are: 'low', 'medium', 'high'.\"}}");
+
+        assertFalse(p.errorText().contains("Invalid value: 'max'."),
+                "the budget was gone by the time the decisive failure arrived");
+        assertTrue(CodexCliProvider.effortRejection("max", p.classifiableErrorText()),
+                "so the refused effort can still be named from what the exit path classifies");
+    }
+
+    @Test
+    void aShortFailureKeptWholeIsNotClassifiedTwice() {
+        // The kept text holds it already; appending it again would be noise in what the exit path reads.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"Invalid value: 'max'.\"}}");
+
+        assertEquals("Invalid value: 'max'.", p.classifiableErrorText());
+    }
+
+    @Test
+    void aTurnWithNoErrorClassifiesNothing() {
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        p.accept("{\"type\":\"turn.completed\",\"usage\":{}}");
+
+        assertEquals("", p.classifiableErrorText(), "no error must not read as a blank line of error");
+    }
+
+    @Test
+    void twoFailuresSharingAMessageAreBothShownWhenTheyAreDifferentItems() {
+        // Codex's error messages are generic enough to collide ("stream error"), and two tool calls
+        // failing the same way is two failures. Suppressing by text alone would hide the second one, so
+        // suppression keys off the item's identity; only an event with no item id falls back to text.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        String message = "stream error: retrying";
+
+        p.accept("{\"type\":\"item.started\",\"item\":{\"type\":\"error\",\"id\":\"err_1\","
+                + "\"message\":\"" + message + "\"}}");
+        p.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"error\",\"id\":\"err_1\","
+                + "\"message\":\"" + message + "\"}}");
+        p.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"error\",\"id\":\"err_2\","
+                + "\"message\":\"" + message + "\"}}");
+
+        assertEquals(List.of(message, message), l.errors,
+                "one report per failing item, not per distinct string");
+
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + message + "\"}}");
+        assertEquals(2, l.errors.size(),
+                "a turn-level event has only the text to identify it, so it is the echo it looks like");
+    }
+
+    @Test
+    void oneHugeErrorIsTruncatedRatherThanKeptWhole() {
+        // The budget was checked before appending, so any single message got in whole however big it
+        // was - a 10,000-char diagnostic became 10,000 chars of kept text.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + "e".repeat(10_000) + "\"}}");
+        assertTrue(p.errorText().length() <= 4_001, "kept text length: " + p.errorText().length());
+        assertTrue(p.errorText().endsWith("…"), "a truncated diagnostic says so");
+        assertEquals(1, l.errors.size());
+        assertEquals(10_000, l.errors.get(0).length(), "the user is still shown all of it");
+    }
+
+    @Test
+    void theSameFailureArrivingTwiceIsReportedOnce() {
+        // An error item is re-delivered on item.completed, and turn.failed then repeats the same
+        // message: three deliveries of one failure, which read as three failures in the transcript.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        String message = "Invalid value: 'max'.";
+
+        p.accept("{\"type\":\"item.started\",\"item\":{\"type\":\"error\",\"message\":\""
+                + message + "\"}}");
+        p.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"error\",\"message\":\""
+                + message + "\"}}");
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"" + message + "\"}}");
+
+        assertEquals(List.of(message), l.errors, "one failure, said once");
+        assertEquals(message, p.errorText(), "and kept once, so classification sees it plainly");
+        assertTrue(p.errorReported(), "a repeat still counts as the stream having spoken");
+    }
+
+    @Test
+    void twoDifferentFailuresAreBothStillReported() {
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        p.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"error\",\"message\":\"first\"}}");
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"second\"}}");
+        assertEquals(List.of("first", "second"), l.errors,
+                "suppressing repeats must not suppress news");
+    }
+
+    @Test
+    void anEmptyErrorMessageIsNotTreatedAsAReportedError() {
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        p.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"error\"}}");
+        assertFalse(p.errorReported(), "nothing was said, so the exit line is still needed");
+        assertEquals("", p.errorText());
+        assertTrue(l.errors.isEmpty());
+    }
+
+    // ---- answered(): what the completion handler calls the turn -------------------------------
+
+    @Test
+    void aStreamedReplyMakesTheTurnAnswered() {
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+        assertFalse(p.answered(), "nothing has been said yet");
+
+        p.accept("{\"type\":\"item.updated\",\"item\":{\"type\":\"agent_message\","
+                + "\"id\":\"m1\",\"text\":\"hello\"}}");
+
+        assertTrue(p.answered(), "text the user can read is an answer, whatever else the turn reported");
+        assertEquals("hello", l.text.toString());
+    }
+
+    @Test
+    void anIdLessReplyDeliveredOnCompletionAlsoCounts() {
+        // The other emit path: a message with no item id is printed once, on completion.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+
+        p.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\","
+                + "\"text\":\"late reply\"}}");
+
+        assertTrue(p.answered(), "both ways a reply reaches the listener must count as one");
+        assertEquals("late reply", l.text.toString());
+    }
+
+    @Test
+    void reasoningAndErrorsAloneAreNotAnAnswer() {
+        // Neither hidden reasoning nor a diagnostic is a reply: a turn that produced only these was not
+        // answered, so the completion handler must still describe it as the failure it was.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+
+        p.accept("{\"type\":\"item.updated\",\"item\":{\"type\":\"reasoning\","
+                + "\"id\":\"r1\",\"text\":\"thinking\"}}");
+        p.accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"Invalid value: 'max'.\"}}");
+
+        assertFalse(p.answered(), "reasoning and an error are not a reply");
+        assertTrue(p.errorReported());
+    }
+
+    @Test
+    void aReplyOfNothingButWhitespaceIsNotAnAnswer() {
+        // A blank agent_message puts nothing on the screen. A turn that also failed was refused, and
+        // calling that whitespace an answer would describe the refusal as a success it never was.
+        RecordingChatListener l = new RecordingChatListener();
+        CodexEventParser p = parser(l);
+
+        p.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\","
+                + "\"text\":\"  \\n \"}}");
+
+        assertFalse(p.answered(), "blank text is not something the user can read");
     }
 
     // ---- constructor + listener wiring -------------------------------------------------------

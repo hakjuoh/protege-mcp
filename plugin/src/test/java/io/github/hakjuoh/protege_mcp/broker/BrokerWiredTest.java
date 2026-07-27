@@ -208,6 +208,178 @@ class BrokerWiredTest {
         assertTrue(client().probe(), "with the secret the info probe answers");
     }
 
+    @Test
+    void registrationWithoutAnOsPidIsRejectedWithAReason() throws Exception {
+        HttpResponse<String> resp = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/internal/register"))
+                .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        "{\"pid\":0,\"version\":\"t\",\"token\":\"" + STATIC_TOKEN + "\",\"windows\":[]}"))
+                .timeout(Duration.ofSeconds(5))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(400, resp.statusCode(),
+                "a registration the registry would refuse must not surface as a server error");
+        assertTrue(resp.body().contains("invalid_pid"), resp.body());
+    }
+
+    @Test
+    void registrationThatWouldLoseAWindowIsRejectedInsteadOfTruncated() throws Exception {
+        // Silently keeping part of the payload would leave the dropped endpoint unroutable and, worse,
+        // outside every revocation fanout - so a revocation would answer "revoked" while that window kept
+        // serving the credential. Both shapes that could cause it are answered as bad requests instead.
+        String duplicate = "{\"pid\":" + ProcessHandle.current().pid() + ",\"version\":\"t\",\"token\":\""
+                + STATIC_TOKEN + "\",\"windows\":["
+                + "{\"id\":\"dup\",\"port\":5001,\"secret\":\"a\"},"
+                + "{\"id\":\"dup\",\"port\":5002,\"secret\":\"b\"}]}";
+        StringBuilder overBound = new StringBuilder("{\"pid\":" + ProcessHandle.current().pid()
+                + ",\"version\":\"t\",\"token\":\"" + STATIC_TOKEN + "\",\"windows\":[");
+        for (int index = 0; index <= InstanceRegistry.MAX_WINDOWS_PER_PROCESS; index++) {
+            overBound.append(index == 0 ? "" : ",")
+                    .append("{\"id\":\"w-").append(index).append("\",\"port\":").append(6_000 + index)
+                    .append(",\"secret\":\"s\"}");
+        }
+        overBound.append("]}");
+
+        for (String body : List.of(duplicate, overBound.toString())) {
+            HttpResponse<String> resp = http.send(HttpRequest.newBuilder(
+                            URI.create("http://127.0.0.1:" + brokerPort + "/internal/register"))
+                    .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .timeout(Duration.ofSeconds(5))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(400, resp.statusCode(), resp.body());
+            assertTrue(resp.body().contains("invalid_windows"), resp.body());
+        }
+        HttpResponse<String> info = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/internal/info"))
+                .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                .GET().timeout(Duration.ofSeconds(5))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertTrue(info.body().contains("\"windows\":0"),
+                "no partial registration may survive a refused payload: " + info.body());
+    }
+
+    @Test
+    void aWindowNoRequestCanBeAddressedToIsRefusedWithItsWholePayload() throws Exception {
+        // A port no URL can name and a secret no HTTP header can carry name endpoints the broker could
+        // neither route to nor fence. Holding the rest of the payload without them is what cannot be
+        // done: this list is the whole window set of a process, so the windows kept would be taken as
+        // the current set and the entry's own siblings retired with it - a bad entry unregistering a
+        // window that is still serving. It is refused entire, before any state is touched, so the
+        // process keeps the set it last reported and is told which payload the broker would not hold.
+        String body = "{\"pid\":" + ProcessHandle.current().pid() + ",\"version\":\"t\",\"token\":\""
+                + STATIC_TOKEN + "\",\"windows\":["
+                + "{\"id\":\"addressable\",\"port\":5001,\"secret\":\"s\"},"
+                + "{\"id\":\"newline-secret\",\"port\":5002,\"secret\":\"a\\nb\"},"
+                + "{\"id\":\"impossible-port\",\"port\":99999,\"secret\":\"s\"}]}";
+
+        HttpResponse<String> resp = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/internal/register"))
+                .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .timeout(Duration.ofSeconds(5))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(400, resp.statusCode(), resp.body());
+        assertTrue(resp.body().contains("invalid_windows"), resp.body());
+        HttpResponse<String> info = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/internal/info"))
+                .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                .GET().timeout(Duration.ofSeconds(5))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertTrue(info.body().contains("\"windows\":0"),
+                "no part of a refused payload may be held: " + info.body());
+    }
+
+    @Test
+    void aHeartbeatCarryingAnUnaddressableWindowLeavesTheReportedSetStanding() throws Exception {
+        // The same refusal on the payload that replaces a window set, where holding the part that parsed
+        // would be a live window's registration being retired by a sibling entry the broker cannot use.
+        FakeBackend serving = startBackend("serving");
+        String processId = client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(serving, "w-live", 100)));
+
+        HttpResponse<String> resp = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/internal/heartbeat"))
+                .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"processId\":\"" + processId
+                        + "\",\"token\":\"" + STATIC_TOKEN + "\",\"windows\":["
+                        + "{\"id\":\"w-live\",\"port\":" + serving.lastHeaders.get("_port")
+                        + ",\"secret\":\"win-secret-w-live\"},"
+                        + "{\"id\":\"w-bad\",\"port\":5002,\"secret\":\"a b\"}]}"))
+                .timeout(Duration.ofSeconds(5))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(400, resp.statusCode(), resp.body());
+        assertTrue(resp.body().contains("invalid_windows"), resp.body());
+        HttpResponse<String> info = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/internal/info"))
+                .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                .GET().timeout(Duration.ofSeconds(5))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertTrue(info.body().contains("\"windows\":1"),
+                "the window set that was reported successfully must stand: " + info.body());
+    }
+
+    @Test
+    void aPayloadThatNamesNoWindowListAtAllIsRefusedRatherThanReadAsNone() throws Exception {
+        // An empty list is a process reporting no windows, which the broker holds as its set. A payload
+        // with no list - or a "windows" that is not one - reports nothing about the set, and reading it as
+        // an empty one would retire every window the process still has serving. That is the same silent
+        // unregistration a single unusable entry is refused for, so it is refused the same way.
+        FakeBackend serving = startBackend("serving");
+        String processId = client().register(ProcessHandle.current().pid(), "t", STATIC_TOKEN, -1,
+                List.of(reg(serving, "w-live", 100)));
+
+        for (String windows : List.of("", ",\"windows\":\"all\"", ",\"windows\":{}",
+                ",\"windows\":7", ",\"windows\":null")) {
+            HttpResponse<String> resp = http.send(HttpRequest.newBuilder(
+                            URI.create("http://127.0.0.1:" + brokerPort + "/internal/heartbeat"))
+                    .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"processId\":\"" + processId
+                            + "\",\"token\":\"" + STATIC_TOKEN + "\"" + windows + "}"))
+                    .timeout(Duration.ofSeconds(5))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+
+            assertEquals(400, resp.statusCode(), windows + " -> " + resp.body());
+            assertTrue(resp.body().contains("invalid_windows"), windows + " -> " + resp.body());
+            HttpResponse<String> info = http.send(HttpRequest.newBuilder(
+                            URI.create("http://127.0.0.1:" + brokerPort + "/internal/info"))
+                    .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                    .GET().timeout(Duration.ofSeconds(5))
+                    .build(), HttpResponse.BodyHandlers.ofString());
+            assertTrue(info.body().contains("\"windows\":1"),
+                    "the live window must still be registered after " + windows + ": " + info.body());
+        }
+
+        // The list the broker does hold: an explicit empty one retires the set, because that is a process
+        // saying it has no windows open rather than saying nothing.
+        HttpResponse<String> emptied = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/internal/heartbeat"))
+                .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"processId\":\"" + processId
+                        + "\",\"token\":\"" + STATIC_TOKEN + "\",\"windows\":[]}"))
+                .timeout(Duration.ofSeconds(5))
+                .build(), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, emptied.statusCode(), emptied.body());
+        HttpResponse<String> after = http.send(HttpRequest.newBuilder(
+                        URI.create("http://127.0.0.1:" + brokerPort + "/internal/info"))
+                .header(InternalApiServlet.SECRET_HEADER, dirSecret)
+                .GET().timeout(Duration.ofSeconds(5))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertTrue(after.body().contains("\"windows\":0"),
+                "an explicit empty set is a set: " + after.body());
+    }
+
     // ---- routing ---------------------------------------------------------------------------------
 
     @Test
@@ -642,9 +814,12 @@ class BrokerWiredTest {
                 List.of("http://127.0.0.1/unfenced"), "unfenced-client");
         OAuthStore.Tokens tokens = broker.oauthStore().issueTokens(registered.clientId, "read", null);
 
-        IOException incomplete = assertThrows(IOException.class,
+        BrokerClient.IncompleteRevocationException incomplete = assertThrows(
+                BrokerClient.IncompleteRevocationException.class,
                 () -> client().revokeClient(registered.clientId));
         assertTrue(incomplete.getMessage().contains("did not confirm the execution fence"));
+        assertEquals(1, incomplete.unacknowledgedWindows(),
+                "one of the two windows owed a fence, and the report must say how many");
         assertEquals(1, fenced.fencedClients.get());
         assertEquals(1, unfenced.fencedClients.get());
         assertEquals(401, call("POST", "/mcp", tokens.accessToken).statusCode(),

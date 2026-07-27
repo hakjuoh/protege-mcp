@@ -143,6 +143,26 @@ if ! grep -qF "version **\`${version}\`**" DESIGN.md; then
   failed=1
 fi
 
+# Release pins in the copy-paste CI recipes. A reader pastes these verbatim, so a pin left on the
+# previous release hands out that release's workflow semantics and CLI from this release's manual - and
+# nothing else in this gate looks at them. Only the pin syntaxes are matched, so prose that names an
+# older floor on purpose ("requires 0.7.1+") stays untouched. YAML quoting is not part of the pin: a
+# value written "0.8.0" or bare is the same input to the workflow as '0.8.0', and matching only the
+# single-quoted spelling would wave a stale pin through on a re-quote nobody thought was a version edit.
+pin_pattern="@v[0-9]+\.[0-9]+\.[0-9]+|(cli_version|default):[ ]*['\"]?[0-9]+\.[0-9]+\.[0-9]+['\"]?"
+pin_pattern="${pin_pattern}|CLI_VERSION(=|:-)[0-9]+\.[0-9]+\.[0-9]+"
+for pinned in docs/ci.md docs/examples/ci/annotate.yml docs/examples/ci/general-owl.yml \
+              docs/examples/ci/obo.yml docs/examples/ci/validate-ontology.sh \
+              .github/workflows/ontology-ci.yml; do
+  while IFS= read -r pin; do
+    [[ -z "$pin" ]] && continue
+    if [[ "$pin" != *"$version"* ]]; then
+      echo "STALE: $pinned pins '$pin'; expected release ${version}." >&2
+      failed=1
+    fi
+  done < <(grep -oE "$pin_pattern" "$pinned" || true)
+done
+
 first_readme_version="$(grep -m1 -oE '<h4>v[^<]+</h4>' docs/readme.html || true)"
 if [[ "$first_readme_version" != "<h4>v${version}</h4>" ]]; then
   echo "STALE: docs/readme.html starts with '$first_readme_version'; expected '<h4>v${version}</h4>'." >&2
