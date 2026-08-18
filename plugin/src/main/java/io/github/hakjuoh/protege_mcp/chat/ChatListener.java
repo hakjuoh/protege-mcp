@@ -1,16 +1,15 @@
 package io.github.hakjuoh.protege_mcp.chat;
 
 /**
- * Streaming callbacks a {@link ChatProvider} fires while a turn runs. Implementations are invoked on
- * the provider's daemon worker thread (never the EDT), so a Swing listener must marshal to the EDT
- * itself (see {@link io.github.hakjuoh.protege_mcp.ui.ChatView}). Every method has a no-op default so a listener
- * only overrides what it needs.
+ * Streaming callbacks a {@link ChatProvider} fires while a turn runs. Implementations are invoked
+ * on the provider's daemon worker thread (never the EDT), so a Swing listener must marshal to the
+ * EDT itself (see {@link io.github.hakjuoh.protege_mcp.ui.ChatTurnController}). Every method has a
+ * no-op default so a listener only overrides what it needs.
  */
 public interface ChatListener {
 
     /** The provider's session/thread id, for resuming subsequent turns. */
-    default void onSessionId(String sessionId) {
-    }
+    default void onSessionId(String sessionId) {}
 
     /**
      * Starts one distinct assistant message. Providers fire this immediately before that message's
@@ -18,42 +17,37 @@ public interface ChatListener {
      * no visible assistant message to delimit. Text deltas that belong to the same provider message
      * must share one start callback.
      */
-    default void onAssistantMessageStart() {
-    }
+    default void onAssistantMessageStart() {}
 
     /** A chunk of assistant-visible text within the message most recently started above. */
-    default void onAssistantText(String text) {
-    }
+    default void onAssistantText(String text) {}
 
     /** A chunk of model reasoning ("thinking"); shown only when the panel opts in. */
-    default void onThinking(String text) {
-    }
+    default void onThinking(String text) {}
 
-    /** A short note that the assistant invoked a tool / ran an action (e.g. {@code create_class}). */
-    default void onToolActivity(String summary) {
-    }
+    /**
+     * A short note that the assistant invoked a tool / ran an action (e.g. {@code create_class}).
+     */
+    default void onToolActivity(String summary) {}
 
-    /** A live (running) token count emitted while the turn streams; not necessarily final or exact. */
-    default void onUsage(ChatUsage usage) {
-    }
+    /**
+     * A live (running) token count emitted while the turn streams; not necessarily final or exact.
+     */
+    default void onUsage(ChatUsage usage) {}
 
     /** Final token/cost accounting for the turn. */
-    default void onResult(ChatUsage usage) {
-    }
+    default void onResult(ChatUsage usage) {}
 
     /** A non-fatal or fatal error message surfaced to the transcript. */
-    default void onError(String message) {
-    }
+    default void onError(String message) {}
 
     /**
      * Something the turn should have done but silently did not — the CLI ignoring an option is the
      * case this exists for. Unlike {@link #onError}, the turn itself succeeded, so the note belongs
      * after the reply rather than in the error color; a listener may show it once per turn.
      */
-    default void onNotice(String message) {
-    }
+    default void onNotice(String message) {}
 
     /** The provider process exited; {@code exitCode} is 0 on success ({@code -1} if unknown). */
-    default void onComplete(int exitCode) {
-    }
+    default void onComplete(int exitCode) {}
 }

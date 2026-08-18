@@ -1,158 +1,72 @@
 package io.github.hakjuoh.protege_mcp.ui;
 
-import java.awt.BasicStroke;
-import java.awt.BorderLayout;
-import java.awt.Color;
-import java.awt.Component;
-import java.awt.Cursor;
-import java.awt.Desktop;
-import java.awt.Dimension;
-import java.awt.FlowLayout;
-import java.awt.Font;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
-import java.awt.Image;
-import java.awt.Insets;
-import java.awt.Point;
-import java.awt.RenderingHints;
-import java.awt.Toolkit;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.geom.Ellipse2D;
-import java.awt.geom.Line2D;
-import java.awt.geom.Path2D;
-import java.awt.geom.Rectangle2D;
-import java.awt.geom.RoundRectangle2D;
-import java.awt.datatransfer.DataFlavor;
-import java.awt.datatransfer.StringSelection;
-import java.awt.datatransfer.Transferable;
-import java.awt.datatransfer.UnsupportedFlavorException;
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
-import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.ArrayDeque;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Deque;
-import java.util.List;
-import java.util.Objects;
-import java.util.UUID;
+import static io.github.hakjuoh.protege_mcp.ui.ChatIcons.icon;
+import static io.github.hakjuoh.protege_mcp.ui.ChatIcons.iconButton;
 
-import javax.imageio.ImageIO;
-import javax.swing.Action;
-import javax.swing.BorderFactory;
-import javax.swing.DefaultListCellRenderer;
-import javax.swing.Icon;
-import javax.swing.JButton;
-import javax.swing.JCheckBox;
-import javax.swing.JComboBox;
-import javax.swing.JComponent;
-import javax.swing.JFileChooser;
-import javax.swing.JLabel;
-import javax.swing.JList;
-import javax.swing.JMenuItem;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
-import javax.swing.JScrollPane;
-import javax.swing.JTextArea;
-import javax.swing.JTextPane;
-import javax.swing.KeyStroke;
-import javax.swing.SwingUtilities;
-import javax.swing.SwingWorker;
-import javax.swing.Timer;
-import javax.swing.TransferHandler;
-import javax.swing.text.BadLocationException;
-import javax.swing.text.Element;
-import javax.swing.text.JTextComponent;
-import javax.swing.text.SimpleAttributeSet;
-import javax.swing.text.StyleConstants;
-import javax.swing.text.StyledDocument;
-
-import org.protege.editor.owl.ui.view.AbstractOWLViewComponent;
-import io.github.hakjuoh.protege_mcp.chat.AssistantSegment;
-import io.github.hakjuoh.protege_mcp.chat.AttachmentFileManager;
-import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
-import io.github.hakjuoh.protege_mcp.chat.ChatComposer;
-import io.github.hakjuoh.protege_mcp.chat.ChatHistory;
-import io.github.hakjuoh.protege_mcp.chat.ChatModels;
-import io.github.hakjuoh.protege_mcp.chat.CliSupport;
-import io.github.hakjuoh.protege_mcp.chat.ChatListener;
-import io.github.hakjuoh.protege_mcp.chat.ChatMarkdown;
-import io.github.hakjuoh.protege_mcp.chat.ChatModelCatalog;
-import io.github.hakjuoh.protege_mcp.chat.ChatProcess;
 import io.github.hakjuoh.protege_mcp.chat.ChatProvider;
-import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
 import io.github.hakjuoh.protege_mcp.chat.ChatUsage;
-import io.github.hakjuoh.protege_mcp.chat.TranscriptMessageSpacing;
-import io.github.hakjuoh.protege_mcp.chat.McpEndpoint;
 import io.github.hakjuoh.protege_mcp.chat.Providers;
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.McpServerRegistry;
+import io.github.hakjuoh.protege_mcp.ui.ChatIcons.Glyph;
+import io.github.hakjuoh.protege_mcp.ui.ChatTranscriptPane.Kind;
+
+import org.protege.editor.owl.ui.view.AbstractOWLViewComponent;
+
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.Insets;
+import java.util.List;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.KeyStroke;
+import javax.swing.Timer;
 
 /**
  * In-Protégé chat assistant (Architecture Approach B). The user converses with a locally-installed
  * coding-agent CLI (selected from a provider drop-down) that is spawned, per turn, configured to
  * connect back to this window's running MCP server — so the assistant reads and edits the
- * <em>live</em> ontology through the existing tool layer, with GUI reflection, the shared undo stack,
- * and the read-only / confirm-write gates all inherited unchanged.
+ * <em>live</em> ontology through the existing tool layer, with GUI reflection, the shared undo
+ * stack, and the read-only / confirm-write gates all inherited unchanged.
  *
- * <p>All subprocess I/O runs on a daemon worker; streamed output is coalesced onto the EDT via a queue
- * drained by a Swing {@link Timer}. Assistant replies are Markdown and render styled
- * ({@link ChatMarkdown}): the in-flight message is re-rendered from its accumulated source once per
- * drain tick, so formatting converges while the reply streams. Because that rendering is lossy
- * (selecting and copying yields the styled plain text), each finished message keeps its original
- * Markdown source ({@link AssistantSegment#SOURCE_MD}): a copy button under the turn's final reply and
- * a "Copy message as Markdown" context-menu item put the untouched markup on the clipboard. The plugin
- * stores no provider API key — each CLI uses the user's existing login.
+ * <p>All subprocess I/O runs on a daemon worker; streamed output is coalesced onto the EDT via a
+ * queue drained by a Swing {@link Timer}. {@link ChatTranscriptPane} owns Markdown streaming,
+ * message spacing, links, and copy-as-Markdown interactions. The plugin stores no provider API key
+ * — each CLI uses the user's existing login.
  */
 public class ChatView extends AbstractOWLViewComponent {
 
     private static final long serialVersionUID = 1L;
 
-    private static final String MODEL_DEFAULT_LABEL = "(default)";
-    private static final String EFFORT_DEFAULT_LABEL = "(default)";
-    private static final String INTRO = "Ask about the active ontology, or ask for edits. The assistant "
-            + "runs your local CLI and edits through Protégé's MCP server (changes appear in the GUI and "
-            + "can be undone).\n";
-    private static final String NO_CLI = "No coding-agent CLI found. Install Claude Code (`claude`), "
-            + "Codex (`codex`), Antigravity (`agy`), or OpenCode (`opencode`) and log in, then reopen "
-            + "this view. You can also set the CLI path in "
-            + "Preferences ▸ Ontology Assistant.\n";
-    private static final int PASTED_TEXT_ATTACHMENT_THRESHOLD = 2000;
-    private static final int PASTED_TEXT_LINE_THRESHOLD = 50;
-    /** A many-line paste is compacted only when it is also at least this large, so short multi-line
-     *  pastes (lists, short stack traces) stay visible inline instead of vanishing behind a placeholder. */
-    private static final int PASTED_TEXT_LINE_MIN_CHARS = 1500;
-    /** Pasted bodies larger than this are buffered to a temp file and referenced by path, so a huge paste
-     *  cannot overflow the single-argv command line (ARG_MAX). */
-    private static final int PASTED_TEXT_INLINE_MAX = 8000;
-    /** Files larger than this are refused (avoids copying huge files and oversized provider arguments). */
-    private static final long MAX_ATTACHMENT_BYTES = 25L * 1024 * 1024;
-    private static final boolean IS_MAC =
-            System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac");
-
-    private enum Kind { USER, ASSISTANT_START, ASSISTANT, TOOL, THINKING, ERROR, SYSTEM }
-    private record MessageMargins(float above, float below) { }
-
-    private record Chunk(Kind kind, String text) {
-    }
-
-    private JTextPane transcript;
+    private static final String INTRO =
+            "Ask about the active ontology, or ask for edits. The assistant runs your local CLI and"
+                    + " edits through Protégé's MCP server (changes appear in the GUI and can be"
+                    + " undone).\n";
+    private static final String NO_CLI =
+            "No coding-agent CLI found. Install Claude Code (`claude`), Codex (`codex`),"
+                    + " Antigravity (`agy`), or OpenCode (`opencode`) and log in, then reopen this"
+                    + " view. You can also set the CLI path in Preferences ▸ Ontology Assistant.\n";
+    private ChatTranscriptPane transcript;
     private JTextArea input;
     private JButton sendButton;
     private JButton attachButton;
     private JButton stopButton;
     private JButton newChatButton;
-    private JComboBox<ChatProvider> providerCombo;
-    private JComboBox<String> modelCombo;
-    private JComboBox<String> effortCombo;
+    private ChatProviderControls providerControls;
+    private ChatAttachmentController attachmentController;
+    private ChatTurnController turnController;
     private JCheckBox confirmEdits;
     private JCheckBox showThinking;
     private JLabel statusLabel;
@@ -160,84 +74,7 @@ public class ChatView extends AbstractOWLViewComponent {
     private JLabel workingLabel;
     private JPanel providerBar;
 
-    private ChatProvider currentProvider;
-    /** One visible conversation; each native CLI session tracks how far through it it has seen. */
-    private final ChatHistory conversationHistory = new ChatHistory();
-    private String activeModel;
-    private String activeReasoningEffort;
-    /** Model items are rebuilt programmatically during provider changes; those events are not user changes. */
-    private boolean suppressModelEvents;
-    private boolean suppressEffortEvents;
-    /** Rebuilds the pickers when the Preferences panel saves a catalog, so an open view stays truthful. */
-    private Runnable catalogListener;
-
-    private volatile ChatProcess currentProcess;
-    private volatile String sessionId;
-    private volatile Integer completedExit;
-    private volatile ChatUsage lastUsage;
-    private volatile ChatUsage liveUsage;
-    /**
-     * A provider note for the turn in flight, rendered once the reply is closed. Deferred rather than
-     * enqueued: a chunk of another kind arriving before the turn ends would close the assistant
-     * segment early and cost the final reply its copy-as-Markdown button.
-     */
-    private volatile String pendingNotice;
-    private boolean atTurnStartOfLine = true;
-    // Kind of the last rendered transcript chunk (EDT-only). Reasoning streams as many small deltas
-    // that virtually never end with a newline, so line breaks are inserted at the RUN boundaries —
-    // entering and leaving a reasoning run — never between the deltas inside one.
-    private Kind lastRenderedKind;
-    /** Start of a contiguous streamed reasoning block, or -1 outside one. EDT-owned. */
-    private int thinkingBlockStart = -1;
-    /** Exclusive end of that block's last visible content, excluding separator-only deltas. */
-    private int thinkingBlockEnd = -1;
-    /** Opening top margin of the current reasoning block; later deltas must not recompute it. */
-    private float thinkingBlockSpaceAbove = -1F;
-
-    // The currently-streaming assistant message, kept as Markdown source and re-rendered in place on
-    // each drain tick (unclosed markers render literally and converge as their closers stream in).
-    // Invariants (suffix segment, close-before-other-kinds) live in AssistantSegment, headless-tested.
-    private final AssistantSegment assistantSegment = new AssistantSegment();
-
-    // Turn bookkeeping (EDT-only). The CLI handle is spawned off-EDT and published back on the EDT, so a
-    // per-turn id lets a late publish tell whether its turn is still in flight, and a Stop pressed before
-    // the handle exists is remembered until it can be honoured.
-    private int turnSeq;
-    private int activeTurn;            // id of the turn in flight, 0 when idle
-    private boolean cancelRequested;   // Stop pressed during the launch window, before a handle exists
-    // Stop was pressed for the turn in flight: deltas drained after the [stopped] marker form a tail
-    // fragment, so the turn's final message must not be offered as "the reply" to copy.
-    private boolean turnStopped;
-    /** Reasoning visibility snapshotted with the provider flags at the start of the active turn. */
-    private boolean showReasoningForTurn;
-    /** Provider and assistant text captured for the turn currently in flight. */
-    private String activeTurnProviderId;
-    private final StringBuilder activeTurnAssistant = new StringBuilder();
-    /** The current turn's non-persisted MCP credential; EDT-owned and revoked on every exit path. */
-    private McpServerController.AssistantCredential activeAssistantCredential;
-    private McpServerController activeAssistantController;
-    private long nextAssistantCredentialRenewal;
-
-    private long turnStartMillis;
-
-    private final Deque<Chunk> queue = new ArrayDeque<>();
-    private Timer flushTimer;
     private Timer statusTimer;
-    private Timer workingTimer;
-
-    private final List<ChatAttachment> pendingAttachments = new ArrayList<>();
-    // Each file-backed attachment lives alone in its own scratch subdir (so Claude's --add-dir grants access
-    // to exactly that one file, never the user's real folder). Lifecycle owned by AttachmentFileManager
-    // (headless-testable); this view delegates create/delete/reset to it.
-    private final AttachmentFileManager attachments = new AttachmentFileManager();
-    private List<ChatAttachment> inFlightAttachments = List.of();
-    // Bumped whenever the conversation is reset/closed, so an in-flight clipboard-image worker can tell its
-    // result belongs to a conversation that no longer exists and discard it instead of injecting a stale
-    // attachment (whose scratch file was already reclaimed).
-    private int attachGeneration;
-    private int nextPastedTextIndex = 1;
-    private int nextImageIndex = 1;
-    private int nextFileIndex = 1;
 
     @Override
     protected void initialiseOWLView() throws Exception {
@@ -246,22 +83,19 @@ public class ChatView extends AbstractOWLViewComponent {
 
         add(buildControlBar(), BorderLayout.NORTH);
 
-        transcript = new JTextPane();
-        transcript.setEditable(false);
+        transcript =
+                new ChatTranscriptPane(() -> turnController != null && turnController.isRunning());
         // Auto-scroll to the bottom of the stream is driven by setCaretPosition(end) after each
         // batch, under the caret's default update policy (same as before Markdown rendering). The
         // streaming re-render's remove + insert run inside one EDT event, so no intermediate caret
         // position or partial render is ever painted.
-        installLinkHandlers();
-        installContextMenu();
         JScrollPane scroll = new JScrollPane(transcript);
         scroll.setPreferredSize(new Dimension(560, 360));
         add(scroll, BorderLayout.CENTER);
 
         add(buildInputBar(), BorderLayout.SOUTH);
+        turnController = buildTurnController();
 
-        flushTimer = new Timer(40, e -> drainQueue());
-        workingTimer = new Timer(1000, e -> tickWorking());
         statusTimer = new Timer(1500, e -> refreshStatus());
         statusTimer.start();
 
@@ -271,126 +105,54 @@ public class ChatView extends AbstractOWLViewComponent {
         }
         refreshStatus();
 
-        // Registered last: everything the callback rebuilds now exists, so a catalog saved while this
-        // view is open cannot arrive before the pickers it refreshes.
-        followCatalogEdits();
-    }
-
-    /**
-     * Keeps this view's pickers in step with the model catalog. The pickers are built once, when the
-     * view opens, so without this a list edited in Preferences would not appear until Protege was
-     * restarted. Package-private so the wiring itself is testable headlessly.
-     */
-    void followCatalogEdits() {
-        catalogListener = this::refreshModelPickers;
-        ChatModelCatalog.addChangeListener(catalogListener);
-    }
-
-    /**
-     * Stops following catalog edits. Mandatory on teardown: the catalog's listener list is static, so
-     * a registration left behind would keep this view (and its Swing tree) alive for the rest of the
-     * Protege session and rebuild pickers nobody is showing.
-     */
-    void stopFollowingCatalogEdits() {
-        if (catalogListener != null) {
-            ChatModelCatalog.removeChangeListener(catalogListener);
-            catalogListener = null;
-        }
+        // Registered last: everything the callback rebuilds now exists, so a catalog saved while
+        // this view is open cannot arrive before the pickers it refreshes.
+        providerControls.followCatalogEdits();
     }
 
     private JComponent buildControlBar() {
-        // Only locally-installed CLIs appear in the picker. The Provider + Model pickers are created here but
-        // laid out in the composer (just left of Send) — see buildInputBar(); the top bar keeps New chat and
-        // the edit/reasoning toggles.
+        // Only locally-installed CLIs appear in the picker. The Provider and Model pickers are
+        // created here but laid out in the composer (just left of Send); see buildInputBar(). The
+        // top bar keeps New chat and the edit/reasoning toggles.
         List<ChatProvider> available = Providers.available();
-        if (!available.isEmpty()) {
-            String savedProvider = McpConfig.prefs().getString(McpConfig.KEY_CHAT_PROVIDER, "");
-            providerCombo = new JComboBox<>();
-            providerCombo.setToolTipText(
-                    "Provider (switching keeps this conversation and hands off new turns)");
-            providerCombo.setRenderer(new DefaultListCellRenderer() {
-                private static final long serialVersionUID = 1L;
-
-                @Override
-                public Component getListCellRendererComponent(JList<?> list, Object value, int index,
-                        boolean isSelected, boolean cellHasFocus) {
-                    super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-                    if (value instanceof ChatProvider p) {
-                        setText(p.displayName());
-                        setToolTipText(p.displayName());
-                    }
-                    return this;
-                }
-            });
-            for (ChatProvider p : available) {
-                providerCombo.addItem(p);
-                if (currentProvider == null && (p.id().equals(savedProvider) || savedProvider.isEmpty())) {
-                    currentProvider = p;
-                }
-            }
-            if (currentProvider == null) {
-                currentProvider = available.get(0);
-                McpConfig.prefs().putString(McpConfig.KEY_CHAT_PROVIDER, currentProvider.id());
-            }
-            if (currentProvider != null) {
-                providerCombo.setSelectedItem(currentProvider);
-                updateProviderTooltip();
-            }
-            // Fires on user change only (the initial selection above equals currentProvider -> no-op).
-            providerCombo.addActionListener(e -> {
-                Object sel = providerCombo.getSelectedItem();
-                if (sel instanceof ChatProvider p && p != currentProvider) {
-                    selectProvider(p);
-                }
-            });
-            Dimension pc = providerCombo.getPreferredSize();
-            providerCombo.setPreferredSize(new Dimension(Math.max(132, pc.width), pc.height));
-        }
-
-        modelCombo = new JComboBox<>();
-        // Non-editable to match the Provider picker (an editable combo renders as a different, taller widget on
-        // macOS Aqua, which is what made the two look mismatched and misaligned). Pick from the provider's list.
-        modelCombo.setToolTipText("Model ((default) = the CLI's own default)");
-        modelCombo.addActionListener(e -> onModelChanged());
-        if (currentProvider != null) {
-            populateModels(currentProvider);
-            activeModel = selectedModel();
-        }
-        Dimension mc = modelCombo.getPreferredSize();
-        modelCombo.setPreferredSize(new Dimension(132, mc.height));
-
-        effortCombo = new JComboBox<>();
-        effortCombo.setToolTipText("Reasoning effort ((default) = the CLI's configured default)");
-        effortCombo.addActionListener(e -> onReasoningEffortChanged());
-        if (currentProvider != null) {
-            populateReasoningEfforts(currentProvider);
-            activeReasoningEffort = selectedReasoningEffort();
-        }
-        Dimension ec = effortCombo.getPreferredSize();
-        effortCombo.setPreferredSize(new Dimension(104, ec.height));
+        providerControls = buildProviderControls(available);
 
         newChatButton = new JButton("New chat");
         newChatButton.addActionListener(e -> startNewConversation(true));
 
-        confirmEdits = new JCheckBox("Confirm each edit",
-                McpConfig.prefs().getBoolean(McpConfig.KEY_CONFIRM_WRITES, false));
-        confirmEdits.setToolTipText("Require a confirmation dialog before the assistant applies any edit "
-                + "(this is the MCP server's confirm-writes setting).");
-        confirmEdits.addActionListener(e -> {
-            McpConfig.prefs().putBoolean(McpConfig.KEY_CONFIRM_WRITES, confirmEdits.isSelected());
-            refreshStatus();
-        });
+        confirmEdits =
+                new JCheckBox(
+                        "Confirm each edit",
+                        McpConfig.prefs().getBoolean(McpConfig.KEY_CONFIRM_WRITES, false));
+        confirmEdits.setToolTipText(
+                "Require a confirmation dialog before the assistant applies any edit "
+                        + "(this is the MCP server's confirm-writes setting).");
+        confirmEdits.addActionListener(
+                e -> {
+                    McpConfig.prefs()
+                            .putBoolean(McpConfig.KEY_CONFIRM_WRITES, confirmEdits.isSelected());
+                    refreshStatus();
+                });
 
-        showThinking = new JCheckBox("Show reasoning",
-                McpConfig.prefs().getBoolean(McpConfig.KEY_CHAT_SHOW_THINKING, false));
-        showThinking.setToolTipText("Ask the CLI for the model's reasoning and show it in the transcript "
-                + "(gray italics). Takes effect from the next message.");
-        showThinking.addActionListener(e ->
-                McpConfig.prefs().putBoolean(McpConfig.KEY_CHAT_SHOW_THINKING, showThinking.isSelected()));
+        showThinking =
+                new JCheckBox(
+                        "Show reasoning",
+                        McpConfig.prefs().getBoolean(McpConfig.KEY_CHAT_SHOW_THINKING, false));
+        showThinking.setToolTipText(
+                "Ask the CLI for the model's reasoning and show it in the transcript "
+                        + "(gray italics). Takes effect from the next message.");
+        showThinking.addActionListener(
+                e ->
+                        McpConfig.prefs()
+                                .putBoolean(
+                                        McpConfig.KEY_CHAT_SHOW_THINKING,
+                                        showThinking.isSelected()));
 
         providerBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         if (available.isEmpty()) {
-            JLabel none = new JLabel("No coding-agent CLI found — install a configured client, then reopen");
+            JLabel none =
+                    new JLabel(
+                            "No coding-agent CLI found — install a configured client, then reopen");
             none.setForeground(new Color(0xB00020));
             providerBar.add(none);
         }
@@ -398,9 +160,8 @@ public class ChatView extends AbstractOWLViewComponent {
         providerBar.add(confirmEdits);
         providerBar.add(showThinking);
 
-        // The live status strip (server/edits state, working indicator, token count) is created here but laid
-        // out inside the composer's bottom row (between "+" and Send) — see buildInputBar() — so the otherwise
-        // empty middle of the composer surfaces useful live info instead of wasting space.
+        // The live status strip is created here but laid out inside the composer's bottom row, so
+        // the otherwise empty middle surfaces useful server, working, and token state.
         Font small = new JLabel().getFont().deriveFont(Font.PLAIN, 11f);
         Color muted = new Color(0x666666);
         statusLabel = new JLabel(" ");
@@ -417,50 +178,74 @@ public class ChatView extends AbstractOWLViewComponent {
         return providerBar;
     }
 
+    /**
+     * Builds the picker group with conversation callbacks; package-private for headless wiring
+     * tests.
+     */
+    ChatProviderControls buildProviderControls(List<ChatProvider> available) {
+        return new ChatProviderControls(
+                available,
+                new ChatProviderControls.Listener() {
+                    @Override
+                    public void providerChanged(ChatProvider provider) {
+                        onProviderChanged(provider);
+                    }
+
+                    @Override
+                    public void modelChanged(String displayName) {
+                        onModelChanged(displayName);
+                    }
+
+                    @Override
+                    public void reasoningEffortChanged(String displayName) {
+                        onReasoningEffortChanged(displayName);
+                    }
+                });
+    }
+
     private JComponent buildInputBar() {
         input = new JTextArea(3, 40);
         input.setLineWrap(true);
         input.setWrapStyleWord(true);
         // Enter sends; Shift+Enter inserts a newline.
         input.getInputMap().put(KeyStroke.getKeyStroke("ENTER"), "send");
-        input.getActionMap().put("send", new javax.swing.AbstractAction() {
-            private static final long serialVersionUID = 1L;
+        input.getActionMap()
+                .put(
+                        "send",
+                        new javax.swing.AbstractAction() {
+                            private static final long serialVersionUID = 1L;
 
-            @Override
-            public void actionPerformed(java.awt.event.ActionEvent e) {
-                send();
-            }
-        });
+                            @Override
+                            public void actionPerformed(java.awt.event.ActionEvent e) {
+                                send();
+                            }
+                        });
         input.getInputMap().put(KeyStroke.getKeyStroke("shift ENTER"), "insert-break");
-        // Backspace next to a `[Image #N]`/`[File …]`/`[Pasted …]` placeholder removes the whole token (and
-        // its attachment) at once, instead of nibbling it one bracket at a time.
-        installSmartBackspace();
-        // Replace the transfer handler so paste/drop can become attachments. We intentionally do NOT call
-        // setDragEnabled(true): that only makes the field a drag *source*, and since this handler does not
-        // implement export it would break the built-in drag-to-move-text. Drop import works regardless.
-        input.setTransferHandler(new AttachmentTransferHandler(input.getTransferHandler()));
+        attachmentController = buildAttachmentController(input);
+        attachmentController.installInputActions();
         input.setBorder(BorderFactory.createEmptyBorder(2, 4, 2, 4));
 
-        // Composer layout: a "+" attaches at the bottom-left; the send button sits at the bottom-right and is
-        // swapped in place for a stop button while a turn streams, so the two share one slot.
+        // Composer layout: a "+" attaches at the bottom-left; the send button sits at the
+        // bottom-right and is swapped in place for a stop button while a turn streams, so the two
+        // share one slot.
         Color accent = new Color(0x1A4F8B);
-        attachButton = iconButton(icon(Glyph.PLUS, 22, new Color(0x555555), null), "Attach files or images");
-        attachButton.addActionListener(e -> attachFilesFromChooser());
+        attachButton =
+                iconButton(
+                        icon(Glyph.PLUS, 22, new Color(0x555555), null), "Attach files or images");
+        attachButton.addActionListener(e -> attachmentController.chooseFiles());
         sendButton = iconButton(icon(Glyph.SEND, 26, Color.WHITE, accent), "Send (Enter)");
         sendButton.addActionListener(e -> send());
         stopButton = iconButton(icon(Glyph.STOP, 26, Color.WHITE, new Color(0xD93025)), "Stop");
         stopButton.addActionListener(e -> stop());
-        stopButton.setVisible(false);   // only shown (in the send slot) while a turn is running
+        stopButton.setVisible(false); // only shown (in the send slot) while a turn is running
 
         JPanel sendSlot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         sendSlot.setOpaque(false);
         sendSlot.add(sendButton);
         sendSlot.add(stopButton);
 
-        // Fill the gap between "+" and Send with the live status strip (server/edits state · working · tokens).
-        // Status text and the "● running Ns" indicator group on the LEFT (the indicator just after the status);
-        // the token readout stays on the right. GridBagLayout (not FlowLayout) so the short labels are centered
-        // vertically in the row — FlowLayout pins its row to the top, which made the strip sit too high.
+        // Fill the gap between "+" and Send with status and working state on the left and tokens on
+        // the right. GridBagLayout keeps the short labels vertically centered in the row.
         JPanel leftStatus = new JPanel(new java.awt.GridBagLayout());
         leftStatus.setOpaque(false);
         java.awt.GridBagConstraints gbc = new java.awt.GridBagConstraints();
@@ -480,11 +265,7 @@ public class ChatView extends AbstractOWLViewComponent {
         // Right cluster: the Provider + Model pickers sit just to the LEFT of the send/stop button.
         JPanel east = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         east.setOpaque(false);
-        if (providerCombo != null) {
-            east.add(providerCombo);
-        }
-        east.add(modelCombo);
-        east.add(effortCombo);
+        east.add(providerControls);
         east.add(sendSlot);
 
         JPanel controlRow = new JPanel(new BorderLayout());
@@ -494,20 +275,76 @@ public class ChatView extends AbstractOWLViewComponent {
         controlRow.add(middleInfo, BorderLayout.CENTER);
         controlRow.add(east, BorderLayout.EAST);
 
-        JScrollPane inputScroll = new JScrollPane(input,
-                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        JScrollPane inputScroll =
+                new JScrollPane(
+                        input,
+                        JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
+                        JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         inputScroll.setBorder(BorderFactory.createEmptyBorder());
 
         JPanel inputPanel = new JPanel(new BorderLayout(0, 2));
-        inputPanel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(0xC8C8C8)),
-                BorderFactory.createEmptyBorder(4, 4, 4, 4)));
+        inputPanel.setBorder(
+                BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(new Color(0xC8C8C8)),
+                        BorderFactory.createEmptyBorder(4, 4, 4, 4)));
         inputPanel.add(inputScroll, BorderLayout.CENTER);
         inputPanel.add(controlRow, BorderLayout.SOUTH);
 
         JPanel bar = new JPanel(new BorderLayout());
         bar.add(inputPanel, BorderLayout.CENTER);
         return bar;
+    }
+
+    /** Connects attachment errors to this transcript; package-private for headless wiring tests. */
+    ChatAttachmentController buildAttachmentController(JTextArea composer) {
+        return new ChatAttachmentController(composer, this, message -> append(Kind.ERROR, message));
+    }
+
+    private ChatTurnController buildTurnController() {
+        return new ChatTurnController(
+                new ChatTurnController.Host() {
+                    @Override
+                    public void append(Kind kind, String text) {
+                        ChatView.this.append(kind, text);
+                    }
+
+                    @Override
+                    public void closeAssistantSegment(boolean offerCopy) {
+                        transcript.closeAssistantSegment(offerCopy);
+                    }
+
+                    @Override
+                    public boolean isTranscriptAtLineStart() {
+                        return transcript.isAtLineStart();
+                    }
+
+                    @Override
+                    public void showUsage(ChatUsage usage, boolean pending) {
+                        usageLabel.setText(
+                                pending ? "tokens: …" : usage == null ? " " : formatUsage(usage));
+                    }
+
+                    @Override
+                    public void showWorkingSeconds(long seconds) {
+                        workingLabel.setText(seconds < 0 ? " " : "● running   " + seconds + "s");
+                    }
+
+                    @Override
+                    public void setTurnRunning(boolean running) {
+                        setInputEnabled(!running);
+                        showStop(running);
+                    }
+
+                    @Override
+                    public void finishTurnAttachments() {
+                        attachmentController.finishTurn();
+                    }
+
+                    @Override
+                    public void focusComposer() {
+                        input.requestFocusInWindow();
+                    }
+                });
     }
 
     /** Show the stop button in the send slot while a turn runs; restore send when idle. */
@@ -526,419 +363,6 @@ public class ChatView extends AbstractOWLViewComponent {
         }
     }
 
-    private static JButton iconButton(Icon icon, String tooltip) {
-        JButton b = new JButton(icon);
-        b.setToolTipText(tooltip);
-        b.setBorderPainted(false);
-        b.setContentAreaFilled(false);
-        b.setFocusPainted(false);
-        b.setMargin(new Insets(2, 2, 2, 2));
-        b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        return b;
-    }
-
-    private enum Glyph { PLUS, SEND, STOP, COPY, CHECK }
-
-    /** A small flat-drawn icon: plus, up-arrow send (filled circle), stop square, copy (two
-     *  overlapping sheets, like Codex's per-message copy button), or a confirmation check mark. */
-    private static Icon icon(Glyph glyph, int size, Color fg, Color bg) {
-        return new Icon() {
-            @Override
-            public int getIconWidth() {
-                return size;
-            }
-
-            @Override
-            public int getIconHeight() {
-                return size;
-            }
-
-            @Override
-            public void paintIcon(Component c, Graphics g, int x, int y) {
-                Graphics2D g2 = (Graphics2D) g.create();
-                try {
-                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    g2.translate(x, y);
-                    float s = size;
-                    if (bg != null) {
-                        g2.setColor(bg);
-                        g2.fill(new Ellipse2D.Float(0, 0, s, s));
-                    }
-                    g2.setColor(fg);
-                    switch (glyph) {
-                        case PLUS -> {
-                            g2.setStroke(new BasicStroke(Math.max(1.6f, s * 0.11f),
-                                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                            float m = s * 0.24f;
-                            g2.draw(new Line2D.Float(s / 2, m, s / 2, s - m));
-                            g2.draw(new Line2D.Float(m, s / 2, s - m, s / 2));
-                        }
-                        case SEND -> {
-                            g2.setStroke(new BasicStroke(Math.max(1.7f, s * 0.10f),
-                                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                            float cx = s / 2;
-                            float top = s * 0.30f;
-                            float bot = s * 0.72f;
-                            float head = s * 0.17f;
-                            g2.draw(new Line2D.Float(cx, top, cx, bot));
-                            g2.draw(new Line2D.Float(cx, top, cx - head, top + head));
-                            g2.draw(new Line2D.Float(cx, top, cx + head, top + head));
-                        }
-                        case STOP -> {
-                            float m = s * 0.34f;
-                            g2.fill(new RoundRectangle2D.Float(m, m, s - 2 * m, s - 2 * m, s * 0.08f, s * 0.08f));
-                        }
-                        case COPY -> {
-                            g2.setStroke(new BasicStroke(Math.max(1.2f, s * 0.09f),
-                                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                            float side = s * 0.50f;
-                            float arc = s * 0.14f;
-                            float frontX = s * 0.16f;
-                            float frontY = s - s * 0.16f - side;
-                            float backX = frontX + s * 0.19f;
-                            float backY = frontY - s * 0.19f;
-                            // Back sheet: drawn only where the front sheet doesn't cover it — from
-                            // the front's top edge up over the two rounded top corners and down to
-                            // its bottom-right, stopping at the front's right edge.
-                            Path2D.Float back = new Path2D.Float();
-                            back.moveTo(backX, frontY);
-                            back.lineTo(backX, backY + arc);
-                            back.quadTo(backX, backY, backX + arc, backY);
-                            back.lineTo(backX + side - arc, backY);
-                            back.quadTo(backX + side, backY, backX + side, backY + arc);
-                            back.lineTo(backX + side, backY + side);
-                            back.lineTo(frontX + side, backY + side);
-                            g2.draw(back);
-                            g2.draw(new RoundRectangle2D.Float(frontX, frontY, side, side, arc, arc));
-                        }
-                        case CHECK -> {
-                            g2.setStroke(new BasicStroke(Math.max(1.6f, s * 0.12f),
-                                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                            Path2D.Float check = new Path2D.Float();
-                            check.moveTo(s * 0.24f, s * 0.54f);
-                            check.lineTo(s * 0.43f, s * 0.72f);
-                            check.lineTo(s * 0.78f, s * 0.30f);
-                            g2.draw(check);
-                        }
-                        default -> {
-                        }
-                    }
-                } finally {
-                    g2.dispose();
-                }
-            }
-        };
-    }
-
-    private void installSmartBackspace() {
-        Action deletePrev = input.getActionMap().get(javax.swing.text.DefaultEditorKit.deletePrevCharAction);
-        input.getInputMap().put(KeyStroke.getKeyStroke("BACK_SPACE"), "smart-backspace");
-        input.getActionMap().put("smart-backspace", new javax.swing.AbstractAction() {
-            private static final long serialVersionUID = 1L;
-
-            @Override
-            public void actionPerformed(java.awt.event.ActionEvent e) {
-                if (!deletePlaceholderBefore() && deletePrev != null) {
-                    deletePrev.actionPerformed(e);
-                }
-            }
-        });
-    }
-
-    /**
-     * If the caret sits immediately after an attachment placeholder (and there is no selection), delete the
-     * whole {@code [ … ]} token and drop its attachment in one keystroke. Returns false to fall back to a
-     * normal one-character backspace.
-     */
-    private boolean deletePlaceholderBefore() {
-        if (input.getSelectionStart() != input.getSelectionEnd()) {
-            return false;
-        }
-        ChatComposer.PlaceholderMatch match = ChatComposer.matchPlaceholderBefore(
-                input.getText(), input.getCaretPosition(), pendingAttachments);
-        if (match == null) {
-            return false;   // no attachment token just before the caret — ordinary backspace
-        }
-        try {
-            input.getDocument().remove(match.start(), match.end() - match.start());
-        } catch (BadLocationException ex) {
-            return false;
-        }
-        ChatAttachment attachment = match.attachment();
-        pendingAttachments.remove(attachment);
-        if (attachment.file() != null) {
-            deleteScratchDir(attachment.file().getParentFile());
-        }
-        return true;
-    }
-
-    private void attachFilesFromChooser() {
-        JFileChooser chooser = new JFileChooser();
-        chooser.setMultiSelectionEnabled(true);
-        int choice = chooser.showOpenDialog(this);
-        if (choice == JFileChooser.APPROVE_OPTION) {
-            attachFiles(Arrays.asList(chooser.getSelectedFiles()));
-        }
-    }
-
-    private final class AttachmentTransferHandler extends TransferHandler {
-        private static final long serialVersionUID = 1L;
-
-        private final TransferHandler delegate;
-
-        AttachmentTransferHandler(TransferHandler delegate) {
-            this.delegate = delegate;
-        }
-
-        @Override
-        public boolean canImport(TransferSupport support) {
-            return support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
-                    || support.isDataFlavorSupported(DataFlavor.imageFlavor)
-                    || support.isDataFlavorSupported(DataFlavor.stringFlavor)
-                    || (delegate != null && delegate.canImport(support));
-        }
-
-        @Override
-        public boolean importData(TransferSupport support) {
-            try {
-                moveCaretToDropLocation(support);
-                Transferable t = support.getTransferable();
-                if (support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
-                    @SuppressWarnings("unchecked")
-                    List<File> files = (List<File>) t.getTransferData(DataFlavor.javaFileListFlavor);
-                    return attachFiles(files);
-                }
-                if (support.isDataFlavorSupported(DataFlavor.imageFlavor)) {
-                    Image image = (Image) t.getTransferData(DataFlavor.imageFlavor);
-                    return attachClipboardImage(image);
-                }
-                if (support.isDataFlavorSupported(DataFlavor.stringFlavor)) {
-                    String text = (String) t.getTransferData(DataFlavor.stringFlavor);
-                    if (shouldAttachPastedText(text)) {
-                        attachPastedText(text);
-                    } else {
-                        input.replaceSelection(text == null ? "" : text);
-                    }
-                    return true;
-                }
-            } catch (UnsupportedFlavorException | IOException | RuntimeException ex) {
-                append(Kind.ERROR, "\nCould not attach pasted or dropped content: "
-                        + ex.getMessage() + "\n");
-                return false;
-            }
-            return delegate != null && delegate.importData(support);
-        }
-    }
-
-    private void moveCaretToDropLocation(TransferHandler.TransferSupport support) {
-        if (!support.isDrop()) {
-            return;
-        }
-        TransferHandler.DropLocation loc = support.getDropLocation();
-        if (loc instanceof JTextComponent.DropLocation textLoc) {
-            input.setCaretPosition(textLoc.getIndex());
-        }
-    }
-
-    private boolean shouldAttachPastedText(String text) {
-        return io.github.hakjuoh.protege_mcp.chat.ChatText.shouldAttachPastedText(text,
-                PASTED_TEXT_ATTACHMENT_THRESHOLD, PASTED_TEXT_LINE_THRESHOLD, PASTED_TEXT_LINE_MIN_CHARS);
-    }
-
-    private void attachPastedText(String text) {
-        String label = "Pasted content #" + nextPastedTextIndex++ + ": " + String.format("%,d", text.length())
-                + " chars";
-        ChatAttachment attachment;
-        if (text.length() > PASTED_TEXT_INLINE_MAX) {
-            // Too large to inline on the command line — buffer it to an isolated temp file and pass the path,
-            // so the provider prompt stays bounded regardless of paste size.
-            File dir = null;
-            try {
-                dir = newScratchDir();
-                File file = new File(dir, "pasted-" + System.currentTimeMillis() + ".txt");
-                Files.writeString(file.toPath(), text);
-                restrict(file.toPath(), false);
-                attachment = ChatAttachment.pastedTextFile(label, text, file);
-            } catch (IOException ex) {
-                // Re-inlining a body this large would just reintroduce the command-line overflow the temp file
-                // exists to prevent, so drop it back into the visible input for the user to see and trim.
-                append(Kind.ERROR, "\nCould not buffer large pasted text; left it in the input box "
-                        + "instead: " + ex.getMessage() + "\n");
-                deleteScratchDir(dir);
-                nextPastedTextIndex--;
-                input.replaceSelection(text);
-                return;
-            }
-        } else {
-            attachment = ChatAttachment.pastedText(label, text);
-        }
-        pendingAttachments.add(attachment);
-        insertAttachmentPlaceholder(attachment);
-    }
-
-    private boolean attachClipboardImage(Image image) throws IOException {
-        if (image == null) {
-            return false;
-        }
-        // Reserve the label/index and create the (cheap) scratch dir on the EDT; do the potentially heavy
-        // encode + PNG write off the EDT so a large screenshot can't freeze the UI.
-        final int idx = nextImageIndex++;
-        final String label = "Image #" + idx;
-        final File dir = newScratchDir();
-        final File file = new File(dir, "image-" + System.currentTimeMillis() + "-" + idx + ".png");
-        final int generation = attachGeneration;
-        new SwingWorker<Void, Void>() {
-            @Override
-            protected Void doInBackground() throws Exception {
-                ImageIO.write(toBufferedImage(image), "png", file);
-                restrict(file.toPath(), false);
-                return null;
-            }
-
-            @Override
-            protected void done() {
-                if (generation != attachGeneration) {
-                    // The conversation was reset/closed while we encoded — discard rather than inject a stale
-                    // attachment whose scratch file deleteAllScratch() may already have reclaimed.
-                    deleteScratchDir(dir);
-                    return;
-                }
-                try {
-                    get();
-                    ChatAttachment attachment = ChatAttachment.image(label, file, "image/png");
-                    pendingAttachments.add(attachment);
-                    insertAttachmentPlaceholder(attachment);
-                } catch (Exception ex) {
-                    append(Kind.ERROR, "\nCould not attach pasted image: " + causeMessage(ex) + "\n");
-                    deleteScratchDir(dir);
-                }
-            }
-        }.execute();
-        return true;
-    }
-
-    private boolean attachFiles(List<File> files) {
-        if (files == null || files.isEmpty()) {
-            return false;
-        }
-        boolean attached = false;
-        for (File f : files) {
-            if (f == null) {
-                continue;
-            }
-            File source = f.getAbsoluteFile();
-            if (!source.isFile()) {
-                append(Kind.ERROR, "\nCannot attach non-file path: " + source + "\n");
-                continue;
-            }
-            if (source.length() > MAX_ATTACHMENT_BYTES) {
-                append(Kind.ERROR, "\nAttachment too large (" + (source.length() / (1024 * 1024))
-                        + " MB, max " + (MAX_ATTACHMENT_BYTES / (1024 * 1024)) + " MB): " + source.getName()
-                        + "\n");
-                continue;
-            }
-            // Copy the user's file into its own isolated scratch dir and reference the copy, so granting the
-            // provider read access to that dir never exposes the user's real folder contents.
-            File dir = null;
-            try {
-                dir = newScratchDir();
-                File copy = new File(dir, source.getName());
-                Files.copy(source.toPath(), copy.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                restrict(copy.toPath(), false);
-                ChatAttachment attachment;
-                if (isImageFile(source)) {
-                    attachment = ChatAttachment.image("Image #" + nextImageIndex++, copy, imageMediaType(source));
-                } else {
-                    attachment = ChatAttachment.file("File #" + nextFileIndex++ + ": "
-                            + ChatAttachment.sanitizeLabel(source.getName()), copy, null);
-                }
-                pendingAttachments.add(attachment);
-                insertAttachmentPlaceholder(attachment);
-                attached = true;
-            } catch (IOException ex) {
-                append(Kind.ERROR, "\nCould not attach " + source.getName() + ": "
-                        + ex.getMessage() + "\n");
-                deleteScratchDir(dir);   // null-safe: reclaim the just-created dir on a failed copy
-            }
-        }
-        return attached;
-    }
-
-    private void insertAttachmentPlaceholder(ChatAttachment attachment) {
-        String placeholder = attachment.placeholder();
-        String current = input.getText();
-        // replaceSelection() inserts at the selection START and deletes the selected range, so base the spacing
-        // decision on the selection bounds — not getCaretPosition(), which is the selection END after a drag.
-        int start = Math.max(0, Math.min(input.getSelectionStart(), current.length()));
-        int end = Math.max(start, Math.min(input.getSelectionEnd(), current.length()));
-        boolean addLeadingSpace = start > 0 && !Character.isWhitespace(current.charAt(start - 1));
-        boolean addTrailingSpace = end < current.length() && !Character.isWhitespace(current.charAt(end));
-        input.replaceSelection((addLeadingSpace ? " " : "") + placeholder + (addTrailingSpace ? " " : ""));
-    }
-
-    private static BufferedImage toBufferedImage(Image image) throws IOException {
-        if (image instanceof BufferedImage b) {
-            return b;
-        }
-        javax.swing.ImageIcon icon = new javax.swing.ImageIcon(image);
-        int width = icon.getIconWidth();
-        int height = icon.getIconHeight();
-        if (width <= 0 || height <= 0) {
-            throw new IOException("clipboard image has no readable size");
-        }
-        BufferedImage buffered = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = buffered.createGraphics();
-        try {
-            g.drawImage(image, 0, 0, null);
-        } finally {
-            g.dispose();
-        }
-        return buffered;
-    }
-
-    /** A fresh, owner-only scratch subdir holding exactly one attachment file; tracked for later cleanup. */
-    private File newScratchDir() throws IOException {
-        return attachments.newScratchDir();
-    }
-
-    /** Best-effort owner-only permissions on POSIX filesystems (no-op on Windows / non-POSIX). */
-    private static void restrict(java.nio.file.Path path, boolean directory) {
-        AttachmentFileManager.restrict(path, directory);
-    }
-
-    /** Delete one of our scratch dirs (and its single file). Guarded so only tracked dirs are removed. */
-    private void deleteScratchDir(File dir) {
-        attachments.deleteScratchDir(dir);
-    }
-
-    /** Delete the scratch dirs backing the given attachments (no-op for inline pasted text). */
-    private void deleteScratchFor(Collection<ChatAttachment> atts) {
-        attachments.deleteScratchFor(atts);
-    }
-
-    /** Remove every scratch dir created this conversation (New Chat / view close). */
-    private void deleteAllScratch() {
-        attachments.deleteAllScratch();
-    }
-
-    private static String causeMessage(Exception ex) {
-        Throwable t = ex.getCause() != null ? ex.getCause() : ex;
-        String m = t.getMessage();
-        return m == null ? t.getClass().getSimpleName() : m;
-    }
-
-    private static boolean isImageFile(File file) {
-        return io.github.hakjuoh.protege_mcp.chat.ChatText.isImageFileName(file.getName());
-    }
-
-    private static String imageMediaType(File file) {
-        return io.github.hakjuoh.protege_mcp.chat.ChatText.imageMediaType(file.getName());
-    }
-
-    private List<ChatAttachment> activeAttachments(String displayPrompt) {
-        return ChatComposer.activeAttachments(pendingAttachments, displayPrompt);
-    }
-
     /** The opening transcript line: the usage hint, or the install hint when no CLI is present. */
     private void showIntro() {
         append(Kind.SYSTEM, Providers.available().isEmpty() ? NO_CLI : INTRO);
@@ -946,161 +370,69 @@ public class ChatView extends AbstractOWLViewComponent {
 
     // ------------------------------------------------------------------ provider / model
 
-    private void selectProvider(ChatProvider p) {
-        currentProvider = p;
-        McpConfig.prefs().putString(McpConfig.KEY_CHAT_PROVIDER, p.id());
-        refreshModelPickers();
-        sessionId = conversationHistory.sessionId(p.id());
-        append(Kind.SYSTEM, "Provider: " + p.displayName()
-                + (sessionId != null && !sessionId.isBlank()
-                        ? " — its CLI session will resume; missed turns will be handed off.\n"
-                        : " — joining the shared conversation; prior turns will be handed off.\n"));
+    private void onProviderChanged(ChatProvider provider) {
+        String sessionId = turnController.sessionId(provider.id());
+        append(
+                Kind.SYSTEM,
+                "Provider: "
+                        + provider.displayName()
+                        + (sessionId != null && !sessionId.isBlank()
+                                ? " — its CLI session will resume; missed turns will be handed"
+                                        + " off.\n"
+                                : " — joining the shared conversation; prior turns will be handed"
+                                        + " off.\n"));
     }
 
-    /**
-     * Rebuilds both pickers from what is stored now. Used on a provider change and whenever the
-     * Preferences panel saves a catalog: an id the user just deleted must leave the picker, and a
-     * selection that went with it falls back to the CLI default rather than lingering as a value the
-     * next turn would still run on.
-     */
-    private void refreshModelPickers() {
-        if (providerCombo != null) {
-            // Provider renderers ask the profile for its current user-visible name. Repaint on the
-            // same notification that refreshes model catalogs so a rename saved in Preferences is
-            // visible immediately without rebuilding the conversation or reopening this view.
-            providerCombo.repaint();
-            updateProviderTooltip();
-        }
-        if (currentProvider == null || modelCombo == null || effortCombo == null) {
-            return;
-        }
-        populateModels(currentProvider);
-        activeModel = selectedModel();
-        populateReasoningEfforts(currentProvider);
-        activeReasoningEffort = selectedReasoningEffort();
+    private void onModelChanged(String displayName) {
+        String sessionId = selectedSessionId();
+        append(
+                Kind.SYSTEM,
+                "Model: "
+                        + displayName
+                        + (sessionId == null || sessionId.isBlank()
+                                ? ".\n"
+                                : " — continuing this provider's conversation.\n"));
     }
 
-    private void updateProviderTooltip() {
-        if (providerCombo != null && currentProvider != null) {
-            providerCombo.setToolTipText(currentProvider.displayName()
-                    + " — switching keeps this conversation and hands off new turns");
-        }
+    private void onReasoningEffortChanged(String displayName) {
+        String sessionId = selectedSessionId();
+        append(
+                Kind.SYSTEM,
+                "Reasoning effort: "
+                        + displayName
+                        + (sessionId == null || sessionId.isBlank()
+                                ? ".\n"
+                                : " — continuing this provider's conversation.\n"));
     }
 
-    private void populateModels(ChatProvider p) {
-        boolean previousSuppression = suppressModelEvents;
-        suppressModelEvents = true;
-        try {
-            modelCombo.removeAllItems();
-            List<String> models = p.listModels();
-            for (String m : models) {
-                modelCombo.addItem(m.isEmpty() ? MODEL_DEFAULT_LABEL : m);
-            }
-            String saved = McpConfig.prefs().getString(modelPrefKey(p), "");
-            boolean validSaved = !saved.isEmpty() && models.contains(saved);
-            modelCombo.setSelectedItem(validSaved ? saved : MODEL_DEFAULT_LABEL);
-        } finally {
-            suppressModelEvents = previousSuppression;
-        }
+    private ChatProvider currentProvider() {
+        return providerControls == null ? null : providerControls.selectedProvider();
     }
 
-    private void onModelChanged() {
-        if (suppressModelEvents || currentProvider == null) {
-            return;
-        }
-        String selected = selectedModel();
-        if (Objects.equals(activeModel, selected)) {
-            return;   // JComboBox may fire even when the already-selected item is chosen again.
-        }
-        activeModel = selected;
-        McpConfig.prefs().putString(modelPrefKey(currentProvider), selected);
-        populateReasoningEfforts(currentProvider);
-        activeReasoningEffort = selectedReasoningEffort();
-        append(Kind.SYSTEM, "Model: " + (selected.isEmpty() ? MODEL_DEFAULT_LABEL : selected)
-                + (sessionId == null || sessionId.isBlank()
-                        ? ".\n"
-                        : " — continuing this provider's conversation.\n"));
-    }
-
-    private static String modelPrefKey(ChatProvider p) {
-        return ChatModels.modelPrefKey(p.id());
-    }
-
-    /** The model id to pass to the provider ("" = the CLI's own default). */
-    private String selectedModel() {
-        Object sel = modelCombo.getSelectedItem();
-        return ChatModels.normalizeModel(sel == null ? null : sel.toString(), MODEL_DEFAULT_LABEL);
-    }
-
-    private void populateReasoningEfforts(ChatProvider p) {
-        boolean previousSuppression = suppressEffortEvents;
-        suppressEffortEvents = true;
-        try {
-            effortCombo.removeAllItems();
-            List<String> efforts = p.reasoningEfforts(selectedModel());
-            for (String effort : efforts) {
-                effortCombo.addItem(effort.isEmpty() ? EFFORT_DEFAULT_LABEL : effort);
-            }
-            String saved = McpConfig.prefs().getString(
-                    ChatModels.reasoningEffortPrefKey(p.id()), "");
-            boolean validSaved = !saved.isEmpty() && efforts.contains(saved);
-            effortCombo.setSelectedItem(validSaved ? saved : EFFORT_DEFAULT_LABEL);
-        } finally {
-            suppressEffortEvents = previousSuppression;
-        }
-    }
-
-    private void onReasoningEffortChanged() {
-        if (suppressEffortEvents || currentProvider == null) {
-            return;
-        }
-        String selected = selectedReasoningEffort();
-        if (Objects.equals(activeReasoningEffort, selected)) {
-            return;
-        }
-        activeReasoningEffort = selected;
-        McpConfig.prefs().putString(ChatModels.reasoningEffortPrefKey(currentProvider.id()), selected);
-        append(Kind.SYSTEM, "Reasoning effort: "
-                + (selected.isEmpty() ? EFFORT_DEFAULT_LABEL : selected)
-                + (sessionId == null || sessionId.isBlank()
-                        ? ".\n"
-                        : " — continuing this provider's conversation.\n"));
-    }
-
-    private String selectedReasoningEffort() {
-        Object selected = effortCombo.getSelectedItem();
-        return ChatModels.normalizeReasoningEffort(
-                selected == null ? null : selected.toString(), EFFORT_DEFAULT_LABEL);
+    private String selectedSessionId() {
+        ChatProvider provider = currentProvider();
+        return provider == null || turnController == null
+                ? null
+                : turnController.sessionId(provider.id());
     }
 
     private void startNewConversation(boolean clearTranscript) {
-        // Don't reset/clear underneath a streaming turn (the controls are disabled then, but guard anyway).
-        if (currentProcess != null && currentProcess.isAlive()) {
+        // Don't reset/clear underneath a streaming turn (the controls are disabled then, but guard
+        // anyway).
+        if (turnController.isRunning()) {
             return;
         }
-        conversationHistory.clear();
-        sessionId = null;
+        turnController.clearConversation();
         if (clearTranscript) {
-            transcript.setText("");
-            closeAssistantSegment(false);   // its offsets were reset along with the document
-            atTurnStartOfLine = true;
-            lastRenderedKind = null;
-            thinkingBlockStart = -1;
-            thinkingBlockEnd = -1;
-            thinkingBlockSpaceAbove = -1F;
-            liveUsage = null;
-            lastUsage = null;
+            transcript.resetTranscript();
             usageLabel.setText(" ");
-            pendingAttachments.clear();
-            attachGeneration++;   // invalidate any in-flight clipboard-image worker for the old conversation
-            attachments.reset();
-            nextPastedTextIndex = 1;
-            nextImageIndex = 1;
-            nextFileIndex = 1;
+            attachmentController.resetConversation();
             showIntro();
-            if (currentProvider != null) {
-                append(Kind.SYSTEM, "Provider: " + currentProvider.displayName()
-                        + " — new shared conversation.\n");
+            ChatProvider provider = currentProvider();
+            if (provider != null) {
+                append(
+                        Kind.SYSTEM,
+                        "Provider: " + provider.displayName() + " — new shared conversation.\n");
             }
         }
     }
@@ -1108,440 +440,57 @@ public class ChatView extends AbstractOWLViewComponent {
     // ------------------------------------------------------------------ send / stop
 
     private void send() {
-        if (currentProcess != null && currentProcess.isAlive()) {
+        if (turnController.isRunning()) {
             return;
         }
         String prompt = input.getText().trim();
-        List<ChatAttachment> turnAttachments = activeAttachments(prompt);
         if (prompt.isEmpty()) {
             return;
         }
-        if (currentProvider == null) {
+        ChatProvider provider = currentProvider();
+        if (provider == null) {
             append(Kind.ERROR, "Select a provider first.\n");
             return;
         }
         McpServerController controller = controller();
         if (controller == null) {
-            append(Kind.ERROR, "MCP server is not available in this window; cannot reach the ontology.\n");
+            append(
+                    Kind.ERROR,
+                    "MCP server is not available in this window; cannot reach the ontology.\n");
             return;
         }
         if (!controller.isRunning() && controller.isUserStopped()) {
             // The user pressed Stop in the MCP Server view: the lazy start below must not override
             // that, so refuse here — before the prompt is consumed — with the way back spelled out.
             // (McpBoot.ensureStarted enforces the same latch for a Stop racing this check.)
-            append(Kind.ERROR, "The MCP server in this window is stopped. "
-                    + "Press Start in the MCP Server view to use the assistant again.\n");
+            append(
+                    Kind.ERROR,
+                    "The MCP server in this window is stopped. "
+                            + "Press Start in the MCP Server view to use the assistant again.\n");
             return;
         }
 
+        ChatAttachmentController.TurnAttachments preparedAttachments =
+                attachmentController.beginTurn(prompt);
         input.setText("");
-        // Any pending attachment whose placeholder the user edited away is NOT sent — surface that and reclaim
-        // its temp files instead of silently dropping it while the transcript still shows the mangled text.
-        List<ChatAttachment> dropped = new ArrayList<>();
-        for (ChatAttachment a : pendingAttachments) {
-            if (!turnAttachments.contains(a)) {
-                dropped.add(a);
-            }
-        }
-        pendingAttachments.clear();
-        inFlightAttachments = turnAttachments;
-        String providerId = currentProvider.id();
-        String handoffContext = conversationHistory.handoffFor(providerId);
-        conversationHistory.addUser(providerId, prompt);
-        if (!atTurnStartOfLine) {
-            append(Kind.SYSTEM, "\n");
-        }
-        append(Kind.USER, "> " + prompt + "\n");
-        if (!dropped.isEmpty()) {
-            append(Kind.SYSTEM, "[note] " + dropped.size() + " attachment(s) were not referenced in your "
-                    + "message and were not sent.\n");
-            deleteScratchFor(dropped);
-        }
-
-        completedExit = null;
-        lastUsage = null;
-        liveUsage = null;
-        pendingNotice = null;
-        currentProcess = null;
-        final int turn = ++turnSeq;   // identifies this turn so a late handle-publish can't bleed across turns
-        activeTurn = turn;
-        activeTurnProviderId = providerId;
-        activeTurnAssistant.setLength(0);
-        cancelRequested = false;
-        turnStopped = false;
-        usageLabel.setText("tokens: …");
-        setInputEnabled(false);
-        showStop(true);
-        startWorking();
-        flushTimer.start();
-
-        ChatProvider provider = currentProvider;
-        String model = selectedModel();
-        String reasoningEffort = selectedReasoningEffort();
-        String resume = conversationHistory.sessionId(providerId);
-        // Read the toggle here, on the EDT: the providers add their CLI-side opt-in flag from it
-        // (no CLI sends reasoning text unless asked), so it snapshots per turn like the model does.
         boolean reasoningOn = showThinking != null && showThinking.isSelected();
-        showReasoningForTurn = reasoningOn;
-        boolean assistantWrites = McpConfig.prefs().getBoolean(
-                McpConfig.KEY_CHAT_ALLOW_WRITES, true);
-        String assistantChatIdentity = chatIdentity(providerId, resume, turn);
-
-        Thread launcher = new Thread(() -> {
-            McpServerController.AssistantCredential credential = null;
-            try {
-                // Broker-first lazy start; degrades to a standalone start (which itself falls back
-                // to an ephemeral port when the configured port is busy). The chat always talks to
-                // THIS window's server directly — never through the broker.
-                io.github.hakjuoh.protege_mcp.broker.McpBoot.ensureStarted(controller);
-                credential = controller.issueAssistantCredential(
-                        providerId, assistantChatIdentity, assistantWrites);
-                McpEndpoint endpoint = new McpEndpoint(
-                        controller.getEndpointUrl(), credential.token());
-                ChatRequest req = new ChatRequest(model, prompt, resume, endpoint, turnAttachments,
-                        reasoningOn, handoffContext, reasoningEffort);
-                ChatProcess proc = provider.startTurn(req, uiListener(providerId));
-                // Publish on the EDT: if this turn already finalized (a fast turn) or the user hit Stop during
-                // the launch window, publishProcess cancels the freshly-spawned process instead of leaking it.
-                McpServerController.AssistantCredential publishedCredential = credential;
-                SwingUtilities.invokeLater(() -> publishProcess(
-                        turn, proc, controller, publishedCredential));
-                credential = null; // ownership transferred to publishProcess
-            } catch (Exception ex) {
-                if (credential != null) {
-                    revokeCredentialAsync(controller, credential);
-                }
-                String msg = ex.getMessage();
-                enqueue(Kind.ERROR, "Could not start " + provider.displayName() + ": "
-                        + (msg == null ? ex.getClass().getSimpleName() : msg) + "\n");
-                completedExit = -1;
-            }
-        }, "protege-chat-launch");
-        launcher.setDaemon(true);
-        launcher.start();
-    }
-
-    /** EDT: adopt the just-spawned process for the in-flight turn, or cancel it if the turn is already over. */
-    private void publishProcess(int turn, ChatProcess proc, McpServerController controller,
-            McpServerController.AssistantCredential credential) {
-        if (turn != activeTurn) {
-            // The turn finalized (or was superseded / the view disposed) before the handle arrived — don't
-            // leave a stale handle or an orphan process running.
-            proc.cancel();
-            revokeCredentialAsync(controller, credential);
-            return;
-        }
-        currentProcess = proc;
-        if (cancelRequested) {
-            // Stop was pressed during the launch window, before a handle existed — honour it now.
-            proc.cancel();
-            revokeCredentialAsync(controller, credential);
-        } else {
-            activeAssistantCredential = credential;
-            activeAssistantController = controller;
-            nextAssistantCredentialRenewal = System.currentTimeMillis() + 60_000L;
-        }
+        boolean assistantWrites =
+                McpConfig.prefs().getBoolean(McpConfig.KEY_CHAT_ALLOW_WRITES, true);
+        turnController.start(
+                new ChatTurnController.StartRequest(
+                        provider,
+                        controller,
+                        prompt,
+                        providerControls.selectedModel(),
+                        providerControls.selectedReasoningEffort(),
+                        reasoningOn,
+                        assistantWrites,
+                        preparedAttachments.attachments(),
+                        preparedAttachments.droppedCount()));
     }
 
     private void stop() {
-        if (activeTurn == 0) {
-            return;   // nothing in flight
-        }
-        turnStopped = true;
-        revokeActiveAssistantCredential();
-        ChatProcess p = currentProcess;
-        if (p != null) {
-            enqueue(Kind.SYSTEM, "\n[stopped]\n");
-            p.cancel();
-        } else {
-            // Still launching: no handle yet. Remember the request so publishProcess cancels on arrival.
-            cancelRequested = true;
-            enqueue(Kind.SYSTEM, "\n[stopping…]\n");
-        }
-    }
-
-    // ------------------------------------------------------------------ working indicator (EDT timer)
-
-    private void startWorking() {
-        turnStartMillis = System.currentTimeMillis();
-        workingLabel.setText("● running   0s");
-        workingTimer.start();
-    }
-
-    private void stopWorking() {
-        if (workingTimer != null) {
-            workingTimer.stop();
-        }
-        if (workingLabel != null) {
-            workingLabel.setText(" ");
-        }
-    }
-
-    /** Only the elapsed-seconds number changes; the rest of the indicator stays put. */
-    private void tickWorking() {
-        long now = System.currentTimeMillis();
-        long secs = (now - turnStartMillis) / 1000;
-        workingLabel.setText("● running   " + secs + "s");
-        McpServerController.AssistantCredential credential = activeAssistantCredential;
-        if (credential != null && now >= nextAssistantCredentialRenewal) {
-            McpServerController controller = activeAssistantController;
-            if (controller == null || !controller.renewAssistantCredential(credential.token())) {
-                // The lease is gone, but a tool invocation issued under its grant may still be inside a
-                // commit fence. Revoke it the way every other lifecycle path does — the credential object
-                // carries the principal that expiry cleanup takes away with the token, so the fence is
-                // still applied — rather than dropping the reference and leaving that execution to finish
-                // on a turn the view has already given up on.
-                revokeActiveAssistantCredential();
-                turnStopped = true;
-                enqueue(Kind.ERROR, "\nThe Assistant MCP credential expired or its server restarted; "
-                        + "start a new turn.\n");
-                ChatProcess process = currentProcess;
-                if (process != null) process.cancel();
-            } else {
-                nextAssistantCredentialRenewal = now + 60_000L;
-            }
-        }
-    }
-
-    // ------------------------------------------------------------------ streaming listener (off-EDT)
-
-    private ChatListener uiListener() {
-        return uiListener(currentProvider == null ? "" : currentProvider.id());
-    }
-
-    private ChatListener uiListener(String providerId) {
-        return new ChatListener() {
-            @Override
-            public void onSessionId(String id) {
-                conversationHistory.setSessionId(providerId, id);
-                if (currentProvider == null || providerId.equals(currentProvider.id())) {
-                    sessionId = id;
-                }
-            }
-
-            @Override
-            public void onAssistantMessageStart() {
-                // ChatHistory stores one assistant entry per CLI turn, so retain provider message
-                // boundaries as Markdown paragraphs inside that entry as well as in the transcript.
-                if (activeTurnAssistant.length() > 0) {
-                    activeTurnAssistant.append("\n\n");
-                }
-                enqueue(Kind.ASSISTANT_START, "");
-            }
-
-            @Override
-            public void onAssistantText(String text) {
-                activeTurnAssistant.append(text);
-                enqueue(Kind.ASSISTANT, text);
-            }
-
-            @Override
-            public void onThinking(String text) {
-                // Always enqueue off-EDT; whether to render is decided on the EDT in append()
-                // (reading the showThinking checkbox here would touch Swing off-EDT).
-                enqueue(Kind.THINKING, text);
-            }
-
-            @Override
-            public void onToolActivity(String summary) {
-                enqueue(Kind.TOOL, "  ⚙ " + summary + "\n");
-            }
-
-            @Override
-            public void onUsage(ChatUsage usage) {
-                // Live token count: the EDT flush timer renders this each tick (no Swing touch here).
-                liveUsage = usage;
-            }
-
-            @Override
-            public void onResult(ChatUsage usage) {
-                lastUsage = usage;
-            }
-
-            @Override
-            public void onError(String message) {
-                // No "[error]" prefix: the ERROR kind already renders in the error color. Nothing else
-                // needs telling: whether the turn becomes the conversation turns on the reply, and a
-                // turn that reported a failure and still answered is the conversation either way.
-                enqueue(Kind.ERROR, "\n" + message + "\n");
-            }
-
-            @Override
-            public void onNotice(String message) {
-                pendingNotice = message;
-            }
-
-            @Override
-            public void onComplete(int exitCode) {
-                completedExit = exitCode;
-            }
-        };
-    }
-
-    private void enqueue(Kind kind, String text) {
-        synchronized (queue) {
-            queue.add(new Chunk(kind, text));
-        }
-    }
-
-    /** EDT: drain queued chunks, refresh the live token count, then finalize once the process exits. */
-    private void drainQueue() {
-        // Consecutive assistant deltas are batched so the Markdown segment re-renders once per tick,
-        // not once per token. Hidden reasoning is dropped here (before batching) so it can neither
-        // split the batch nor close the assistant segment while the toggle is off.
-        StringBuilder assistantBatch = null;
-        Chunk c;
-        while ((c = poll()) != null) {
-            if (c.kind() == Kind.ASSISTANT) {
-                if (assistantBatch == null) {
-                    assistantBatch = new StringBuilder();
-                }
-                assistantBatch.append(c.text());
-                continue;
-            }
-            if (c.kind() == Kind.THINKING && !shouldShowReasoning()) {
-                continue;
-            }
-            if (assistantBatch != null) {
-                append(Kind.ASSISTANT, assistantBatch.toString());
-                assistantBatch = null;
-            }
-            append(c.kind(), c.text());
-        }
-        if (assistantBatch != null) {
-            append(Kind.ASSISTANT, assistantBatch.toString());
-        }
-        ChatUsage lu = liveUsage;
-        if (lu != null) {
-            usageLabel.setText(formatUsage(lu));
-        }
-        Integer exit = completedExit;
-        if (exit != null && isQueueEmpty()) {
-            completedExit = null;   // clear before finalize so a later tick can't finalize twice
-            finalizeTurn(exit);
-        }
-    }
-
-    private Chunk poll() {
-        synchronized (queue) {
-            return queue.poll();
-        }
-    }
-
-    private boolean isQueueEmpty() {
-        synchronized (queue) {
-            return queue.isEmpty();
-        }
-    }
-
-    private void finalizeTurn(int exit) {
-        // The reply is complete; later assistant text is a new message. The final reply gets the
-        // copy-as-Markdown button (interim messages already carry their source for the context menu) —
-        // unless the user stopped the turn: deltas drained past the [stopped] marker are a tail
-        // fragment, not "the reply", so they stay button-less (still right-click copyable).
-        closeAssistantSegment(!turnStopped);
-        String reply = activeTurnAssistant.toString();
-        if (isConversationHistory(exit, turnStopped, !reply.isBlank())
-                && activeTurnProviderId != null) {
-            conversationHistory.addAssistant(activeTurnProviderId, reply);
-            conversationHistory.markSynced(activeTurnProviderId);
-        }
-        activeTurnProviderId = null;
-        activeTurnAssistant.setLength(0);
-        revokeActiveAssistantCredential();
-        currentProcess = null;
-        activeTurn = 0;
-        cancelRequested = false;
-        // The CLI has exited, so it is done reading any attachment files — reclaim this turn's scratch dirs.
-        if (!inFlightAttachments.isEmpty()) {
-            deleteScratchFor(inFlightAttachments);
-            inFlightAttachments = List.of();
-        }
-        if (flushTimer != null) {
-            flushTimer.stop();
-        }
-        stopWorking();
-        if (!atTurnStartOfLine) {
-            append(Kind.SYSTEM, "\n");
-        }
-        // After the reply is closed, so the note reads as being about the turn rather than part of it.
-        renderPendingNotice();
-        ChatUsage u = lastUsage;
-        if (u != null) {
-            usageLabel.setText(formatUsage(u));
-        }
-        setInputEnabled(true);
-        showStop(false);
-        input.requestFocusInWindow();
-    }
-
-    /**
-     * Whether the turn that just finished becomes conversation history — recorded as the reply and
-     * marked as already known to the active provider's native session.
-     *
-     * <p>Only a turn that ran to completion and answered qualifies. A clean exit is not enough on its
-     * own, because marking a provider synced is a claim about a session this side cannot see: it drops
-     * the question from every later handoff, so if that session never took it — or never existed — the
-     * question is lost from the conversation for good. A reply is the whole of the evidence that it was
-     * taken, so a turn that answered nothing is not filed however cleanly it exited and whatever account
-     * of itself it left: an empty reply is not the conversation's reply either. A stopped turn is treated
-     * the same way, and for the same reason: what reached the transcript is a fragment, and the killed
-     * CLI's session state is unknown.
-     *
-     * <p>A reply that arrived after a reported failure still counts. Codex surfaces the errors of a retry
-     * loop as it goes, so a turn can print a failure, recover, and answer; the text proves the question
-     * was taken, and dropping such a turn would hide a real reply from the other provider and ask this
-     * one again. Package-private for testing.
-     */
-    static boolean isConversationHistory(int exit, boolean stopped, boolean replied) {
-        return exit == 0 && !stopped && replied;
-    }
-
-    /**
-     * Renders the note the provider left for the turn just finished, once. It is held until here
-     * rather than streamed: a non-assistant chunk arriving mid-reply closes the assistant segment,
-     * which would cost the final reply its copy-as-Markdown button. Package-private for testing.
-     */
-    void renderPendingNotice() {
-        String notice = pendingNotice;
-        pendingNotice = null;
-        if (notice != null && !notice.isBlank()) {
-            append(Kind.SYSTEM, notice.strip() + "\n");
-        }
-    }
-
-    private void revokeActiveAssistantCredential() {
-        McpServerController.AssistantCredential credential = activeAssistantCredential;
-        McpServerController controller = activeAssistantController;
-        activeAssistantCredential = null;
-        activeAssistantController = null;
-        nextAssistantCredentialRenewal = 0L;
-        if (credential != null) {
-            revokeCredentialAsync(controller, credential);
-        }
-    }
-
-    /**
-     * Revocation may wait for a non-interruptible tool invocation to leave its commit fence. All
-     * callers of this helper are EDT lifecycle paths, so the wait must stay off the Swing thread.
-     */
-    private static void revokeCredentialAsync(McpServerController controller,
-            McpServerController.AssistantCredential credential) {
-        if (controller == null || credential == null) {
-            return;
-        }
-        Thread revoker = new Thread(
-                () -> controller.revokeAssistantCredential(credential),
-                "protege-chat-revoke-credential");
-        revoker.setDaemon(true);
-        revoker.start();
-    }
-
-    static String chatIdentity(String provider, String session, int turn) {
-        if (session == null || session.isBlank()) return "turn-" + turn;
-        UUID digest = UUID.nameUUIDFromBytes(
-                (provider + "\0" + session).getBytes(StandardCharsets.UTF_8));
-        return "session-" + digest;
+        turnController.stop();
     }
 
     private static String formatUsage(ChatUsage u) {
@@ -1551,469 +500,7 @@ public class ChatView extends AbstractOWLViewComponent {
     // ------------------------------------------------------------------ transcript rendering (EDT)
 
     private void append(Kind kind, String text) {
-        if (kind == Kind.ASSISTANT_START) {
-            startAssistantMessage();
-            return;
-        }
-        if (text == null || text.isEmpty()) {
-            return;
-        }
-        // Reasoning is rendered only when this turn's EDT-owned snapshot opted in.
-        if (kind == Kind.THINKING && !shouldShowReasoning()) {
-            return;
-        }
-        if (kind == Kind.ASSISTANT) {
-            appendAssistant(text);
-            return;
-        }
-        if (kind != Kind.THINKING) {
-            text = normalizeLeadingBoundaryBreaks(text, atTurnStartOfLine);
-            if (text.isEmpty()) {
-                return;
-            }
-        }
-        boolean continuingThinking = kind == Kind.THINKING
-                && lastRenderedKind == Kind.THINKING && thinkingBlockSpaceAbove >= 0F;
-        if (!continuingThinking) {
-            thinkingBlockStart = -1;
-            thinkingBlockEnd = -1;
-            thinkingBlockSpaceAbove = -1F;
-        }
-        closeAssistantSegment(false);   // interrupted mid-turn: tag the source, no button row
-        if (needsTranscriptLineBreak(kind, text)) {
-            text = "\n" + text;
-        }
-        StyledDocument doc = transcript.getStyledDocument();
-        int insertionStart = doc.getLength();
-        SimpleAttributeSet attributes = styleFor(kind);
-        MessageMargins margins = plainMessageMargins();
-        if (kind == Kind.THINKING) {
-            if (!continuingThinking) {
-                thinkingBlockSpaceAbove = margins.above();
-            } else {
-                margins = new MessageMargins(thinkingBlockSpaceAbove, margins.below());
-            }
-        }
-        try {
-            if (continuingThinking && thinkingBlockEnd > thinkingBlockStart) {
-                // Move the outer bottom margin as the streamed block grows instead of leaving it
-                // behind on a paragraph that has become internal to the same reasoning message.
-                TranscriptMessageSpacing.apply(doc, thinkingBlockStart, thinkingBlockEnd, 0F);
-            }
-            doc.insertString(insertionStart, text, attributes);
-            int firstContent = firstContentOffset(text);
-            int lastContent = lastContentOffset(text);
-            if (kind == Kind.THINKING) {
-                if (firstContent < lastContent) {
-                    if (thinkingBlockStart < 0) {
-                        thinkingBlockStart = insertionStart + firstContent;
-                    }
-                    thinkingBlockEnd = insertionStart + lastContent;
-                }
-                if (thinkingBlockEnd > thinkingBlockStart) {
-                    // Reapply even after a newline-only delta: it is a separator inside the same
-                    // streamed message and must not erase that message's existing outer margins.
-                    TranscriptMessageSpacing.apply(doc, thinkingBlockStart,
-                            thinkingBlockEnd, margins.above(), margins.below());
-                }
-            } else if (firstContent < lastContent) {
-                TranscriptMessageSpacing.apply(doc, insertionStart + firstContent,
-                        insertionStart + lastContent, margins.above(), margins.below());
-            }
-        } catch (BadLocationException ignored) {
-            return;
-        }
-        atTurnStartOfLine = text.endsWith("\n");
-        lastRenderedKind = kind;
-        transcript.setCaretPosition(doc.getLength());
-    }
-
-    /**
-     * Closes the preceding provider message and gives the next one its own Markdown block. Most
-     * boundaries already contain visible reasoning or tool activity, which closes the segment via
-     * {@link #append}; only two adjacent assistant messages need an explicit blank transcript line.
-     */
-    private void startAssistantMessage() {
-        StyledDocument doc = transcript.getStyledDocument();
-        String previous = closeAssistantSegment(false);
-        if (previous == null) {
-            return;
-        }
-        try {
-            // One break reaches the next line; the second makes the boundary the same height as a
-            // blank transcript line. If the prior renderer already ended on a line boundary, only
-            // the latter is needed.
-            doc.insertString(doc.getLength(), atTurnStartOfLine ? "\n" : "\n\n", null);
-            atTurnStartOfLine = true;
-            transcript.setCaretPosition(doc.getLength());
-        } catch (BadLocationException ignored) {
-            // The messages remain distinct Markdown segments even if the visual separator failed.
-        }
-    }
-
-    /**
-     * True when this chunk needs a fresh transcript line. Tool rows always stand alone, while the
-     * first reasoning delta and the first non-reasoning chunk after it must not glue to adjacent text.
-     * A chunk already at a line start (or carrying its own leading newline) needs nothing.
-     */
-    private boolean needsTranscriptLineBreak(Kind kind, String text) {
-        if (atTurnStartOfLine || text.startsWith("\n")) {
-            return false;
-        }
-        return kind == Kind.TOOL
-                || (kind == Kind.THINKING) != (lastRenderedKind == Kind.THINKING);
-    }
-
-    /** Leading/trailing line breaks are separators, not message content that should receive margins. */
-    private static int firstContentOffset(String text) {
-        int offset = 0;
-        while (offset < text.length() && (text.charAt(offset) == '\n' || text.charAt(offset) == '\r')) {
-            offset++;
-        }
-        return offset;
-    }
-
-    private static int lastContentOffset(String text) {
-        int offset = text.length();
-        while (offset > 0 && (text.charAt(offset - 1) == '\n' || text.charAt(offset - 1) == '\r')) {
-            offset--;
-        }
-        return offset;
-    }
-
-    /**
-     * Leading breaks on plain chunks are boundary markers, not message content. At a line start
-     * they are redundant; mid-line, any run of them collapses to the one break needed to start the
-     * message. This prevents a real blank paragraph from stacking with the visual message gap.
-     */
-    private static String normalizeLeadingBoundaryBreaks(String text, boolean atLineStart) {
-        int content = firstContentOffset(text);
-        if (content == 0) {
-            return text;
-        }
-        return (atLineStart ? "" : "\n") + text.substring(content);
-    }
-
-    /**
-     * Reasoning display is a per-turn choice, matching the CLI-side opt-in. Once a turn starts,
-     * changing the checkbox only affects the next message and cannot drop the tail of this one.
-     */
-    private boolean shouldShowReasoning() {
-        return activeTurn != 0 ? showReasoningForTurn
-                : showThinking != null && showThinking.isSelected();
-    }
-
-    /**
-     * Assistant text is Markdown: extend the in-flight message's source and re-render it in place
-     * (see {@link AssistantSegment}). A marker that closes late (a fence, a {@code **})
-     * retroactively restyles the text it spans.
-     */
-    private void appendAssistant(String text) {
-        StyledDocument doc = transcript.getStyledDocument();
-        if (lastRenderedKind == Kind.THINKING && !atTurnStartOfLine) {
-            // A reasoning run just ended (rendering it closed the segment, so no segment offsets can
-            // move here); give the reply its own line rather than gluing it onto the reasoning's last.
-            try {
-                doc.insertString(doc.getLength(), "\n", null);
-                atTurnStartOfLine = true;
-            } catch (BadLocationException ignored) {
-                // worst case the reply starts on the reasoning's line
-            }
-        }
-        thinkingBlockStart = -1;
-        thinkingBlockEnd = -1;
-        thinkingBlockSpaceAbove = -1F;
-        Boolean endsWithBreak = assistantSegment.appendAndRender(doc, text, transcriptFontSize());
-        if (endsWithBreak != null) {
-            atTurnStartOfLine = endsWithBreak;
-        }
-        lastRenderedKind = Kind.ASSISTANT;
-        transcript.setCaretPosition(doc.getLength());
-    }
-
-    /**
-     * Ends the in-flight assistant message; later assistant text starts a fresh Markdown context.
-     * The finished message's rendered range is tagged with its original Markdown source (feeding the
-     * context menu's "Copy message as Markdown"); {@code offerCopy} additionally drops a copy button
-     * under the message — used for the turn's final reply only, so tool-interrupted interim messages
-     * don't stack up button rows.
-     */
-    private String closeAssistantSegment(boolean offerCopy) {
-        String source = assistantSegment.close(transcript.getStyledDocument());
-        if (offerCopy && source != null) {
-            insertCopyAffordance(source);
-        }
-        return source;
-    }
-
-    /** A left-aligned copy button on its own line under the message it copies (cf. Codex's ⧉). */
-    private void insertCopyAffordance(String markdown) {
-        StyledDocument doc = transcript.getStyledDocument();
-        SimpleAttributeSet attrs = new SimpleAttributeSet();
-        StyleConstants.setComponent(attrs, copyMessageButton(markdown));
-        // The whole affordance line — newlines included — answers "Copy message as Markdown" for
-        // the message above it, so right-clicks that clamp to the line's whitespace still hit it.
-        // The newlines get a SOURCE_MD-only set: sharing attrs would embed the one button 3 times.
-        attrs.addAttribute(AssistantSegment.SOURCE_MD, markdown);
-        SimpleAttributeSet sourceOnly = new SimpleAttributeSet();
-        sourceOnly.addAttribute(AssistantSegment.SOURCE_MD, markdown);
-        try {
-            if (!atTurnStartOfLine) {
-                doc.insertString(doc.getLength(), "\n", sourceOnly);
-            }
-            doc.insertString(doc.getLength(), " ", attrs);   // the embedded component's one character
-            doc.insertString(doc.getLength(), "\n", sourceOnly);
-        } catch (BadLocationException ignored) {
-            return;   // the message is still intact; only the affordance is lost
-        }
-        atTurnStartOfLine = true;
-        transcript.setCaretPosition(doc.getLength());
-    }
-
-    /** Copies the message's original Markdown; flips to a check mark for a moment as feedback. */
-    private JButton copyMessageButton(String markdown) {
-        Icon copyIcon = icon(Glyph.COPY, 16, new Color(0x777777), null);
-        Icon copiedIcon = icon(Glyph.CHECK, 16, new Color(0x1E8E3E), null);
-        String tip = "Copy message (original Markdown)";
-        JButton b = iconButton(copyIcon, tip);
-        b.setFocusable(false);
-        b.setAlignmentY(0.8f);
-        // One shared revert timer: a re-click inside the feedback window restarts the countdown
-        // instead of letting the first click's timer cut the second click's feedback short.
-        Timer revert = new Timer(1500, ev -> {
-            b.setIcon(copyIcon);
-            b.setToolTipText(tip);
-        });
-        revert.setRepeats(false);
-        b.addActionListener(e -> {
-            if (!copyToClipboard(markdown)) {
-                return;
-            }
-            b.setIcon(copiedIcon);
-            b.setToolTipText("Copied");
-            revert.restart();
-        });
-        return b;
-    }
-
-    /** Puts {@code text} on the system clipboard; false (with feedback) when unavailable. */
-    private boolean copyToClipboard(String text) {
-        try {
-            Toolkit.getDefaultToolkit().getSystemClipboard()
-                    .setContents(new StringSelection(text), null);
-            return true;
-        } catch (IllegalStateException ex) {
-            // The system clipboard can be transiently unavailable (held by another app on Windows).
-            reportTransientUiError("\nCould not access the system clipboard — try again.\n");
-            return false;
-        }
-    }
-
-    /**
-     * Reports a failure of a transcript-embedded control (copy button, context menu, link). These
-     * stay clickable while a turn streams, but append() closes the in-flight assistant segment —
-     * splitting the live reply around an error line and truncating its recorded Markdown source —
-     * so mid-turn this degrades to a beep instead of writing into the transcript.
-     */
-    private void reportTransientUiError(String message) {
-        if (activeTurn != 0) {
-            Toolkit.getDefaultToolkit().beep();
-        } else {
-            append(Kind.ERROR, message);
-        }
-    }
-
-    private int transcriptFontSize() {
-        Font f = transcript.getFont();
-        return f != null ? f.getSize() : 13;
-    }
-
-    /**
-     * Keeps Markdown paragraph attributes untouched. Every plain message owns the whole one-line
-     * gap below it; a plain message directly following Markdown additionally owns that boundary's
-     * gap above it. Thus neither edge requires changing Markdown's renderer-owned paragraph styles.
-     */
-    private MessageMargins plainMessageMargins() {
-        Font font = transcript.getFont();
-        int lineHeight = font == null ? 13 : transcript.getFontMetrics(font).getHeight();
-        return lastRenderedKind == Kind.ASSISTANT
-                ? new MessageMargins(lineHeight, lineHeight)
-                : new MessageMargins(0F, lineHeight);
-    }
-
-    // ------------------------------------------------------------------ transcript links
-
-    /** Click opens a rendered Markdown link; the cursor becomes a hand over one. */
-    private void installLinkHandlers() {
-        transcript.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                // On macOS only, Ctrl+click is the context-menu gesture: the press already opened
-                // the popup, so the click that follows must not also open the link's confirmation
-                // dialog. Elsewhere Ctrl+click stays a normal click (Windows AltGr even reports
-                // Ctrl down, so a platform-wide guard would swallow legitimate opens).
-                boolean macPopupGesture = e.isControlDown() && IS_MAC;
-                if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 1
-                        && !macPopupGesture) {
-                    String url = linkAt(e.getPoint());
-                    if (url != null) {
-                        openLink(url);
-                    }
-                }
-            }
-        });
-        transcript.addMouseMotionListener(new MouseAdapter() {
-            @Override
-            public void mouseMoved(MouseEvent e) {
-                String url = linkAt(e.getPoint());
-                // The tooltip discloses the REAL destination — the visible link text is
-                // model-chosen and can differ from where the link actually goes.
-                transcript.setToolTipText(url);
-                transcript.setCursor(Cursor.getPredefinedCursor(
-                        url != null ? Cursor.HAND_CURSOR : Cursor.TEXT_CURSOR));
-            }
-        });
-    }
-
-    /**
-     * The URL under the given point, or null. viewToModel2D clamps points outside the text to the
-     * nearest character, so the hit only counts when the point really falls inside that character's
-     * box — otherwise clicking the empty area past a line-ending link would open it.
-     */
-    private String linkAt(Point p) {
-        int pos = transcript.viewToModel2D(p);
-        StyledDocument doc = transcript.getStyledDocument();
-        if (pos < 0 || pos >= doc.getLength()) {
-            return null;
-        }
-        Element el = doc.getCharacterElement(pos);
-        Object url = el.getAttributes().getAttribute(ChatMarkdown.LINK_URL);
-        if (!(url instanceof String s)) {
-            return null;
-        }
-        try {
-            Rectangle2D r = transcript.modelToView2D(pos);
-            Rectangle2D next = transcript.modelToView2D(pos + 1);
-            if (r == null || next == null) {
-                return null;
-            }
-            double x1 = Math.min(r.getX(), next.getX()) - 1;
-            double x2 = Math.max(r.getX(), next.getX()) + 1;
-            if (p.getY() < r.getY() || p.getY() > r.getY() + r.getHeight()
-                    || p.getX() < x1 || p.getX() > x2) {
-                return null;
-            }
-        } catch (BadLocationException ex) {
-            return null;
-        }
-        return s;
-    }
-
-    /**
-     * Right-click menu: "Copy" (the selection, as displayed) and "Copy message as Markdown" (the
-     * original source of the assistant message under the pointer — the styled rendering is lossy, so
-     * this is the only way selection-copy can't provide the markup back).
-     */
-    private void installContextMenu() {
-        transcript.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mousePressed(MouseEvent e) {
-                maybeShowContextMenu(e);   // macOS triggers on press …
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent e) {
-                maybeShowContextMenu(e);   // … Windows/Linux on release
-            }
-        });
-    }
-
-    private void maybeShowContextMenu(MouseEvent e) {
-        if (!e.isPopupTrigger()) {
-            return;
-        }
-        JPopupMenu menu = new JPopupMenu();
-        // Snapshot the selection now: the popup gesture itself can clear it (macOS Ctrl+click moves
-        // the caret) and a streaming re-render can collapse it before the item is clicked.
-        String selected = transcript.getSelectedText();
-        JMenuItem copySelection = new JMenuItem("Copy");
-        copySelection.setEnabled(selected != null && !selected.isEmpty());
-        copySelection.addActionListener(ev -> {
-            if (selected != null && !selected.isEmpty()) {
-                copyToClipboard(selected);
-            }
-        });
-        menu.add(copySelection);
-        // viewToModel2D clamps to the nearest character, so a right-click in the whitespace around a
-        // message still offers that message — friendlier than linkAt's strict hit box, and safe
-        // because a menu item states what it copies before anything happens. A click past a line's
-        // end clamps to its terminating newline, which for a message's LAST line lies just outside
-        // the tagged range — hence the one-position fallback.
-        int pos = transcript.viewToModel2D(e.getPoint());
-        String atPos = AssistantSegment.sourceAt(transcript.getStyledDocument(), pos);
-        String source = atPos != null ? atPos
-                : AssistantSegment.sourceAt(transcript.getStyledDocument(), pos - 1);
-        JMenuItem copyMessage = new JMenuItem("Copy message as Markdown");
-        copyMessage.setEnabled(source != null);
-        copyMessage.addActionListener(ev -> {
-            if (source != null) {
-                copyToClipboard(source);
-            }
-        });
-        menu.add(copyMessage);
-        menu.show(transcript, e.getX(), e.getY());
-    }
-
-    /**
-     * Opens a transcript link after showing the user the REAL destination. The link text is
-     * model-chosen and can look like anything (including a different URL), so navigation is an
-     * informed action, consistent with the plugin's other egress confirmations.
-     */
-    private void openLink(String url) {
-        // Defense in depth: ChatMarkdown only attaches http(s) URLs, but never trust the attribute.
-        String lower = url.toLowerCase(java.util.Locale.ROOT);
-        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
-            return;
-        }
-        String shown = url.length() > 300 ? url.substring(0, 300) + "…" : url;
-        int choice = JOptionPane.showConfirmDialog(this,
-                "Open this link in your browser?\n\n" + shown,
-                "Open link", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
-        if (choice != JOptionPane.OK_OPTION) {
-            return;
-        }
-        try {
-            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-                Desktop.getDesktop().browse(URI.create(url));
-            }
-        } catch (Exception ex) {
-            reportTransientUiError("\nCould not open link: " + url + "\n");
-        }
-    }
-
-    private static SimpleAttributeSet styleFor(Kind kind) {
-        SimpleAttributeSet a = new SimpleAttributeSet();
-        switch (kind) {
-            case USER -> {
-                StyleConstants.setBold(a, true);
-                StyleConstants.setForeground(a, new Color(0x1A4F8B));
-            }
-            // ASSISTANT and ASSISTANT_START never reach here: append() routes them to the
-            // Markdown segment lifecycle.
-            case TOOL -> {
-                StyleConstants.setItalic(a, true);
-                StyleConstants.setForeground(a, new Color(0x507030));
-            }
-            case THINKING -> {
-                StyleConstants.setItalic(a, true);
-                StyleConstants.setForeground(a, new Color(0x888888));
-            }
-            case ERROR -> StyleConstants.setForeground(a, new Color(0xB00020));
-            case SYSTEM -> StyleConstants.setForeground(a, new Color(0x666666));
-            default -> {
-            }
-        }
-        return a;
+        transcript.append(kind, text);
     }
 
     // ------------------------------------------------------------------ status / lifecycle
@@ -2024,8 +511,9 @@ public class ChatView extends AbstractOWLViewComponent {
 
     private void refreshStatus() {
         McpServerController c = controller();
-        // Kept compact: the strip now shares the composer's bottom row with the Provider/Model pickers.
-        // Provider data-egress details live in Preferences and the manual rather than a blocking dialog.
+        // Kept compact: the strip shares the composer's bottom row with the Provider/Model pickers.
+        // Provider data-egress details live in Preferences and the manual rather than a blocking
+        // dialog.
         String server;
         if (c == null) {
             server = "server: n/a";
@@ -2045,8 +533,9 @@ public class ChatView extends AbstractOWLViewComponent {
             mode = "  ·  writable";
         }
         statusLabel.setText(server + mode);
-        statusLabel.setToolTipText("MCP server status and edit mode · prompts/attachments go to your model "
-                + "provider via the CLI");
+        statusLabel.setToolTipText(
+                "MCP server status and edit mode · prompts/attachments go to your model "
+                        + "provider via the CLI");
         if (confirmEdits != null && c != null) {
             boolean live = c.isConfirmWrites();
             if (confirmEdits.isSelected() != live) {
@@ -2057,40 +546,31 @@ public class ChatView extends AbstractOWLViewComponent {
 
     /** Enable/disable every control that mutates conversation state (everything but Stop). */
     private void setInputEnabled(boolean enabled) {
-        for (Component comp : new Component[] {
-                sendButton, attachButton, input, newChatButton, providerCombo, modelCombo, effortCombo
-        }) {
+        for (Component comp : new Component[] {sendButton, attachButton, input, newChatButton}) {
             if (comp != null) {
                 comp.setEnabled(enabled);
             }
+        }
+        if (providerControls != null) {
+            providerControls.setControlsEnabled(enabled);
         }
     }
 
     @Override
     protected void disposeOWLView() {
-        // First, so a catalog saved during teardown cannot rebuild pickers this method is dismantling.
-        stopFollowingCatalogEdits();
+        // First, so a catalog saved during teardown cannot rebuild pickers being dismantled.
+        if (providerControls != null) {
+            providerControls.stopFollowingCatalogEdits();
+        }
         if (statusTimer != null) {
             statusTimer.stop();
             statusTimer = null;
         }
-        if (workingTimer != null) {
-            workingTimer.stop();
-            workingTimer = null;
+        if (turnController != null) {
+            turnController.dispose();
         }
-        if (flushTimer != null) {
-            drainQueue();   // flush any buffered transcript before tearing down
-            flushTimer.stop();
-            flushTimer = null;
+        if (attachmentController != null) {
+            attachmentController.dispose();
         }
-        activeTurn = 0;     // so a handle still being spawned is cancelled (not adopted) when it publishes
-        revokeActiveAssistantCredential();
-        ChatProcess p = currentProcess;
-        if (p != null) {
-            p.cancel();     // non-blocking; the kill escalation runs off the EDT
-            currentProcess = null;
-        }
-        attachGeneration++;   // invalidate any in-flight clipboard-image worker before tearing down
-        deleteAllScratch();   // reclaim any attachment temp files this view created
     }
 }

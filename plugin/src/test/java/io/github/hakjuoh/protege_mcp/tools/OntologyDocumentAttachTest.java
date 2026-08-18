@@ -126,11 +126,11 @@ class OntologyDocumentAttachTest {
 
     /** The production load_ontology path: fetch into a throwaway manager, then attach on the model. */
     private static void loadAndAttach(OWLModelManager modelManager, Path root) throws Exception {
-        Method fetch = OntologyDocumentTools.class.getDeclaredMethod("fetch", String.class,
+        Method fetch = OntologyDocumentLoader.class.getDeclaredMethod("fetch", String.class,
                 int.class, MissingImportsMode.class, List.class);
         fetch.setAccessible(true);
         Object loaded = fetch.invoke(null, root.toString(), 1_000, MissingImportsMode.ERROR, List.of());
-        Method attach = OntologyDocumentTools.class.getDeclaredMethod("attach", OWLModelManager.class,
+        Method attach = OntologyDocumentLoader.class.getDeclaredMethod("attach", OWLModelManager.class,
                 loaded.getClass(), boolean.class);
         attach.setAccessible(true);
         attach.invoke(null, modelManager, loaded, false);

@@ -36,6 +36,11 @@ public final class CliSupport {
      * GUI-launched process often misses. Returns {@code null} if not found.
      */
     public static String resolveExecutable(String name, String override) {
+        return resolveExecutable(name, override, System.getenv("PATH"), System.getProperty("user.home"));
+    }
+
+    /** Deterministic executable-resolution seam for tests with an explicit PATH and home. */
+    static String resolveExecutable(String name, String override, String path, String home) {
         if (override != null && !override.isBlank()) {
             File direct = new File(override.trim());
             if (direct.isFile() && direct.canExecute()) {
@@ -47,11 +52,9 @@ public final class CliSupport {
             }
         }
         List<String> dirs = new ArrayList<>();
-        String path = System.getenv("PATH");
         if (path != null) {
             Collections.addAll(dirs, path.split(File.pathSeparator));
         }
-        String home = System.getProperty("user.home");
         if (home != null && !home.isBlank()) {
             dirs.add(home + "/.local/bin");
             dirs.add(home + "/.opencode/bin");

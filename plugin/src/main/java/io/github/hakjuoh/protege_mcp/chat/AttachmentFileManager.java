@@ -14,8 +14,8 @@ import java.util.Set;
 /**
  * Owner-only scratch directories for chat attachments: each attachment is copied into its own one-file
  * dir (so only that dir is granted to the CLI), tracked for cleanup on New-Chat / view close. Pure file
- * I/O, no Swing — split out of {@code ChatView} so it is headless-testable. {@code ChatView} holds one
- * instance and delegates.
+ * I/O, no Swing — split out so it is headless-testable. The Swing-side
+ * {@code ChatAttachmentController} owns one instance and coordinates it with composer state.
  */
 public final class AttachmentFileManager {
 

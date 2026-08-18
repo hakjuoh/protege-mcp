@@ -130,7 +130,7 @@ public final class DiffTools {
                         // Resolve the comparison document's imports the same way load_ontology does:
                         // snapshot the workspace's immutable logical->document IRI pairs on the EDT,
                         // then fetch and parse off it (with the sibling catalog still winning).
-                        List<OntologyDocumentTools.ImportMapping> mappings = ctx.access()
+                        List<OntologyImportMapping> mappings = ctx.access()
                                 .compute(OntologyDocumentTools::workspaceImportMappings);
                         loaded = loadDocument(rightDocument, mappings, unresolvedImports, importNetwork);
                     }
@@ -380,16 +380,16 @@ public final class DiffTools {
      * {@code unresolvedOut}: a silently truncated closure is invisible to the diff and could flip its
      * classification in either direction.
      */
-    static OWLOntology loadDocument(String source, List<OntologyDocumentTools.ImportMapping> mappings,
+    static OWLOntology loadDocument(String source, List<OntologyImportMapping> mappings,
             Collection<String> unresolvedOut) {
         return loadDocument(source, mappings, unresolvedOut,
                 new DirectAccessPolicy.NetworkRule(true, Set.of(), true, true));
     }
 
-    static OWLOntology loadDocument(String source, List<OntologyDocumentTools.ImportMapping> mappings,
+    static OWLOntology loadDocument(String source, List<OntologyImportMapping> mappings,
             Collection<String> unresolvedOut, DirectAccessPolicy.NetworkRule networkRule) {
-        String normalized = OntologyDocumentTools.normalizeSource(source);
-        return loadDocument(OntologyDocumentTools.documentSource(normalized), normalized, mappings,
+        String normalized = OntologyImportResolver.normalizeSource(source);
+        return loadDocument(OntologyImportResolver.documentSource(normalized), normalized, mappings,
                 unresolvedOut, networkRule);
     }
 
@@ -400,7 +400,7 @@ public final class DiffTools {
      * anchors the sibling-catalog lookup and relative import resolution.
      */
     static OWLOntology loadDocument(byte[] documentBytes, java.nio.file.Path documentPath,
-            List<OntologyDocumentTools.ImportMapping> mappings, Collection<String> unresolvedOut,
+            List<OntologyImportMapping> mappings, Collection<String> unresolvedOut,
             DirectAccessPolicy.NetworkRule networkRule) {
         return loadDocument(new org.semanticweb.owlapi.io.StreamDocumentSource(
                         new java.io.ByteArrayInputStream(documentBytes),
@@ -441,7 +441,7 @@ public final class DiffTools {
 
     private static OWLOntology loadDocument(
             org.semanticweb.owlapi.io.OWLOntologyDocumentSource documentSource, String normalized,
-            List<OntologyDocumentTools.ImportMapping> mappings, Collection<String> unresolvedOut,
+            List<OntologyImportMapping> mappings, Collection<String> unresolvedOut,
             DirectAccessPolicy.NetworkRule networkRule) {
         OWLOntologyManager manager = OwlManagers.create();
         manager.addMissingImportListener(
@@ -449,18 +449,18 @@ public final class DiffTools {
         OWLOntologyLoaderConfiguration config = new OWLOntologyLoaderConfiguration()
                 .setMissingImportHandlingStrategy(MissingImportHandlingStrategy.SILENT)
                 .setFollowRedirects(networkRule.followRedirects());
-        try (OntologyDocumentTools.NetworkImportBlocker blocker =
-                OntologyDocumentTools.NetworkImportBlocker.install(manager, networkRule);
-                OntologyDocumentTools.UnsupportedImportFallback fallback =
-                        OntologyDocumentTools.UnsupportedImportFallback.install(manager)) {
-            OntologyDocumentTools.addWorkspaceImportMappers(manager, mappings, blocker);
-            OntologyDocumentTools.addFolderCatalogMapper(manager, normalized, blocker);
+        try (OntologyNetworkSupport.NetworkImportBlocker blocker =
+                OntologyNetworkSupport.NetworkImportBlocker.install(manager, networkRule);
+                OntologyNetworkSupport.UnsupportedImportFallback fallback =
+                        OntologyNetworkSupport.UnsupportedImportFallback.install(manager)) {
+            OntologyImportResolver.addWorkspaceImportMappers(manager, mappings, blocker);
+            OntologyImportResolver.addFolderCatalogMapper(manager, normalized, blocker);
             OWLOntology loaded = manager.loadOntologyFromOntologyDocument(documentSource, config);
             // Same closing steps as load_ontology/merge: restore fallback-satisfied IRIs (an
             // unsupported scheme such as a URN) to the caller's unresolved list, then apply the
             // policy verdict — so all three document loaders report the same structured diagnostic
             // instead of diff leaking a raw OWLAPI factory error.
-            OntologyDocumentTools.finishUnsupportedImports(loaded, fallback, unresolvedOut,
+            OntologyNetworkSupport.finishUnsupportedImports(loaded, fallback, unresolvedOut,
                     MissingImportsMode.SILENT, normalized);
             blocker.failIfBlocked(normalized, unresolvedOut);
             return loaded;

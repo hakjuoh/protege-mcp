@@ -151,8 +151,8 @@ class OntologyDocumentToolsPolicyGateTest {
                 """);
         Path inRoot = project.resolve("workspace-imported.ttl");
         Files.writeString(inRoot, ontology(imported));
-        List<OntologyDocumentTools.ImportMapping> workspace = List.of(
-                new OntologyDocumentTools.ImportMapping(IRI.create(imported),
+        List<OntologyImportMapping> workspace = List.of(
+                new OntologyImportMapping(IRI.create(imported),
                         IRI.create(inRoot.toUri())));
         DirectAccessPolicy.Rules rules = rules(project,
                 Set.of(DirectAccessPolicy.PROJECT_READ, DirectAccessPolicy.NETWORK));
@@ -212,8 +212,8 @@ class OntologyDocumentToolsPolicyGateTest {
                 """.formatted(imported));
         DirectAccessPolicy.Rules rules = rules(project,
                 Set.of(DirectAccessPolicy.PROJECT_READ, DirectAccessPolicy.NETWORK));
-        List<OntologyDocumentTools.ImportMapping> escaping = List.of(
-                new OntologyDocumentTools.ImportMapping(IRI.create(imported),
+        List<OntologyImportMapping> escaping = List.of(
+                new OntologyImportMapping(IRI.create(imported),
                         IRI.create(outside.toUri())));
 
         for (Method loader : loaders()) {
@@ -227,8 +227,8 @@ class OntologyDocumentToolsPolicyGateTest {
 
         Path inRoot = project.resolve("workspace-imported.ttl");
         Files.writeString(inRoot, ontology(imported));
-        List<OntologyDocumentTools.ImportMapping> contained = List.of(
-                new OntologyDocumentTools.ImportMapping(IRI.create(imported),
+        List<OntologyImportMapping> contained = List.of(
+                new OntologyImportMapping(IRI.create(imported),
                         IRI.create(inRoot.toUri())));
         for (Method loader : loaders()) {
             assertDoesNotThrow(() -> invoke(loader, root.toString(), 1_000,
@@ -763,10 +763,10 @@ class OntologyDocumentToolsPolicyGateTest {
     /** Both policy-aware production loaders: fetch (load_ontology) and load (merge document). */
     private static List<Method> loaders() throws Exception {
         List<Method> out = new ArrayList<>();
-        for (String name : List.of("fetch", "load")) {
-            Method method = OntologyDocumentTools.class.getDeclaredMethod(name, String.class,
-                    int.class, MissingImportsMode.class, List.class,
-                    DirectAccessPolicy.NetworkRule.class);
+        for (Class<?> loader : List.of(OntologyDocumentLoader.class, OntologyDocumentTools.class)) {
+            String name = loader == OntologyDocumentLoader.class ? "fetch" : "load";
+            Method method = loader.getDeclaredMethod(name, String.class, int.class,
+                    MissingImportsMode.class, List.class, DirectAccessPolicy.NetworkRule.class);
             method.setAccessible(true);
             out.add(method);
         }

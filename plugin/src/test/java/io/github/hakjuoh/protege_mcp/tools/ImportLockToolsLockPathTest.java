@@ -5,13 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Proxy;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import io.github.hakjuoh.protege_mcp.config.McpConfig;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
+import io.github.hakjuoh.protege_mcp.server.McpAccessException;
+import io.github.hakjuoh.protege_mcp.server.McpServerController;
+import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
+import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
+import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,23 +25,24 @@ import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
-import io.github.hakjuoh.protege_mcp.config.McpConfig;
-import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
-import io.github.hakjuoh.protege_mcp.server.McpAccessException;
-import io.github.hakjuoh.protege_mcp.server.McpServerController;
-import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
-import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
-import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Fail-closed default lock-path resolution for {@code write_import_lock}/{@code verify_import_lock}.
- * With no explicit {@code path} the policy decides the target, and it must decide cleanly: a policy
- * reference that failed to resolve, a loaded-but-invalid policy, or a declared imports.lockfile that
- * did not resolve to a file all refuse — the lock must never silently land beside the active document
- * when the policy declares a different file (verify would otherwise report valid=true for the wrong
- * lock). Driven end-to-end through the real tool entry points over the headless Protégé adapter; the
- * write gate runs against a real controller with the read-only/confirm-writes preferences pinned off
- * and restored afterwards (the same snapshot/restore discipline as McpConfigTest).
+ * Fail-closed default lock-path resolution for {@code write_import_lock}/{@code
+ * verify_import_lock}. With no explicit {@code path} the policy decides the target, and it must
+ * decide cleanly: a policy reference that failed to resolve, a loaded-but-invalid policy, or a
+ * declared imports.lockfile that did not resolve to a file all refuse — the lock must never
+ * silently land beside the active document when the policy declares a different file (verify would
+ * otherwise report valid=true for the wrong lock). Driven end-to-end through the real tool entry
+ * points over the headless Protégé adapter; the write gate runs against a real controller with the
+ * read-only/confirm-writes preferences pinned off and restored afterwards (the same
+ * snapshot/restore discipline as McpConfigTest).
  */
 class ImportLockToolsLockPathTest {
 
@@ -68,29 +70,42 @@ class ImportLockToolsLockPathTest {
     @Test
     void derivedDefaultsStayAuthorizedWhenCompatibilityPathsAreDisabled(@TempDir Path temp)
             throws Exception {
-        // policy_required mode: no policy, the local-admin compatibility opt-in is OFF. A caller-selected
-        // path is refused, but the beside-active lockfile/catalog are DERIVED from the open document and
-        // must still work — the preference governs caller-selected paths only (matches save_ontology).
-        boolean savedCompat = prefs.getBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, true);
+        // policy_required mode: no policy, the local-admin compatibility opt-in is OFF. A
+        // caller-selected
+        // path is refused, but the beside-active lockfile/catalog are DERIVED from the open
+        // document and
+        // must still work — the preference governs caller-selected paths only (matches
+        // save_ontology).
+        boolean savedCompat =
+                prefs.getBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, true);
         prefs.putBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, false);
         try {
             ToolContext ctx = context(temp);
             // A caller-selected path is still refused in this mode.
-            assertThrows(ToolArgException.class, () -> ImportLockTools.write(ctx,
-                    Map.of("path", temp.resolve("elsewhere.lock.json").toString())));
+            assertThrows(
+                    ToolArgException.class,
+                    () ->
+                            ImportLockTools.write(
+                                    ctx,
+                                    Map.of(
+                                            "path",
+                                            temp.resolve("elsewhere.lock.json").toString())));
 
             // The argument-less (derived beside-active) write/verify succeed.
-            Map<String, Object> written = structured(ImportLockTools.write(context(temp), Map.of()));
+            Map<String, Object> written =
+                    structured(ImportLockTools.write(context(temp), Map.of()));
             assertEquals(true, written.get("written"), () -> written.toString());
             assertTrue(Files.isRegularFile(temp.resolve("imports.lock.json")));
-            Map<String, Object> verified = structured(ImportLockTools.verify(context(temp), Map.of()));
+            Map<String, Object> verified =
+                    structured(ImportLockTools.verify(context(temp), Map.of()));
             assertEquals(true, verified.get("valid"), () -> verified.toString());
 
-            Files.writeString(temp.resolve("catalog-v001.xml"),
+            Files.writeString(
+                    temp.resolve("catalog-v001.xml"),
                     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                    + "<catalog xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\"/>\n");
-            Map<String, Object> catalog = structured(ImportLockTools.validateCatalog(context(temp),
-                    Map.of()));
+                            + "<catalog xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\"/>\n");
+            Map<String, Object> catalog =
+                    structured(ImportLockTools.validateCatalog(context(temp), Map.of()));
             assertEquals(true, catalog.get("valid"), () -> catalog.toString());
         } finally {
             prefs.putBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, savedCompat);
@@ -101,63 +116,93 @@ class ImportLockToolsLockPathTest {
     void writeRefusesWhenDeclaredLockfileDidNotResolve(@TempDir Path temp) throws Exception {
         Path policy = writePolicy(temp, "imports:\n  lockfile: config/imports.lock.json\n");
         ToolContext ctx = context(temp);
-        ToolArgException refusal = assertThrows(ToolArgException.class,
-                () -> ImportLockTools.write(ctx, Map.of("policy_path", policy.toString())));
-        assertTrue(refusal.getMessage().contains("config/imports.lock.json"),
+        ToolArgException refusal =
+                assertThrows(
+                        ToolArgException.class,
+                        () -> ImportLockTools.write(ctx, Map.of("policy_path", policy.toString())));
+        assertTrue(
+                refusal.getMessage().contains("config/imports.lock.json"),
                 "the refusal must name the declared lockfile: " + refusal.getMessage());
-        assertFalse(Files.exists(temp.resolve("imports.lock.json")),
+        assertFalse(
+                Files.exists(temp.resolve("imports.lock.json")),
                 "no lock may appear beside the active document");
-        assertFalse(Files.exists(temp.resolve("config/imports.lock.json")),
+        assertFalse(
+                Files.exists(temp.resolve("config/imports.lock.json")),
                 "the declared location must not be silently created either");
     }
 
     @Test
     void writeRefusesWhenPolicyIsLoadedButInvalid(@TempDir Path temp) throws Exception {
         Path policy = temp.resolve("policy.yaml");
-        ProjectPolicyFixtures.writePolicy(policy,
+        ProjectPolicyFixtures.writePolicy(
+                policy,
                 ProjectPolicyFixtures.minimalPolicy("lock-path", "https://example.org/other")
-                + "validation:\n"
-                + "  required_stages: [structural]\n");
+                        + "validation:\n"
+                        + "  required_stages: [structural]\n");
         ToolContext ctx = context(temp);
-        ToolArgException refusal = assertThrows(ToolArgException.class,
-                () -> ImportLockTools.write(ctx, Map.of("policy_path", policy.toString())));
-        assertTrue(refusal.getMessage().contains("root_ontology_mismatch"),
+        ToolArgException refusal =
+                assertThrows(
+                        ToolArgException.class,
+                        () -> ImportLockTools.write(ctx, Map.of("policy_path", policy.toString())));
+        assertTrue(
+                refusal.getMessage().contains("root_ontology_mismatch"),
                 "the refusal must name the policy error cause: " + refusal.getMessage());
-        assertFalse(Files.exists(temp.resolve("imports.lock.json")),
+        assertFalse(
+                Files.exists(temp.resolve("imports.lock.json")),
                 "an invalid policy must not fall back beside the active document");
     }
 
     @Test
-    void writeGivesGenericRefusalWhenPolicyBreaksBeforeAssetResolution(@TempDir Path temp) throws Exception {
-        // A schema-broken policy still carries a raw imports.lockfile value, but that value never went
-        // through asset resolution — the refusal must name the schema failure, not claim the declared
+    void writeGivesGenericRefusalWhenPolicyBreaksBeforeAssetResolution(@TempDir Path temp)
+            throws Exception {
+        // A schema-broken policy still carries a raw imports.lockfile value, but that value never
+        // went
+        // through asset resolution — the refusal must name the schema failure, not claim the
+        // declared
         // lockfile does not exist.
         Path policy = temp.resolve("policy.yaml");
-        Files.writeString(policy, "version: 2\n"
-                + "project_id: lock-path\n"
-                + "root_ontology: " + ONTOLOGY_IRI + "\n"
-                + "imports:\n"
-                + "  lockfile: config/imports.lock.json\n");
+        Files.writeString(
+                policy,
+                "version: 2\n"
+                        + "project_id: lock-path\n"
+                        + "root_ontology: "
+                        + ONTOLOGY_IRI
+                        + "\n"
+                        + "imports:\n"
+                        + "  lockfile: config/imports.lock.json\n");
         ToolContext ctx = context(temp);
-        ToolArgException refusal = assertThrows(ToolArgException.class,
-                () -> ImportLockTools.write(ctx, Map.of("policy_path", policy.toString())));
-        assertTrue(refusal.getMessage().contains("schema_invalid"),
+        ToolArgException refusal =
+                assertThrows(
+                        ToolArgException.class,
+                        () -> ImportLockTools.write(ctx, Map.of("policy_path", policy.toString())));
+        assertTrue(
+                refusal.getMessage().contains("schema_invalid"),
                 "the refusal must name the schema failure: " + refusal.getMessage());
-        assertFalse(refusal.getMessage().contains("did not resolve to a file"),
+        assertFalse(
+                refusal.getMessage().contains("did not resolve to a file"),
                 "a pre-asset-resolution failure must not claim the lockfile is missing");
-        assertFalse(Files.exists(temp.resolve("imports.lock.json")),
+        assertFalse(
+                Files.exists(temp.resolve("imports.lock.json")),
                 "no lock may appear beside the active document");
     }
 
     @Test
     void writeRefusesWhenExplicitPolicyPathDoesNotExist(@TempDir Path temp) throws Exception {
         ToolContext ctx = context(temp);
-        ToolArgException refusal = assertThrows(ToolArgException.class,
-                () -> ImportLockTools.write(ctx,
-                        Map.of("policy_path", temp.resolve("missing.yaml").toString())));
-        assertTrue(refusal.getMessage().contains("policy_not_found"),
+        ToolArgException refusal =
+                assertThrows(
+                        ToolArgException.class,
+                        () ->
+                                ImportLockTools.write(
+                                        ctx,
+                                        Map.of(
+                                                "policy_path",
+                                                temp.resolve("missing.yaml").toString())));
+        assertTrue(
+                refusal.getMessage().contains("policy_not_found"),
                 "a bad explicit policy path must refuse, not fall back: " + refusal.getMessage());
-        assertFalse(Files.exists(temp.resolve("imports.lock.json")),
+        assertFalse(
+                Files.exists(temp.resolve("imports.lock.json")),
                 "no lock may appear beside the active document");
     }
 
@@ -165,21 +210,34 @@ class ImportLockToolsLockPathTest {
     void explicitPathIsHonoredEvenWhenThePolicyCannotDecide(@TempDir Path temp) throws Exception {
         Path policy = writePolicy(temp, "imports:\n  lockfile: config/imports.lock.json\n");
         Path target = temp.resolve("config/imports.lock.json");
-        Map<String, Object> result = structured(ImportLockTools.write(context(temp),
-                Map.of("policy_path", policy.toString(), "path", target.toString())));
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.write(
+                                context(temp),
+                                Map.of(
+                                        "policy_path",
+                                        policy.toString(),
+                                        "path",
+                                        target.toString())));
         assertEquals(true, result.get("written"), () -> result.toString());
         assertEquals(target.toString(), result.get("path"));
-        assertTrue(Files.isRegularFile(target),
+        assertTrue(
+                Files.isRegularFile(target),
                 "an explicit path bootstraps the declared lockfile location");
     }
 
     @Test
-    void policyWithoutLockfileStillDefaultsBesideTheActiveDocument(@TempDir Path temp) throws Exception {
+    void policyWithoutLockfileStillDefaultsBesideTheActiveDocument(@TempDir Path temp)
+            throws Exception {
         Path policy = writePolicy(temp, "");
-        Map<String, Object> result = structured(ImportLockTools.write(context(temp),
-                Map.of("policy_path", policy.toString())));
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.write(
+                                context(temp), Map.of("policy_path", policy.toString())));
         assertEquals(true, result.get("written"), () -> result.toString());
-        assertEquals(temp.resolve("imports.lock.json").toString(), result.get("path"),
+        assertEquals(
+                temp.resolve("imports.lock.json").toString(),
+                result.get("path"),
                 "a policy that declares no lockfile keeps the beside-document default");
         assertTrue(Files.isRegularFile(temp.resolve("imports.lock.json")));
     }
@@ -187,19 +245,28 @@ class ImportLockToolsLockPathTest {
     @Test
     void verifyRefusesDeclaredButMissingLockfileInsteadOfValidatingTheFallback(@TempDir Path temp)
             throws Exception {
-        // A valid empty lock beside the document: a silent fallback would verify THIS file and report
-        // valid=true even though the policy declares config/imports.lock.json. Prove the fallback file
-        // verifies on its own (no policy), then that the declaring policy refuses instead of using it.
+        // A valid empty lock beside the document: a silent fallback would verify THIS file and
+        // report
+        // valid=true even though the policy declares config/imports.lock.json. Prove the fallback
+        // file
+        // verifies on its own (no policy), then that the declaring policy refuses instead of using
+        // it.
         Files.writeString(temp.resolve("imports.lock.json"), "{\"version\": 1, \"imports\": []}\n");
         Map<String, Object> fallback = structured(ImportLockTools.verify(context(temp), Map.of()));
         assertEquals(true, fallback.get("valid"), () -> fallback.toString());
 
         Path policy = writePolicy(temp, "imports:\n  lockfile: config/imports.lock.json\n");
         ToolContext ctx = context(temp);
-        ToolArgException refusal = assertThrows(ToolArgException.class,
-                () -> ImportLockTools.verify(ctx, Map.of("policy_path", policy.toString())));
-        assertTrue(refusal.getMessage().contains("config/imports.lock.json"),
-                "verify must refuse rather than validate a different file: " + refusal.getMessage());
+        ToolArgException refusal =
+                assertThrows(
+                        ToolArgException.class,
+                        () ->
+                                ImportLockTools.verify(
+                                        ctx, Map.of("policy_path", policy.toString())));
+        assertTrue(
+                refusal.getMessage().contains("config/imports.lock.json"),
+                "verify must refuse rather than validate a different file: "
+                        + refusal.getMessage());
     }
 
     @Test
@@ -207,9 +274,12 @@ class ImportLockToolsLockPathTest {
         ToolContext ctx = context(temp);
         // A NUL character is rejected by Path.of on every platform, so this exercises the policy
         // RESOLUTION error branch (PolicyState.error) rather than a loaded-but-invalid policy.
-        ToolArgException refusal = assertThrows(ToolArgException.class,
-                () -> ImportLockTools.verify(ctx, Map.of("policy_path", "\0")));
-        assertTrue(refusal.getMessage().contains("Invalid policy_path"),
+        ToolArgException refusal =
+                assertThrows(
+                        ToolArgException.class,
+                        () -> ImportLockTools.verify(ctx, Map.of("policy_path", "\0")));
+        assertTrue(
+                refusal.getMessage().contains("Invalid policy_path"),
                 "an unresolvable policy reference must refuse defaulting: " + refusal.getMessage());
     }
 
@@ -221,12 +291,13 @@ class ImportLockToolsLockPathTest {
         // pointing at the declared location must still write — refusing would leave no tool-surface
         // way to ever create the declared file.
         Files.createDirectories(temp.resolve(".protege-mcp"));
-        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
-                discoveredPolicy("bootstrap"));
+        ProjectPolicyFixtures.writePolicy(
+                temp.resolve(".protege-mcp/project.yaml"), discoveredPolicy("bootstrap"));
         Path declared = temp.resolve("config/imports.lock.json");
 
-        Map<String, Object> result = structured(ImportLockTools.write(context(temp),
-                Map.of("path", declared.toString())));
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.write(context(temp), Map.of("path", declared.toString())));
 
         assertEquals(true, result.get("written"), () -> result.toString());
         assertEquals(declared.toString(), result.get("path"));
@@ -240,20 +311,25 @@ class ImportLockToolsLockPathTest {
     @Test
     void verifyReportsOnTheDeclaredLocationUnderADiscoveredInvalidPolicy(@TempDir Path temp)
             throws Exception {
-        // Before the bootstrap write exists, verify with the explicit (relative) path must REPORT on
+        // Before the bootstrap write exists, verify with the explicit (relative) path must REPORT
+        // on
         // the declared location — rooted at the canonical project_root, never at the process CWD —
         // rather than refuse because the discovered policy is invalid.
         Files.createDirectories(temp.resolve(".protege-mcp"));
-        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
-                discoveredPolicy("bootstrap-verify"));
+        ProjectPolicyFixtures.writePolicy(
+                temp.resolve(".protege-mcp/project.yaml"), discoveredPolicy("bootstrap-verify"));
 
-        Map<String, Object> result = structured(ImportLockTools.verify(context(temp),
-                Map.of("path", "config/imports.lock.json")));
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.verify(
+                                context(temp), Map.of("path", "config/imports.lock.json")));
 
         assertEquals(false, result.get("valid"), () -> result.toString());
-        assertTrue(String.valueOf(result.get("errors")).contains("missing"), () -> result.toString());
+        assertTrue(
+                String.valueOf(result.get("errors")).contains("missing"), () -> result.toString());
         String reported = String.valueOf(result.get("path"));
-        assertTrue(reported.startsWith(temp.toRealPath().toString()),
+        assertTrue(
+                reported.startsWith(temp.toRealPath().toString()),
                 "the relative path must resolve below the canonical project root: " + reported);
         assertTrue(reported.endsWith("config/imports.lock.json"), reported);
     }
@@ -265,15 +341,20 @@ class ImportLockToolsLockPathTest {
         // project_root containment still applies, and an invalid policy can never grant external
         // paths.
         Files.createDirectories(temp.resolve(".protege-mcp"));
-        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
-                discoveredPolicy("bootstrap-escape"));
+        ProjectPolicyFixtures.writePolicy(
+                temp.resolve(".protege-mcp/project.yaml"), discoveredPolicy("bootstrap-escape"));
         ToolContext ctx = context(temp);
 
-        ToolArgException refusal = assertThrows(ToolArgException.class,
-                () -> ImportLockTools.write(ctx, Map.of("path", "../escaped-imports.lock.json")));
+        ToolArgException refusal =
+                assertThrows(
+                        ToolArgException.class,
+                        () ->
+                                ImportLockTools.write(
+                                        ctx, Map.of("path", "../escaped-imports.lock.json")));
 
         assertTrue(refusal.getMessage().contains("outside project_root"), refusal.getMessage());
-        assertFalse(Files.exists(temp.toRealPath().getParent().resolve("escaped-imports.lock.json")),
+        assertFalse(
+                Files.exists(temp.toRealPath().getParent().resolve("escaped-imports.lock.json")),
                 "nothing may be written outside the project root");
     }
 
@@ -285,60 +366,84 @@ class ImportLockToolsLockPathTest {
         // were pre-absolutized against the CWD, which either spuriously refused an in-project file
         // or silently wrote beside the process CWD.
         Files.createDirectories(temp.resolve(".protege-mcp"));
-        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
+        ProjectPolicyFixtures.writePolicy(
+                temp.resolve(".protege-mcp/project.yaml"),
                 ProjectPolicyFixtures.minimalPolicy("relative-paths", ONTOLOGY_IRI)
-                + "validation:\n  required_stages: [structural]\n");
+                        + "validation:\n  required_stages: [structural]\n");
         ToolContext ctx = context(temp);
 
-        Map<String, Object> written = structured(ImportLockTools.write(ctx,
-                Map.of("path", "nested/imports.lock.json")));
+        Map<String, Object> written =
+                structured(ImportLockTools.write(ctx, Map.of("path", "nested/imports.lock.json")));
 
         assertEquals(true, written.get("written"), () -> written.toString());
-        assertTrue(Files.isRegularFile(temp.resolve("nested/imports.lock.json")),
+        assertTrue(
+                Files.isRegularFile(temp.resolve("nested/imports.lock.json")),
                 "the relative target must land below the project root");
-        assertTrue(String.valueOf(written.get("path")).startsWith(temp.toRealPath().toString()),
+        assertTrue(
+                String.valueOf(written.get("path")).startsWith(temp.toRealPath().toString()),
                 () -> "the reported path must be the project-rooted target: " + written);
-        assertFalse(Files.exists(Path.of("nested/imports.lock.json").toAbsolutePath()),
+        assertFalse(
+                Files.exists(Path.of("nested/imports.lock.json").toAbsolutePath()),
                 "nothing may resolve against the process working directory");
 
-        Map<String, Object> verified = structured(ImportLockTools.verify(ctx,
-                Map.of("path", "nested/imports.lock.json")));
+        Map<String, Object> verified =
+                structured(ImportLockTools.verify(ctx, Map.of("path", "nested/imports.lock.json")));
         assertEquals(true, verified.get("valid"), () -> verified.toString());
     }
 
     @Test
-    void validateCatalogResolvesRelativePathsAgainstTheProjectRoot(@TempDir Path temp) throws Exception {
+    void validateCatalogResolvesRelativePathsAgainstTheProjectRoot(@TempDir Path temp)
+            throws Exception {
         Files.createDirectories(temp.resolve(".protege-mcp"));
-        ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
+        ProjectPolicyFixtures.writePolicy(
+                temp.resolve(".protege-mcp/project.yaml"),
                 ProjectPolicyFixtures.minimalPolicy("relative-catalog", ONTOLOGY_IRI)
-                + "validation:\n  required_stages: [structural]\n");
-        Files.writeString(temp.resolve("catalog-v001.xml"),
+                        + "validation:\n  required_stages: [structural]\n");
+        Files.writeString(
+                temp.resolve("catalog-v001.xml"),
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                + "<catalog xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\"/>\n");
+                        + "<catalog xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\"/>\n");
 
-        Map<String, Object> result = structured(ImportLockTools.validateCatalog(context(temp),
-                Map.of("path", "catalog-v001.xml")));
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.validateCatalog(
+                                context(temp), Map.of("path", "catalog-v001.xml")));
 
         assertEquals(true, result.get("valid"), () -> result.toString());
-        assertTrue(String.valueOf(result.get("catalog")).startsWith(temp.toRealPath().toString()),
+        assertTrue(
+                String.valueOf(result.get("catalog")).startsWith(temp.toRealPath().toString()),
                 () -> "the catalog path must resolve below the canonical root: " + result);
     }
 
     @Test
-    void writeRefusesWhenTheOntologyChangesDuringOffThreadCapture(@TempDir Path temp) throws Exception {
+    void writeRefusesWhenTheOntologyChangesDuringOffThreadCapture(@TempDir Path temp)
+            throws Exception {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         OWLOntology ontology = manager.createOntology(IRI.create(ONTOLOGY_IRI));
         manager.setOntologyDocumentIRI(ontology, IRI.create(temp.resolve("ontology.ttl").toUri()));
-        ToolContext ctx = new ToolContext(HeadlessAccess.over(FakeModelManager.over(ontology)),
-                new McpServerController(new OntologyAccess(null)));
+        ToolContext ctx =
+                new ToolContext(
+                        HeadlessAccess.over(FakeModelManager.over(ontology)),
+                        new McpServerController(new OntologyAccess(null)));
         Path target = temp.resolve("imports.lock.json");
 
-        Map<String, Object> result = structured(ImportLockTools.write(ctx,
-                Map.of("path", target.toString()), () -> {
-                    var cls = manager.getOWLDataFactory().getOWLClass(
-                            IRI.create(ONTOLOGY_IRI + "#ChangedDuringCapture"));
-                    manager.addAxiom(ontology, manager.getOWLDataFactory().getOWLDeclarationAxiom(cls));
-                }));
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.write(
+                                ctx,
+                                Map.of("path", target.toString()),
+                                () -> {
+                                    var cls =
+                                            manager.getOWLDataFactory()
+                                                    .getOWLClass(
+                                                            IRI.create(
+                                                                    ONTOLOGY_IRI
+                                                                            + "#ChangedDuringCapture"));
+                                    manager.addAxiom(
+                                            ontology,
+                                            manager.getOWLDataFactory()
+                                                    .getOWLDeclarationAxiom(cls));
+                                }));
 
         assertEquals(false, result.get("written"), () -> result.toString());
         assertEquals("revision_conflict", result.get("error_code"));
@@ -349,12 +454,16 @@ class ImportLockToolsLockPathTest {
     void writeRechecksReadOnlyImmediatelyBeforeInstalling(@TempDir Path temp) throws Exception {
         Path target = temp.resolve("imports.lock.json");
 
-        CallToolResult result = ImportLockTools.write(context(temp),
-                Map.of("path", target.toString()),
-                () -> prefs.putBoolean(McpConfig.KEY_READ_ONLY, true));
+        CallToolResult result =
+                ImportLockTools.write(
+                        context(temp),
+                        Map.of("path", target.toString()),
+                        () -> prefs.putBoolean(McpConfig.KEY_READ_ONLY, true));
 
-        assertTrue(Boolean.TRUE.equals(result.isError()), "the final read-only gate must fail closed");
-        assertFalse(Files.exists(target), "read-only mode must prevent the delayed filesystem write");
+        assertTrue(
+                Boolean.TRUE.equals(result.isError()), "the final read-only gate must fail closed");
+        assertFalse(
+                Files.exists(target), "read-only mode must prevent the delayed filesystem write");
     }
 
     @Test
@@ -363,89 +472,169 @@ class ImportLockToolsLockPathTest {
         Path originalTarget = temp.resolve("imports.lock.json");
         Path policyTarget = temp.resolve("config/imports.lock.json");
 
-        Map<String, Object> result = structured(ImportLockTools.write(context(temp), Map.of(), () -> {
-            try {
-                Files.createDirectories(temp.resolve(".protege-mcp"));
-                Files.createDirectories(policyTarget.getParent());
-                Files.writeString(policyTarget, "policy-selected placeholder\n");
-                ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
-                        ProjectPolicyFixtures.minimalPolicy("lock-path", ONTOLOGY_IRI)
-                        + "validation:\n"
-                        + "  required_stages: [structural]\n"
-                        + "imports:\n"
-                        + "  lockfile: config/imports.lock.json\n");
-            } catch (java.io.IOException e) {
-                throw new RuntimeException(e);
-            }
-        }));
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.write(
+                                context(temp),
+                                Map.of(),
+                                () -> {
+                                    try {
+                                        Files.createDirectories(temp.resolve(".protege-mcp"));
+                                        Files.createDirectories(policyTarget.getParent());
+                                        Files.writeString(
+                                                policyTarget, "policy-selected placeholder\n");
+                                        ProjectPolicyFixtures.writePolicy(
+                                                temp.resolve(".protege-mcp/project.yaml"),
+                                                ProjectPolicyFixtures.minimalPolicy(
+                                                                "lock-path", ONTOLOGY_IRI)
+                                                        + "validation:\n"
+                                                        + "  required_stages: [structural]\n"
+                                                        + "imports:\n"
+                                                        + "  lockfile: config/imports.lock.json\n");
+                                    } catch (java.io.IOException e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                }));
 
         assertEquals(false, result.get("written"), () -> result.toString());
         assertEquals("policy_conflict", result.get("error_code"));
-        assertFalse(Files.exists(originalTarget),
+        assertFalse(
+                Files.exists(originalTarget),
                 "a capture for the obsolete default path must never be installed");
-        assertEquals("policy-selected placeholder\n", Files.readString(policyTarget),
+        assertEquals(
+                "policy-selected placeholder\n",
+                Files.readString(policyTarget),
                 "the newly effective policy target must not be overwritten either");
     }
 
     @Test
     void writeRefusesWhenAnAppearingPolicyLeavesTheTargetUndecidable(@TempDir Path temp)
             throws Exception {
-        // Same appearing-policy race as above, but the newly declared lockfile does NOT exist, so the
+        // Same appearing-policy race as above, but the newly declared lockfile does NOT exist, so
+        // the
         // install-time re-discovery cannot resolve a target at all. The refusal must still be the
-        // structured policy_conflict, not a raw lock-path resolution error escaping the install guard.
+        // structured policy_conflict, not a raw lock-path resolution error escaping the install
+        // guard.
         Path originalTarget = temp.resolve("imports.lock.json");
         Path policyTarget = temp.resolve("config/imports.lock.json");
 
-        Map<String, Object> result = structured(ImportLockTools.write(context(temp), Map.of(), () -> {
-            try {
-                Files.createDirectories(temp.resolve(".protege-mcp"));
-                ProjectPolicyFixtures.writePolicy(temp.resolve(".protege-mcp/project.yaml"),
-                        ProjectPolicyFixtures.minimalPolicy("lock-path", ONTOLOGY_IRI)
-                        + "validation:\n"
-                        + "  required_stages: [structural]\n"
-                        + "imports:\n"
-                        + "  lockfile: config/imports.lock.json\n");
-            } catch (java.io.IOException e) {
-                throw new RuntimeException(e);
-            }
-        }));
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.write(
+                                context(temp),
+                                Map.of(),
+                                () -> {
+                                    try {
+                                        Files.createDirectories(temp.resolve(".protege-mcp"));
+                                        ProjectPolicyFixtures.writePolicy(
+                                                temp.resolve(".protege-mcp/project.yaml"),
+                                                ProjectPolicyFixtures.minimalPolicy(
+                                                                "lock-path", ONTOLOGY_IRI)
+                                                        + "validation:\n"
+                                                        + "  required_stages: [structural]\n"
+                                                        + "imports:\n"
+                                                        + "  lockfile: config/imports.lock.json\n");
+                                    } catch (java.io.IOException e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                }));
 
         assertEquals(false, result.get("written"), () -> result.toString());
         assertEquals("policy_conflict", result.get("error_code"));
-        assertTrue(String.valueOf(result.get("message")).contains("config/imports.lock.json"),
+        assertTrue(
+                String.valueOf(result.get("message")).contains("config/imports.lock.json"),
                 () -> "the conflict must name the undecidable declared lockfile: " + result);
-        assertFalse(Files.exists(originalTarget),
+        assertFalse(
+                Files.exists(originalTarget),
                 "a capture for the obsolete default path must never be installed");
-        assertFalse(Files.exists(policyTarget),
+        assertFalse(
+                Files.exists(policyTarget),
                 "the undecidable declared location must not be created either");
     }
 
     @Test
-    void writeRefusesWhenTheEffectivePolicyIsEditedInPlaceDuringCapture(@TempDir Path temp)
-            throws Exception {
-        // The pinned policy IDENTITY — not just the resolved target path — must still hold at install
-        // time: an in-place edit of the effective project.yaml that keeps the SAME declared lockfile
-        // changes the policy digest, and the stale capture must fail closed instead of installing
-        // under rules that no longer exist.
+    void writeRefusesWhenPolicySourceBytesChangeDuringCapture(@TempDir Path temp) throws Exception {
+        // A semantically neutral source edit keeps the effective policy digest and target
+        // unchanged,
+        // so only the raw source-byte digest can reject this stale capture.
         Files.createDirectories(temp.resolve(".protege-mcp"));
         Files.createDirectories(temp.resolve("config"));
         Path declaredTarget = temp.resolve("config/imports.lock.json");
         Files.writeString(declaredTarget, "declared placeholder\n");
         Path project = temp.resolve(".protege-mcp/project.yaml");
         ProjectPolicyFixtures.writePolicy(project, discoveredPolicy("first-rules"));
+        String effectiveDigest = ProjectPolicyLoader.load(project, null).digest();
 
-        Map<String, Object> result = structured(ImportLockTools.write(context(temp), Map.of(), () -> {
-            try {
-                ProjectPolicyFixtures.writePolicy(project, discoveredPolicy("second-rules"));
-            } catch (java.io.IOException e) {
-                throw new RuntimeException(e);
-            }
-        }));
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.write(
+                                context(temp),
+                                Map.of(),
+                                () -> {
+                                    try {
+                                        ProjectPolicyFixtures.writePolicy(
+                                                project,
+                                                discoveredPolicy("first-rules")
+                                                        + "# semantically neutral source edit\n");
+                                        Files.setLastModifiedTime(
+                                                project,
+                                                java.nio.file.attribute.FileTime.fromMillis(
+                                                        System.currentTimeMillis() + 2_000));
+                                    } catch (java.io.IOException e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                }));
 
+        assertEquals(effectiveDigest, ProjectPolicyLoader.load(project, null).digest());
         assertEquals(false, result.get("written"), () -> result.toString());
         assertEquals("policy_conflict", result.get("error_code"));
-        assertEquals("declared placeholder\n", Files.readString(declaredTarget),
+        assertEquals(
+                "declared placeholder\n",
+                Files.readString(declaredTarget),
                 "the still-declared target must not be overwritten by the stale capture");
+    }
+
+    @Test
+    void verifyRefusesWhenPolicySourceBytesChangeDuringCapture(@TempDir Path temp)
+            throws Exception {
+        Files.createDirectories(temp.resolve(".protege-mcp"));
+        Files.createDirectories(temp.resolve("config"));
+        Path declaredTarget = temp.resolve("config/imports.lock.json");
+        Files.writeString(declaredTarget, "placeholder\n");
+        Path project = temp.resolve(".protege-mcp/project.yaml");
+        ProjectPolicyFixtures.writePolicy(project, discoveredPolicy("first-rules"));
+        String effectiveDigest = ProjectPolicyLoader.load(project, null).digest();
+        assertEquals(
+                true, structured(ImportLockTools.write(context(temp), Map.of())).get("written"));
+
+        Map<String, Object> result =
+                structured(
+                        ImportLockTools.verify(
+                                context(temp),
+                                Map.of(),
+                                () -> {
+                                    try {
+                                        ProjectPolicyFixtures.writePolicy(
+                                                project,
+                                                discoveredPolicy("first-rules")
+                                                        + "# semantically neutral source edit\n");
+                                        Files.setLastModifiedTime(
+                                                project,
+                                                java.nio.file.attribute.FileTime.fromMillis(
+                                                        System.currentTimeMillis() + 2_000));
+                                    } catch (java.io.IOException e) {
+                                        throw new RuntimeException(e);
+                                    }
+                                }));
+
+        assertEquals(effectiveDigest, ProjectPolicyLoader.load(project, null).digest());
+        assertEquals(false, result.get("valid"), () -> result.toString());
+        assertTrue(
+                ((java.util.List<?>) result.get("errors"))
+                        .stream()
+                                .map(String::valueOf)
+                                .anyMatch(message -> message.contains("changed while")),
+                () -> result.toString());
     }
 
     @Test
@@ -469,23 +658,29 @@ class ImportLockToolsLockPathTest {
         OWLOntology ontology = manager.createOntology(IRI.create(ONTOLOGY_IRI));
         manager.setOntologyDocumentIRI(ontology, IRI.create(temp.resolve("ontology.ttl").toUri()));
         AtomicInteger dispatches = new AtomicInteger();
-        ToolContext ctx = new ToolContext(
-                HeadlessAccess.overStalledDispatches(FakeModelManager.over(ontology),
-                        150L, 1_000L, 2, dispatches),
-                new McpServerController(new OntologyAccess(null)));
+        ToolContext ctx =
+                new ToolContext(
+                        HeadlessAccess.overStalledDispatches(
+                                FakeModelManager.over(ontology), 150L, 1_000L, 2, dispatches),
+                        new McpServerController(new OntologyAccess(null)));
         Path target = temp.resolve("imports.lock.json");
 
-        Map<String, Object> result = structured(
-                ImportLockTools.write(ctx, Map.of("path", target.toString())));
+        Map<String, Object> result =
+                structured(ImportLockTools.write(ctx, Map.of("path", target.toString())));
 
         assertEquals(true, result.get("written"), () -> result.toString());
-        assertTrue(Files.isRegularFile(target), "the lock lands through the long-bounded install hop");
-        assertEquals(3, dispatches.get(), "policy resolution + capture + install; update the"
-                + " stalled-dispatch script if write()'s hop structure changes");
+        assertTrue(
+                Files.isRegularFile(target), "the lock lands through the long-bounded install hop");
+        assertEquals(
+                3,
+                dispatches.get(),
+                "policy resolution + capture + install; update the"
+                        + " stalled-dispatch script if write()'s hop structure changes");
     }
 
     @Test
-    void installHopTimeoutIsHonestAboutThePossiblyInstalledLock(@TempDir Path temp) throws Exception {
+    void installHopTimeoutIsHonestAboutThePossiblyInstalledLock(@TempDir Path temp)
+            throws Exception {
         // Simulate the bounded EDT wait expiring mid-install: OntologyAccess.compute throws exactly
         // this exception type while the queued body may keep running to completion on the UI
         // thread. Arming the proxy from the afterCapture seam confines the simulated expiry to the
@@ -495,38 +690,53 @@ class ImportLockToolsLockPathTest {
         manager.setOntologyDocumentIRI(ontology, IRI.create(temp.resolve("ontology.ttl").toUri()));
         OWLModelManager base = FakeModelManager.over(ontology);
         AtomicBoolean armed = new AtomicBoolean(false);
-        OWLModelManager timingOut = (OWLModelManager) Proxy.newProxyInstance(
-                ImportLockToolsLockPathTest.class.getClassLoader(),
-                new Class<?>[] {OWLModelManager.class},
-                (proxy, method, args) -> {
-                    if (armed.get() && "getActiveOntology".equals(method.getName())) {
-                        throw new McpAccessException("Timed out after "
-                                + ImportLockTools.WRITE_HOP_TIMEOUT_MS
-                                + " ms waiting for the Protégé UI thread (the application may be busy).");
-                    }
-                    try {
-                        return method.invoke(base, args);
-                    } catch (InvocationTargetException e) {
-                        throw e.getCause();
-                    }
-                });
-        ToolContext ctx = new ToolContext(HeadlessAccess.over(timingOut),
-                new McpServerController(new OntologyAccess(null)));
+        OWLModelManager timingOut =
+                (OWLModelManager)
+                        Proxy.newProxyInstance(
+                                ImportLockToolsLockPathTest.class.getClassLoader(),
+                                new Class<?>[] {OWLModelManager.class},
+                                (proxy, method, args) -> {
+                                    if (armed.get()
+                                            && "getActiveOntology".equals(method.getName())) {
+                                        throw new McpAccessException(
+                                                "Timed out after "
+                                                        + ImportLockTools.WRITE_HOP_TIMEOUT_MS
+                                                        + " ms waiting for the Protégé UI thread"
+                                                        + " (the application may be busy).");
+                                    }
+                                    try {
+                                        return method.invoke(base, args);
+                                    } catch (InvocationTargetException e) {
+                                        throw e.getCause();
+                                    }
+                                });
+        ToolContext ctx =
+                new ToolContext(
+                        HeadlessAccess.over(timingOut),
+                        new McpServerController(new OntologyAccess(null)));
         Path target = temp.resolve("imports.lock.json");
 
-        McpAccessException failure = assertThrows(McpAccessException.class,
-                () -> ImportLockTools.write(ctx, Map.of("path", target.toString()),
-                        () -> armed.set(true)));
+        McpAccessException failure =
+                assertThrows(
+                        McpAccessException.class,
+                        () ->
+                                ImportLockTools.write(
+                                        ctx,
+                                        Map.of("path", target.toString()),
+                                        () -> armed.set(true)));
 
         assertTrue(failure.getMessage().contains("may still complete"), failure.getMessage());
         assertTrue(failure.getMessage().contains("verify_import_lock"), failure.getMessage());
-        assertFalse(Files.exists(target),
+        assertFalse(
+                Files.exists(target),
                 "in this simulation the install body never ran, so no lock may exist");
     }
 
     // ------------------------------------------------------------------ fixtures
 
-    /** A discovered-policy body that declares config/imports.lock.json; the id varies the digest. */
+    /**
+     * A discovered-policy body that declares config/imports.lock.json; the id varies the digest.
+     */
     private static String discoveredPolicy(String projectId) {
         return ProjectPolicyFixtures.minimalPolicy(projectId, ONTOLOGY_IRI)
                 + "validation:\n"
@@ -535,32 +745,38 @@ class ImportLockToolsLockPathTest {
                 + "  lockfile: config/imports.lock.json\n";
     }
 
-    /** A minimal valid policy (matching root, structural-only stages) plus the given extra block. */
+    /**
+     * A minimal valid policy (matching root, structural-only stages) plus the given extra block.
+     */
     private static Path writePolicy(Path temp, String extra) throws Exception {
         Path policy = temp.resolve("policy.yaml");
-        ProjectPolicyFixtures.writePolicy(policy,
+        ProjectPolicyFixtures.writePolicy(
+                policy,
                 ProjectPolicyFixtures.minimalPolicy("lock-path", ONTOLOGY_IRI)
-                + "validation:\n"
-                + "  required_stages: [structural]\n"
-                + extra);
+                        + "validation:\n"
+                        + "  required_stages: [structural]\n"
+                        + extra);
         return policy;
     }
 
     /**
-     * A headless context whose active ontology is saved (by document IRI) in {@code temp}, with a real
-     * controller so {@code write} runs through the actual write gate.
+     * A headless context whose active ontology is saved (by document IRI) in {@code temp}, with a
+     * real controller so {@code write} runs through the actual write gate.
      */
     private static ToolContext context(Path temp) throws Exception {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         OWLOntology ontology = manager.createOntology(IRI.create(ONTOLOGY_IRI));
         manager.setOntologyDocumentIRI(ontology, IRI.create(temp.resolve("ontology.ttl").toUri()));
-        return new ToolContext(HeadlessAccess.over(FakeModelManager.over(ontology)),
+        return new ToolContext(
+                HeadlessAccess.over(FakeModelManager.over(ontology)),
                 new McpServerController(new OntologyAccess(null)));
     }
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> structured(CallToolResult result) {
-        assertFalse(Boolean.TRUE.equals(result.isError()), () -> String.valueOf(result.structuredContent()));
+        assertFalse(
+                Boolean.TRUE.equals(result.isError()),
+                () -> String.valueOf(result.structuredContent()));
         return (Map<String, Object>) result.structuredContent();
     }
 }

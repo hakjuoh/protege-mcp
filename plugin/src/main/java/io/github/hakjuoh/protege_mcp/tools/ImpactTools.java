@@ -110,7 +110,7 @@ public final class ImpactTools {
             // discovered policy while policy-driven impact categories reported the explicit one.
             DirectAccessPolicy.Rules docRules = rules.withRequestNetwork(network);
             rightDocument = docRules.authorizeSource(rightDocument).value();
-            List<OntologyDocumentTools.ImportMapping> mappings = ctx.access()
+            List<OntologyImportMapping> mappings = ctx.access()
                     .compute(OntologyDocumentTools::workspaceImportMappings);
             OWLOntology loaded = DiffTools.loadDocument(rightDocument, mappings, unresolved,
                     docRules.importNetworkRule());

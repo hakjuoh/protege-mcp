@@ -756,23 +756,16 @@ class ChatPreferencesPanelTest {
         ChatModelCatalog.save(preferences, "codex", List.of("kept", "dropped"));
         preferences.putString(ChatModels.modelPrefKey("codex"), "kept");
 
-        clearMissingModelSelection(preferences, "codex", List.of("kept", "dropped"));
+        ChatPreferencesSupport.clearMissingModelSelection(
+                preferences, "codex", List.of("kept", "dropped"));
         assertEquals("kept", preferences.getString(ChatModels.modelPrefKey("codex"), ""),
                 "an edit that leaves the selected id in place must not reset the picker");
 
         preferences.putString(ChatModels.modelPrefKey("codex"), "dropped");
-        clearMissingModelSelection(preferences, "codex", List.of("kept"));
+        ChatPreferencesSupport.clearMissingModelSelection(preferences, "codex", List.of("kept"));
         assertEquals("", preferences.getString(ChatModels.modelPrefKey("codex"), ""),
                 "a selection the edit deleted must fall back to the CLI default, not linger as a "
                         + "value the next turn would still run on");
-    }
-
-    private static void clearMissingModelSelection(Preferences preferences, String providerId,
-            List<String> catalog) throws Exception {
-        Method method = ChatPreferencesPanel.class.getDeclaredMethod("clearMissingModelSelection",
-                Preferences.class, String.class, List.class);
-        method.setAccessible(true);
-        method.invoke(null, preferences, providerId, catalog);
     }
 
     private static void type(Object editor, String text) throws Exception {
@@ -815,7 +808,7 @@ class ChatPreferencesPanelTest {
 
     private static Object newEditor(ChatClientProfile client, Preferences preferences,
             Supplier<String> executableOverride) throws Exception {
-        Class<?> type = Class.forName(ChatPreferencesPanel.class.getName() + "$ModelEditor");
+        Class<?> type = ChatModelEditor.class;
         Constructor<?> constructor = type.getDeclaredConstructor(
                 ChatClientModelCatalog.class, String.class, Preferences.class, Supplier.class);
         constructor.setAccessible(true);

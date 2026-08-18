@@ -214,7 +214,7 @@ class OntologyDocumentMissingImportsTest {
 
         OWLOntologyManager workspace = OWLManager.createOWLOntologyManager();
         OWLOntology imported = workspace.loadOntologyFromOntologyDocument(importedDocument.toFile());
-        List<OntologyDocumentTools.ImportMapping> mappings = OntologyDocumentTools
+        List<OntologyImportMapping> mappings = OntologyDocumentTools
                 .workspaceImportMappings(FakeModelManager.over(imported));
         assertTrue(mappings.stream().anyMatch(mapping -> importedIri.equals(mapping.logical.toString())
                 && importedDocument.toUri().equals(mapping.document.toURI())));
@@ -246,8 +246,8 @@ class OntologyDocumentMissingImportsTest {
                         + "xmlns=\"urn:oasis:names:tc:entity:xmlns:xml:catalog\">\n"
                         + "  <uri name=\"" + importedIri + "\" uri=\"catalog-imported.rdf\"/>\n"
                         + "</catalog>\n", StandardCharsets.UTF_8);
-        List<OntologyDocumentTools.ImportMapping> stale = List.of(
-                new OntologyDocumentTools.ImportMapping(IRI.create(importedIri),
+        List<OntologyImportMapping> stale = List.of(
+                new OntologyImportMapping(IRI.create(importedIri),
                         IRI.create(dir.resolve("missing-stale.rdf").toUri())));
 
         Method mergeLoader = loader("load", String.class, int.class, MissingImportsMode.class,
@@ -261,7 +261,9 @@ class OntologyDocumentMissingImportsTest {
     }
 
     private static Method loader(String name, Class<?>... parameters) throws Exception {
-        Method method = OntologyDocumentTools.class.getDeclaredMethod(name, parameters);
+        Class<?> owner = name.equals("fetch")
+                ? OntologyDocumentLoader.class : OntologyDocumentTools.class;
+        Method method = owner.getDeclaredMethod(name, parameters);
         method.setAccessible(true);
         return method;
     }

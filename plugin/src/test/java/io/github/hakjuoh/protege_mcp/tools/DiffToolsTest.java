@@ -190,7 +190,7 @@ class DiffToolsTest {
 
         ToolArgException denied = org.junit.jupiter.api.Assertions.assertThrows(
                 ToolArgException.class, () -> DiffTools.loadDocument(root.toString(),
-                        java.util.List.of(new OntologyDocumentTools.ImportMapping(
+                        java.util.List.of(new OntologyImportMapping(
                                 IRI.create(imported), IRI.create(mapped.toUri()))),
                         new java.util.ArrayList<>(), offline));
         assertTrue(denied.getMessage().contains("had to resolve without the folder catalog"),
