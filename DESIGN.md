@@ -1,6 +1,6 @@
 # Protégé MCP — Current Design
 
-> Architecture snapshot for release 0.8.0. User-facing installation and operation are documented at
+> Architecture snapshot for release 0.8.1. User-facing installation and operation are documented at
 > <https://hakjuoh.github.io/protege-mcp/>. Historical feature delivery is recorded in
 > [`CHANGELOG.md`](CHANGELOG.md); unimplemented work is tracked in [`PLAN.md`](PLAN.md).
 
@@ -30,11 +30,11 @@ The Java 17 Maven reactor has three modules:
 
 | Module | Artifact | Responsibility |
 | --- | --- | --- |
-| `core` | `protege-mcp-core-0.8.0.jar` | Protégé-free contracts, policy, authorization metadata, audit primitives, OWL/QC/diff/release services, and headless workspace abstractions |
-| `plugin` | `protege-mcp-0.8.0.jar` | OSGi bundle: Protégé lifecycle/UI adapters, live tools/prompts, HTTP/OAuth server, shared broker, and Ontology Assistant |
-| `cli` | `protege-mcp-cli-0.8.0-all.jar` | Executable shaded CLI with OWLAPI, HermiT, headless workspace, release commands, and bounded stdio MCP server |
+| `core` | `protege-mcp-core-0.8.1.jar` | Protégé-free contracts, policy, authorization metadata, audit primitives, OWL/QC/diff/release services, and headless workspace abstractions |
+| `plugin` | `protege-mcp-0.8.1.jar` | OSGi bundle: Protégé lifecycle/UI adapters, live tools/prompts, HTTP/OAuth server, shared broker, and Ontology Assistant |
+| `cli` | `protege-mcp-cli-0.8.1-all.jar` | Executable shaded CLI with OWLAPI, HermiT, headless workspace, release commands, and bounded stdio MCP server |
 
-The current bundle version **`0.8.0`** and MCP server identity `SERVER_VERSION=0.8.0` are checked by
+The current bundle version **`0.8.1`** and MCP server identity `SERVER_VERSION=0.8.1` are checked by
 `scripts/check-version-consistency.sh` together with the POMs, plugin descriptor, CLI, and documentation.
 
 The dependency direction is:

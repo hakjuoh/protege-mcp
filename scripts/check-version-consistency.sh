@@ -115,6 +115,10 @@ expect_line plugin/src/main/java/io/github/hakjuoh/protege_mcp/server/McpServerM
 # so a release cannot ship a stale `--version`.
 expect_line cli/src/main/java/io/github/hakjuoh/protege_mcp/cli/Main.java \
   "    public static final String VERSION = \"${version}\";"
+# Keep the user-visible version contract test on the same release too; otherwise a source bump only
+# discovers this stale literal at the very end of the full reactor build.
+expect_line cli/src/test/java/io/github/hakjuoh/protege_mcp/cli/MainTest.java \
+  "        assertEquals(\"protege-mcp-cli ${version}\", out.toString().trim());"
 expect_line docs/_config.yml "version: ${version}"
 expect_line TESTING.md "Tested source version: **\`${version}\`**."
 

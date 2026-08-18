@@ -21,6 +21,42 @@ each section is also published as the body of its
 
 ---
 
+## [0.8.1] - 2026-07-28
+
+### Changed
+- Split **Settings ▸ Ontology Assistant** into independent **Claude Code**, **Codex**, **Antigravity**,
+  **OpenCode**, and **General** tabs. Each predefined client now owns its executable path and ordered model catalog, and its display
+  name can be changed without changing the stable client identity used for sessions and preferences.
+  Existing Claude/Codex path, model, and reasoning selections retain their 0.8.0 preference keys.
+- Added platform-appropriate install commands, first-run authentication guidance, copy support, and
+  official documentation links to every predefined client tab.
+- Made the Assistant Preferences layout use the full available width. Client tabs, installation
+  commands, model lists, and model-id fields now expand with the window, and installation actions
+  share a consistent alignment. Help and warning prose in both the Assistant and MCP preferences
+  now reflows against the available width instead of retaining a fixed HTML wrapping width.
+- Added CSS-like top and bottom spacing to each Assistant transcript message block—including user
+  prompts, streamed assistant messages, tool activity, and final replies—so adjacent messages are
+  separated by the same height as a blank transcript line while Markdown keeps its original internal
+  paragraph spacing.
+- Added a typed client-profile and per-client model-catalog boundary. Future user-created clients receive
+  isolated encoded preference keys rather than falling through to Claude's settings, while the predefined
+  client metadata now lives alongside each runtime adapter under its client-specific `chat` package.
+
+### Added
+- Added Antigravity CLI (`agy`) support using its documented headless `stream-json` protocol, isolated
+  Streamable HTTP MCP configuration, sandbox mode, and deny-by-default permissions. This follows
+  Antigravity's official Gemini CLI migration path; no Gemini CLI profile is added.
+- Added OpenCode (`opencode run --format json`) support, including native session resume, attachments,
+  provider/model ids, reasoning events, usage/cost reporting, and a deny-by-default inline MCP
+  configuration. Its short-lived Protégé token is supplied by environment substitution, never argv;
+  owner-only config isolation prevents pre-existing MCP children or plugins from inheriting it.
+
+### Fixed
+- Preserved provider-reported assistant-message boundaries across Codex item IDs, Claude Code
+  message lifecycles, Antigravity response-step indexes, and OpenCode message IDs. Consecutive
+  progress messages now render as distinct Markdown blocks even when hidden reasoning or an
+  unrendered tool-search event is the only activity between them.
+
 ## [0.8.0] - 2026-07-24
 
 **The 0.8.0 release expands Protégé MCP to 104 live tools and 11 prompts with governed ontology-engineering workflows.**
