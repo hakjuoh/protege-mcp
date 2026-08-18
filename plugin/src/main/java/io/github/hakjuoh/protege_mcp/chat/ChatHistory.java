@@ -8,7 +8,7 @@ import java.util.Map;
 /**
  * Provider-neutral conversation history plus each CLI provider's resume position.
  *
- * <p>Claude and Codex cannot share a native session id. Instead, each provider keeps its own id and
+ * <p>Different clients cannot share a native session id. Instead, each provider keeps its own id and
  * a cursor into this common history. Before a provider's next turn, {@link #handoffFor(String)}
  * supplies the user/assistant turns that happened since that provider last completed a turn. This
  * lets a resumed native session catch up without splitting the visible conversation into branches.

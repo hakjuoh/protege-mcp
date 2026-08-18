@@ -2,6 +2,9 @@ package io.github.hakjuoh.protege_mcp.chat.claude;
 
 import io.github.hakjuoh.protege_mcp.chat.AssistantSteering;
 import io.github.hakjuoh.protege_mcp.chat.ChatListener;
+import io.github.hakjuoh.protege_mcp.chat.ChatClientPreferences;
+import io.github.hakjuoh.protege_mcp.chat.ChatClientProfile;
+import io.github.hakjuoh.protege_mcp.chat.ChatClientModelCatalog;
 import io.github.hakjuoh.protege_mcp.chat.ChatModelCatalog;
 import io.github.hakjuoh.protege_mcp.chat.ChatProcess;
 import io.github.hakjuoh.protege_mcp.chat.ChatProvider;
@@ -31,7 +34,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  */
 public final class ClaudeCliProvider implements ChatProvider {
 
-    public static final String EXECUTABLE = "claude";
+    public static final String ID = ClaudeClient.ID;
+    public static final String EXECUTABLE = ClaudeClient.EXECUTABLE;
     private static final ObjectMapper MAPPER = new ObjectMapper();
     /** How the CLI prefixes a diagnostic it is going to carry on past. */
     private static final String WARNING_PREFIX = "Warning:";
@@ -40,15 +44,27 @@ public final class ClaudeCliProvider implements ChatProvider {
     private static final String THINKING_OPTION = "--thinking-display";
     /** A warning is one line in practice; the cap only stops a pathological stderr reaching the view. */
     private static final int MAX_WARNING_CHARS = 400;
+    private final ChatClientProfile profile;
+
+    public ClaudeCliProvider() {
+        this(ClaudeClient.PROFILE);
+    }
+
+    public ClaudeCliProvider(ChatClientProfile profile) {
+        if (!ClaudeClient.ADAPTER.id().equals(profile.adapterId())) {
+            throw new IllegalArgumentException("ClaudeCliProvider requires the claude-cli adapter");
+        }
+        this.profile = profile;
+    }
 
     @Override
     public String id() {
-        return "claude";
+        return profile.id();
     }
 
     @Override
     public String displayName() {
-        return "Claude";
+        return ChatClientPreferences.displayName(McpConfig.prefs(), profile);
     }
 
     @Override
@@ -58,12 +74,17 @@ public final class ClaudeCliProvider implements ChatProvider {
 
     @Override
     public List<String> listModels() {
-        return ChatModelCatalog.pickerModels(McpConfig.prefs(), id());
+        return new ChatClientModelCatalog(profile).pickerModels(McpConfig.prefs());
     }
 
     @Override
     public List<String> reasoningEfforts() {
-        return ChatModelCatalog.claudeReasoningEfforts();
+        return reasoningEfforts("");
+    }
+
+    @Override
+    public List<String> reasoningEfforts(String model) {
+        return new ChatClientModelCatalog(profile).reasoningEfforts(McpConfig.prefs(), model);
     }
 
     @Override
@@ -269,8 +290,9 @@ public final class ClaudeCliProvider implements ChatProvider {
     }
 
     private String resolveExecutable() {
-        String override = McpConfig.prefs().getString(McpConfig.KEY_CHAT_CLAUDE_PATH, "");
-        return CliSupport.resolveExecutable(EXECUTABLE, override);
+        String override = McpConfig.prefs().getString(
+                ChatClientPreferences.executablePathPrefKey(profile.id()), "");
+        return CliSupport.resolveExecutable(profile.executable(), override);
     }
 
     /**

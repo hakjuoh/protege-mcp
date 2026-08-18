@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * A backend that can run a chat turn against the live ontology. The shipped implementations drive a
- * locally-installed coding-agent CLI ({@link ClaudeCliProvider}, {@link CodexCliProvider}) configured
+ * locally-installed coding-agent CLI configured
  * to connect back to Protégé's own MCP server, so the agent loop and provider authentication live in
  * the CLI and the plugin holds no API key. The seam is kept deliberately small so a future
  * direct-API provider could slot in behind it.

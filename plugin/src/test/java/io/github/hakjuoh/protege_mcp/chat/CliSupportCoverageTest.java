@@ -3,6 +3,7 @@ package io.github.hakjuoh.protege_mcp.chat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -227,9 +228,10 @@ class CliSupportCoverageTest {
         File d = CliSupport.neutralWorkingDir();
         assertNotNull(d);
         assertTrue(d.isDirectory(), "neutral working dir should exist as a directory");
-        assertTrue(d.getName().equals("protege-mcp-chat")
-                        || d.equals(new File(System.getProperty("user.home", "."))),
-                "expected the tmp scratch dir or the user.home fallback: " + d);
+        assertTrue(d.getName().startsWith("protege-mcp-chat-"),
+                "expected a process-random private temp directory: " + d);
+        assertNotEquals(new File(System.getProperty("user.home", ".")), d,
+                "the user home must never be used as a neutral fallback");
     }
 
     @Test

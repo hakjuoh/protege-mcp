@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.hakjuoh.protege_mcp.chat.claude.ClaudeCliProvider;
 import io.github.hakjuoh.protege_mcp.chat.codex.CodexCliProvider;
+import io.github.hakjuoh.protege_mcp.chat.antigravity.AntigravityCliProvider;
+import io.github.hakjuoh.protege_mcp.chat.opencode.OpenCodeCliProvider;
 
 import java.util.List;
 
@@ -19,7 +21,7 @@ import org.junit.jupiter.api.Test;
 /**
  * Method-level tests for {@link Providers}.
  *
- * <p>{@code Providers.all()} hard-codes the two shipped {@link ChatProvider} implementations, so the
+ * <p>{@code Providers.all()} is derived from the shipped client profiles, so the
  * search space cannot be swapped for test doubles. Tests therefore assert the real registry's
  * contents and contracts, the pure lookup behaviour of {@code byId}, and the environment-independent
  * invariants of {@code available} (it is a filtered subset of {@code all}, where every element's
@@ -33,13 +35,17 @@ class ProvidersTest {
     // ---------------------------------------------------------------------------------------------
 
     @Test
-    void allReturnsExactlyTwoProvidersInDisplayOrder() {
+    void allReturnsShippedProvidersInDisplayOrder() {
         List<ChatProvider> providers = Providers.all();
-        assertEquals(2, providers.size(), "all() should expose exactly the two shipped providers");
+        assertEquals(4, providers.size(), "all() should expose every shipped provider");
         assertTrue(providers.get(0) instanceof ClaudeCliProvider,
                 "first provider should be the Claude CLI provider");
         assertTrue(providers.get(1) instanceof CodexCliProvider,
                 "second provider should be the Codex CLI provider");
+        assertTrue(providers.get(2) instanceof AntigravityCliProvider,
+                "third provider should be the Antigravity CLI provider");
+        assertTrue(providers.get(3) instanceof OpenCodeCliProvider,
+                "fourth provider should be the OpenCode CLI provider");
     }
 
     @Test
@@ -47,6 +53,8 @@ class ProvidersTest {
         List<ChatProvider> providers = Providers.all();
         assertEquals("claude", providers.get(0).id(), "first provider id");
         assertEquals("codex", providers.get(1).id(), "second provider id");
+        assertEquals("antigravity", providers.get(2).id(), "third provider id");
+        assertEquals("opencode", providers.get(3).id(), "fourth provider id");
     }
 
     @Test
@@ -129,6 +137,12 @@ class ProvidersTest {
         assertNotNull(p, "byId(\"codex\") should resolve a provider");
         assertTrue(p instanceof CodexCliProvider, "byId(\"codex\") should return the Codex provider");
         assertEquals("codex", p.id(), "resolved provider's id should match the query");
+    }
+
+    @Test
+    void byIdReturnsNewProviders() {
+        assertTrue(Providers.byId("antigravity") instanceof AntigravityCliProvider);
+        assertTrue(Providers.byId("opencode") instanceof OpenCodeCliProvider);
     }
 
     @Test

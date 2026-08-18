@@ -1,10 +1,11 @@
 package io.github.hakjuoh.protege_mcp.ui;
 
 import java.awt.Color;
+import java.awt.BorderLayout;
 
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
-import javax.swing.JLabel;
+import javax.swing.JTextArea;
 import javax.swing.JSpinner;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.event.DocumentEvent;
@@ -12,7 +13,6 @@ import javax.swing.event.DocumentListener;
 import javax.swing.text.JTextComponent;
 
 import org.protege.editor.core.prefs.Preferences;
-import org.protege.editor.core.ui.preferences.PreferencesLayoutPanel;
 import org.protege.editor.core.ui.preferences.PreferencesPanel;
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
@@ -30,7 +30,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
     private JSpinner portSpinner;
     private JCheckBox ephemeralCheck;
     private JComboBox<String> bindCombo;
-    private JLabel bindWarning;
+    private JTextArea bindWarning;
     private JCheckBox sharedBrokerCheck;
     private JSpinner lingerSpinner;
     private JCheckBox autoStartCheck;
@@ -40,6 +40,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
 
     @Override
     public void initialise() throws Exception {
+        setLayout(new BorderLayout());
         Preferences p = McpConfig.prefs();
         int port = p.getInt(McpConfig.KEY_PORT, McpConfig.DEFAULT_PORT);
         boolean ephemeral = port == 0;
@@ -59,13 +60,13 @@ public class McpPreferencesPanel extends PreferencesPanel {
                 p.getString(McpConfig.KEY_BIND_ADDRESS, McpConfig.DEFAULT_BIND_ADDRESS)));
         bindCombo.setPrototypeDisplayValue("255.255.255.255.255");
 
-        bindWarning = new JLabel(PreferencesText.wrapped(
+        bindWarning = PreferencesText.helpText(
                 "Warning: a non-loopback bind address exposes the MCP endpoint (and the shared "
                 + "broker) to the network over plain, unencrypted HTTP — the static bearer token "
                 + "transits in clear text, and anyone who captures it gets full MCP access (OAuth "
                 + "authorization itself stays same-machine only). Prefer keeping 127.0.0.1 and "
                 + "tunnelling instead (ssh -L 8123:127.0.0.1:8123 <this-machine>); bind other "
-                + "addresses only on networks you trust."));
+                + "addresses only on networks you trust.");
         bindWarning.setForeground(new Color(0xB0, 0x20, 0x20));
         bindCombo.addActionListener(e -> updateBindWarning());
         ((JTextComponent) bindCombo.getEditor().getEditorComponent()).getDocument()
@@ -109,7 +110,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
                 "Allow unrestricted local-admin paths when no project policy is loaded",
                 p.getBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, true));
 
-        PreferencesLayoutPanel panel = new PreferencesLayoutPanel();
+        ResponsivePreferencesLayoutPanel panel = new ResponsivePreferencesLayoutPanel();
         panel.addGroup("Connection");
         panel.addGroupComponent(PreferencesRows.labelled("Port:", portSpinner));
         panel.addGroupComponent(ephemeralCheck);
@@ -117,7 +118,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
         panel.addGroupComponent(bindWarning);
         panel.addGroupComponent(sharedBrokerCheck);
         panel.addGroupComponent(PreferencesRows.labelled("Broker idle linger (seconds):", lingerSpinner));
-        panel.addHelpText(PreferencesText.wrapped(
+        panel.addHelpText(
                 "The server binds the address above — 127.0.0.1 (this machine only) by default; "
                 + "IPv6-preferring clients connect fine over IPv4 loopback, so ::1 is only for a "
                 + "client hard-wired to the IPv6 loopback. 0.0.0.0 serves every interface, but "
@@ -128,8 +129,8 @@ public class McpPreferencesPanel extends PreferencesPanel {
                 + "MCP clients to the right window; each window's own server uses an ephemeral "
                 + "loopback port behind it. Port, bind-address and broker changes apply the next "
                 + "time a server (or the broker) starts — for a clean switch, close all Protégé "
-                + "windows and reopen."));
-        panel.addHelpText(PreferencesText.wrapped(
+                + "windows and reopen.");
+        panel.addHelpText(
                 "Idle linger: once the last Protégé instance disconnects (last window closed, or "
                 + "the application quits), the broker keeps running this many seconds before "
                 + "exiting, so a quick restart — or a second instance arriving moments later — "
@@ -141,7 +142,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
                 + "instance disconnects: every quit-and-relaunch then spawns a fresh broker, MCP "
                 + "clients briefly get connection errors during that gap, and a relaunch racing "
                 + "the dying broker's lock handover can delay startup by a few seconds. The "
-                + "default of 15 seconds bridges a normal restart."));
+                + "default of 15 seconds bridges a normal restart.");
         panel.addSeparator();
         panel.addGroup("Startup");
         panel.addGroupComponent(autoStartCheck);
@@ -150,11 +151,11 @@ public class McpPreferencesPanel extends PreferencesPanel {
         panel.addGroupComponent(readOnlyCheck);
         panel.addGroupComponent(confirmWritesCheck);
         panel.addGroupComponent(unrestrictedNoPolicyPathsCheck);
-        panel.addHelpText(PreferencesText.wrapped(
+        panel.addHelpText(
                 "Read-only, confirmation, and the no-policy path compatibility switch apply "
                         + "immediately, without a restart. Disable the compatibility switch to require "
-                        + "a project policy before any caller-selected local path or document URL."));
-        add(panel);
+                        + "a project policy before any caller-selected local path or document URL.");
+        add(panel, BorderLayout.NORTH);
     }
 
     /** Show the exposure warning exactly while the (possibly still uncommitted) text is non-loopback. */

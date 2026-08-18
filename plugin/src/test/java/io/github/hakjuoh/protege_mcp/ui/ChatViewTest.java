@@ -34,6 +34,10 @@ import io.github.hakjuoh.protege_mcp.chat.ChatProvider;
 import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
 import io.github.hakjuoh.protege_mcp.chat.ChatUsage;
 import io.github.hakjuoh.protege_mcp.chat.ChatModelCatalog;
+import io.github.hakjuoh.protege_mcp.chat.ChatModels;
+import io.github.hakjuoh.protege_mcp.chat.ChatClientPreferences;
+import io.github.hakjuoh.protege_mcp.chat.claude.ClaudeClient;
+import io.github.hakjuoh.protege_mcp.chat.claude.ClaudeCliProvider;
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.oauth.OAuthStore;
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
@@ -407,12 +411,13 @@ class ChatViewTest {
     }
 
     @Test
-    void modelPrefKeyForNonCodexProviderIsClaude() throws Exception {
+    void modelPrefKeyUsesEachClientsOwnPreferenceScope() throws Exception {
         Method m = staticMethod("modelPrefKey", ChatProvider.class);
         assertEquals(McpConfig.KEY_CHAT_MODEL_CLAUDE, m.invoke(null, provider("claude")),
-                "non-codex id -> claude model key");
-        assertEquals(McpConfig.KEY_CHAT_MODEL_CLAUDE, m.invoke(null, provider("something-else")),
-                "any other id -> claude model key");
+                "the predefined Claude client retains its legacy key");
+        assertEquals(ChatModels.modelPrefKey("something-else"),
+                m.invoke(null, provider("something-else")),
+                "a client added later receives its own key rather than sharing Claude state");
     }
 
     // ------------------------------------------------------------------ shouldAttachPastedText
@@ -767,6 +772,57 @@ class ChatViewTest {
     }
 
     @Test
+    void switchingModelsRebuildsTheEffortPickerAndRejectsAnUnsupportedSavedValue()
+            throws Exception {
+        Preferences preferences = McpConfig.prefs();
+        preferences.clear();
+        ChatProvider provider = new ChatProvider() {
+            @Override public String id() { return "effort-switch-test"; }
+            @Override public String displayName() { return "Effort test"; }
+            @Override public boolean isAvailable() { return true; }
+            @Override public List<String> listModels() {
+                return List.of("", "model-a", "model-b");
+            }
+            @Override public List<String> reasoningEfforts(String model) {
+                return "model-a".equals(model)
+                        ? List.of("", "high") : List.of("", "low");
+            }
+            @Override public String defaultModel() { return ""; }
+            @Override public ChatProcess startTurn(ChatRequest request, ChatListener listener) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        try {
+            preferences.putString(ChatModels.reasoningEffortPrefKey(provider.id()), "high");
+            ChatView view = affordanceInstance(new javax.swing.JTextPane(),
+                    new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+            javax.swing.JComboBox<String> models = new javax.swing.JComboBox<>(
+                    new String[] { "model-a", "model-b" });
+            javax.swing.JComboBox<String> efforts = new javax.swing.JComboBox<>();
+            setField(view, "currentProvider", provider);
+            setField(view, "modelCombo", models);
+            setField(view, "effortCombo", efforts);
+            setField(view, "activeModel", "model-a");
+            Method changed = ChatView.class.getDeclaredMethod("onModelChanged");
+            changed.setAccessible(true);
+
+            models.setSelectedItem("model-b");
+            changed.invoke(view);
+            assertEquals(List.of("(default)", "low"), items(efforts));
+            assertEquals("(default)", efforts.getSelectedItem(),
+                    "a saved effort unsupported by the new model must not remain selected");
+
+            models.setSelectedItem("model-a");
+            changed.invoke(view);
+            assertEquals(List.of("(default)", "high"), items(efforts));
+            assertEquals("high", efforts.getSelectedItem(),
+                    "switching back restores a saved effort that this model supports");
+        } finally {
+            preferences.clear();
+        }
+    }
+
+    @Test
     void assistantModelPickerUsesTheSavedPreferencesOrder() throws Exception {
         Preferences preferences = TestPreferences.cleared();
         ChatModelCatalog.save(preferences, "codex", List.of("third", "first", "second"));
@@ -825,6 +881,33 @@ class ChatViewTest {
 
         assertEquals(List.of(), items(models),
                 "a disposed view must not be repopulated - the emptied picker stays empty");
+    }
+
+    @Test
+    void savedRenameRefreshesAnAlreadyOpenAssistantAndExposesTheFullName() throws Exception {
+        Preferences preferences = McpConfig.prefs();
+        preferences.clear();
+        ChatView view = bareInstance();
+        ChatProvider provider = new ClaudeCliProvider();
+        javax.swing.JComboBox<ChatProvider> providers = new javax.swing.JComboBox<>();
+        providers.addItem(provider);
+        setField(view, "providerCombo", providers);
+        setField(view, "modelCombo", new javax.swing.JComboBox<String>());
+        setField(view, "effortCombo", new javax.swing.JComboBox<String>());
+        setField(view, "currentProvider", provider);
+        followCatalog(view);
+        try {
+            String longName = "Claude Code — Research Ontology Workspace";
+            ChatClientPreferences.saveDisplayName(preferences, ClaudeClient.PROFILE, longName);
+            ChatModelCatalog.fireChanged();
+            javax.swing.SwingUtilities.invokeAndWait(() -> { /* drain listener delivery */ });
+
+            assertTrue(providers.getToolTipText().startsWith(longName),
+                    "the full editable name must remain discoverable even in a constrained toolbar");
+        } finally {
+            unfollowCatalog(view);
+            preferences.clear();
+        }
     }
 
     /** A provider whose picker list comes from the supplied preferences rather than the real home. */

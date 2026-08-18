@@ -51,7 +51,7 @@ class ClaudeCliProviderCoverageTest {
 
     @Test
     void displayNameIsHumanReadable() {
-        assertEquals("Claude", provider.displayName(), "displayName() must be 'Claude'");
+        assertEquals("Claude Code", provider.displayName(), "displayName() uses the predefined client name");
     }
 
     @Test

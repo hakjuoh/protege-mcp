@@ -15,9 +15,9 @@ public final class AssistantSteering {
 
     /**
      * Passed by {@code ClaudeCliProvider} as {@code --append-system-prompt} on every turn (the flag
-     * is per-invocation, so a resumed session must re-send it), and by {@code CodexCliProvider} as a
-     * first-message preamble on new sessions only ({@code codex exec} has no append-system-prompt
-     * equivalent, and a resumed thread already carries the preamble in its history).
+     * is per-invocation, so a resumed session must re-send it), and by the Codex, Antigravity, and
+     * OpenCode providers as a first-message preamble on new sessions. Those CLIs have no equivalent
+     * append-system-prompt flag, and a resumed thread already carries the preamble in its history.
      */
     public static final String SYSTEM_PROMPT =
             "Ontology editing policy (Protégé MCP assistant):\n"

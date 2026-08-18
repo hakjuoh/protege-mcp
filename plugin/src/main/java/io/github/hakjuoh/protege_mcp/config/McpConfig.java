@@ -46,7 +46,7 @@ public final class McpConfig {
     public static final String KEY_OAUTH_STATE = "oauthState";
 
     // ---- In-Protégé chat (Architecture Approach B) settings ----
-    /** Selected chat provider id ({@code claude} / {@code codex}). */
+    /** Selected chat provider's stable client id. */
     public static final String KEY_CHAT_PROVIDER = "chatProvider";
     /** Last model picked for the Claude provider (blank = the CLI's own default). */
     public static final String KEY_CHAT_MODEL_CLAUDE = "chatModelClaude";
@@ -60,6 +60,10 @@ public final class McpConfig {
     public static final String KEY_CHAT_CLAUDE_PATH = "chatClaudePath";
     /** Optional absolute path / dir override when the {@code codex} CLI is not on the GUI's PATH. */
     public static final String KEY_CHAT_CODEX_PATH = "chatCodexPath";
+    /** Optional user-visible name override for the predefined Claude Code client. */
+    public static final String KEY_CHAT_CLIENT_NAME_CLAUDE = "chatClientNameClaude";
+    /** Optional user-visible name override for the predefined Codex client. */
+    public static final String KEY_CHAT_CLIENT_NAME_CODEX = "chatClientNameCodex";
     /** Whether the chat should show the model's reasoning ("thinking") in the transcript. */
     public static final String KEY_CHAT_SHOW_THINKING = "chatShowThinking";
     /** Selected Claude reasoning effort; blank delegates to Claude Code's configured default. */

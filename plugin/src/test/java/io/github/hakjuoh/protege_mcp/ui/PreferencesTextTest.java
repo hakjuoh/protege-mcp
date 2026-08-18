@@ -1,8 +1,9 @@
 package io.github.hakjuoh.protege_mcp.ui;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import javax.swing.JTextArea;
 
 import org.junit.jupiter.api.Test;
 
@@ -13,47 +14,33 @@ import org.junit.jupiter.api.Test;
 class PreferencesTextTest {
 
     @Test
-    void wrappedProducesFixedWidthHtmlBlock() {
-        assertEquals("<html><div style='width: " + PreferencesText.HELP_TEXT_WIDTH_PX
-                + "px'>some help</div></html>", PreferencesText.wrapped("some help"));
+    void helpTextUsesNativeResponsiveWordWrapping() {
+        JTextArea help = PreferencesText.helpText("some help");
+        assertTrue(help.getLineWrap());
+        assertTrue(help.getWrapStyleWord());
+        assertFalse(help.isEditable());
+        assertFalse(help.isFocusable());
+        assertFalse(help.isOpaque());
     }
 
     @Test
-    void wrappedStartsWithHtmlTagSoSwingRendersMultiLine() {
-        // JLabel only soft-wraps when the text literally starts with <html>; a leading space or
-        // other prefix would silently fall back to single-line rendering.
-        assertTrue(PreferencesText.wrapped("x").startsWith("<html>"));
-        assertTrue(PreferencesText.wrapped("").startsWith("<html>"));
+    void helpTextPreservesPlainUnicodeAndMarkupLookingProse() {
+        String prose = "Protégé windows — use <html> & Preferences ▸ MCP";
+        JTextArea help = PreferencesText.helpText(prose);
+        assertTrue(help.getText().equals(prose));
     }
 
     @Test
-    void wrappedEscapesHtmlSignificantCharacters() {
-        String wrapped = PreferencesText.wrapped("a < b & b > c");
-        assertTrue(wrapped.contains("a &lt; b &amp; b &gt; c"));
-        assertFalse(wrapped.contains("a < b"));
-    }
+    void preferredHeightReflowsWhenTheAllocatedWidthChanges() {
+        JTextArea help = PreferencesText.helpText(
+                "A sufficiently long help paragraph should occupy more lines at a narrow width "
+                + "and fewer lines when the Preferences dialog grows wider.");
+        help.setSize(280, 1000);
+        int narrowHeight = help.getPreferredSize().height;
+        help.setSize(700, 1000);
+        int wideHeight = help.getPreferredSize().height;
 
-    @Test
-    void wrappedEscapesAmpersandBeforeAngleBrackets() {
-        // Ampersands must be escaped first, or "&lt;" would double-escape to "&amp;lt;".
-        assertTrue(PreferencesText.wrapped("<").contains("&lt;"));
-        assertFalse(PreferencesText.wrapped("<").contains("&amp;lt;"));
-    }
-
-    @Test
-    void wrappedPreservesNonAsciiProseVerbatim() {
-        // Help texts use em-dashes, accented product names and menu glyphs; the HTML view renders
-        // literal Unicode fine, so no entity substitution should happen.
-        String prose = "Protégé windows — Preferences ▸ MCP";
-        assertTrue(PreferencesText.wrapped(prose).contains(prose));
-    }
-
-    @Test
-    void wrappedNeutralizesInjectedMarkup() {
-        // A future help text containing markup-looking prose must not alter the HTML structure.
-        String wrapped = PreferencesText.wrapped("use <html> or </div> literally");
-        assertFalse(wrapped.substring("<html>".length()).contains("<html>"));
-        assertTrue(wrapped.contains("&lt;html&gt;"));
-        assertTrue(wrapped.contains("&lt;/div&gt;"));
+        assertTrue(narrowHeight > wideHeight,
+                "native wrapping must recalculate preferred height from the allocated width");
     }
 }

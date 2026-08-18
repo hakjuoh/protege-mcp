@@ -5,8 +5,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Matcher;
@@ -21,8 +23,6 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-import io.github.hakjuoh.protege_mcp.config.McpConfig;
 
 /**
  * Owns the model ids shown by the Ontology Assistant. When a user has not saved a catalog yet, the
@@ -97,11 +97,12 @@ public final class ChatModelCatalog {
      * thousand levels, or one whose "level" is a paragraph of prose, describes nothing the CLI would
      * accept - and offering it would put a value in the picker that fails at the API on every send.
      */
-    private static final int MAX_EFFORT_CHARS = 32;
     private static final int MAX_EFFORTS = 24;
     /**
-     * Views that want to know a saved catalog changed. Copy-on-write because the Preferences panel
-     * fires from the event thread while a view may be disposing on that same thread.
+     * Views that want to know saved client-facing catalog settings changed. The notification also
+     * covers a client display-name edit because the same open provider selector must repaint on OK.
+     * Copy-on-write because the Preferences panel fires from the event thread while a view may be
+     * disposing on that same thread.
      */
     private static final List<Runnable> LISTENERS = new CopyOnWriteArrayList<>();
 
@@ -113,11 +114,23 @@ public final class ChatModelCatalog {
         return load(preferences, providerId, home());
     }
 
+    /** Returns a profile-bound catalog, including metadata supplied by its runtime adapter. */
+    static List<String> load(Preferences preferences, ChatClientProfile client) {
+        return load(preferences, client, home());
+    }
+
     /** Loads a catalog from the supplied CLI metadata root; package-private for deterministic tests. */
     static List<String> load(Preferences preferences, String providerId, Path metadataHome) {
         String stored = preferences.getString(modelPrefKey(providerId), null);
         return stored == null
-                ? bootstrapModels(preferences, providerId, metadataHome)
+                ? bootstrapModels(preferences, ChatClients.byId(providerId), providerId, metadataHome)
+                : parseStoredModels(stored);
+    }
+
+    static List<String> load(Preferences preferences, ChatClientProfile client, Path metadataHome) {
+        String stored = preferences.getString(modelPrefKey(client.id()), null);
+        return stored == null
+                ? bootstrapModels(preferences, client, client.id(), metadataHome)
                 : parseStoredModels(stored);
     }
 
@@ -128,11 +141,13 @@ public final class ChatModelCatalog {
      * still in preferences would silently drop out of the picker and the next turn would quietly run
      * on a different model.
      */
-    private static List<String> bootstrapModels(Preferences preferences, String providerId,
-            Path metadataHome) {
+    private static List<String> bootstrapModels(Preferences preferences, ChatClientProfile client,
+            String providerId, Path metadataHome) {
         List<String> models = new ArrayList<>();
         models.add(preferences.getString(ChatModels.modelPrefKey(providerId), ""));
-        models.addAll(discoverModels(providerId, metadataHome));
+        if (client != null) {
+            models.addAll(client.adapter().discoverModels(metadataHome));
+        }
         return normalize(models);
     }
 
@@ -142,8 +157,8 @@ public final class ChatModelCatalog {
     }
 
     /**
-     * Registers a listener notified after a catalog edit is saved. Notifications always arrive on the
-     * event dispatch thread, so a listener may touch Swing state directly.
+     * Registers a listener notified after client catalog/name edits are saved. Notifications always
+     * arrive on the event dispatch thread, so a listener may touch Swing state directly.
      */
     public static void addChangeListener(Runnable listener) {
         if (listener != null) {
@@ -157,7 +172,8 @@ public final class ChatModelCatalog {
     }
 
     /**
-     * Announces that a saved catalog changed. Each listener is re-checked when its notification runs:
+     * Announces that saved client-facing catalog settings changed. Each listener is re-checked when its
+     * notification runs:
      * a view disposed between the save and the queued notification must not be called. One listener
      * that throws is contained: the remaining views still refresh, and the exception never escapes
      * into the Preferences dialog's OK handling, which has already saved the catalog by this point.
@@ -183,11 +199,9 @@ public final class ChatModelCatalog {
         }
     }
 
-    /** The preference key for a provider's editable model catalog. */
-    public static String modelPrefKey(String providerId) {
-        return "codex".equals(providerId)
-                ? McpConfig.KEY_CHAT_MODELS_CODEX
-                : McpConfig.KEY_CHAT_MODELS_CLAUDE;
+    /** The preference key for a client profile's editable model catalog. */
+    public static String modelPrefKey(String clientId) {
+        return ChatClientPreferences.modelCatalogPrefKey(clientId);
     }
 
     /** Pure parser used by the preference store and headless tests. */
@@ -222,6 +236,13 @@ public final class ChatModelCatalog {
         return pickerModels(preferences, providerId, home());
     }
 
+    static List<String> pickerModels(Preferences preferences, ChatClientProfile client) {
+        List<String> values = new ArrayList<>();
+        values.add("");
+        values.addAll(load(preferences, client, home()));
+        return List.copyOf(values);
+    }
+
     /** Builds picker values from the supplied CLI metadata root. */
     static List<String> pickerModels(Preferences preferences, String providerId, Path metadataHome) {
         List<String> values = new ArrayList<>();
@@ -245,13 +266,8 @@ public final class ChatModelCatalog {
         return List.of("", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra");
     }
 
-    private static List<String> discoverModels(String providerId, Path metadataHome) {
-        return "codex".equals(providerId)
-                ? discoverCodexModels(metadataHome)
-                : discoverClaudeModels(metadataHome);
-    }
-
-    private static List<String> discoverClaudeModels(Path metadataHome) {
+    /** Adapter hook for Claude Code's local settings metadata. */
+    public static List<String> discoverClaudeModels(Path metadataHome) {
         Set<String> models = new LinkedHashSet<>();
         Path claude = metadataHome.resolve(".claude");
         addJsonField(models, claude.resolve("settings.json"), "model");
@@ -259,7 +275,8 @@ public final class ChatModelCatalog {
         return List.copyOf(models);
     }
 
-    private static List<String> discoverCodexModels(Path metadataHome) {
+    /** Adapter hook for Codex's local config and model cache. */
+    public static List<String> discoverCodexModels(Path metadataHome) {
         Set<String> models = new LinkedHashSet<>();
         Path codex = metadataHome.resolve(".codex");
         Path config = codex.resolve("config.toml");
@@ -274,26 +291,50 @@ public final class ChatModelCatalog {
     }
 
     /**
-     * Narrows the effort values from the supplied CLI metadata root; package-private for tests.
+     * Narrows the effort values from the supplied CLI metadata root.
      *
      * <p>Only {@code models_cache.json} is consulted, because that is the only file Codex itself
      * reads. A stale sibling backup would otherwise be able to narrow the picker down to values the
      * running CLI no longer accepts, which fails at the API rather than in the panel.
      */
-    static List<String> codexReasoningEfforts(String model, Path metadataHome) {
+    public static List<String> codexReasoningEfforts(String model, Path metadataHome) {
         String target = model == null || model.isBlank()
                 ? configuredCodexModel(metadataHome)
                 : model.trim();
-        if (target != null && !target.isBlank()) {
+        if (target == null || target.isBlank()) {
+            return codexReasoningEfforts();
+        }
+        return codexReasoningEffortsByModel(List.of(target), metadataHome).get(target);
+    }
+
+    /** Parses the Codex cache at most once for an ordered group of catalog models. */
+    public static Map<String, List<String>> codexReasoningEffortsByModel(
+            List<String> models, Path metadataHome) {
+        if (models == null || models.isEmpty()) {
+            return Map.of();
+        }
+        JsonNode root = null;
+        Path cache = metadataHome.resolve(".codex").resolve("models_cache.json");
+        try {
+            if (Files.isRegularFile(cache)) {
+                root = MAPPER.readTree(readMetadata(cache));
+            }
+        } catch (IOException | RuntimeException ignored) {
+            // Each requested model receives the conservative CLI-level fallback below.
+        }
+        Map<String, List<String>> byModel = new LinkedHashMap<>();
+        for (String model : models) {
+            if (model == null || model.isBlank()) {
+                continue;
+            }
+            String target = model.trim();
             Set<String> efforts = new LinkedHashSet<>();
             efforts.add("");
-            addCodexCacheEfforts(efforts,
-                    metadataHome.resolve(".codex").resolve("models_cache.json"), target);
-            if (efforts.size() > 1) {
-                return List.copyOf(efforts);
-            }
+            addCodexCacheEfforts(efforts, root, target);
+            byModel.put(target, efforts.size() > 1
+                    ? List.copyOf(efforts) : codexReasoningEfforts());
         }
-        return codexReasoningEfforts();
+        return Map.copyOf(byModel);
     }
 
     /** Parses Claude settings metadata without touching the filesystem; package-private for tests. */
@@ -348,18 +389,6 @@ public final class ChatModelCatalog {
             }
         } catch (IOException | RuntimeException ignored) {
             // Optional CLI metadata is best effort; an unavailable catalog stays empty.
-        }
-    }
-
-    private static void addCodexCacheEfforts(Set<String> efforts, Path path, String target) {
-        try {
-            if (!Files.isRegularFile(path)) {
-                return;
-            }
-            JsonNode root = MAPPER.readTree(readMetadata(path));
-            addCodexCacheEfforts(efforts, root, target);
-        } catch (IOException | RuntimeException ignored) {
-            // Optional CLI metadata is best effort; the conservative effort fallback remains usable.
         }
     }
 
@@ -431,13 +460,7 @@ public final class ChatModelCatalog {
      * it in the picker would offer a send that cannot work as if the CLI's own metadata had named it.
      */
     static boolean isAcceptableEffortLevel(String effort) {
-        if (effort == null) {
-            return false;
-        }
-        String trimmed = effort.trim();
-        return !trimmed.isEmpty() && trimmed.length() <= MAX_EFFORT_CHARS
-                && trimmed.chars().allMatch(c -> c == '-' || c == '_' || c == '.'
-                        || (c < 0x80 && Character.isLetterOrDigit(c)));
+        return ChatReasoningEfforts.isAcceptable(effort);
     }
 
     /** Whether a cache entry describes a model the CLI will actually run for us. */

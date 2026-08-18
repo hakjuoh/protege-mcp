@@ -47,7 +47,7 @@
         <defaultViewConfigFileName value="viewconfig-ontologyassistanttab.xml"/>
     </extension>
 
-    <!-- Preferences tab for the chat: CLI path overrides + egress consent reset. -->
+    <!-- Preferences tab for the chat: per-client profiles plus shared access/privacy settings. -->
     <extension id="io.github.hakjuoh.protege_mcp.chat.preferences"
                point="org.protege.editor.core.application.preferencespanel">
         <label value="Ontology Assistant"/>

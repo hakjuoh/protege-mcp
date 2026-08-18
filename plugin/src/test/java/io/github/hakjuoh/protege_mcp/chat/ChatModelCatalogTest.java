@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -163,6 +164,19 @@ class ChatModelCatalogTest {
     }
 
     @Test
+    void codexBatchEffortsAssociateEachModelFromOneCacheSnapshot() throws Exception {
+        writeCodexMetadata("models_cache.json", "{\"models\":["
+                + "{\"slug\":\"syn-low\",\"supported_reasoning_levels\":[{\"effort\":\"low\"}]},"
+                + "{\"slug\":\"syn-high\",\"supported_reasoning_levels\":[{\"effort\":\"high\"}]}]}");
+
+        assertEquals(Map.of(
+                "syn-low", List.of("", "low"),
+                "syn-high", List.of("", "high")),
+                ChatModelCatalog.codexReasoningEffortsByModel(
+                        List.of("syn-low", "syn-high"), tempDir));
+    }
+
+    @Test
     void onlyALevelTheCliCouldTakeIsOfferedAsOne() throws Exception {
         // The value is sent as -c model_reasoning_effort="…", so a level is a bare token. A cache entry
         // whose level is a sentence, a line of its own, or longer than any identifier names nothing the CLI
@@ -172,7 +186,7 @@ class ChatModelCatalogTest {
         writeCodexMetadata("models_cache.json", "{\"models\":[{\"slug\":\"syn-shapes\","
                 + "\"supported_reasoning_levels\":[{\"effort\":\"low\"},{\"effort\":\"turbo-2.5_x\"},"
                 + "{\"effort\":\"not a level but prose\"},{\"effort\":\"high\\nlow\"},"
-                + "{\"effort\":\"" + "x".repeat(33) + "\"},{\"effort\":\"  medium  \"},"
+                + "{\"effort\":\"" + "x".repeat(257) + "\"},{\"effort\":\"  medium  \"},"
                 + "{\"effort\":\"héroïque\"},{\"effort\":\"\"},{\"effort\":\"   \"}]}]}");
 
         assertEquals(List.of("", "low", "turbo-2.5_x", "medium"),

@@ -16,8 +16,6 @@ import javax.swing.SpinnerNumberModel;
 
 import org.junit.jupiter.api.Test;
 
-import org.protege.editor.core.ui.preferences.PreferencesLayoutPanel;
-
 /**
  * Headless unit tests for {@link PreferencesRows}. Swing components are lightweight, so composing
  * and laying them out needs no display; same-package placement reaches the package-private class.
@@ -55,7 +53,7 @@ class PreferencesRowsTest {
     }
 
     /**
-     * Regression test for the labelled-row placement inside a real {@code PreferencesLayoutPanel}.
+     * Regression test for labelled-row placement inside the responsive preferences layout.
      * The upstream {@code addLabelledGroupComponent} puts the label and its field into the SAME
      * grid cell (field leading, label trailing), so next to a wide sibling (a long checkbox, a
      * wrapped help text) the label floated at the far right edge of the dialog. A row composed by
@@ -64,7 +62,7 @@ class PreferencesRowsTest {
      */
     @Test
     void labelledRowStaysAtLeadingEdgeOfComponentColumn() {
-        PreferencesLayoutPanel panel = new PreferencesLayoutPanel();
+        ResponsivePreferencesLayoutPanel panel = new ResponsivePreferencesLayoutPanel();
         panel.addGroup("Connection");
         JSpinner spinner = new JSpinner(new SpinnerNumberModel(8123, 1, 65535, 1));
         Box row = PreferencesRows.labelled("Port:", spinner);
@@ -72,9 +70,8 @@ class PreferencesRowsTest {
         JCheckBox wideSibling = new JCheckBox(
                 "Share one MCP endpoint across all Protégé windows and instances (broker process)");
         panel.addGroupComponent(wideSibling);
-        panel.addHelpText(PreferencesText.wrapped(
-                "A help text long enough to be wrapped over several lines by the fixed-width HTML "
-                + "block, which widens the shared component column just like the real MCP tab."));
+        panel.addHelpText("A help text long enough to wrap over several lines in the responsive "
+                + "component column, just like the real MCP tab.");
 
         panel.setSize(900, 600);
         layoutTree(panel);

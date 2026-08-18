@@ -1,8 +1,5 @@
 package io.github.hakjuoh.protege_mcp.chat;
 
-import io.github.hakjuoh.protege_mcp.chat.claude.ClaudeCliProvider;
-import io.github.hakjuoh.protege_mcp.chat.codex.CodexCliProvider;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -14,7 +11,9 @@ public final class Providers {
 
     /** Every known provider, in display order (regardless of whether it is installed). */
     public static List<ChatProvider> all() {
-        return List.of(new ClaudeCliProvider(), new CodexCliProvider());
+        return ChatClients.predefined().stream()
+                .map(profile -> profile.adapter().createProvider(profile))
+                .toList();
     }
 
     /** Only the providers whose CLI is installed and resolvable right now. */

@@ -120,8 +120,9 @@ public class ChatView extends AbstractOWLViewComponent {
     private static final String INTRO = "Ask about the active ontology, or ask for edits. The assistant "
             + "runs your local CLI and edits through Protégé's MCP server (changes appear in the GUI and "
             + "can be undone).\n";
-    private static final String NO_CLI = "No coding-agent CLI found. Install Claude Code (`claude`) or "
-            + "Codex (`codex`) and log in, then reopen this view. You can also set the CLI path in "
+    private static final String NO_CLI = "No coding-agent CLI found. Install Claude Code (`claude`), "
+            + "Codex (`codex`), Antigravity (`agy`), or OpenCode (`opencode`) and log in, then reopen "
+            + "this view. You can also set the CLI path in "
             + "Preferences ▸ Ontology Assistant.\n";
     private static final int PASTED_TEXT_ATTACHMENT_THRESHOLD = 2000;
     private static final int PASTED_TEXT_LINE_THRESHOLD = 50;
@@ -298,7 +299,8 @@ public class ChatView extends AbstractOWLViewComponent {
         if (!available.isEmpty()) {
             String savedProvider = McpConfig.prefs().getString(McpConfig.KEY_CHAT_PROVIDER, "");
             providerCombo = new JComboBox<>();
-            providerCombo.setToolTipText("Provider (switching keeps this conversation and hands off new turns)");
+            providerCombo.setToolTipText(
+                    "Provider (switching keeps this conversation and hands off new turns)");
             providerCombo.setRenderer(new DefaultListCellRenderer() {
                 private static final long serialVersionUID = 1L;
 
@@ -308,6 +310,7 @@ public class ChatView extends AbstractOWLViewComponent {
                     super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
                     if (value instanceof ChatProvider p) {
                         setText(p.displayName());
+                        setToolTipText(p.displayName());
                     }
                     return this;
                 }
@@ -324,6 +327,7 @@ public class ChatView extends AbstractOWLViewComponent {
             }
             if (currentProvider != null) {
                 providerCombo.setSelectedItem(currentProvider);
+                updateProviderTooltip();
             }
             // Fires on user change only (the initial selection above equals currentProvider -> no-op).
             providerCombo.addActionListener(e -> {
@@ -333,7 +337,7 @@ public class ChatView extends AbstractOWLViewComponent {
                 }
             });
             Dimension pc = providerCombo.getPreferredSize();
-            providerCombo.setPreferredSize(new Dimension(96, pc.height));
+            providerCombo.setPreferredSize(new Dimension(Math.max(132, pc.width), pc.height));
         }
 
         modelCombo = new JComboBox<>();
@@ -379,8 +383,7 @@ public class ChatView extends AbstractOWLViewComponent {
 
         providerBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         if (available.isEmpty()) {
-            JLabel none = new JLabel("No coding-agent CLI found — install Claude Code (claude) or Codex "
-                    + "(codex), then reopen");
+            JLabel none = new JLabel("No coding-agent CLI found — install a configured client, then reopen");
             none.setForeground(new Color(0xB00020));
             providerBar.add(none);
         }
@@ -954,6 +957,13 @@ public class ChatView extends AbstractOWLViewComponent {
      * next turn would still run on.
      */
     private void refreshModelPickers() {
+        if (providerCombo != null) {
+            // Provider renderers ask the profile for its current user-visible name. Repaint on the
+            // same notification that refreshes model catalogs so a rename saved in Preferences is
+            // visible immediately without rebuilding the conversation or reopening this view.
+            providerCombo.repaint();
+            updateProviderTooltip();
+        }
         if (currentProvider == null || modelCombo == null || effortCombo == null) {
             return;
         }
@@ -961,6 +971,13 @@ public class ChatView extends AbstractOWLViewComponent {
         activeModel = selectedModel();
         populateReasoningEfforts(currentProvider);
         activeReasoningEffort = selectedReasoningEffort();
+    }
+
+    private void updateProviderTooltip() {
+        if (providerCombo != null && currentProvider != null) {
+            providerCombo.setToolTipText(currentProvider.displayName()
+                    + " — switching keeps this conversation and hands off new turns");
+        }
     }
 
     private void populateModels(ChatProvider p) {

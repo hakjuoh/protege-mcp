@@ -32,7 +32,9 @@ final class PreferencesRows {
             component.setMinimumSize(component.getPreferredSize());
         }
         Box row = Box.createHorizontalBox();
-        row.add(new JLabel(label));
+        JLabel fieldLabel = new JLabel(label);
+        fieldLabel.setLabelFor(component);
+        row.add(fieldLabel);
         row.add(Box.createHorizontalStrut(LABEL_GAP_PX));
         row.add(component);
         return row;

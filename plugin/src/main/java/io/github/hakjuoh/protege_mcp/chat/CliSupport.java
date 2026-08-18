@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.chat;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -13,12 +14,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
- * Shared plumbing for driving a coding-agent CLI ({@code claude} / {@code codex}) as a subprocess:
+ * Shared plumbing for driving a coding-agent CLI as a subprocess:
  * resolving the executable's absolute path (a Finder/Dock-launched Protégé has a minimal {@code PATH}),
  * probing its version, and spawning it with its stdout pumped line-by-line off the EDT.
  */
@@ -51,6 +54,7 @@ public final class CliSupport {
         String home = System.getProperty("user.home");
         if (home != null && !home.isBlank()) {
             dirs.add(home + "/.local/bin");
+            dirs.add(home + "/.opencode/bin");
             dirs.add(home + "/.npm-global/bin");
             dirs.add(home + "/.bun/bin");
             dirs.add(home + "/bin");
@@ -99,6 +103,125 @@ public final class CliSupport {
     }
 
     /**
+     * Runs an installed CLI's non-interactive {@code models} command with strict time/output bounds.
+     * Intended for a background worker, never the Swing event thread. A missing executable, timeout,
+     * non-zero exit, oversized output, or malformed line contributes no models. Standard input is
+     * closed immediately because discovery has no interactive phase.
+     */
+    public static List<String> discoverModelIds(String executableName, String override) {
+        return discoverModelIds(executableName, override, TimeUnit.SECONDS.toMillis(10));
+    }
+
+    static List<String> discoverModelIds(
+            String executableName, String override, long timeoutMillis) {
+        final int maxOutputBytes = 64 * 1024;
+        Optional<String> output = runDiscoveryCommand(
+                executableName, override, List.of("models"), timeoutMillis, maxOutputBytes);
+        if (output.isEmpty()) {
+            return List.of();
+        }
+        java.util.LinkedHashSet<String> models = new java.util.LinkedHashSet<>();
+        for (String line : output.orElseThrow().split("\\R")) {
+            String model = line.trim();
+            if (ChatModelCatalog.isAcceptableModelId(model)) {
+                models.add(model);
+                if (models.size() == ChatModelCatalog.maxModels()) {
+                    break;
+                }
+            }
+        }
+        return List.copyOf(models);
+    }
+
+    /** Runs a bounded model-metadata command for an installed CLI. */
+    public static Optional<String> runDiscoveryCommand(
+            String executableName, String override, List<String> arguments) {
+        return runDiscoveryCommand(executableName, override, arguments,
+                TimeUnit.SECONDS.toMillis(15), 1024 * 1024);
+    }
+
+    static Optional<String> runDiscoveryCommand(String executableName, String override,
+            List<String> arguments, long timeoutMillis, int maxOutputBytes) {
+        String executable = resolveExecutable(executableName, override);
+        if (executable == null || timeoutMillis <= 0 || maxOutputBytes <= 0
+                || arguments == null || arguments.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            List<String> command = new ArrayList<>();
+            command.add(executable);
+            command.addAll(arguments);
+            ProcessBuilder builder = new ProcessBuilder(command);
+            // Warnings and authentication diagnostics belong on stderr and must never become
+            // persistent model ids. Discard them while allowing stdout to remain authoritative.
+            builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+            ensureHome(builder.environment());
+            ensurePath(builder.environment());
+            Process process = builder.start();
+            // Model discovery is a non-interactive CLI operation. Close stdin immediately so a
+            // client that waits for EOF before finalizing its output (notably `agy models`) cannot
+            // sit behind an open ProcessBuilder pipe until the discovery timeout expires.
+            process.getOutputStream().close();
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            AtomicBoolean oversized = new AtomicBoolean();
+            Thread reader = new Thread(() -> {
+                byte[] buffer = new byte[4096];
+                try (InputStream stream = process.getInputStream()) {
+                    int count;
+                    while ((count = stream.read(buffer)) >= 0) {
+                        if (output.size() + count <= maxOutputBytes) {
+                            output.write(buffer, 0, count);
+                        } else {
+                            oversized.set(true);
+                        }
+                    }
+                } catch (IOException ignored) {
+                    // A killed or failed discovery process contributes no catalog entries.
+                }
+            }, "protege-chat-model-discovery");
+            reader.setDaemon(true);
+            reader.start();
+            try {
+                if (!process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS)) {
+                    terminateProcessTree(process);
+                    process.waitFor(2, TimeUnit.SECONDS);
+                    reader.join(1500);
+                    return Optional.empty();
+                }
+                reader.join(1500);
+            } catch (InterruptedException interrupted) {
+                terminateProcessTree(process);
+                Thread.currentThread().interrupt();
+                return Optional.empty();
+            }
+            if (reader.isAlive() || process.exitValue() != 0 || oversized.get()) {
+                return Optional.empty();
+            }
+            return Optional.of(output.toString(StandardCharsets.UTF_8));
+        } catch (IOException | RuntimeException failure) {
+            return Optional.empty();
+        }
+    }
+
+    private static void terminateProcessTree(Process process) {
+        try {
+            // Snapshot first: destroying the parent can detach descendants from its ProcessHandle.
+            List<ProcessHandle> descendants = process.descendants().toList();
+            for (ProcessHandle descendant : descendants) {
+                descendant.destroyForcibly();
+            }
+        } catch (RuntimeException ignored) {
+            // The parent is still terminated below even if the platform cannot enumerate children.
+        }
+        process.destroyForcibly();
+        try {
+            process.getInputStream().close();
+        } catch (IOException ignored) {
+            // Closing only unblocks the bounded reader after termination.
+        }
+    }
+
+    /**
      * Spawn {@code command}, returning immediately with a {@link ChatProcess} handle. The child's
      * stdin is closed (so a prompt-on-stdin CLI sees EOF), its stdout is read line-by-line on a daemon
      * worker (each line passed to {@code lineHandler}), and its stderr is drained into a buffer. When
@@ -106,7 +229,25 @@ public final class CliSupport {
      */
     public static ChatProcess spawn(List<String> command, Map<String, String> extraEnv, File workingDir,
             Consumer<String> lineHandler, BiConsumer<Integer, String> completionHandler) throws IOException {
-        ProcessBuilder pb = new ProcessBuilder(loginShellWrap(command));
+        return spawnProcess(loginShellWrap(command), extraEnv, workingDir,
+                lineHandler, completionHandler);
+    }
+
+    /**
+     * Spawn without a login-shell wrapper. Use this when security-critical environment overrides must
+     * not be replaced by assignments in the user's shell profile. The executable must already be
+     * resolved; standard system paths are still added for helpers it launches.
+     */
+    public static ChatProcess spawnDirect(List<String> command, Map<String, String> extraEnv,
+            File workingDir, Consumer<String> lineHandler,
+            BiConsumer<Integer, String> completionHandler) throws IOException {
+        return spawnProcess(command, extraEnv, workingDir, lineHandler, completionHandler);
+    }
+
+    private static ChatProcess spawnProcess(List<String> command, Map<String, String> extraEnv,
+            File workingDir, Consumer<String> lineHandler,
+            BiConsumer<Integer, String> completionHandler) throws IOException {
+        ProcessBuilder pb = new ProcessBuilder(command);
         if (workingDir != null) {
             pb.directory(workingDir);
         }
@@ -263,13 +404,65 @@ public final class CliSupport {
         return path.toFile();
     }
 
-    /** A neutral working directory so a CLI does not auto-discover a project's config (CLAUDE.md, etc.). */
-    public static File neutralWorkingDir() {
-        File dir = new File(System.getProperty("java.io.tmpdir", "."), "protege-mcp-chat");
-        if (!dir.isDirectory()) {
-            dir.mkdirs();
+    /** Creates an owner-only temporary directory for a CLI's managed per-session configuration. */
+    public static Path createOwnerOnlyTempDirectory(String prefix) throws IOException {
+        Path path;
+        try {
+            path = Files.createTempDirectory(prefix,
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        } catch (UnsupportedOperationException notPosix) {
+            path = Files.createTempDirectory(prefix);
+            File directory = path.toFile();
+            directory.setReadable(false, false);
+            directory.setReadable(true, true);
+            directory.setWritable(false, false);
+            directory.setWritable(true, true);
+            directory.setExecutable(false, false);
+            directory.setExecutable(true, true);
         }
-        return dir.isDirectory() ? dir : new File(System.getProperty("user.home", "."));
+        path.toFile().deleteOnExit();
+        return path;
+    }
+
+    /** Writes an exact managed config path with owner-only permissions and registers exit cleanup. */
+    public static void writeOwnerOnlyFile(Path path, String content) throws IOException {
+        Files.createDirectories(path.getParent());
+        if (!Files.exists(path)) {
+            try {
+                Files.createFile(path,
+                        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+            } catch (UnsupportedOperationException notPosix) {
+                Files.createFile(path);
+                File file = path.toFile();
+                file.setReadable(false, false);
+                file.setReadable(true, true);
+                file.setWritable(false, false);
+                file.setWritable(true, true);
+            }
+        }
+        Files.writeString(path, content, StandardCharsets.UTF_8);
+        path.toFile().deleteOnExit();
+    }
+
+    /**
+     * A private, process-random neutral directory so a CLI cannot discover repository instructions or
+     * another local user's planted project configuration. Creation fails closed; the user's home is
+     * never used as a fallback working directory.
+     */
+    public static File neutralWorkingDir() {
+        return NeutralWorkingDirectory.PATH;
+    }
+
+    private static final class NeutralWorkingDirectory {
+        private static final File PATH = create();
+
+        private static File create() {
+            try {
+                return createOwnerOnlyTempDirectory("protege-mcp-chat-").toFile();
+            } catch (IOException failure) {
+                throw new IllegalStateException("Could not create a private CLI working directory", failure);
+            }
+        }
     }
 
     /** A concise one-line failure message from a non-zero exit + captured stderr (last bytes). */
@@ -293,6 +486,17 @@ public final class CliSupport {
         return "The '" + name + "' CLI exited without an answer and without reporting why. Send the "
                 + "message again; if it keeps happening, run " + name + " in a terminal to see what it "
                 + "reports.";
+    }
+
+    /** Shared completion semantics for JSON-streaming CLIs with no provider-specific warning policy. */
+    public static void finishJsonTurn(String name, int exit, String stderr,
+            boolean errorReported, boolean answered, ChatListener listener) {
+        if (exit != 0 && !errorReported) {
+            listener.onError(describeFailure(name, exit, stderr));
+        } else if (exit == 0 && !errorReported && !answered) {
+            listener.onError(describeSilentTurn(name));
+        }
+        listener.onComplete(exit);
     }
 
     private static void ensureHome(Map<String, String> env) {
@@ -328,6 +532,7 @@ public final class CliSupport {
         String home = System.getProperty("user.home");
         if (home != null && !home.isBlank()) {
             dirs.add(home + "/.local/bin");
+            dirs.add(home + "/.opencode/bin");
         }
         env.put("PATH", String.join(File.pathSeparator, dirs));
     }

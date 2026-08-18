@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.chat;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import org.junit.jupiter.api.Test;
@@ -19,9 +20,12 @@ class ChatModelsTest {
     }
 
     @Test
-    void modelPrefKeyForAnyOtherProviderDefaultsToTheClaudeKey() {
-        // Any non-codex id (incl. null / unknown) maps to the Claude key — the two keys must never swap.
-        assertEquals(McpConfig.KEY_CHAT_MODEL_CLAUDE, ChatModels.modelPrefKey("something-else"));
+    void modelPrefKeyForAClientAddedLaterIsIndependent() {
+        assertEquals(ChatClientPreferences.selectedModelPrefKey("something-else"),
+                ChatModels.modelPrefKey("something-else"));
+        assertNotEquals(McpConfig.KEY_CHAT_MODEL_CLAUDE,
+                ChatModels.modelPrefKey("something-else"));
+        // Null retains the old defensive fallback for callers that have no selected client.
         assertEquals(McpConfig.KEY_CHAT_MODEL_CLAUDE, ChatModels.modelPrefKey(null));
     }
 

@@ -1,6 +1,9 @@
 package io.github.hakjuoh.protege_mcp.chat.codex;
 
 import io.github.hakjuoh.protege_mcp.chat.AssistantSteering;
+import io.github.hakjuoh.protege_mcp.chat.ChatClientPreferences;
+import io.github.hakjuoh.protege_mcp.chat.ChatClientProfile;
+import io.github.hakjuoh.protege_mcp.chat.ChatClientModelCatalog;
 import io.github.hakjuoh.protege_mcp.chat.ChatListener;
 import io.github.hakjuoh.protege_mcp.chat.ChatModelCatalog;
 import io.github.hakjuoh.protege_mcp.chat.ChatProcess;
@@ -31,9 +34,22 @@ import io.github.hakjuoh.protege_mcp.config.McpConfig;
  */
 public final class CodexCliProvider implements ChatProvider {
 
-    public static final String EXECUTABLE = "codex";
+    public static final String ID = CodexClient.ID;
+    public static final String EXECUTABLE = CodexClient.EXECUTABLE;
     /** Env var Codex reads for the MCP server's bearer token (referenced by the -c override). */
     static final String TOKEN_ENV_VAR = "PROTEGE_MCP_TOKEN";
+    private final ChatClientProfile profile;
+
+    public CodexCliProvider() {
+        this(CodexClient.PROFILE);
+    }
+
+    public CodexCliProvider(ChatClientProfile profile) {
+        if (!CodexClient.ADAPTER.id().equals(profile.adapterId())) {
+            throw new IllegalArgumentException("CodexCliProvider requires the codex-cli adapter");
+        }
+        this.profile = profile;
+    }
     /**
      * The value an "invalid value" diagnostic names, quoted or bare. The bare form must not be part of
      * a dotted identifier, so {@code high.foo} is one value rather than a refusal of {@code high}.
@@ -133,12 +149,12 @@ public final class CodexCliProvider implements ChatProvider {
 
     @Override
     public String id() {
-        return "codex";
+        return profile.id();
     }
 
     @Override
     public String displayName() {
-        return "Codex";
+        return ChatClientPreferences.displayName(McpConfig.prefs(), profile);
     }
 
     @Override
@@ -148,7 +164,7 @@ public final class CodexCliProvider implements ChatProvider {
 
     @Override
     public List<String> listModels() {
-        return ChatModelCatalog.pickerModels(McpConfig.prefs(), id());
+        return new ChatClientModelCatalog(profile).pickerModels(McpConfig.prefs());
     }
 
     @Override
@@ -158,7 +174,7 @@ public final class CodexCliProvider implements ChatProvider {
 
     @Override
     public List<String> reasoningEfforts(String model) {
-        return ChatModelCatalog.codexReasoningEfforts(model);
+        return new ChatClientModelCatalog(profile).reasoningEfforts(McpConfig.prefs(), model);
     }
 
     @Override
@@ -358,8 +374,9 @@ public final class CodexCliProvider implements ChatProvider {
     }
 
     private String resolveExecutable() {
-        String override = McpConfig.prefs().getString(McpConfig.KEY_CHAT_CODEX_PATH, "");
-        return CliSupport.resolveExecutable(EXECUTABLE, override);
+        String override = McpConfig.prefs().getString(
+                ChatClientPreferences.executablePathPrefKey(profile.id()), "");
+        return CliSupport.resolveExecutable(profile.executable(), override);
     }
 
     /**

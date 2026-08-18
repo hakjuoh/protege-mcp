@@ -1,7 +1,5 @@
 package io.github.hakjuoh.protege_mcp.chat;
 
-import io.github.hakjuoh.protege_mcp.config.McpConfig;
-
 /**
  * Pure model-selection decisions for the chat UI: which preference key stores a provider's last model, and
  * normalizing the model combo-box selection to the id passed to the CLI ({@code ""} = the CLI's own
@@ -13,17 +11,13 @@ public final class ChatModels {
     }
 
     /** The preferences key holding the last-picked model for the given provider id. */
-    public static String modelPrefKey(String providerId) {
-        return "codex".equals(providerId)
-                ? McpConfig.KEY_CHAT_MODEL_CODEX
-                : McpConfig.KEY_CHAT_MODEL_CLAUDE;
+    public static String modelPrefKey(String clientId) {
+        return ChatClientPreferences.selectedModelPrefKey(clientId);
     }
 
     /** The preference key holding a provider's last reasoning-effort selection. */
-    public static String reasoningEffortPrefKey(String providerId) {
-        return "codex".equals(providerId)
-                ? McpConfig.KEY_CHAT_REASONING_EFFORT_CODEX
-                : McpConfig.KEY_CHAT_REASONING_EFFORT_CLAUDE;
+    public static String reasoningEffortPrefKey(String clientId) {
+        return ChatClientPreferences.reasoningEffortPrefKey(clientId);
     }
 
     /**

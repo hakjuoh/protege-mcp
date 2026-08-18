@@ -22,9 +22,10 @@ external client to configure.
 
 The **Ontology Assistant** (introduced in `0.3.0`) is a chat tab and view built into the plugin.
 Instead of calling a model API directly, it **drives a coding-agent CLI you already have installed** —
-[Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`) or
-[OpenAI Codex](https://github.com/openai/codex) (`codex`) — and points that CLI back at **this plugin's
-own MCP server**.
+[Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`),
+[OpenAI Codex](https://github.com/openai/codex) (`codex`),
+[Antigravity CLI](https://antigravity.google/docs/cli/overview) (`agy`), or
+[OpenCode](https://opencode.ai/docs/) (`opencode`) — and points that CLI back at **this plugin's own MCP server**.
 
 So the assistant reads and edits through **exactly the same tools** an external MCP client uses:
 
@@ -36,10 +37,13 @@ So the assistant reads and edits through **exactly the same tools** an external 
   carries no refresh token — nothing can be exchanged for a fresh one. Its own 30-minute lease is extended
   while the CLI process remains active, so a legitimate long turn keeps working; an orphaned credential
   expires without renewal.
-- **No API key is stored by Protégé.** Each CLI uses your existing login (Claude subscription/keychain;
-  `codex login`).
+- **No model-provider API key is stored by Protégé.** Each CLI uses its existing login or inherited
+  provider environment. OpenCode retains its authentication data and built-in/local providers, but does
+  not load the user's global `opencode.json` during a privileged turn; environment-based equivalents
+  should be used for custom provider endpoints so unrelated MCP/plugin definitions cannot inherit the
+  short-lived Protégé token.
 - **Axiom edits default to the transactional change-set path.** Each Claude turn appends a write-workflow
-  steering system prompt, and each new Codex thread opens with the same preamble (a resumed thread
+  steering system prompt, and each new Codex, Antigravity, or OpenCode thread opens with the same preamble (a resumed thread
   already carries it). It tells the model to preview each axiom edit with `preview_change_set` — or
   `create_terms`/`create_properties` with `preview=true` — review the isolated policy/QC gate, and only
   then `commit_change_set` against the exact revision it previewed. High-level operations without a
@@ -53,7 +57,10 @@ So the assistant reads and edits through **exactly the same tools** an external 
 
 - **Install and log in to at least one CLI:**
   - Claude Code — <https://docs.claude.com/en/docs/claude-code> (then `claude` works in your terminal), or
-  - Codex — <https://github.com/openai/codex> (`codex login`).
+  - Codex — <https://github.com/openai/codex> (`codex login`),
+  - Antigravity CLI — <https://antigravity.google/docs/cli/install> (the executable is `agy`; use the
+    official Gemini CLI migration workflow if applicable), or
+  - OpenCode — <https://opencode.ai/docs/> (configure at least one model provider or local model).
 - The **MCP server must be running.** The chat starts it automatically on your first message — unless
   you stopped the server yourself with **Stop** in the **MCP Server** view; an explicit Stop blocks
   every automatic start (added in `0.5.0`) until you press **Start** again.
@@ -64,7 +71,7 @@ Only CLIs that are actually detected on your system are offered as providers.
 
 1. Open the **Ontology Assistant** tab (a top-level tab), or add the **Ontology Assistant** view to any
    tab via **Window ▸ Views**.
-2. **Pick a provider** — *Use Claude* / *Use Codex* (only installed CLIs appear) — and optionally a
+2. **Pick a provider** (only installed CLIs appear) — and optionally a
    **model** and a **reasoning effort** (added in `0.8.0`). `(default)` in either picker sends no flag,
    so the CLI's own configured default decides. The model list is the catalog you maintain under
    **Settings ▸ Ontology Assistant ▸ Available models**; the effort list is that CLI's accepted levels,
@@ -147,7 +154,7 @@ The chat input accepts more than plain text (added in `0.3.1`):
   paste can never overflow the command line.
 - **Files and images** — via the **Attach** button, **drag-and-drop**, or **clipboard paste** — become
   placeholders such as `[Image #1]` or `[File #2: name]`. Codex receives images natively (`--image`);
-  Claude is granted read access to the file (`--add-dir`).
+  OpenCode receives files natively (`--file`); Claude and Antigravity receive narrowly scoped read access.
 - Deleting the placeholder before sending removes the attachment (backspace next to a placeholder
   deletes the whole token); a placeholder edited away before **Send** is reported and not sent.
 
@@ -162,6 +169,9 @@ The chat input accepts more than plain text (added in `0.3.1`):
 - Each attached file or image is copied into its **own private temp folder**, and only that single-file
   copy is exposed to the CLI — never the rest of its containing folder. The temp copies are deleted when
   the turn finishes.
+- OpenCode turns keep its normal authentication data but use an owner-only, empty configuration root,
+  disable project configuration and external plugins, and then install only the turn's Protégé MCP
+  definition. This prevents an existing local MCP/plugin from inheriting the short-lived turn token.
 - **Cost and rate limits** are governed by your CLI's own subscription/account, not by Protégé.
 - **Edits obey the MCP preferences** (read-only, confirm-each-write). A **Confirm each edit** checkbox
   in the panel toggles confirmation live.
@@ -171,14 +181,21 @@ The chat input accepts more than plain text (added in `0.3.1`):
 
 ## Settings (Settings ▸ Ontology Assistant)
 
-- **CLI path overrides** — if Protégé was launched from the macOS **Dock/Finder**, it may not inherit
-  your shell `PATH`, so a CLI can fail to resolve. Set an explicit path to the `claude` / `codex`
-  executable here. The panel shows what was detected.
+- **Client tabs** — Claude Code, Codex, Antigravity, and OpenCode have independent tabs, with **General** holding shared
+  access and privacy settings. A client name is predefined but editable; changing it only changes the
+  label shown in Preferences and the Assistant, not the stable identity that owns its session, model,
+  and reasoning settings. This separation is also the foundation for user-created client profiles.
+- **CLI path overrides** — each client tab owns its executable path. If Protégé was launched from the
+  macOS **Dock/Finder**, it may not inherit your shell `PATH`, so a CLI can fail to resolve. Set an
+  explicit path to the `claude`, `codex`, `agy`, or `opencode` executable in that client's tab. Detection updates while the
+  field is edited.
 - **Available models** (added in `0.8.0`) — the ordered model catalog the chat's picker offers, kept
-  separately for Claude Code and Codex. The plugin hard-codes no model ids: until you first save a
+  separately in each client tab. The plugin hard-codes no model ids: until you first save a
   catalog it starts from the model you already had selected, followed by whatever that CLI's own local
   metadata names (Claude Code's `settings.json` / `settings.local.json`, Codex's `config.toml` and
-  model cache). That `config.toml` is read as configuration rather than as prose, exactly as the effort
+  model cache). Antigravity and OpenCode keep discovery user-managed because their authoritative model
+  commands may perform account/provider work that must not run on Swing's UI thread. That `config.toml`
+  is read as configuration rather than as prose, exactly as the effort
   narrowing above reads it: a `model =` line inside a comment or inside a multi-line string body seeds no
   model, and an escaped quote inside a value is a character of the id rather than the end of it. A
   profile's model is seeded every way TOML spells it — `profiles.work.model = "…"` and the inline
@@ -210,9 +227,12 @@ The chat input accepts more than plain text (added in `0.3.1`):
   selected anywhere: that provider falls back to **(default)** rather than quietly running the next turn
   on an id the catalog no longer offers. Saving an empty list is meaningful: only **(default)** remains,
   and turns then omit `--model` / `-m` entirely so the CLI's own configuration chooses.
-- **Assistant access** — choose whether per-turn credentials may use the bounded ontology/project write
-  profile. Disable it for read-only Assistant use. The MCP server's global read-only setting always wins.
-- **Privacy** — a non-blocking summary of what is sent to the selected model provider.
+  OpenCode model variants are provider/model-specific and are not guessed by this release; configure
+  the desired default variant in OpenCode itself.
+- **General ▸ Assistant access** — choose whether per-turn credentials may use the bounded
+  ontology/project write profile. Disable it for read-only Assistant use. The MCP server's global
+  read-only setting always wins.
+- **General ▸ Privacy** — a non-blocking summary of what is sent to the selected model provider.
 
 (The **Show reasoning** and **Confirm each edit** toggles live in the chat panel itself, next to
 **New chat** — not in this settings page.)
@@ -252,7 +272,8 @@ The chat input accepts more than plain text (added in `0.3.1`):
   transcript, so the message says exactly that instead of leaving a blank exchange. Send the message
   again; if it keeps happening, run that CLI in a terminal with the same message and see what it reports.
   The failed turn is not added to the conversation, so switching providers still asks your question.
-- **"Not logged in" / auth errors** — log in in your terminal first (`claude`, or `codex login`). The
+- **"Not logged in" / auth errors** — log in or configure providers in the CLI first (`claude`,
+  `codex login`, `agy`, or OpenCode's provider setup). The
   plugin spawns the CLI through a login shell so it can pick up your environment.
 - **Edits don't apply** — check the Assistant access setting, MCP **read-only** mode, and any pending
   **confirm-each-write** dialog (Settings ▸ MCP), plus the **Confirm each edit** checkbox in the panel.
