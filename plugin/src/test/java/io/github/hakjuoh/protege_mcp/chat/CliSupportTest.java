@@ -62,6 +62,22 @@ class CliSupportTest {
     }
 
     @Test
+    void discoversModelIdsFromTabularCliOutput(@TempDir Path dir) throws IOException {
+        File executable = dir.resolve("models-cli").toFile();
+        Files.writeString(
+                executable.toPath(),
+                "#!/bin/sh\n"
+                    + "printf 'gemini-3.7-flash-high     Gemini 3.7 Flash (High)\\n'\n"
+                    + "printf 'gemini-3.7-flash-medium   Gemini 3.7 Flash (Medium)\\n'\n"
+                    + "printf 'claude-sonnet-4-6         Claude Sonnet 4.6 (Thinking)\\n'\n");
+        assertTrue(executable.setExecutable(true));
+
+        assertEquals(
+                List.of("gemini-3.7-flash-high", "gemini-3.7-flash-medium", "claude-sonnet-4-6"),
+                CliSupport.discoverModelIds("models-cli", executable.getAbsolutePath()));
+    }
+
+    @Test
     void modelDiscoveryClosesNonInteractiveInput(@TempDir Path dir) throws IOException {
         File executable = dir.resolve("models-cli").toFile();
         Files.writeString(

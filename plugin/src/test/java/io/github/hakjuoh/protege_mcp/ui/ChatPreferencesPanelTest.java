@@ -142,9 +142,9 @@ class ChatPreferencesPanelTest {
         awaitModels(editor, 3);
 
         assertEquals("/staged/dynamic-cli", seenOverride.get());
-        assertEquals(List.of("custom/manual", "provider/a", "provider/b"), models(editor));
+        assertEquals(List.of("provider/a", "provider/b", "custom/manual"), models(editor));
         saveEditor(editor, preferences);
-        assertEquals(List.of("custom/manual", "provider/a", "provider/b"),
+        assertEquals(List.of("provider/a", "provider/b", "custom/manual"),
                 ChatModelCatalog.load(preferences, "dynamic"));
         assertTrue(preferences.getBoolean(
                 ChatClientPreferences.modelDiscoveryCompletedPrefKey("dynamic"), false));
@@ -212,6 +212,25 @@ class ChatPreferencesPanelTest {
         assertEquals(0, mergeModels(editor, List.of(
                 new ChatModelDefinition("provider/a", List.of("high", "max")))));
         assertEquals("low", field(editor, "effortField", JTextField.class).getText());
+    }
+
+    @Test
+    void refreshPrependsNewlyDiscoveredModelsPreservingExistingOrder() throws Exception {
+        Preferences preferences = TestPreferences.cleared();
+        ChatModelCatalog.save(preferences, "antigravity", List.of("model-c", "model-b", "model-d"));
+        Object editor = newEditor("antigravity", preferences);
+        invoke(editor, "component");
+
+        assertEquals(List.of("model-c", "model-b", "model-d"), models(editor));
+
+        int changed = mergeModels(editor, List.of(
+                new ChatModelDefinition("model-a", List.of("high")),
+                new ChatModelDefinition("model-b", List.of()),
+                new ChatModelDefinition("model-c", List.of()),
+                new ChatModelDefinition("model-d", List.of())));
+
+        assertEquals(1, changed);
+        assertEquals(List.of("model-a", "model-c", "model-b", "model-d"), models(editor));
     }
 
     @Test

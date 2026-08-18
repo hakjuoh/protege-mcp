@@ -42,6 +42,23 @@ class AntigravityCliProviderTest {
     }
 
     @Test
+    void clientDiscoversModelDefinitionsFromTabularAgyOutput(@TempDir Path dir) throws Exception {
+        Path executable = Files.writeString(dir.resolve("agy"),
+                "#!/bin/sh\n"
+                    + "printf 'gemini-3.7-flash-high     Gemini 3.7 Flash (High)\\n'\n"
+                    + "printf 'gemini-3.7-flash-medium   Gemini 3.7 Flash (Medium)\\n'\n"
+                    + "printf 'gemini-3.7-flash-low      Gemini 3.7 Flash (Low)\\n'\n"
+                    + "printf 'claude-sonnet-4-6         Claude Sonnet 4.6 (Thinking)\\n'\n");
+        assertTrue(executable.toFile().setExecutable(true));
+
+        assertEquals(
+                List.of(
+                        new ChatModelDefinition("gemini-3.7-flash", List.of("low", "medium", "high")),
+                        new ChatModelDefinition("claude-sonnet-4-6", List.of())),
+                AntigravityClient.ADAPTER.discoverModelDefinitions(dir, executable.toString()));
+    }
+
+    @Test
     void suffixedCliModelsBecomeOneModelWithOnlyItsAvailableEfforts() {
         assertEquals(List.of(
                 new ChatModelDefinition("gemini-3.6-flash",

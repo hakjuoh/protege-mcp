@@ -357,6 +357,8 @@ final class ChatModelEditor {
         int changed = 0;
         String selectedModel = modelList.getSelectedValue();
         boolean selectedEffortsChanged = false;
+        List<ChatModelDefinition> newModels = new ArrayList<>();
+        Set<String> seenNew = new LinkedHashSet<>();
         for (ChatModelDefinition definition : discovered) {
             String normalized = definition == null ? "" : definition.id().trim();
             if (!ChatModelCatalog.isAcceptableModelId(normalized)) {
@@ -376,10 +378,17 @@ final class ChatModelEditor {
                 }
                 continue;
             }
+            if (seenNew.add(normalized)) {
+                newModels.add(definition);
+            }
+        }
+        int insertIndex = 0;
+        for (ChatModelDefinition definition : newModels) {
             if (modelData.size() >= ChatModelCatalog.maxModels()) {
                 break;
             }
-            modelData.addElement(normalized);
+            String normalized = definition.id().trim();
+            modelData.add(insertIndex++, normalized);
             effortsByModel.put(normalized, definition.reasoningEfforts());
             changed++;
         }
@@ -387,6 +396,7 @@ final class ChatModelEditor {
             dirty = true;
             modelList.setVisibleRowCount(Math.min(5, Math.max(3, modelData.size())));
             updateModelScrollHeight();
+            modelList.revalidate();
             modelList.repaint();
         }
         if (selectedEffortsChanged) {
@@ -404,6 +414,7 @@ final class ChatModelEditor {
                         PreferencesText.HELP_TEXT_DISPLAY_WIDTH_PX,
                         CELL_HEIGHT * modelList.getVisibleRowCount() + 3));
         modelScroll.revalidate();
+        modelList.revalidate();
     }
 
     private void installKeyboardActions() {

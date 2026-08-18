@@ -125,7 +125,11 @@ public final class CliSupport {
         }
         java.util.LinkedHashSet<String> models = new java.util.LinkedHashSet<>();
         for (String line : output.orElseThrow().split("\\R")) {
-            String model = line.trim();
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            String model = trimmed.split("\\s+", 2)[0];
             if (ChatModelCatalog.isAcceptableModelId(model)) {
                 models.add(model);
                 if (models.size() == ChatModelCatalog.maxModels()) {
