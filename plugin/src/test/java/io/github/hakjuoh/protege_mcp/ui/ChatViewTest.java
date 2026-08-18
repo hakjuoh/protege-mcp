@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Color;
+import java.awt.Font;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -24,6 +25,7 @@ import java.util.Set;
 
 import javax.swing.text.SimpleAttributeSet;
 import javax.swing.text.StyleConstants;
+import javax.swing.text.StyledDocument;
 
 import org.junit.jupiter.api.Test;
 
@@ -380,6 +382,8 @@ class ChatViewTest {
         SimpleAttributeSet a = styleFor("TOOL");
         assertTrue(StyleConstants.isItalic(a), "TOOL is italic");
         assertEquals(new Color(0x507030), StyleConstants.getForeground(a), "TOOL is green");
+        assertEquals(0F, StyleConstants.getSpaceBelow(a),
+                "paragraph spacing is shared by every message kind, not embedded in TOOL styling");
     }
 
     @Test
@@ -588,6 +592,55 @@ class ChatViewTest {
     }
 
     @Test
+    void uiListenerPreservesAssistantMessageStartsInQueueAndHistory() throws Exception {
+        ChatView v = wiredInstance();
+        ChatListener l = invokeUiListener(v);
+        l.onAssistantMessageStart();
+        l.onAssistantText("one.");
+        l.onAssistantMessageStart();
+        l.onAssistantText("Two.");
+
+        assertEquals(List.of("ASSISTANT_START", "ASSISTANT", "ASSISTANT_START", "ASSISTANT"),
+                queueOf(v).stream().map(chunk -> {
+                    try {
+                        return chunkKind(chunk);
+                    } catch (Exception ex) {
+                        throw new RuntimeException(ex);
+                    }
+                }).toList());
+        assertEquals("one.\n\nTwo.", getField(v, "activeTurnAssistant").toString());
+    }
+
+    @Test
+    void queuedBoundarySeparatesMessagesEvenWhenInterveningReasoningIsHidden() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        ChatView v = wiredInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment",
+                new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "lastRenderedKind", null);
+        javax.swing.JCheckBox showThinking = new javax.swing.JCheckBox();
+        showThinking.setSelected(false);
+        setField(v, "showThinking", showThinking);
+
+        ChatListener l = invokeUiListener(v);
+        l.onAssistantMessageStart();
+        l.onAssistantText("one.");
+        l.onThinking("hidden");
+        l.onAssistantMessageStart();
+        l.onAssistantText("Two.");
+
+        Method drain = ChatView.class.getDeclaredMethod("drainQueue");
+        drain.setAccessible(true);
+        drain.invoke(v);
+
+        assertEquals("one.\n\nTwo.",
+                pane.getStyledDocument().getText(0, pane.getStyledDocument().getLength()),
+                "a hidden non-text event cannot erase the provider's message boundary");
+    }
+
+    @Test
     void uiListenerOnToolActivityFormatsSummary() throws Exception {
         ChatView v = wiredInstance();
         ChatListener l = invokeUiListener(v);
@@ -597,7 +650,7 @@ class ChatViewTest {
         assertEquals("TOOL", chunkKind(chunk), "tool chunk uses Kind.TOOL");
         String t = chunkText(chunk);
         assertTrue(t.contains("create_class"), "summary is embedded, got: " + t);
-        assertTrue(t.startsWith("\n"), "tool line starts on a fresh line");
+        assertFalse(t.startsWith("\n"), "renderer owns the line boundary, avoiding doubled gaps");
         assertTrue(t.endsWith("\n"), "tool line ends with a newline");
     }
 
@@ -1081,7 +1134,7 @@ class ChatViewTest {
 
     private boolean boundaryBreak(ChatView v, String kindName, String text) throws Exception {
         Class<?> k = Class.forName("io.github.hakjuoh.protege_mcp.ui.ChatView$Kind");
-        Method m = ChatView.class.getDeclaredMethod("needsReasoningBoundaryBreak", k, String.class);
+        Method m = ChatView.class.getDeclaredMethod("needsTranscriptLineBreak", k, String.class);
         m.setAccessible(true);
         return (boolean) m.invoke(v, kind(kindName), text);
     }
@@ -1107,6 +1160,383 @@ class ChatViewTest {
     void lineStartOrOwnLeadingNewlineNeedsNoBreak() throws Exception {
         assertFalse(boundaryBreak(renderState(true, "ASSISTANT"), "THINKING", "pondering"));
         assertFalse(boundaryBreak(renderState(false, "THINKING"), "TOOL", "\n  tool line\n"));
+    }
+
+    @Test
+    void toolEnteringMidLineGetsABreakButConsecutiveToolsDoNot() throws Exception {
+        assertTrue(boundaryBreak(renderState(false, "ASSISTANT"), "TOOL", "  first\n"));
+        assertFalse(boundaryBreak(renderState(true, "TOOL"), "TOOL", "  second\n"));
+    }
+
+    @Test
+    void plainMessagesOwnOneLineBoundariesWithoutStylingMarkdown() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        StyledDocument doc = pane.getStyledDocument();
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment", new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "lastRenderedKind", null);
+
+        appendChunk(v, "USER", "> question\n");
+        appendChunk(v, "ASSISTANT", "working");
+        appendChunk(v, "TOOL", "  ⚙ first\n");
+        appendChunk(v, "TOOL", "  ⚙ second\n");
+        appendChunk(v, "ASSISTANT", "done");
+
+        String rendered = doc.getText(0, doc.getLength());
+        assertEquals("> question\nworking\n  ⚙ first\n  ⚙ second\ndone", rendered,
+                "message margins add no blank transcript lines");
+        float lineHeight = pane.getFontMetrics(pane.getFont()).getHeight();
+        assertParagraphSpacing(doc, rendered.indexOf("> question"), 0F, lineHeight);
+        assertParagraphSpacing(doc, rendered.indexOf("working"), 0F, 0F);
+        assertParagraphSpacing(doc, rendered.indexOf("⚙ first"), lineHeight, lineHeight);
+        assertParagraphSpacing(doc, rendered.indexOf("⚙ second"), 0F, lineHeight);
+        assertParagraphSpacing(doc, rendered.indexOf("done"), 0F, 0F);
+    }
+
+    @Test
+    void consecutiveThinkingDeltasRemainOneMessageBlockAcrossParagraphs() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        StyledDocument doc = pane.getStyledDocument();
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment", new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "lastRenderedKind", null);
+        setField(v, "thinkingBlockStart", -1);
+        setField(v, "thinkingBlockEnd", -1);
+        setField(v, "thinkingBlockSpaceAbove", -1F);
+        javax.swing.JCheckBox showThinking = new javax.swing.JCheckBox();
+        showThinking.setSelected(true);
+        setField(v, "showThinking", showThinking);
+
+        appendChunk(v, "THINKING", "first paragraph\n");
+        appendChunk(v, "THINKING", "second paragraph");
+
+        String rendered = doc.getText(0, doc.getLength());
+        int first = rendered.indexOf("first");
+        int second = rendered.indexOf("second");
+        float lineHeight = pane.getFontMetrics(pane.getFont()).getHeight();
+        assertEquals(0F, StyleConstants.getSpaceAbove(
+                doc.getParagraphElement(first).getAttributes()));
+        assertEquals(0F, StyleConstants.getSpaceBelow(
+                doc.getParagraphElement(first).getAttributes()),
+                "a prior delta's bottom margin must not become an internal reasoning gap");
+        assertEquals(0F, StyleConstants.getSpaceAbove(
+                doc.getParagraphElement(second).getAttributes()));
+        assertEquals(lineHeight, StyleConstants.getSpaceBelow(
+                doc.getParagraphElement(second).getAttributes()));
+    }
+
+    @Test
+    void separatorOnlyThinkingDeltaPreservesMarginsAndAllowsLaterContent() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        StyledDocument doc = pane.getStyledDocument();
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment", new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "lastRenderedKind", null);
+        setField(v, "thinkingBlockStart", -1);
+        setField(v, "thinkingBlockEnd", -1);
+        setField(v, "thinkingBlockSpaceAbove", -1F);
+        javax.swing.JCheckBox showThinking = new javax.swing.JCheckBox();
+        showThinking.setSelected(true);
+        setField(v, "showThinking", showThinking);
+
+        appendChunk(v, "THINKING", "first");
+        appendChunk(v, "THINKING", "\n");
+        float lineHeight = pane.getFontMetrics(pane.getFont()).getHeight();
+        assertEquals(0F, StyleConstants.getSpaceAbove(
+                doc.getParagraphElement(0).getAttributes()));
+        assertEquals(lineHeight, StyleConstants.getSpaceBelow(
+                doc.getParagraphElement(0).getAttributes()),
+                "a terminal separator delta preserves the visible block's bottom margin");
+
+        appendChunk(v, "THINKING", "second");
+        String rendered = doc.getText(0, doc.getLength());
+        int first = rendered.indexOf("first");
+        int second = rendered.indexOf("second");
+        assertEquals(0F, StyleConstants.getSpaceBelow(
+                doc.getParagraphElement(first).getAttributes()));
+        assertEquals(0F, StyleConstants.getSpaceAbove(
+                doc.getParagraphElement(second).getAttributes()));
+        assertEquals(lineHeight, StyleConstants.getSpaceBelow(
+                doc.getParagraphElement(second).getAttributes()));
+    }
+
+    @Test
+    void messageGapTracksTheRenderedLineHeight() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        pane.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 20));
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+
+        Method margin = ChatView.class.getDeclaredMethod("plainMessageMargins");
+        margin.setAccessible(true);
+        Object margins = margin.invoke(v);
+        Method above = margins.getClass().getDeclaredMethod("above");
+        Method below = margins.getClass().getDeclaredMethod("below");
+        above.setAccessible(true);
+        below.setAccessible(true);
+
+        assertEquals(0F, (float) above.invoke(margins));
+        assertEquals(pane.getFontMetrics(pane.getFont()).getHeight(),
+                (float) below.invoke(margins),
+                "a plain message contributes one rendered blank line after itself");
+    }
+
+    @Test
+    void messageGapMatchesAnActualBlankLineInSwingLayout() throws Exception {
+        double[] deltas = new double[2];
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            try {
+                Font font = new Font(Font.SANS_SERIF, Font.PLAIN, 20);
+                javax.swing.JTextPane messages = new javax.swing.JTextPane();
+                messages.setFont(font);
+                ChatView v = bareInstance();
+                setField(v, "transcript", messages);
+                setField(v, "assistantSegment",
+                        new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+                setField(v, "atTurnStartOfLine", true);
+                setField(v, "lastRenderedKind", null);
+                appendChunk(v, "USER", "first\n");
+                appendChunk(v, "SYSTEM", "second");
+                messages.setSize(400, 400);
+
+                javax.swing.JTextPane blankLine = new javax.swing.JTextPane();
+                blankLine.setFont(font);
+                blankLine.setText("first\n\nsecond");
+                blankLine.setSize(400, 400);
+
+                deltas[0] = messages.modelToView2D(6).getY()
+                        - messages.modelToView2D(0).getY();
+                deltas[1] = blankLine.modelToView2D(7).getY()
+                        - blankLine.modelToView2D(0).getY();
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+        });
+        assertEquals(deltas[1], deltas[0],
+                "adjacent message baselines are separated exactly like text around a blank line");
+    }
+
+    @Test
+    void markdownKeepsItsOriginalParagraphSpacing() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment", new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "lastRenderedKind", null);
+
+        appendChunk(v, "ASSISTANT", "first\n\n- one\n- two\n\nlast");
+
+        StyledDocument doc = pane.getStyledDocument();
+        String rendered = doc.getText(0, doc.getLength());
+        for (String text : List.of("first", "• one", "• two", "last")) {
+            int offset = rendered.indexOf(text);
+            assertParagraphSpacing(doc, offset, 0F, 0F);
+        }
+    }
+
+    @Test
+    void adjacentProviderMessagesRenderAsDistinctMarkdownBlocks() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment",
+                new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "lastRenderedKind", null);
+
+        appendChunk(v, "ASSISTANT_START", "");
+        appendChunk(v, "ASSISTANT", "**one.**");
+        appendChunk(v, "ASSISTANT_START", "");
+        appendChunk(v, "ASSISTANT", "_Two._");
+        closeSegment(v, false);
+
+        StyledDocument doc = pane.getStyledDocument();
+        String rendered = doc.getText(0, doc.getLength());
+        assertEquals("one.\n\nTwo.", rendered,
+                "a provider message boundary becomes one blank transcript line");
+        assertEquals("**one.**", io.github.hakjuoh.protege_mcp.chat.AssistantSegment
+                .sourceAt(doc, rendered.indexOf("one.")));
+        assertEquals("_Two._", io.github.hakjuoh.protege_mcp.chat.AssistantSegment
+                .sourceAt(doc, rendered.indexOf("Two.")));
+    }
+
+    @Test
+    void assistantStartAfterVisibleToolDoesNotAddASecondSeparator() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment",
+                new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "lastRenderedKind", null);
+
+        appendChunk(v, "ASSISTANT_START", "");
+        appendChunk(v, "ASSISTANT", "first");
+        appendChunk(v, "TOOL", "tool\n");
+        appendChunk(v, "ASSISTANT_START", "");
+        appendChunk(v, "ASSISTANT", "second");
+
+        assertEquals("first\ntool\nsecond",
+                pane.getStyledDocument().getText(0, pane.getStyledDocument().getLength()),
+                "the tool row already owns both adjacent visual message boundaries");
+    }
+
+    @Test
+    void assistantAndPlainTransitionsAllKeepOneBlankLine() throws Exception {
+        double[] deltas = new double[3];
+        double[] expected = new double[1];
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            try {
+                Font font = new Font(Font.SANS_SERIF, Font.PLAIN, 20);
+                javax.swing.JTextPane pane = new javax.swing.JTextPane();
+                pane.setFont(font);
+                ChatView v = bareInstance();
+                setField(v, "transcript", pane);
+                setField(v, "assistantSegment",
+                        new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+                setField(v, "atTurnStartOfLine", true);
+                setField(v, "lastRenderedKind", null);
+
+                appendChunk(v, "ASSISTANT", "a");
+                appendChunk(v, "TOOL", "b\n");
+                appendChunk(v, "TOOL", "c\n");
+                appendChunk(v, "ASSISTANT", "d");
+                pane.setSize(400, 400);
+                deltas[0] = pane.modelToView2D(2).getY() - pane.modelToView2D(0).getY();
+                deltas[1] = pane.modelToView2D(4).getY() - pane.modelToView2D(2).getY();
+                deltas[2] = pane.modelToView2D(6).getY() - pane.modelToView2D(4).getY();
+
+                javax.swing.JTextPane blankLine = new javax.swing.JTextPane();
+                blankLine.setFont(font);
+                blankLine.setText("a\n\nb");
+                blankLine.setSize(400, 400);
+                expected[0] = blankLine.modelToView2D(3).getY()
+                        - blankLine.modelToView2D(0).getY();
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+        });
+        assertEquals(expected[0], deltas[0], "assistant to plain");
+        assertEquals(expected[0], deltas[1], "plain to consecutive plain");
+        assertEquals(expected[0], deltas[2], "plain to assistant");
+    }
+
+    @Test
+    void reasoningAfterAssistantKeepsItsOpeningGapAcrossDeltas() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        StyledDocument doc = pane.getStyledDocument();
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment", new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "lastRenderedKind", null);
+        setField(v, "thinkingBlockStart", -1);
+        setField(v, "thinkingBlockEnd", -1);
+        setField(v, "thinkingBlockSpaceAbove", -1F);
+        javax.swing.JCheckBox showThinking = new javax.swing.JCheckBox();
+        showThinking.setSelected(true);
+        setField(v, "showThinking", showThinking);
+
+        appendChunk(v, "ASSISTANT", "answer");
+        appendChunk(v, "THINKING", "first\n");
+        appendChunk(v, "THINKING", "second");
+
+        String rendered = doc.getText(0, doc.getLength());
+        float lineHeight = pane.getFontMetrics(pane.getFont()).getHeight();
+        int first = rendered.indexOf("first");
+        int second = rendered.indexOf("second");
+        assertEquals(lineHeight, StyleConstants.getSpaceAbove(
+                doc.getParagraphElement(first).getAttributes()));
+        assertEquals(0F, StyleConstants.getSpaceBelow(
+                doc.getParagraphElement(first).getAttributes()));
+        assertEquals(lineHeight, StyleConstants.getSpaceBelow(
+                doc.getParagraphElement(second).getAttributes()));
+    }
+
+    @Test
+    void separatorFirstReasoningKeepsAssistantBoundaryForLaterContent() throws Exception {
+        javax.swing.JTextPane pane = new javax.swing.JTextPane();
+        StyledDocument doc = pane.getStyledDocument();
+        ChatView v = bareInstance();
+        setField(v, "transcript", pane);
+        setField(v, "assistantSegment", new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+        setField(v, "atTurnStartOfLine", true);
+        setField(v, "lastRenderedKind", null);
+        setField(v, "thinkingBlockStart", -1);
+        setField(v, "thinkingBlockEnd", -1);
+        setField(v, "thinkingBlockSpaceAbove", -1F);
+        javax.swing.JCheckBox showThinking = new javax.swing.JCheckBox();
+        showThinking.setSelected(true);
+        setField(v, "showThinking", showThinking);
+
+        appendChunk(v, "ASSISTANT", "answer");
+        appendChunk(v, "THINKING", "\n");
+        appendChunk(v, "THINKING", "content");
+
+        String rendered = doc.getText(0, doc.getLength());
+        int content = rendered.indexOf("content");
+        float lineHeight = pane.getFontMetrics(pane.getFont()).getHeight();
+        assertEquals("answer\ncontent", rendered);
+        assertEquals(lineHeight, StyleConstants.getSpaceAbove(
+                doc.getParagraphElement(content).getAttributes()));
+        assertEquals(lineHeight, StyleConstants.getSpaceBelow(
+                doc.getParagraphElement(content).getAttributes()));
+    }
+
+    @Test
+    void leadingNewlineOnPlainMessageDoesNotDoubleAnExistingBoundary() throws Exception {
+        double[] actual = new double[1];
+        double[] expected = new double[1];
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            try {
+                Font font = new Font(Font.SANS_SERIF, Font.PLAIN, 20);
+                javax.swing.JTextPane pane = new javax.swing.JTextPane();
+                pane.setFont(font);
+                ChatView v = bareInstance();
+                setField(v, "transcript", pane);
+                setField(v, "assistantSegment",
+                        new io.github.hakjuoh.protege_mcp.chat.AssistantSegment());
+                setField(v, "atTurnStartOfLine", true);
+                setField(v, "lastRenderedKind", null);
+                appendChunk(v, "USER", "plain\n");
+                appendChunk(v, "ERROR", "\n\nerror\n");
+                pane.setSize(400, 400);
+                assertEquals("plain\nerror\n", pane.getText());
+                actual[0] = pane.modelToView2D(6).getY() - pane.modelToView2D(0).getY();
+
+                javax.swing.JTextPane blankLine = new javax.swing.JTextPane();
+                blankLine.setFont(font);
+                blankLine.setText("plain\n\nerror");
+                blankLine.setSize(400, 400);
+                expected[0] = blankLine.modelToView2D(7).getY()
+                        - blankLine.modelToView2D(0).getY();
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+        });
+        assertEquals(expected[0], actual[0]);
+    }
+
+    private void appendChunk(ChatView view, String kindName, String text) throws Exception {
+        Class<?> kindClass = Class.forName("io.github.hakjuoh.protege_mcp.ui.ChatView$Kind");
+        Method append = ChatView.class.getDeclaredMethod("append", kindClass, String.class);
+        append.setAccessible(true);
+        append.invoke(view, kind(kindName), text);
+    }
+
+    private void assertParagraphSpacing(StyledDocument doc, int offset,
+            float expectedAbove, float expectedBelow) {
+        assertEquals(expectedAbove, StyleConstants.getSpaceAbove(
+                doc.getParagraphElement(offset).getAttributes()));
+        assertEquals(expectedBelow, StyleConstants.getSpaceBelow(
+                doc.getParagraphElement(offset).getAttributes()));
     }
 
     @Test

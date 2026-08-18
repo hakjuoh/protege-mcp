@@ -77,6 +77,41 @@ class ClaudeEventParserTest {
     }
 
     @Test
+    void anthropicMessageLifecycleRetainsDistinctAssistantMessages() {
+        RecordingChatListener listener = new RecordingChatListener();
+        ClaudeEventParser parser = new ClaudeEventParser(listener);
+        parser.accept("{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\","
+                + "\"message\":{\"id\":\"msg-1\"}}}");
+        parser.accept("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\","
+                + "\"delta\":{\"type\":\"text_delta\",\"text\":\"one\"}}}");
+        parser.accept("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\","
+                + "\"delta\":{\"type\":\"text_delta\",\"text\":\".\"}}}");
+        parser.accept("{\"type\":\"stream_event\",\"event\":{\"type\":\"message_stop\"}}"
+                + "{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\","
+                + "\"message\":{\"id\":\"msg-2\"}}}");
+        parser.accept("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\","
+                + "\"delta\":{\"type\":\"text_delta\",\"text\":\"Two.\"}}}");
+
+        assertEquals("one.Two.", listener.text.toString());
+        assertEquals(java.util.List.of(0, 4), listener.assistantMessageStarts,
+                "deltas share a message until Claude emits the next message lifecycle");
+    }
+
+    @Test
+    void toolOnlyClaudeMessageCreatesNoEmptyVisibleBoundary() {
+        RecordingChatListener listener = new RecordingChatListener();
+        ClaudeEventParser parser = new ClaudeEventParser(listener);
+        parser.accept("{\"type\":\"stream_event\",\"event\":{\"type\":\"message_start\","
+                + "\"message\":{\"id\":\"tool-only\"}}}");
+        parser.accept("{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_start\","
+                + "\"content_block\":{\"type\":\"tool_use\",\"name\":\"Read\"}}}");
+        parser.accept("{\"type\":\"stream_event\",\"event\":{\"type\":\"message_stop\"}}");
+
+        assertTrue(listener.assistantMessageStarts.isEmpty());
+        assertEquals(0, listener.text.length());
+    }
+
+    @Test
     void aValueThatFollowsAGoodOneWithoutBeingJsonLeavesTheFirstDelivered() {
         RecordingChatListener listener = new RecordingChatListener();
         new ClaudeEventParser(listener).accept(

@@ -210,7 +210,9 @@ public final class AntigravityCliProvider implements ChatProvider {
     static String mcpConfigJson(McpEndpoint endpoint) {
         ObjectNode root = MAPPER.createObjectNode();
         ObjectNode server = root.putObject("mcpServers").putObject(McpEndpoint.SERVER_NAME);
-        server.put("serverUrl", endpoint.url());
+        // Antigravity treats serverUrl as legacy SSE. The embedded MCP endpoint uses Streamable HTTP,
+        // whose distinct configuration key is httpUrl; using serverUrl leaves the CLI connecting forever.
+        server.put("httpUrl", endpoint.url());
         server.putObject("headers").put("Authorization", "Bearer " + endpoint.token());
         return json(root);
     }

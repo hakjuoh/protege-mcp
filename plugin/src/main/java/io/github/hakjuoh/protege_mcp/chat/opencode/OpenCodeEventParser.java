@@ -19,6 +19,7 @@ final class OpenCodeEventParser implements Consumer<String> {
 
     private final ChatListener listener;
     private final Set<String> completedParts = new HashSet<>();
+    private final Set<String> startedAssistantMessages = new HashSet<>();
     private long inputTokens;
     private long outputTokens;
     private long cachedInputTokens;
@@ -75,6 +76,15 @@ final class OpenCodeEventParser implements Consumer<String> {
         if (reasoning) {
             listener.onThinking(text + (text.endsWith("\n") ? "" : "\n"));
         } else {
+            // messageID groups all text parts from one assistant response. Older events that do not
+            // carry it still have a unique part id, which is the narrowest truthful fallback.
+            String messageId = part.path("messageID").asText("");
+            if (messageId.isEmpty()) {
+                messageId = id;
+            }
+            if (messageId.isEmpty() || startedAssistantMessages.add(messageId)) {
+                listener.onAssistantMessageStart();
+            }
             answered |= !text.isBlank();
             listener.onAssistantText(text);
         }

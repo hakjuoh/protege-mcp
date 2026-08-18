@@ -73,6 +73,33 @@ class OpenCodeEventParserTest {
         parser.accept(event);
         parser.accept(event);
         assertEquals("once", listener.text.toString());
+        assertEquals(List.of(0), listener.assistantMessageStarts);
+    }
+
+    @Test
+    void messageIdSeparatesResponsesWhileGroupingTheirTextParts() {
+        RecordingChatListener listener = new RecordingChatListener();
+        OpenCodeEventParser parser = new OpenCodeEventParser(listener);
+        parser.accept("{\"type\":\"text\",\"part\":{\"id\":\"part-1\","
+                + "\"messageID\":\"msg-1\",\"text\":\"one\"}}"
+                + "{\"type\":\"text\",\"part\":{\"id\":\"part-2\","
+                + "\"messageID\":\"msg-1\",\"text\":\".\"}}"
+                + "{\"type\":\"text\",\"part\":{\"id\":\"part-3\","
+                + "\"messageID\":\"msg-2\",\"text\":\"Two.\"}}");
+
+        assertEquals("one.Two.", listener.text.toString());
+        assertEquals(List.of(0, 4), listener.assistantMessageStarts);
+    }
+
+    @Test
+    void partIdIsTheBoundaryFallbackWhenMessageIdIsAbsent() {
+        RecordingChatListener listener = new RecordingChatListener();
+        OpenCodeEventParser parser = new OpenCodeEventParser(listener);
+        parser.accept("{\"type\":\"text\",\"part\":{\"id\":\"part-1\",\"text\":\"a\"}}"
+                + "{\"type\":\"text\",\"part\":{\"id\":\"part-2\",\"text\":\"b\"}}");
+
+        assertEquals("ab", listener.text.toString());
+        assertEquals(List.of(0, 1), listener.assistantMessageStarts);
     }
 
     @Test

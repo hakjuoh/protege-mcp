@@ -81,10 +81,11 @@ class AntigravityCliProviderTest {
     }
 
     @Test
-    void mcpConfigurationUsesRemoteServerAndBearerHeader() throws Exception {
+    void mcpConfigurationUsesStreamableHttpAndBearerHeader() throws Exception {
         JsonNode root = MAPPER.readTree(AntigravityCliProvider.mcpConfigJson(ENDPOINT));
         JsonNode server = root.path("mcpServers").path("protege");
-        assertEquals(ENDPOINT.url(), server.path("serverUrl").asText());
+        assertEquals(ENDPOINT.url(), server.path("httpUrl").asText());
+        assertFalse(server.has("serverUrl"), "serverUrl would select legacy SSE transport");
         assertEquals("Bearer secret-token", server.path("headers").path("Authorization").asText());
     }
 

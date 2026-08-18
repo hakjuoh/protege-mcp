@@ -44,6 +44,8 @@ final class ClaudeEventParser implements Consumer<String> {
      * note claiming it ran at the CLI's own setting would describe a reply that is not there.
      */
     private boolean answered;
+    /** True after the first text delta of the current Anthropic message. */
+    private boolean assistantMessageStarted;
 
     ClaudeEventParser(ChatListener listener) {
         this.listener = listener;
@@ -111,10 +113,16 @@ final class ClaudeEventParser implements Consumer<String> {
                     listener.onToolActivity(stripToolPrefix(block.path("name").asText("tool")));
                 }
             }
-            case "message_start" -> updateLiveUsage(event.path("message").path("usage"));
+            case "message_start" -> {
+                // One Claude Code turn can contain several Anthropic messages around tool calls.
+                // Delay the visible boundary until text actually arrives: some messages are tool-only.
+                assistantMessageStarted = false;
+                updateLiveUsage(event.path("message").path("usage"));
+            }
             case "message_delta" -> updateLiveUsage(event.path("usage"));
+            case "message_stop" -> assistantMessageStarted = false;
             default -> {
-                // message_stop / content_block_stop: structural
+                // content_block_stop and future structural events
             }
         }
     }
@@ -170,6 +178,10 @@ final class ClaudeEventParser implements Consumer<String> {
      * whose whole reply was blank has nothing in it to call an answer.
      */
     private void emitAssistant(String text) {
+        if (!assistantMessageStarted) {
+            listener.onAssistantMessageStart();
+            assistantMessageStarted = true;
+        }
         answered |= !text.isBlank();
         listener.onAssistantText(text);
     }

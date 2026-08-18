@@ -7,6 +7,8 @@ import java.util.List;
 public final class RecordingChatListener implements ChatListener {
 
     public final StringBuilder text = new StringBuilder();
+    /** Text offsets at which distinct assistant messages started. */
+    public final List<Integer> assistantMessageStarts = new ArrayList<>();
     public final StringBuilder thinking = new StringBuilder();
     public final List<String> tools = new ArrayList<>();
     public final List<String> errors = new ArrayList<>();
@@ -19,6 +21,11 @@ public final class RecordingChatListener implements ChatListener {
     @Override
     public void onSessionId(String id) {
         sessionId = id;
+    }
+
+    @Override
+    public void onAssistantMessageStart() {
+        assistantMessageStarts.add(text.length());
     }
 
     @Override

@@ -43,6 +43,22 @@ class CodexEventParserTest {
         parser.accept("{\"type\":\"item.updated\",\"item\":{\"id\":\"m\",\"type\":\"agent_message\",\"text\":\"Hello\"}}");
         parser.accept("{\"type\":\"item.completed\",\"item\":{\"id\":\"m\",\"type\":\"agent_message\",\"text\":\"Hello, world\"}}");
         assertEquals("Hello, world", listener.text.toString());
+        assertEquals(java.util.List.of(0), listener.assistantMessageStarts,
+                "updates and completion for one item remain one assistant message");
+    }
+
+    @Test
+    void distinctAgentMessageItemsRetainTheirBoundary() {
+        RecordingChatListener listener = new RecordingChatListener();
+        CodexEventParser parser = new CodexEventParser(listener);
+        parser.accept("{\"type\":\"item.completed\",\"item\":{\"id\":\"first\","
+                + "\"type\":\"agent_message\",\"text\":\"one.\"}}");
+        parser.accept("{\"type\":\"item.completed\",\"item\":{\"id\":\"second\","
+                + "\"type\":\"agent_message\",\"text\":\"Two.\"}}");
+
+        assertEquals("one.Two.", listener.text.toString(), "the parser does not alter provider text");
+        assertEquals(java.util.List.of(0, 4), listener.assistantMessageStarts,
+                "different Codex item ids are different visible messages");
     }
 
     @Test
@@ -54,6 +70,7 @@ class CodexEventParserTest {
         parser.accept("{\"type\":\"item.updated\",\"item\":{\"type\":\"agent_message\",\"text\":\"partial\"}}");
         parser.accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"final answer\"}}");
         assertEquals("final answer", listener.text.toString());
+        assertEquals(java.util.List.of(0), listener.assistantMessageStarts);
     }
 
     @Test

@@ -12,7 +12,16 @@ public interface ChatListener {
     default void onSessionId(String sessionId) {
     }
 
-    /** A chunk of assistant-visible text (a streamed delta, or a whole message for Codex). */
+    /**
+     * Starts one distinct assistant message. Providers fire this immediately before that message's
+     * first non-empty text chunk, not merely when a model response starts: a tool-only response has
+     * no visible assistant message to delimit. Text deltas that belong to the same provider message
+     * must share one start callback.
+     */
+    default void onAssistantMessageStart() {
+    }
+
+    /** A chunk of assistant-visible text within the message most recently started above. */
     default void onAssistantText(String text) {
     }
 

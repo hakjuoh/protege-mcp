@@ -1,6 +1,8 @@
 package io.github.hakjuoh.protege_mcp.chat.antigravity;
 
 import java.io.IOException;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.Consumer;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -17,6 +19,10 @@ final class AntigravityEventParser implements Consumer<String> {
 
     private final ChatListener listener;
     private final StringBuilder streamedResponse = new StringBuilder();
+    /** Documented step indexes whose assistant response has emitted visible text. */
+    private final Set<String> startedResponseSteps = new HashSet<>();
+    /** Fallback state for older/malformed streams that omit the documented step_index. */
+    private boolean anonymousResponseStarted;
     private boolean answered;
     private boolean errorReported;
 
@@ -53,9 +59,10 @@ final class AntigravityEventParser implements Consumer<String> {
         String type = step.path("step_type").asText("");
         String text = step.path("text_delta").asText("");
         if ("agent_response".equals(type)) {
-            emitAssistant(text);
+            emitAssistantStep(step, text);
             return;
         }
+        anonymousResponseStarted = false;
         if ("reasoning".equals(type) || "thinking".equals(type)) {
             if (!text.isEmpty()) {
                 listener.onThinking(text);
@@ -69,12 +76,37 @@ final class AntigravityEventParser implements Consumer<String> {
         }
     }
 
+    private void emitAssistantStep(JsonNode step, String text) {
+        if (text == null || text.isEmpty()) {
+            if ("DONE".equals(step.path("state").asText(""))
+                    && !step.hasNonNull("step_index")) {
+                anonymousResponseStarted = false;
+            }
+            return;
+        }
+        JsonNode index = step.path("step_index");
+        if (!index.isMissingNode() && !index.isNull()) {
+            if (startedResponseSteps.add(index.asText())) {
+                listener.onAssistantMessageStart();
+            }
+        } else if (!anonymousResponseStarted) {
+            listener.onAssistantMessageStart();
+            anonymousResponseStarted = true;
+        }
+        emitAssistant(text);
+        if ("DONE".equals(step.path("state").asText(""))
+                && !step.hasNonNull("step_index")) {
+            anonymousResponseStarted = false;
+        }
+    }
+
     private void handleResult(JsonNode result) {
         emitSessionId(result.path("conversation_id").asText(""));
         String response = result.path("response").asText("");
         if (!response.isEmpty()) {
             String streamed = streamedResponse.toString();
             if (streamed.isEmpty()) {
+                listener.onAssistantMessageStart();
                 emitAssistant(response);
             } else if (response.startsWith(streamed) && response.length() > streamed.length()) {
                 emitAssistant(response.substring(streamed.length()));

@@ -141,7 +141,7 @@ final class CodexEventParser implements Consumer<String> {
                     if (completed) {
                         String t = item.path("text").asText("");
                         if (!t.isEmpty()) {
-                            emitAssistant(t);
+                            emitAssistantMessage(t);
                         }
                     }
                 } else {
@@ -314,9 +314,18 @@ final class CodexEventParser implements Consumer<String> {
         }
         int prev = emitted.getOrDefault(id, 0);
         if (fullText.length() > prev) {
+            if (prev == 0) {
+                listener.onAssistantMessageStart();
+            }
             emitAssistant(fullText.substring(prev));
             emitted.put(id, fullText.length());
         }
+    }
+
+    /** Emits one complete, non-incremental assistant message. */
+    private void emitAssistantMessage(String text) {
+        listener.onAssistantMessageStart();
+        emitAssistant(text);
     }
 
     /**

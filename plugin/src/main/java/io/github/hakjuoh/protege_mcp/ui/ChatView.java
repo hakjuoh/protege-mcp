@@ -89,6 +89,7 @@ import io.github.hakjuoh.protege_mcp.chat.ChatProcess;
 import io.github.hakjuoh.protege_mcp.chat.ChatProvider;
 import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
 import io.github.hakjuoh.protege_mcp.chat.ChatUsage;
+import io.github.hakjuoh.protege_mcp.chat.TranscriptMessageSpacing;
 import io.github.hakjuoh.protege_mcp.chat.McpEndpoint;
 import io.github.hakjuoh.protege_mcp.chat.Providers;
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
@@ -134,11 +135,11 @@ public class ChatView extends AbstractOWLViewComponent {
     private static final int PASTED_TEXT_INLINE_MAX = 8000;
     /** Files larger than this are refused (avoids copying huge files and oversized provider arguments). */
     private static final long MAX_ATTACHMENT_BYTES = 25L * 1024 * 1024;
-
     private static final boolean IS_MAC =
             System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("mac");
 
-    private enum Kind { USER, ASSISTANT, TOOL, THINKING, ERROR, SYSTEM }
+    private enum Kind { USER, ASSISTANT_START, ASSISTANT, TOOL, THINKING, ERROR, SYSTEM }
+    private record MessageMargins(float above, float below) { }
 
     private record Chunk(Kind kind, String text) {
     }
@@ -186,6 +187,12 @@ public class ChatView extends AbstractOWLViewComponent {
     // that virtually never end with a newline, so line breaks are inserted at the RUN boundaries —
     // entering and leaving a reasoning run — never between the deltas inside one.
     private Kind lastRenderedKind;
+    /** Start of a contiguous streamed reasoning block, or -1 outside one. EDT-owned. */
+    private int thinkingBlockStart = -1;
+    /** Exclusive end of that block's last visible content, excluding separator-only deltas. */
+    private int thinkingBlockEnd = -1;
+    /** Opening top margin of the current reasoning block; later deltas must not recompute it. */
+    private float thinkingBlockSpaceAbove = -1F;
 
     // The currently-streaming assistant message, kept as Markdown source and re-rendered in place on
     // each drain tick (unclosed markers render literally and converge as their closers stream in).
@@ -1078,6 +1085,9 @@ public class ChatView extends AbstractOWLViewComponent {
             closeAssistantSegment(false);   // its offsets were reset along with the document
             atTurnStartOfLine = true;
             lastRenderedKind = null;
+            thinkingBlockStart = -1;
+            thinkingBlockEnd = -1;
+            thinkingBlockSpaceAbove = -1F;
             liveUsage = null;
             lastUsage = null;
             usageLabel.setText(" ");
@@ -1310,6 +1320,16 @@ public class ChatView extends AbstractOWLViewComponent {
             }
 
             @Override
+            public void onAssistantMessageStart() {
+                // ChatHistory stores one assistant entry per CLI turn, so retain provider message
+                // boundaries as Markdown paragraphs inside that entry as well as in the transcript.
+                if (activeTurnAssistant.length() > 0) {
+                    activeTurnAssistant.append("\n\n");
+                }
+                enqueue(Kind.ASSISTANT_START, "");
+            }
+
+            @Override
             public void onAssistantText(String text) {
                 activeTurnAssistant.append(text);
                 enqueue(Kind.ASSISTANT, text);
@@ -1324,7 +1344,7 @@ public class ChatView extends AbstractOWLViewComponent {
 
             @Override
             public void onToolActivity(String summary) {
-                enqueue(Kind.TOOL, "\n  ⚙ " + summary + "\n");
+                enqueue(Kind.TOOL, "  ⚙ " + summary + "\n");
             }
 
             @Override
@@ -1531,6 +1551,10 @@ public class ChatView extends AbstractOWLViewComponent {
     // ------------------------------------------------------------------ transcript rendering (EDT)
 
     private void append(Kind kind, String text) {
+        if (kind == Kind.ASSISTANT_START) {
+            startAssistantMessage();
+            return;
+        }
         if (text == null || text.isEmpty()) {
             return;
         }
@@ -1542,13 +1566,60 @@ public class ChatView extends AbstractOWLViewComponent {
             appendAssistant(text);
             return;
         }
+        if (kind != Kind.THINKING) {
+            text = normalizeLeadingBoundaryBreaks(text, atTurnStartOfLine);
+            if (text.isEmpty()) {
+                return;
+            }
+        }
+        boolean continuingThinking = kind == Kind.THINKING
+                && lastRenderedKind == Kind.THINKING && thinkingBlockSpaceAbove >= 0F;
+        if (!continuingThinking) {
+            thinkingBlockStart = -1;
+            thinkingBlockEnd = -1;
+            thinkingBlockSpaceAbove = -1F;
+        }
         closeAssistantSegment(false);   // interrupted mid-turn: tag the source, no button row
-        if (needsReasoningBoundaryBreak(kind, text)) {
+        if (needsTranscriptLineBreak(kind, text)) {
             text = "\n" + text;
         }
         StyledDocument doc = transcript.getStyledDocument();
+        int insertionStart = doc.getLength();
+        SimpleAttributeSet attributes = styleFor(kind);
+        MessageMargins margins = plainMessageMargins();
+        if (kind == Kind.THINKING) {
+            if (!continuingThinking) {
+                thinkingBlockSpaceAbove = margins.above();
+            } else {
+                margins = new MessageMargins(thinkingBlockSpaceAbove, margins.below());
+            }
+        }
         try {
-            doc.insertString(doc.getLength(), text, styleFor(kind));
+            if (continuingThinking && thinkingBlockEnd > thinkingBlockStart) {
+                // Move the outer bottom margin as the streamed block grows instead of leaving it
+                // behind on a paragraph that has become internal to the same reasoning message.
+                TranscriptMessageSpacing.apply(doc, thinkingBlockStart, thinkingBlockEnd, 0F);
+            }
+            doc.insertString(insertionStart, text, attributes);
+            int firstContent = firstContentOffset(text);
+            int lastContent = lastContentOffset(text);
+            if (kind == Kind.THINKING) {
+                if (firstContent < lastContent) {
+                    if (thinkingBlockStart < 0) {
+                        thinkingBlockStart = insertionStart + firstContent;
+                    }
+                    thinkingBlockEnd = insertionStart + lastContent;
+                }
+                if (thinkingBlockEnd > thinkingBlockStart) {
+                    // Reapply even after a newline-only delta: it is a separator inside the same
+                    // streamed message and must not erase that message's existing outer margins.
+                    TranscriptMessageSpacing.apply(doc, thinkingBlockStart,
+                            thinkingBlockEnd, margins.above(), margins.below());
+                }
+            } else if (firstContent < lastContent) {
+                TranscriptMessageSpacing.apply(doc, insertionStart + firstContent,
+                        insertionStart + lastContent, margins.above(), margins.below());
+            }
         } catch (BadLocationException ignored) {
             return;
         }
@@ -1558,16 +1629,69 @@ public class ChatView extends AbstractOWLViewComponent {
     }
 
     /**
-     * True when this chunk starts or ends a reasoning run mid-line: the first reasoning delta must
-     * not glue onto earlier text, and the first non-reasoning chunk after a run must not glue onto
-     * the reasoning's last line. Chunks that bring their own leading newline (tool/error lines) and
-     * deltas inside one reasoning run get nothing.
+     * Closes the preceding provider message and gives the next one its own Markdown block. Most
+     * boundaries already contain visible reasoning or tool activity, which closes the segment via
+     * {@link #append}; only two adjacent assistant messages need an explicit blank transcript line.
      */
-    private boolean needsReasoningBoundaryBreak(Kind kind, String text) {
+    private void startAssistantMessage() {
+        StyledDocument doc = transcript.getStyledDocument();
+        String previous = closeAssistantSegment(false);
+        if (previous == null) {
+            return;
+        }
+        try {
+            // One break reaches the next line; the second makes the boundary the same height as a
+            // blank transcript line. If the prior renderer already ended on a line boundary, only
+            // the latter is needed.
+            doc.insertString(doc.getLength(), atTurnStartOfLine ? "\n" : "\n\n", null);
+            atTurnStartOfLine = true;
+            transcript.setCaretPosition(doc.getLength());
+        } catch (BadLocationException ignored) {
+            // The messages remain distinct Markdown segments even if the visual separator failed.
+        }
+    }
+
+    /**
+     * True when this chunk needs a fresh transcript line. Tool rows always stand alone, while the
+     * first reasoning delta and the first non-reasoning chunk after it must not glue to adjacent text.
+     * A chunk already at a line start (or carrying its own leading newline) needs nothing.
+     */
+    private boolean needsTranscriptLineBreak(Kind kind, String text) {
         if (atTurnStartOfLine || text.startsWith("\n")) {
             return false;
         }
-        return (kind == Kind.THINKING) != (lastRenderedKind == Kind.THINKING);
+        return kind == Kind.TOOL
+                || (kind == Kind.THINKING) != (lastRenderedKind == Kind.THINKING);
+    }
+
+    /** Leading/trailing line breaks are separators, not message content that should receive margins. */
+    private static int firstContentOffset(String text) {
+        int offset = 0;
+        while (offset < text.length() && (text.charAt(offset) == '\n' || text.charAt(offset) == '\r')) {
+            offset++;
+        }
+        return offset;
+    }
+
+    private static int lastContentOffset(String text) {
+        int offset = text.length();
+        while (offset > 0 && (text.charAt(offset - 1) == '\n' || text.charAt(offset - 1) == '\r')) {
+            offset--;
+        }
+        return offset;
+    }
+
+    /**
+     * Leading breaks on plain chunks are boundary markers, not message content. At a line start
+     * they are redundant; mid-line, any run of them collapses to the one break needed to start the
+     * message. This prevents a real blank paragraph from stacking with the visual message gap.
+     */
+    private static String normalizeLeadingBoundaryBreaks(String text, boolean atLineStart) {
+        int content = firstContentOffset(text);
+        if (content == 0) {
+            return text;
+        }
+        return (atLineStart ? "" : "\n") + text.substring(content);
     }
 
     /**
@@ -1596,6 +1720,9 @@ public class ChatView extends AbstractOWLViewComponent {
                 // worst case the reply starts on the reasoning's line
             }
         }
+        thinkingBlockStart = -1;
+        thinkingBlockEnd = -1;
+        thinkingBlockSpaceAbove = -1F;
         Boolean endsWithBreak = assistantSegment.appendAndRender(doc, text, transcriptFontSize());
         if (endsWithBreak != null) {
             atTurnStartOfLine = endsWithBreak;
@@ -1611,11 +1738,12 @@ public class ChatView extends AbstractOWLViewComponent {
      * under the message — used for the turn's final reply only, so tool-interrupted interim messages
      * don't stack up button rows.
      */
-    private void closeAssistantSegment(boolean offerCopy) {
+    private String closeAssistantSegment(boolean offerCopy) {
         String source = assistantSegment.close(transcript.getStyledDocument());
         if (offerCopy && source != null) {
             insertCopyAffordance(source);
         }
+        return source;
     }
 
     /** A left-aligned copy button on its own line under the message it copies (cf. Codex's ⧉). */
@@ -1698,6 +1826,19 @@ public class ChatView extends AbstractOWLViewComponent {
     private int transcriptFontSize() {
         Font f = transcript.getFont();
         return f != null ? f.getSize() : 13;
+    }
+
+    /**
+     * Keeps Markdown paragraph attributes untouched. Every plain message owns the whole one-line
+     * gap below it; a plain message directly following Markdown additionally owns that boundary's
+     * gap above it. Thus neither edge requires changing Markdown's renderer-owned paragraph styles.
+     */
+    private MessageMargins plainMessageMargins() {
+        Font font = transcript.getFont();
+        int lineHeight = font == null ? 13 : transcript.getFontMetrics(font).getHeight();
+        return lastRenderedKind == Kind.ASSISTANT
+                ? new MessageMargins(lineHeight, lineHeight)
+                : new MessageMargins(0F, lineHeight);
     }
 
     // ------------------------------------------------------------------ transcript links
@@ -1857,8 +1998,8 @@ public class ChatView extends AbstractOWLViewComponent {
                 StyleConstants.setBold(a, true);
                 StyleConstants.setForeground(a, new Color(0x1A4F8B));
             }
-            // ASSISTANT never reaches here: append() routes it to appendAssistant(), and
-            // ChatMarkdown owns the assistant styling.
+            // ASSISTANT and ASSISTANT_START never reach here: append() routes them to the
+            // Markdown segment lifecycle.
             case TOOL -> {
                 StyleConstants.setItalic(a, true);
                 StyleConstants.setForeground(a, new Color(0x507030));
