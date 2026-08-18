@@ -61,7 +61,7 @@
         <commons.csv.version>1.14.1</commons.csv.version>
         <!-- Keep commons-csv's transitive utilities converged with OWLAPI's graph. -->
         <commons.io.version>2.22.0</commons.io.version>
-        <commons.codec.version>1.22.0</commons.codec.version>
+        <commons.codec.version>1.22.1</commons.codec.version>
         <okhttp.version>5.4.0</okhttp.version>
         <!-- OkHttp 5.4.0's JVM artifact requires Kotlin at runtime. Keep the stdlib version
              explicit so the OSGi bundle embeds it deterministically instead of relying on bnd
