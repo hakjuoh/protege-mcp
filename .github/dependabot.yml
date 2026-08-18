@@ -13,7 +13,6 @@ updates:
   # test/build tooling (junit, jacoco, surefire, compiler, enforcer, shade) is left to Dependabot.
   - package-ecosystem: maven
     directory: "/"
-    target-branch: develop
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -36,6 +35,8 @@ updates:
       - dependency-name: "org.eclipse.jetty*"
       - dependency-name: "jakarta.servlet:*"
       - dependency-name: "org.apache.jena:*"
+      - dependency-name: "com.squareup.okhttp3:*"
+      - dependency-name: "org.jetbrains.kotlin:*"
       # Titanium is embedded into both distributable artifacts. Selecting 3.x only when Maven runs
       # on JDK 21 would make their bytecode/runtime contract depend on the build machine, while the
       # project and Protégé integration intentionally remain compatible with Java 17.
@@ -46,7 +47,6 @@ updates:
   # GitHub Actions are safe to keep current; group them into a single PR to keep the noise down.
   - package-ecosystem: github-actions
     directory: "/"
-    target-branch: develop
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
