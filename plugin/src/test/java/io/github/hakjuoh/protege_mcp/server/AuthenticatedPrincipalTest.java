@@ -43,6 +43,11 @@ class AuthenticatedPrincipalTest {
         assertEquals(java.util.Set.of("ontology:read", "ontology:curate",
                 "filesystem:project:read"), selected.capabilities());
         assertFalse(selected.allows("filesystem:project:write"));
+
+        AuthenticatedPrincipal terminology = AuthenticatedPrincipal.oauth(
+                "terminology", "Terminology", "grant-t", "external-terms:read");
+        assertTrue(terminology.allows("external-terms:read"));
+        assertFalse(terminology.allows("network:access"));
     }
 
     @Test

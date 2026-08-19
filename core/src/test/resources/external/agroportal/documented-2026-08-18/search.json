@@ -1,0 +1,1 @@
+{"page":1,"pageCount":2,"totalCount":2,"nextPage":2,"collection":[{"@id":"http://aims.fao.org/aos/agrovoc/c_12332","@type":"http://www.w3.org/2002/07/owl#Class","prefLabel":"maize","synonym":["corn"],"definition":["A cereal crop concept."],"obsolete":false,"links":{"ontology":"https://data.agroportal.eu/ontologies/AGROVOC"}}]}

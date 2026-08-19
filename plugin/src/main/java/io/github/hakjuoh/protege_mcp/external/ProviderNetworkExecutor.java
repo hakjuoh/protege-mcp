@@ -28,7 +28,7 @@ public final class ProviderNetworkExecutor implements ProviderTransport {
     private static final Duration MAX_RETRY_AFTER = Duration.ofSeconds(2);
     private static final Duration BASE_RETRY_DELAY = Duration.ofMillis(250);
     private final ProviderOwnerConfig.ResolvedProvider authority;
-    private final OwnerCredentialStore credentialStore;
+    private final CredentialSource credentialStore;
     private final OwnerProviderCache.Acquisition acquisition;
     private final NetworkGate networkGate;
     private final AddressResolver resolver;
@@ -51,13 +51,20 @@ public final class ProviderNetworkExecutor implements ProviderTransport {
     }
 
     ProviderNetworkExecutor(ProviderOwnerConfig.ResolvedProvider authority,
+            CredentialSource credentialStore, NetworkGate networkGate) {
+        this(authority, credentialStore, networkGate, InetAddress::getAllByName,
+                new PinnedHttpsEngine(), Clock.systemUTC(),
+                duration -> Thread.sleep(duration.toMillis()), null);
+    }
+
+    ProviderNetworkExecutor(ProviderOwnerConfig.ResolvedProvider authority,
             OwnerCredentialStore credentialStore, NetworkGate networkGate,
             AddressResolver resolver, HttpEngine engine, Clock clock, Sleeper sleeper) {
         this(authority, credentialStore, networkGate, resolver, engine, clock, sleeper, null);
     }
 
     ProviderNetworkExecutor(ProviderOwnerConfig.ResolvedProvider authority,
-            OwnerCredentialStore credentialStore, NetworkGate networkGate,
+            CredentialSource credentialStore, NetworkGate networkGate,
             AddressResolver resolver, HttpEngine engine, Clock clock, Sleeper sleeper,
             OwnerProviderCache.Acquisition acquisition) {
         if (authority == null || networkGate == null || resolver == null || engine == null
@@ -161,21 +168,27 @@ public final class ProviderNetworkExecutor implements ProviderTransport {
         Map<String, String> headers = baseHeaders();
         OwnerCredentialStore.CredentialLease lease = null;
         byte[] secret = null;
+        // A query credential exists only on this final engine URI. Cache authority, acquisition
+        // evidence, returned source URLs, and failure details continue to use the query-free target.
+        URI requestTarget = target;
         try {
             if (authority.credential() != null) {
                 // Reopen on every retry so deletion/rotation cannot retransmit a stale generation.
                 lease = credentialStore.open(authority.credential().id());
                 secret = lease.copySecret();
-                requestCanaries.add(secret);
-                String value = new String(secret, StandardCharsets.US_ASCII);
-                if (authority.credential().scheme() == ProviderOwnerConfig.AuthScheme.BEARER) {
-                    value = "Bearer " + value;
+                addCredentialCanaries(requestCanaries, authority.credential().scheme(), secret);
+                if (authority.credential().scheme()
+                        == ProviderOwnerConfig.AuthScheme.QUERY_API_KEY) {
+                    requestTarget = withCredentialQuery(target,
+                            authority.credential().parameter(), secret);
+                } else {
+                    String value = credentialValue(authority.credential().scheme(), secret);
+                    headers.put(authority.credential().header(), value);
                 }
-                headers.put(authority.credential().header(), value);
             }
             String requestScope = authority.cacheScopeFingerprint(lease);
             if (acquisition != null) acquisition.authorizeAttempt(authority, requestScope, target);
-            RawResponse response = engine.get(target,
+            RawResponse response = engine.get(requestTarget,
                     Collections.unmodifiableMap(headers), addresses);
             if (secret != null) {
                 byte[] body = response.body();
@@ -201,23 +214,58 @@ public final class ProviderNetworkExecutor implements ProviderTransport {
         return headers;
     }
 
+    private static String credentialValue(ProviderOwnerConfig.AuthScheme scheme, byte[] secret) {
+        String value = new String(secret, StandardCharsets.US_ASCII);
+        return switch (scheme) {
+            case BEARER -> "Bearer " + value;
+            case API_KEY -> value;
+            case ONTOPORTAL_API_KEY -> "apikey token=" + value;
+            case QUERY_API_KEY -> throw new IllegalArgumentException(
+                    "query credentials do not have a header value");
+        };
+    }
+
+    private static void addCredentialCanaries(List<byte[]> canaries,
+            ProviderOwnerConfig.AuthScheme scheme, byte[] secret) {
+        canaries.add(secret);
+    }
+
+    private static URI withCredentialQuery(URI target, String parameter, byte[] secret)
+            throws ProviderFailure {
+        try {
+            String encodedName = encode(parameter);
+            String rawQuery = target.getRawQuery();
+            if (rawQuery != null && Arrays.stream(rawQuery.split("&", -1))
+                    .anyMatch(field -> field.equals(encodedName)
+                            || field.startsWith(encodedName + "="))) {
+                throw new IllegalArgumentException();
+            }
+            String separator = rawQuery == null ? "?" : "&";
+            URI authenticated = URI.create(target.toASCIIString() + separator + encodedName + "="
+                    + encode(new String(secret, StandardCharsets.US_ASCII)));
+            if (!validHttpsTarget(authenticated)) throw new IllegalArgumentException();
+            return authenticated;
+        } catch (RuntimeException invalid) {
+            throw new ProviderFailure("provider_request_invalid",
+                    "Provider credential query is invalid", false);
+        }
+    }
+
     private void authorizeInitial(URI target) throws ProviderFailure {
-        URI origin = authority.origin().origin();
-        String ownerPath = origin.getRawPath();
-        String targetPath = target.getRawPath();
-        boolean withinOwnerPath = targetPath.equals(ownerPath)
-                || targetPath.startsWith(ownerPath + "/");
-        if (!"https".equalsIgnoreCase(target.getScheme()) || target.getUserInfo() != null
-                || !sameOrigin(origin, target) || !withinOwnerPath) {
+        if (!withinOwnerBinding(target)) {
             throw new ProviderFailure("provider_origin_unbound",
                     "Provider request escaped its exact owner origin", false);
         }
-        authorizeGate(ProviderNetworkUris.origin(origin));
+        authorizeGate(ProviderNetworkUris.origin(authority.origin().origin()));
     }
 
     private void authorizeRedirect(URI target) throws ProviderFailure {
-        if (!validHttpsTarget(target)) throw redirectRefused(302);
+        if (!validHttpsTarget(target) || !withinOwnerBinding(target)) throw redirectRefused(302);
         authorizeGate(ProviderNetworkUris.origin(target));
+    }
+
+    private boolean withinOwnerBinding(URI target) {
+        return ProviderOriginBoundary.contains(authority, target);
     }
 
     private void authorizeGate(URI target) throws ProviderFailure {
@@ -326,16 +374,6 @@ public final class ProviderNetworkExecutor implements ProviderTransport {
         String value = target.toASCIIString();
         int query = value.indexOf('?');
         return URI.create(query < 0 ? value : value.substring(0, query));
-    }
-
-    private static boolean sameOrigin(URI left, URI right) {
-        return left.getScheme().equalsIgnoreCase(right.getScheme())
-                && left.getHost().equalsIgnoreCase(right.getHost())
-                && effectivePort(left) == effectivePort(right);
-    }
-
-    private static int effectivePort(URI uri) {
-        return uri.getPort() < 0 ? 443 : uri.getPort();
     }
 
     private static ProviderFailure statusFailure(int status, int attempts) {
@@ -448,6 +486,11 @@ public final class ProviderNetworkExecutor implements ProviderTransport {
     @FunctionalInterface
     public interface NetworkGate {
         void authorize(URI exactOrigin) throws ProviderFailure;
+    }
+
+    @FunctionalInterface
+    interface CredentialSource {
+        OwnerCredentialStore.CredentialLease open(String credentialId) throws ProviderFailure;
     }
 
     @FunctionalInterface

@@ -1,17 +1,16 @@
 package io.github.hakjuoh.protege_mcp.external;
 
+import java.net.URI;
 import java.time.Clock;
 import java.time.Duration;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 
-/** Default OLS4 gateway with owner-bound transport, cache, and opaque cursor handling. */
+/** Default provider gateway with owner-bound transport, cache, and opaque cursor handling. */
 public final class DefaultExternalProviderGateway implements ExternalProviderGateway {
 
-    private static final Map<String, ExternalTermProvider> PROVIDERS = Map.of(
-            Ols4Provider.PROFILE, new Ols4Provider());
-
+    private final ExternalTermProviderRegistry registry;
     private final ProviderCursorStore cursors;
     private final ProviderCalls calls;
     private final RuntimeRoots roots;
@@ -23,24 +22,35 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
     }
 
     DefaultExternalProviderGateway(ProviderCursorStore cursors) {
-        this(cursors, null);
+        this(cursors, (ProviderCalls) null);
+    }
+
+    DefaultExternalProviderGateway(ProviderCursorStore cursors, ExternalTermProviderRegistry registry) {
+        this(cursors, null, null, null, Clock.systemUTC(), registry);
     }
 
     DefaultExternalProviderGateway(ProviderCursorStore cursors, ProviderCalls calls) {
-        this(cursors, calls, null, null, Clock.systemUTC());
+        this(cursors, calls, null, null, Clock.systemUTC(), ExternalTermProviderRegistry.defaultRegistry());
     }
 
     DefaultExternalProviderGateway(ProviderCursorStore cursors, RuntimeRoots roots,
             TransportFactory transportFactory, Clock clock) {
-        this(cursors, null, roots, transportFactory, clock);
+        this(cursors, null, roots, transportFactory, clock, ExternalTermProviderRegistry.defaultRegistry());
+    }
+
+    DefaultExternalProviderGateway(ProviderCursorStore cursors, RuntimeRoots roots,
+            TransportFactory transportFactory, Clock clock, ExternalTermProviderRegistry registry) {
+        this(cursors, null, roots, transportFactory, clock, registry);
     }
 
     private DefaultExternalProviderGateway(ProviderCursorStore cursors, ProviderCalls calls,
-            RuntimeRoots roots, TransportFactory transportFactory, Clock clock) {
+            RuntimeRoots roots, TransportFactory transportFactory, Clock clock,
+            ExternalTermProviderRegistry registry) {
         this.cursors = java.util.Objects.requireNonNull(cursors, "cursors");
         this.roots = roots;
         this.transportFactory = transportFactory;
         this.clock = java.util.Objects.requireNonNull(clock, "clock");
+        this.registry = registry == null ? ExternalTermProviderRegistry.defaultRegistry() : registry;
         this.calls = calls == null ? new ProviderCalls() {
             @Override
             public ProviderCallSearch search(Invocation invocation,
@@ -54,6 +64,11 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
                 return fetchInspect(invocation, request);
             }
         } : calls;
+    }
+
+    @Override
+    public boolean supportsProfile(String profile) {
+        return registry.supports(profile);
     }
 
     @Override
@@ -90,6 +105,7 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
 
     private ProviderCallInspect fetchInspect(Invocation invocation, ProviderInspectRequest request)
             throws ProviderFailure {
+        ExternalTermProvider selectedProvider = provider(invocation.profile());
         Runtime runtime = runtime(invocation);
         Optional<OwnerProviderCache.InspectRead> cached = invocation.cacheReadAllowed()
                 ? runtime.cache().getInspectForPublication(runtime.authority(), request)
@@ -104,7 +120,7 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
         OwnerProviderCache.Acquisition acquisition = runtime.cache()
                 .beginInspectAcquisition(runtime.authority(), request);
         String acquisitionScope = acquisition.scopeFingerprint();
-        ProviderResult result = provider(invocation.profile()).inspect(request,
+        ProviderResult result = selectedProvider.inspect(request,
                 transport(invocation, runtime, acquisition));
         if (invocation.cacheWriteAllowed()) {
             runtime.cache().putInspect(runtime.authority(), acquisition, request, result);
@@ -148,6 +164,7 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
 
     private ProviderCallSearch fetchSearch(Invocation invocation, ProviderSearchRequest request)
             throws ProviderFailure {
+        ExternalTermProvider selectedProvider = provider(invocation.profile());
         Runtime runtime = runtime(invocation);
         Optional<OwnerProviderCache.SearchRead> cached = request.continuation() == null
                 && invocation.cacheReadAllowed()
@@ -163,7 +180,7 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
         OwnerProviderCache.Acquisition acquisition = runtime.cache()
                 .beginSearchAcquisition(runtime.authority(), request);
         String acquisitionScope = acquisition.scopeFingerprint();
-        ProviderPage page = provider(invocation.profile()).search(request,
+        ProviderPage page = selectedProvider.search(request,
                 transport(invocation, runtime, acquisition));
         if (request.continuation() == null && invocation.cacheWriteAllowed()) {
             runtime.cache().putSearch(runtime.authority(), acquisition, request, page);
@@ -177,6 +194,8 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
 
     private Runtime runtime(Invocation invocation) throws ProviderFailure {
         ProviderOwnerConfig.ResolvedProvider authority = resolveOwner(invocation);
+        ProviderNetworkExecutor.NetworkGate networkGate = ownerBoundNetworkGate(
+                authority, invocation.networkGate());
         OwnerCredentialStore credentials = authority.credential() == null ? null
                 : roots == null ? new OwnerCredentialStore()
                         : new OwnerCredentialStore(roots.credentials());
@@ -188,13 +207,43 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
             Path cacheRoot = roots == null ? ProviderLocalPaths.cache() : roots.cache();
             cache = new OwnerProviderCache(cacheRoot, credentials,
                     () -> resolveOwner(invocation), invocation.projectGate(),
-                    invocation.networkGate(), clock, ttl, OwnerProviderCache.DEFAULT_MAX_ENTRIES,
+                    networkGate, clock, ttl, OwnerProviderCache.DEFAULT_MAX_ENTRIES,
                     OwnerProviderCache.DEFAULT_MAX_BYTES);
         } else {
             cache = new OwnerProviderCache(credentials, () -> resolveOwner(invocation),
-                    invocation.projectGate(), invocation.networkGate());
+                    invocation.projectGate(), networkGate);
         }
-        return new Runtime(authority, credentials, cache);
+        return new Runtime(authority, credentials, cache, networkGate);
+    }
+
+    /**
+     * Bind project egress permission to the exact origin selected by the owner-local alias. This
+     * makes that binding the provider allowlist for live transport, redirects, and cached evidence
+     * without weakening the separate global host policy used by document/import fetching.
+     */
+    private static ProviderNetworkExecutor.NetworkGate ownerBoundNetworkGate(
+            ProviderOwnerConfig.ResolvedProvider authority,
+            ProviderNetworkExecutor.NetworkGate projectGate) {
+        URI ownerOrigin = ProviderNetworkUris.origin(authority.origin().origin());
+        return requested -> {
+            final URI actual;
+            try {
+                actual = ProviderNetworkUris.origin(requested);
+            } catch (RuntimeException invalid) {
+                throw new ProviderFailure("provider_origin_unbound",
+                        "Provider request escaped its exact owner origin", false);
+            }
+            if (!ownerOrigin.getHost().equalsIgnoreCase(actual.getHost())
+                    || effectivePort(ownerOrigin) != effectivePort(actual)) {
+                throw new ProviderFailure("provider_origin_unbound",
+                        "Provider request escaped its exact owner origin", false);
+            }
+            projectGate.authorize(ownerOrigin);
+        };
+    }
+
+    private static int effectivePort(URI uri) {
+        return uri.getPort() < 0 ? 443 : uri.getPort();
     }
 
     private ProviderOwnerConfig.ResolvedProvider resolveOwner(Invocation invocation)
@@ -210,10 +259,10 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
             OwnerProviderCache.Acquisition acquisition) throws ProviderFailure {
         if (transportFactory != null) {
             return transportFactory.create(runtime.authority(), runtime.credentials(),
-                    invocation.networkGate(), acquisition);
+                    runtime.networkGate(), acquisition);
         }
         return new ProviderNetworkExecutor(runtime.authority(), runtime.credentials(),
-                invocation.networkGate(), acquisition);
+                runtime.networkGate(), acquisition);
     }
 
     private static Invocation requireInvocation(String providerId, InvocationResolver resolver)
@@ -243,13 +292,8 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
         }
     }
 
-    private static ExternalTermProvider provider(String profile) throws ProviderFailure {
-        ExternalTermProvider provider = PROVIDERS.get(profile);
-        if (provider == null) {
-            throw new ProviderFailure("provider_profile_unsupported",
-                    "Provider profile is not supported by this release", false);
-        }
-        return provider;
+    private ExternalTermProvider provider(String profile) throws ProviderFailure {
+        return registry.require(profile);
     }
 
     private static void authorizeSearch(Invocation invocation, ProviderSearchRequest request)
@@ -302,7 +346,8 @@ public final class DefaultExternalProviderGateway implements ExternalProviderGat
     }
 
     private record Runtime(ProviderOwnerConfig.ResolvedProvider authority,
-            OwnerCredentialStore credentials, OwnerProviderCache cache) { }
+            OwnerCredentialStore credentials, OwnerProviderCache cache,
+            ProviderNetworkExecutor.NetworkGate networkGate) { }
 
     interface ProviderCalls {
         ProviderCallSearch search(Invocation invocation, ProviderSearchRequest request)

@@ -13,6 +13,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
@@ -74,6 +75,34 @@ class DirectAccessPolicyTest {
         assertFalse(imports.allowed(), "imports.network=deny overrides network.default=allow");
         assertFalse(imports.permits(URI.create("https://raw.githubusercontent.com/x")));
         assertFalse(imports.followRedirects(), "an active host allowlist must not follow unchecked redirects");
+    }
+
+    @Test
+    void externalTermsCapabilityCannotAuthorizeGeneralDocumentNetwork(@TempDir Path temp)
+            throws Exception {
+        ProjectPolicy policy = policy(temp.resolve("project"), false, "deny", "[]");
+        DirectAccessPolicy.Rules general = new DirectAccessPolicy.Rules(policy,
+                principal(Set.of(DirectAccessPolicy.PROJECT_READ,
+                        Capability.EXTERNAL_TERMS_READ.value())));
+
+        ToolArgException denied = assertThrows(ToolArgException.class,
+                () -> general.authorizeNetwork(URI.create("https://example.org/ontology.ttl"), false));
+        assertTrue(denied.getMessage().contains(DirectAccessPolicy.NETWORK));
+
+        DirectAccessPolicy.Rules terminology = general.forExternalTermsNetwork();
+        terminology.authorizeExternalProviderOrigin(
+                URI.create("https://registry.owner-selected.example"));
+        ToolArgException requestDenied = assertThrows(ToolArgException.class,
+                () -> terminology.withRequestNetwork("deny")
+                        .authorizeExternalProviderOrigin(
+                                URI.create("https://registry.owner-selected.example")));
+        assertTrue(requestDenied.getMessage().contains("network=deny"));
+
+        DirectAccessPolicy.Rules legacyGeneralNetwork = new DirectAccessPolicy.Rules(policy,
+                principal(Set.of(DirectAccessPolicy.PROJECT_READ, DirectAccessPolicy.NETWORK)))
+                .forExternalTermsNetwork();
+        legacyGeneralNetwork.authorizeExternalProviderOrigin(
+                URI.create("https://registry.owner-selected.example"));
     }
 
     @Test

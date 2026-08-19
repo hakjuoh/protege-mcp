@@ -15,6 +15,8 @@ public enum Capability {
     FILESYSTEM_PROJECT_READ("filesystem:project:read"),
     FILESYSTEM_PROJECT_WRITE("filesystem:project:write"),
     FILESYSTEM_EXTERNAL("filesystem:external"),
+    /** Read-only egress to project-approved external terminology providers. */
+    EXTERNAL_TERMS_READ("external-terms:read"),
     NETWORK_ACCESS("network:access");
 
     private final String value;

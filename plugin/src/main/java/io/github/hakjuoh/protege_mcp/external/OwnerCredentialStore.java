@@ -13,7 +13,7 @@ import java.util.Arrays;
  * tool. The embedded SHA-256 value is a corruption checksum; owner-only permissions are the
  * authenticity boundary.
  */
-public final class OwnerCredentialStore {
+public final class OwnerCredentialStore implements ProviderNetworkExecutor.CredentialSource {
 
     private static final byte[] MAGIC = "PMCPCRD2".getBytes(StandardCharsets.US_ASCII);
     private static final int DIGEST_BYTES = 32;
@@ -60,6 +60,21 @@ public final class OwnerCredentialStore {
             return decode(id, encoded);
         } finally {
             Arrays.fill(encoded, (byte) 0);
+        }
+    }
+
+    static CredentialLease ephemeral(String credentialId, byte[] secret) throws ProviderFailure {
+        String id = id(credentialId);
+        byte[] snapshot = secret == null ? null : secret.clone();
+        try {
+            validateSecret(snapshot);
+            byte[] incarnation = new byte[INCARNATION_BYTES];
+            RANDOM.nextBytes(incarnation);
+            CredentialLease lease = new CredentialLease(id, 1, incarnation, snapshot);
+            snapshot = null;
+            return lease;
+        } finally {
+            if (snapshot != null) Arrays.fill(snapshot, (byte) 0);
         }
     }
 

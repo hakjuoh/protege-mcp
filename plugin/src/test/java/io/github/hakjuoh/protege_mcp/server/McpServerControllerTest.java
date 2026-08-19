@@ -21,6 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.protege.editor.core.prefs.Preferences;
 
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
+import io.github.hakjuoh.protege_mcp.core.auth.ToolCapabilityCatalog;
 import io.github.hakjuoh.protege_mcp.external.ExternalProviderGateway;
 import io.github.hakjuoh.protege_mcp.external.ProviderFailure;
 import io.github.hakjuoh.protege_mcp.external.ProviderInspectRequest;
@@ -371,7 +373,7 @@ class McpServerControllerTest {
         prefs.putBoolean(McpConfig.KEY_READ_ONLY, false);
 
         McpServerController.AssistantCredential writable = controller.issueAssistantCredential(
-                "codex", "turn-1", true);
+                "codex", "turn-1", true, false);
         Set<String> capabilities = writable.principal().capabilities();
         assertTrue(capabilities.containsAll(Set.of("ontology:read", "ontology:curate",
                 "ontology:admin", "ontology:release", "filesystem:project:read",
@@ -388,29 +390,64 @@ class McpServerControllerTest {
 
         prefs.putBoolean(McpConfig.KEY_READ_ONLY, true);
         McpServerController.AssistantCredential readOnly = controller.issueAssistantCredential(
-                "claude", "session-123", true);
+                "claude", "session-123", true, false);
         assertEquals(Set.of("ontology:read"), readOnly.principal().capabilities());
         controller.revokeAssistantCredential(readOnly.token());
 
         prefs.putBoolean(McpConfig.KEY_READ_ONLY, false);
         McpServerController.AssistantCredential preferenceReadOnly =
-                controller.issueAssistantCredential("claude", "turn-2", false);
+                controller.issueAssistantCredential("claude", "turn-2", false, false);
         assertEquals(Set.of("ontology:read"), preferenceReadOnly.principal().capabilities());
         controller.revokeAssistantCredential(preferenceReadOnly.token());
+
+        McpServerController.AssistantCredential legacy =
+                controller.issueAssistantCredential("codex", "legacy-turn", true);
+        assertFalse(legacy.principal().allows(Capability.EXTERNAL_TERMS_READ.value()));
+        assertFalse(legacy.principal().allows(Capability.NETWORK_ACCESS.value()));
+        controller.revokeAssistantCredential(legacy.token());
+    }
+
+    @Test
+    void assistantExternalTermsOptInSatisfiesProviderToolsWithoutGeneralNetworkAuthority()
+            throws Exception {
+        McpServerController controller = newController();
+        OAuthStore store = new OAuthStore(() -> null, () -> null, ignored -> { });
+        setRuntimeStore(controller, store);
+        prefs.putBoolean(McpConfig.KEY_READ_ONLY, false);
+
+        McpServerController.AssistantCredential enabled = controller.issueAssistantCredential(
+                "codex", "terms-enabled", false, true);
+        Set<String> capabilities = enabled.principal().capabilities();
+        assertEquals(Set.of(Capability.ONTOLOGY_READ.value(),
+                Capability.FILESYSTEM_PROJECT_READ.value(),
+                Capability.EXTERNAL_TERMS_READ.value()), capabilities);
+        assertTrue(ToolCapabilityCatalog.missingForTool("search_external_terms", capabilities,
+                ToolCapabilityCatalog.required("search_external_terms")).isEmpty());
+        assertFalse(enabled.principal().allows(Capability.NETWORK_ACCESS.value()),
+                "terminology egress must not authorize arbitrary remote document loading");
+
+        McpServerController.AssistantCredential disabled = controller.issueAssistantCredential(
+                "codex", "terms-disabled", false, false);
+        assertFalse(ToolCapabilityCatalog.missingForTool("search_external_terms",
+                disabled.principal().capabilities(),
+                ToolCapabilityCatalog.required("search_external_terms")).isEmpty());
+        controller.revokeAssistantCredential(enabled.token());
+        controller.revokeAssistantCredential(disabled.token());
     }
 
     @Test
     void assistantCredentialRequiresRunningStoreAndSafeIdentity() throws Exception {
         McpServerController stopped = newController();
         assertThrows(IllegalStateException.class,
-                () -> stopped.issueAssistantCredential("codex", "turn-1", true));
+                () -> stopped.issueAssistantCredential("codex", "turn-1", true, false));
 
         OAuthStore store = new OAuthStore(() -> null, () -> null, ignored -> { });
         setRuntimeStore(stopped, store);
         assertThrows(IllegalArgumentException.class,
-                () -> stopped.issueAssistantCredential("Codex/../../", "turn-1", true));
+                () -> stopped.issueAssistantCredential("Codex/../../", "turn-1", true, false));
         assertThrows(IllegalArgumentException.class,
-                () -> stopped.issueAssistantCredential("codex", "raw session with spaces", true));
+                () -> stopped.issueAssistantCredential(
+                        "codex", "raw session with spaces", true, false));
     }
 
     @Test
@@ -458,7 +495,7 @@ class McpServerControllerTest {
         assertEquals(client.clientId, gateway.clientId);
 
         McpServerController.AssistantCredential assistant = controller.issueAssistantCredential(
-                "codex", "external-revocation", true);
+                "codex", "external-revocation", true, false);
         assertTrue(controller.revokeAssistantCredential(assistant));
         assertEquals(assistant.principal().clientId(), gateway.grantClientId);
         assertEquals(assistant.principal().grantId(), gateway.grantId);
@@ -471,7 +508,7 @@ class McpServerControllerTest {
         ToolContext context = new ToolContext(null, controller);
         setRuntimeStore(controller, store);
         setRuntimeContext(controller, context);
-        var first = controller.issueAssistantCredential("codex", "same-chat", true);
+        var first = controller.issueAssistantCredential("codex", "same-chat", true, false);
         var active = context.executions().acquire(first.principal());
         var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
         try {
@@ -483,7 +520,7 @@ class McpServerControllerTest {
             assertThrows(ToolArgException.class,
                     () -> context.executions().acquire(first.principal()));
 
-            var nextTurn = controller.issueAssistantCredential("codex", "same-chat", true);
+            var nextTurn = controller.issueAssistantCredential("codex", "same-chat", true, false);
             try (var ignored = context.executions().acquire(nextTurn.principal())) {
                 assertNotEquals(first.principal().grantId(), nextTurn.principal().grantId());
             }

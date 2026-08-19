@@ -32,22 +32,23 @@ weaker path around them.
 
 1. Replace the fixed OLS4-only registry with an explicit, tested provider-profile registry while preserving
    fail-closed rejection of unknown profiles.
-2. Add an authenticated NCBO BioPortal profile with normalized search and exact-term inspection mapped onto
+2. Add one authenticated `ontoportal` profile with normalized search and exact-term inspection mapped onto
    the existing `ProviderPage` and `ProviderResult` contracts.
-3. Evaluate AgroPortal against its official API and ship a separately versioned profile unless conformance
-   fixtures prove that it is exactly compatible with the BioPortal profile. Do not infer compatibility from
-   shared OntoPortal ancestry alone.
-4. Define a contract ADR for private terminology services, including FHIR OntoServer-style lookup/search,
-   before selecting an implementation. Private origins remain owner-bound; project policy cannot supply or
-   override endpoints or credentials.
+3. Provide BioPortal and AgroPortal as editable endpoint presets for that profile. Independently pin and test
+   each deployment against its official API revision; shared OntoPortal ancestry alone is not conformance
+   evidence, and vendor names are not separate runtime or policy profiles.
+4. Keep API-incompatible terminology protocols out of the registry and Preferences until they have a
+   separately reviewed adapter, identity model, policy contract, and fixtures. Do not reserve selectable
+   profiles or liveness probes for unimplemented protocols.
 5. Provide reproducible CI consumption of captured provider evidence without making ordinary headless builds
    network-dependent. Direct headless provider networking requires a separate threat model and remains out of
    scope until that contract is accepted.
 6. Structure the top-level `MCP` Preferences panel with internal sub-tabs (via `JTabbedPane`): keep existing
    server port, bind address, token, and security settings on the `Server` sub-tab, and provide a dedicated
    `Externals` sub-tab containing a "Terminology Registries" section so users can register, edit, and test
-   external ontology registry origins, aliases, profiles (OLS4, BioPortal, AgroPortal, OntoServer), and credentials
-   directly in the GUI with connection liveness probes, without manually editing owner-only JSON configuration files.
+   external ontology registry origins, aliases, profiles (OLS4 and OntoPortal), endpoint presets (BioPortal
+   and AgroPortal), and credentials directly in the GUI with connection liveness probes, without manually
+   editing owner-only JSON configuration files.
    Distinguish this clearly from LLM/chat provider settings.
 
 The existing `search_external_terms`, `inspect_external_term`, `propose_term_reuse`, and
@@ -57,8 +58,9 @@ the tool contracts.
 
 ### 2.2 Completion conditions
 
-- Every supported profile has checked-in search, inspection, pagination, deprecation/replacement, provenance,
-  licensing, malformed-response, and rate-limit fixtures derived from its documented API version.
+- Every supported profile, plus each advertised compatibility preset, has checked-in search, inspection,
+  pagination, deprecation/replacement, provenance, licensing, malformed-response, and rate-limit fixtures
+  derived from its documented API version.
 - Contract tests run the same normalized request and evidence assertions across OLS4 and every added profile.
 - Credentials, signed URLs, sensitive queries, and vendor error bodies remain absent from caches, logs, audit,
   exceptions, and MCP results under redirects, retries, rotation, revocation, and concurrent policy changes.

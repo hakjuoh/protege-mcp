@@ -1,6 +1,8 @@
 package io.github.hakjuoh.protege_mcp.external;
 
 import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -28,7 +30,7 @@ public record ProviderRequest(String relativePath, Map<String, String> query) {
         query = Collections.unmodifiableMap(copy);
     }
 
-    private static boolean safeRelativePath(String value) {
+    static boolean safeRelativePath(String value) {
         if (value == null || value.isBlank() || value.length() > MAX_PATH_LENGTH
                 || !value.startsWith("/") || value.startsWith("//")
                 || value.indexOf('\\') >= 0 || value.indexOf('?') >= 0
@@ -45,13 +47,36 @@ public record ProviderRequest(String relativePath, Map<String, String> query) {
                 || parsed.getRawQuery() != null || parsed.getRawFragment() != null) {
             return false;
         }
-        String lower = value.toLowerCase(java.util.Locale.ROOT);
-        if (lower.contains("%2f") || lower.contains("%5c")) return false;
-        for (String segment : value.split("/", -1)) {
+        String decoded = value;
+        for (int pass = 0; pass < 4; pass++) {
+            if (!safeSegments(decoded)) return false;
+            String next = decodeOnce(decoded);
+            if (next == null) return true;
+            if (next.equals(decoded)) return true;
+            decoded = next;
+        }
+        String stable = decodeOnce(decoded);
+        return (stable == null || stable.equals(decoded)) && safeSegments(decoded);
+    }
+
+    private static boolean safeSegments(String value) {
+        if (value == null || value.indexOf('\\') >= 0 || hasControl(value)) return false;
+        String structural = value.replaceAll("(?i)%2f", "/")
+                .replaceAll("(?i)%5c", "\\\\");
+        if (structural.indexOf('\\') >= 0) return false;
+        for (String segment : structural.split("/", -1)) {
             String dots = segment.toLowerCase(java.util.Locale.ROOT).replace("%2e", ".");
             if (dots.equals(".") || dots.equals("..")) return false;
         }
         return true;
+    }
+
+    private static String decodeOnce(String value) {
+        try {
+            return URLDecoder.decode(value.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException invalid) {
+            return null;
+        }
     }
 
     private static boolean hasControl(String value) {

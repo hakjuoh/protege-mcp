@@ -288,8 +288,11 @@ public final class Ols4Provider implements ExternalTermProvider {
     private static URI termUrl(URI source, String ontology, String iri) throws ProviderFailure {
         try {
             String path = source.getRawPath();
-            int api = path.indexOf("/api/");
-            String base = api < 0 ? "" : path.substring(0, api);
+            String searchSuffix = "/api/search";
+            if (path == null || !path.endsWith(searchSuffix)) {
+                throw new IllegalArgumentException();
+            }
+            String base = path.substring(0, path.length() - searchSuffix.length());
             String authority = source.getRawAuthority();
             String rawPath = base + "/api/ontologies/" + ontology
                     + "/terms/" + doubleEncode(iri);

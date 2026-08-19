@@ -1,5 +1,6 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -7,11 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -20,16 +25,20 @@ import org.semanticweb.owlapi.model.IRI;
 import org.semanticweb.owlapi.model.OWLOntology;
 import org.semanticweb.owlapi.model.OWLOntologyManager;
 
+import io.github.hakjuoh.protege_mcp.external.DefaultExternalProviderGatewayHarness;
 import io.github.hakjuoh.protege_mcp.external.ExternalProviderGateway;
 import io.github.hakjuoh.protege_mcp.external.ProviderFailure;
 import io.github.hakjuoh.protege_mcp.external.ProviderInspectRequest;
 import io.github.hakjuoh.protege_mcp.external.ProviderPage;
+import io.github.hakjuoh.protege_mcp.external.ProviderOwnerConfig;
 import io.github.hakjuoh.protege_mcp.external.ProviderResult;
 import io.github.hakjuoh.protege_mcp.external.ProviderSearchRequest;
 import io.github.hakjuoh.protege_mcp.external.ProviderSessionScope;
 import io.github.hakjuoh.protege_mcp.external.ReuseAction;
 import io.github.hakjuoh.protege_mcp.contracts.ExternalTermToolSchemas;
 import io.github.hakjuoh.protege_mcp.contracts.ToolSchemaValidator;
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
+import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
 import io.github.hakjuoh.protege_mcp.server.HeadlessAccess;
 import io.github.hakjuoh.protege_mcp.server.OntologyAccess;
 import io.github.hakjuoh.protege_mcp.testing.ProjectPolicyFixtures;
@@ -80,6 +89,104 @@ class ExternalTermToolsTest {
     }
 
     @Test
+    void assistantTerminologyScopeDoesNotRequireGlobalHostDuplication(
+            @TempDir Path temporary) throws Exception {
+        FakeGateway gateway = new FakeGateway();
+        ToolContext context = context(temporary, gateway, true);
+        AuthenticatedPrincipal assistant = new AuthenticatedPrincipal(1, "assistant:codex",
+                "assistant-window-turn", "Ontology Assistant (codex)", Set.of(
+                        Capability.ONTOLOGY_READ.value(),
+                        Capability.FILESYSTEM_PROJECT_READ.value(),
+                        Capability.EXTERNAL_TERMS_READ.value()), "assistant-grant");
+
+        CallToolResult result = call(context, ToolTestExchange.principal(assistant),
+                "search_external_terms", Map.of("provider_id", "ols", "query", "cell"));
+
+        assertFalse(Boolean.TRUE.equals(result.isError()), result::toString);
+        assertFalse(assistant.allows(Capability.NETWORK_ACCESS.value()));
+        gateway.invocation.networkGate().authorize(
+                URI.create("https://registry.owner-selected.example"));
+    }
+
+    @Test
+    void assistantUsesARealGatewayForAnOwnerSelectedOriginUnderGlobalNetworkDeny(
+            @TempDir Path temporary) throws Exception {
+        Path providers = temporary.resolve("providers");
+        Path credentials = temporary.resolve("credentials");
+        Path cache = temporary.resolve("cache");
+        URI customOrigin = URI.create("https://registry.owner-selected.example/api/tenant");
+        ProviderOwnerConfig.save(providers, ProviderOwnerConfig.of(Map.of("ebi",
+                ProviderOwnerConfig.bindOrigin("ebi", "ols4", customOrigin)), Map.of()));
+        AtomicInteger networkCalls = new AtomicInteger();
+        AtomicReference<URI> target = new AtomicReference<>();
+        ExternalProviderGateway gateway = DefaultExternalProviderGatewayHarness.create(
+                providers, credentials, cache, networkCalls, target);
+        ToolContext context = context(temporary.resolve("project"), gateway, true);
+        AuthenticatedPrincipal assistant = new AuthenticatedPrincipal(1, "assistant:codex",
+                "assistant-window-turn", "Ontology Assistant (codex)", Set.of(
+                        Capability.ONTOLOGY_READ.value(),
+                        Capability.FILESYSTEM_PROJECT_READ.value(),
+                        Capability.EXTERNAL_TERMS_READ.value()), "assistant-grant");
+
+        CallToolResult result = call(context, ToolTestExchange.principal(assistant),
+                "search_external_terms", Map.of("provider_id", "ols", "query", "cell"));
+
+        assertFalse(Boolean.TRUE.equals(result.isError()), result::toString);
+        assertEquals(1, networkCalls.get());
+        assertEquals(URI.create(customOrigin + "/api/search"), target.get());
+
+        CallToolResult denied = call(context, ToolTestExchange.principal(assistant),
+                "search_external_terms", Map.of("provider_id", "ols", "query", "cell",
+                        "network", "deny"));
+        assertEquals(Boolean.TRUE, denied.isError());
+        assertEquals(1, networkCalls.get(), "request deny must stop before provider transport");
+        gateway.close();
+    }
+
+    @Test
+    void assistantUsesAuthenticatedOntoPortalThroughTheRealGatewayAndCustomOrigin(
+            @TempDir Path temporary) throws Exception {
+        Path providers = temporary.resolve("providers");
+        Path credentials = temporary.resolve("credentials");
+        Path cache = temporary.resolve("cache");
+        URI customOrigin = URI.create("https://registry.owner-selected.example/onto/base");
+        ProviderOwnerConfig.OriginBinding origin = ProviderOwnerConfig.bindOrigin(
+                "ebi", "ontoportal", customOrigin);
+        ProviderOwnerConfig.CredentialBinding credential =
+                new ProviderOwnerConfig.CredentialBinding("owner-key", "ols", "ebi",
+                        ProviderOwnerConfig.AuthScheme.API_KEY, "X-Registry-Key", null);
+        ProviderOwnerConfig.save(providers, ProviderOwnerConfig.of(
+                Map.of(origin.alias(), origin), Map.of(credential.id(), credential)));
+        byte[] secret = "owner-secret".getBytes(StandardCharsets.US_ASCII);
+        DefaultExternalProviderGatewayHarness.rotateCredential(
+                credentials, "owner-key", secret);
+        AtomicInteger networkCalls = new AtomicInteger();
+        AtomicReference<URI> target = new AtomicReference<>();
+        AtomicReference<byte[]> observedSecret = new AtomicReference<>();
+        ExternalProviderGateway gateway = DefaultExternalProviderGatewayHarness.createOntoPortal(
+                providers, credentials, cache, networkCalls, target, observedSecret);
+        ToolContext context = context(temporary.resolve("project"), gateway, true,
+                "[en]", 0, "fresh_required", "ontoportal");
+        AuthenticatedPrincipal assistant = new AuthenticatedPrincipal(1, "assistant:codex",
+                "assistant-window-turn", "Ontology Assistant (codex)", Set.of(
+                        Capability.ONTOLOGY_READ.value(),
+                        Capability.FILESYSTEM_PROJECT_READ.value(),
+                        Capability.EXTERNAL_TERMS_READ.value()), "assistant-grant");
+
+        CallToolResult result = call(context, ToolTestExchange.principal(assistant),
+                "search_external_terms", Map.of("provider_id", "ols", "query", "cell"));
+
+        assertFalse(Boolean.TRUE.equals(result.isError()), result::toString);
+        assertEquals("ontoportal", structured(result).get("profile"));
+        assertEquals(1, networkCalls.get());
+        assertEquals(URI.create(customOrigin + "/search"), target.get());
+        assertArrayEquals(secret, observedSecret.get());
+        java.util.Arrays.fill(secret, (byte) 0);
+        java.util.Arrays.fill(observedSecret.get(), (byte) 0);
+        gateway.close();
+    }
+
+    @Test
     void opaqueCursorCannotBeMixedWithNewSearchArguments(@TempDir Path temporary)
             throws Exception {
         ToolContext context = context(temporary, new FakeGateway(), true);
@@ -121,6 +228,38 @@ class ExternalTermToolsTest {
         assertFalse(Boolean.TRUE.equals(result.isError()), result::toString);
         assertEquals("fr", gateway.searchRequest.language());
         assertEquals(List.of("fr", "de"), gateway.invocation.allowedLanguages());
+    }
+
+    @Test
+    void ontoPortalProfileReachesTheAuthoritativeGateway(@TempDir Path temporary)
+            throws Exception {
+        for (String profile : List.of("ontoportal")) {
+            FakeGateway gateway = new FakeGateway();
+            ToolContext context = context(temporary.resolve(profile), gateway, true,
+                    "[en]", 0, "fresh_required", profile);
+
+            CallToolResult result = call(context, "search_external_terms", Map.of(
+                    "provider_id", "ols", "query", "cell"));
+
+            assertFalse(Boolean.TRUE.equals(result.isError()), result::toString);
+            assertEquals(profile, gateway.invocation.profile());
+            assertEquals(profile, structured(result).get("profile"));
+        }
+    }
+
+    @Test
+    void gatewayProfileContractFailsBeforeSearch(@TempDir Path temporary) throws Exception {
+        FakeGateway gateway = new FakeGateway();
+        gateway.supported = false;
+        ToolContext context = context(temporary, gateway, true, "[en]", 0,
+                "fresh_required", "ontoportal");
+
+        CallToolResult result = call(context, "search_external_terms", Map.of(
+                "provider_id", "ols", "query", "cell"));
+
+        assertEquals(Boolean.TRUE, result.isError());
+        assertEquals("provider_profile_unsupported", structured(result).get("code"));
+        assertEquals(null, gateway.searchRequest);
     }
 
     @Test
@@ -511,19 +650,31 @@ class ExternalTermToolsTest {
 
     private static ToolContext context(Path project, ExternalProviderGateway gateway,
             boolean enabled, String languages, int ttlSeconds, String freshness) throws Exception {
+        return context(project, gateway, enabled, languages, ttlSeconds, freshness, "ols4");
+    }
+
+    private static ToolContext context(Path project, ExternalProviderGateway gateway,
+            boolean enabled, String languages, int ttlSeconds, String freshness, String profile)
+            throws Exception {
+        String credential = profile.equals("ols4") ? ""
+                : "      credential_id: owner-key\n";
         String policy = ProjectPolicyFixtures.minimalPolicy("external-tools", ONTOLOGY)
                 .replace("version: 1", "version: 2")
                 + "external_terms:\n"
                 + "  providers:\n"
                 + "    - id: ols\n"
-                + "      profile: ols4\n"
+                + "      profile: " + profile + "\n"
                 + "      enabled: " + enabled + "\n"
                 + "      origin_alias: ebi\n"
+                + credential
                 + "      ontologies: [efo]\n"
                 + "      languages: " + languages + "\n"
                 + "      ttl_seconds: " + ttlSeconds + "\n"
                 + "      freshness: " + freshness + "\n"
                 + "      max_results: 7\n"
+                + "network:\n"
+                + "  default: deny\n"
+                + "  allowed_hosts: []\n"
                 + "validation:\n"
                 + "  required_stages: [structural]\n";
         ProjectPolicyFixtures.writePolicy(project.resolve(".protege-mcp/project.yaml"), policy);
@@ -539,10 +690,16 @@ class ExternalTermToolsTest {
 
     private static CallToolResult call(ToolContext context, String name,
             Map<String, Object> arguments) {
+        return call(context, ToolTestExchange.localAdmin(), name, arguments);
+    }
+
+    private static CallToolResult call(ToolContext context,
+            io.modelcontextprotocol.server.McpSyncServerExchange exchange, String name,
+            Map<String, Object> arguments) {
         ToolRegistry registry = new ToolRegistry();
         ExternalTermTools.register(registry, context);
         return registry.build().stream().filter(spec -> name.equals(spec.tool().name()))
-                .findFirst().orElseThrow().callHandler().apply(ToolTestExchange.localAdmin(),
+                .findFirst().orElseThrow().callHandler().apply(exchange,
                         new CallToolRequest(name, arguments));
     }
 
@@ -616,6 +773,12 @@ class ExternalTermToolsTest {
         private int inspectCalls;
         private Runnable afterInspect;
         private List<ProviderResult> inspectionEvidence = List.of();
+        private boolean supported = true;
+
+        @Override
+        public boolean supportsProfile(String profile) {
+            return supported;
+        }
 
         @Override
         public SearchOutcome search(ProviderSessionScope scope,
@@ -628,7 +791,7 @@ class ExternalTermToolsTest {
             invocation = resolver.resolve(initialRequest == null ? "ols" : initialRequest.providerId());
             ProviderPage page = new ProviderPage(List.of(evidence()), 2, null,
                     Instant.parse("2026-07-21T00:00:00Z"), 0);
-            return new SearchOutcome("ols", "ols4", page, "opaque-next", false);
+            return new SearchOutcome("ols", invocation.profile(), page, "opaque-next", false);
         }
 
         @Override

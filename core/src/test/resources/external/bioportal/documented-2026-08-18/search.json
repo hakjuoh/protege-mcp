@@ -1,0 +1,1 @@
+{"page":1,"pageCount":2,"totalCount":2,"nextPage":2,"collection":[{"@id":"https://example.org/T1","@type":"http://www.w3.org/2002/07/owl#Class","prefLabel":"Term","synonym":["Term synonym"],"definition":["Term definition"],"obsolete":false,"links":{"ontology":"https://data.bioontology.org/ontologies/TEST"}}]}

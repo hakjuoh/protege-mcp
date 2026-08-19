@@ -34,6 +34,13 @@ class ProviderContractsTest {
         assertThrows(IllegalArgumentException.class,
                 () -> new ProviderRequest("/api/%2e%2e/secret", Map.of()));
         assertThrows(IllegalArgumentException.class,
+                () -> new ProviderRequest("/api%2F%2e%2e%2Fsecret", Map.of()));
+        assertThrows(IllegalArgumentException.class,
+                () -> new ProviderRequest("/api%252F%252e%252e%252Fsecret", Map.of()));
+        assertEquals("/classes/http%3A%2F%2Fexample.org%2FT1",
+                new ProviderRequest("/classes/http%3A%2F%2Fexample.org%2FT1", Map.of())
+                        .relativePath());
+        assertThrows(IllegalArgumentException.class,
                 () -> new ProviderRequest("/api\\secret", Map.of()));
         assertThrows(IllegalArgumentException.class,
                 () -> new ProviderRequest("/api\nsecret", Map.of()));
@@ -88,6 +95,18 @@ class ProviderContractsTest {
                 () -> result.labels().add(new ProviderResult.LocalizedText("x", "en")));
         assertThrows(UnsupportedOperationException.class,
                 () -> result.toJson().put("secret", "value"));
+    }
+
+    @Test
+    void aggregateRetryBoundIsProviderNeutralAndCoversThreeRequestAcquisitions() {
+        ProviderResult value = result("Term", 0.8);
+        int maximum = ProviderResponse.MAX_RETRIES * 3;
+
+        ProviderResult accepted = withRetries(value, maximum);
+
+        assertEquals("fake", accepted.profile());
+        assertEquals(maximum, accepted.retries());
+        assertThrows(IllegalArgumentException.class, () -> withRetries(value, maximum + 1));
     }
 
     @Test
@@ -220,6 +239,15 @@ class ProviderContractsTest {
                 value.synonyms(), descriptions, value.license(), value.provenance(),
                 value.matchExplanation(), value.score(), value.providerVersion(),
                 value.providerTimestamp(), value.sourceUrl(), value.retries(), value.deprecated(),
+                value.replacedBy());
+    }
+
+    private static ProviderResult withRetries(ProviderResult value, int retries) {
+        return ProviderResult.create(value.providerId(), value.profile(), value.sourceOntology(),
+                value.sourceOntologyIri(), value.entityIri(), value.entityType(), value.labels(),
+                value.synonyms(), value.descriptions(), value.license(), value.provenance(),
+                value.matchExplanation(), value.score(), value.providerVersion(),
+                value.providerTimestamp(), value.sourceUrl(), retries, value.deprecated(),
                 value.replacedBy());
     }
 }

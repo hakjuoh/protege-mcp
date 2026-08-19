@@ -72,6 +72,8 @@ public final class McpConfig {
     public static final String KEY_CHAT_REASONING_EFFORT_CODEX = "chatReasoningEffortCodex";
     /** Whether Assistant turn principals may request the bounded project/ontology write profile. */
     public static final String KEY_CHAT_ALLOW_WRITES = "chatAllowWrites";
+    /** Whether Assistant turns may query project-approved external terminology providers. */
+    public static final String KEY_CHAT_ALLOW_EXTERNAL_TERMS = "chatAllowExternalTerms";
 
     /** Default listen port. A configured port of {@code 0} means "pick an ephemeral port". */
     public static final int DEFAULT_PORT = 8123;

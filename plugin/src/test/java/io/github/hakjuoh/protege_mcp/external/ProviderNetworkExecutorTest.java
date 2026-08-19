@@ -25,6 +25,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 class ProviderNetworkExecutorTest {
 
     @TempDir
@@ -53,6 +56,185 @@ class ProviderNetworkExecutorTest {
         assertEquals("https://example.org/ols4/api/search", result.sourceUrl().toString());
         assertEquals(0, result.retries());
         assertArrayEquals("{\"ok\":true}".getBytes(StandardCharsets.UTF_8), result.body());
+    }
+
+    @Test
+    void ontoPortalApiKeysUseTheDocumentedAuthorizationGrammar() throws Exception {
+        Path configRoot = temporary.resolve("ontoportal-config");
+        OwnerOnlyFiles.write(configRoot, ProviderOwnerConfig.FILE_NAME, """
+                {"version":1,"origins":[{"alias":"ncbo","profile":"ontoportal",
+                 "origin":"https://data.bioontology.org"}],"credentials":[
+                 {"id":"token","provider_id":"ncbo","origin_alias":"ncbo",
+                  "scheme":"ontoportal_api_key"}]}
+                """.getBytes(StandardCharsets.UTF_8));
+        ProviderOwnerConfig.ResolvedProvider authority = ProviderOwnerConfig.load(configRoot)
+                .resolve("ncbo", "ncbo", "ontoportal", "token", "project");
+        OwnerCredentialStore store = new OwnerCredentialStore(temporary.resolve("ontoportal-secret"));
+        store.rotate("token", "canary-secret".getBytes(StandardCharsets.US_ASCII));
+        ProviderNetworkExecutor executor = new ProviderNetworkExecutor(authority, store, ignored -> { },
+                host -> publicAddress(), (target, headers, addresses) -> {
+                    assertEquals("apikey token=canary-secret", headers.get("Authorization"));
+                    return response(200, "{}");
+                }, Clock.systemUTC(), delay -> { });
+
+        executor.get(new ProviderRequest("/ontologies", Map.of("pagesize", "1")));
+    }
+
+    @Test
+    void compatibleOntoPortalMayUseAConstrainedCustomApiKeyHeader() throws Exception {
+        ProviderOwnerConfig.ResolvedProvider authority = authority(
+                "api_key", "\"header\":\"X-Registry-Key\",");
+        OwnerCredentialStore store = new OwnerCredentialStore(
+                temporary.resolve("custom-header-secret"));
+        store.rotate("token", "canary-secret".getBytes(StandardCharsets.US_ASCII));
+        ProviderNetworkExecutor executor = new ProviderNetworkExecutor(authority, store,
+                ignored -> { }, host -> publicAddress(), (target, headers, addresses) -> {
+                    assertEquals("canary-secret", headers.get("X-Registry-Key"));
+                    assertFalse(headers.containsKey("Authorization"));
+                    return response(200, "{}");
+                }, Clock.systemUTC(), delay -> { });
+
+        executor.get(new ProviderRequest("/ontologies", Map.of("pagesize", "1")));
+    }
+
+    @Test
+    void ontoPortalApiKeyMayUseTheDocumentedQueryParameterWithoutEvidenceLeakage()
+            throws Exception {
+        ProviderOwnerConfig.ResolvedProvider authority = authority(
+                "query_api_key", "\"parameter\":\"apikey\",");
+        OwnerCredentialStore store = new OwnerCredentialStore(temporary.resolve("query-secret"));
+        store.rotate("token", "canary-secret".getBytes(StandardCharsets.US_ASCII));
+        ProviderNetworkExecutor executor = new ProviderNetworkExecutor(authority, store, ignored -> { },
+                host -> publicAddress(), (target, headers, addresses) -> {
+                    assertEquals("pagesize=1&apikey=canary-secret", target.getRawQuery());
+                    assertFalse(headers.containsKey("Authorization"));
+                    return response(200, "{}");
+                }, Clock.systemUTC(), delay -> { });
+
+        ProviderResponse response = executor.get(new ProviderRequest(
+                "/ontologies", Map.of("pagesize", "1")));
+        assertEquals("https://data.bioontology.org/ontologies",
+                response.sourceUrl().toString());
+
+        ProviderNetworkExecutor duplicate = new ProviderNetworkExecutor(authority, store,
+                ignored -> { }, host -> publicAddress(), (target, headers, addresses) -> {
+                    throw new AssertionError("duplicate credential query must fail before I/O");
+                }, Clock.systemUTC(), delay -> { });
+        assertEquals("provider_request_invalid", assertThrows(ProviderFailure.class,
+                () -> duplicate.get(new ProviderRequest(
+                        "/ontologies", Map.of("apikey", "project-value")))).code());
+
+        ProviderNetworkExecutor echoing = new ProviderNetworkExecutor(authority, store,
+                ignored -> { }, host -> publicAddress(), (target, headers, addresses) ->
+                        response(200, "{\"apikey\":\"canary-secret\"}"),
+                Clock.systemUTC(), delay -> { });
+        assertEquals("provider_redaction_failed", assertThrows(ProviderFailure.class,
+                () -> echoing.get(new ProviderRequest("/ontologies", Map.of()))).code());
+    }
+
+    private ProviderOwnerConfig.ResolvedProvider authority(String scheme, String extraField)
+            throws Exception {
+        Path configRoot = temporary.resolve("authority-" + scheme);
+        String extra = extraField == null ? "" : extraField;
+        OwnerOnlyFiles.write(configRoot, ProviderOwnerConfig.FILE_NAME, ("""
+                {"version":1,"origins":[{"alias":"ncbo","profile":"ontoportal",
+                 "origin":"https://data.bioontology.org"}],"credentials":[
+                 {"id":"token","provider_id":"ncbo","origin_alias":"ncbo",
+                  %s"scheme":"%s"}]}
+                """).formatted(extra, scheme).getBytes(StandardCharsets.UTF_8));
+        return ProviderOwnerConfig.load(configRoot)
+                .resolve("ncbo", "ncbo", "ontoportal", "token", "project");
+    }
+
+    @Test
+    void eachProfileRateLimitFixtureDrivesTheRealBoundedRetryPath() throws Exception {
+        ObjectMapper json = new ObjectMapper();
+        for (RateLimitCase testCase : List.of(
+                new RateLimitCase("ols4", "ols4", "https://www.ebi.ac.uk/ols4"),
+                new RateLimitCase("bioportal", "ontoportal", "https://data.bioontology.org"),
+                new RateLimitCase("agroportal", "ontoportal", "https://data.agroportal.eu"))) {
+            String profile = testCase.profile();
+            String resource = "/external/" + testCase.fixtureProfile()
+                    + "/documented-2026-08-18/rate-limit.json";
+            JsonNode fixture;
+            try (var input = ProviderNetworkExecutorTest.class.getResourceAsStream(resource)) {
+                assertTrue(input != null, "profile rate-limit fixture must be on the test classpath");
+                fixture = json.readTree(input);
+            }
+            boolean authenticated = !profile.equals("ols4");
+            String credentialJson = authenticated ? """
+                    [{"id":"token","provider_id":"provider","origin_alias":"origin",
+                      "scheme":"ontoportal_api_key"}]
+                    """ : "[]";
+            Path configRoot = temporary.resolve(testCase.fixtureProfile() + "-rate-config");
+            OwnerOnlyFiles.write(configRoot, ProviderOwnerConfig.FILE_NAME, ("""
+                    {"version":1,"origins":[{"alias":"origin","profile":"%s",
+                     "origin":"%s"}],"credentials":%s}
+                    """).formatted(profile, testCase.origin(), credentialJson)
+                    .getBytes(StandardCharsets.UTF_8));
+            ProviderOwnerConfig.ResolvedProvider authority = ProviderOwnerConfig.load(configRoot)
+                    .resolve("origin", "provider", profile, authenticated ? "token" : null,
+                            "project");
+            OwnerCredentialStore credentials = new OwnerCredentialStore(
+                    temporary.resolve(testCase.fixtureProfile() + "-rate-secrets"));
+            if (authenticated) {
+                credentials.rotate("token", "canary-secret".getBytes(StandardCharsets.US_ASCII));
+            }
+            AtomicInteger calls = new AtomicInteger();
+            List<Duration> sleeps = new ArrayList<>();
+            ProviderNetworkExecutor executor = new ProviderNetworkExecutor(authority, credentials,
+                    ignored -> { }, ignored -> publicAddress(), (target, headers, addresses) -> {
+                        calls.incrementAndGet();
+                        if (authenticated) {
+                            assertEquals("apikey token=canary-secret",
+                                    headers.get("Authorization"));
+                        } else {
+                            assertFalse(headers.containsKey("Authorization"));
+                        }
+                        return new ProviderNetworkExecutor.RawResponse(
+                                fixture.path("status").asInt(),
+                                Map.of("Retry-After",
+                                        fixture.path("headers").path("Retry-After").asText()),
+                                fixture.path("body").asText().getBytes(StandardCharsets.UTF_8));
+                    }, Clock.systemUTC(), sleeps::add);
+
+            ProviderFailure failure = assertThrows(ProviderFailure.class,
+                    () -> executor.get(new ProviderRequest("/search", Map.of("q", "term"))));
+            assertEquals("provider_http_error", failure.code());
+            assertTrue(failure.retryable());
+            assertEquals(429, failure.details().get("status"));
+            assertEquals(ProviderResponse.MAX_RETRIES + 1, calls.get());
+            assertEquals(List.of(Duration.ofSeconds(1), Duration.ofSeconds(1)), sleeps);
+        }
+    }
+
+    @Test
+    void encodedClassIriIsPreservedAsOneOfficialOntoPortalPathEncoding() throws Exception {
+        Path configRoot = temporary.resolve("encoded-class-config");
+        OwnerOnlyFiles.write(configRoot, ProviderOwnerConfig.FILE_NAME, """
+                {"version":1,"origins":[{"alias":"origin","profile":"ontoportal",
+                 "origin":"https://data.bioontology.org"}],"credentials":[
+                 {"id":"token","provider_id":"provider","origin_alias":"origin",
+                  "scheme":"ontoportal_api_key"}]}
+                """.getBytes(StandardCharsets.UTF_8));
+        ProviderOwnerConfig.ResolvedProvider authority = ProviderOwnerConfig.load(configRoot)
+                .resolve("origin", "provider", "ontoportal", "token", "project");
+        List<URI> targets = new ArrayList<>();
+        OwnerCredentialStore credentials = new OwnerCredentialStore(
+                temporary.resolve("encoded-class-secrets"));
+        credentials.rotate("token", "canary-secret".getBytes(StandardCharsets.US_ASCII));
+        ProviderNetworkExecutor executor = new ProviderNetworkExecutor(authority,
+                credentials, ignored -> { },
+                ignored -> publicAddress(), (target, headers, addresses) -> {
+                    targets.add(target);
+                    return response(200, "{}");
+                }, Clock.systemUTC(), ignored -> { });
+
+        executor.get(new ProviderRequest(
+                "/ontologies/TEST/classes/http%3A%2F%2Fexample.org%2FT1", Map.of()));
+
+        assertEquals("/ontologies/TEST/classes/http%3A%2F%2Fexample.org%2FT1",
+                targets.get(0).getRawPath());
     }
 
     @Test
@@ -311,7 +493,7 @@ class ProviderNetworkExecutorTest {
                     assertFalse(headers.containsKey("Authorization"));
                     if (calls.getAndIncrement() == 0) {
                         return new ProviderNetworkExecutor.RawResponse(302,
-                                Map.of("Location", "https://redirect.example/new?q=opaque"),
+                                Map.of("Location", "https://example.org/ols4/new?q=opaque"),
                                 new byte[0]);
                     }
                     return response(200, "{}");
@@ -319,9 +501,9 @@ class ProviderNetworkExecutorTest {
 
         ProviderResponse response = executor.get(new ProviderRequest("/api", Map.of("q", "term")));
         assertEquals(List.of(URI.create("https://example.org"),
-                URI.create("https://redirect.example")), gates);
-        assertEquals("https://redirect.example/new?q=opaque", targets.get(1).toString());
-        assertEquals("https://redirect.example/new", response.sourceUrl().toString());
+                URI.create("https://example.org")), gates);
+        assertEquals("https://example.org/ols4/new?q=opaque", targets.get(1).toString());
+        assertEquals("https://example.org/ols4/new", response.sourceUrl().toString());
         assertEquals(2, calls.get());
 
         AtomicInteger loopCalls = new AtomicInteger();
@@ -329,7 +511,7 @@ class ProviderNetworkExecutorTest {
                 (target, headers, addresses) -> {
                     loopCalls.incrementAndGet();
                     return new ProviderNetworkExecutor.RawResponse(302,
-                            Map.of("location", "/again"), new byte[0]);
+                            Map.of("location", "/ols4/again"), new byte[0]);
                 }, delay -> { });
         assertEquals("provider_redirect_refused", assertThrows(ProviderFailure.class,
                 () -> loop.get(new ProviderRequest("/api", Map.of()))).code());
@@ -347,9 +529,32 @@ class ProviderNetworkExecutorTest {
                     return new ProviderNetworkExecutor.RawResponse(302,
                             Map.of("location", "https://internal.example/secret"), new byte[0]);
                 }, delay -> { });
-        assertEquals("provider_address_refused", assertThrows(ProviderFailure.class,
+        assertEquals("provider_redirect_refused", assertThrows(ProviderFailure.class,
                 () -> privateRedirect.get(new ProviderRequest("/api", Map.of()))).code());
         assertEquals(1, calls.get());
+
+        ProviderNetworkExecutor outsideBasePath = fixture.executor(origin -> { },
+                host -> publicAddress(),
+                (target, headers, addresses) -> new ProviderNetworkExecutor.RawResponse(302,
+                        Map.of("location", "https://example.org/outside-owner-base"), new byte[0]),
+                delay -> { });
+        assertEquals("provider_redirect_refused", assertThrows(ProviderFailure.class,
+                () -> outsideBasePath.get(new ProviderRequest("/api", Map.of()))).code());
+
+        for (String escaped : List.of(
+                "https://example.org/ols4/%2e%2e/outside",
+                "https://example.org/ols4/%252e%252e/outside",
+                "https://example.org/ols4/%25252e%25252e/outside",
+                "https://example.org/ols4%2f%2e%2e%2foutside",
+                "https://example.org/ols4/%5c..%5coutside")) {
+            ProviderNetworkExecutor encodedEscape = fixture.executor(origin -> { },
+                    host -> publicAddress(),
+                    (target, headers, addresses) -> new ProviderNetworkExecutor.RawResponse(302,
+                            Map.of("location", escaped), new byte[0]), delay -> { });
+            assertEquals("provider_redirect_refused", assertThrows(ProviderFailure.class,
+                    () -> encodedEscape.get(new ProviderRequest("/api", Map.of()))).code(),
+                    escaped);
+        }
 
         ProviderNetworkExecutor cleartext = fixture.executor(origin -> { }, host -> publicAddress(),
                 (target, headers, addresses) -> new ProviderNetworkExecutor.RawResponse(302,
@@ -507,4 +712,6 @@ class ProviderNetworkExecutorTest {
                     Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC), sleeper);
         }
     }
+
+    private record RateLimitCase(String fixtureProfile, String profile, String origin) { }
 }

@@ -328,6 +328,19 @@ class ToolRegistryTest {
     }
 
     @Test
+    void externalTermsScopeIsAcceptedOnlyForTheGovernedProviderTools() {
+        AuthenticatedPrincipal terminology = AuthenticatedPrincipal.oauth(
+                "assistant", "Assistant", "grant-t",
+                "ontology:read filesystem:project:read external-terms:read");
+
+        assertAuthorizationReachedHandler("search_external_terms", terminology);
+        assertAuthorizationReachedHandler("inspect_external_term", terminology);
+        assertAuthorizationReachedHandler("propose_term_reuse", terminology);
+        assertFalse(terminology.allows("network:access"));
+        assertDenied("load_ontology", terminology);
+    }
+
+    @Test
     void guardedHandlerCannotFinishAfterItsClientRevocationCompletes() throws Exception {
         PrincipalExecutionGate gate = new PrincipalExecutionGate();
         ToolRegistry registry = new ToolRegistry(null, gate);
@@ -384,6 +397,19 @@ class ToolRegistryTest {
         var result = registry.build().get(0).callHandler().apply(exchange(principal), null);
         assertFalse(Boolean.TRUE.equals(result.isError()), () -> tool + ": " + result.structuredContent());
         assertTrue(invoked.get(), tool);
+    }
+
+    private static void assertAuthorizationReachedHandler(String tool,
+            AuthenticatedPrincipal principal) {
+        AtomicBoolean invoked = new AtomicBoolean();
+        ToolRegistry registry = new ToolRegistry();
+        registry.tool(tool, (exchange, request) -> {
+            invoked.set(true);
+            return Tools.text("authorization reached handler");
+        });
+        var result = registry.build().get(0).callHandler().apply(exchange(principal), null);
+        assertTrue(invoked.get(), "authorization must reach handler: " + tool);
+        assertFalse(String.valueOf(result.structuredContent()).contains("authorization_denied"));
     }
 
     private static void assertDenied(String tool, AuthenticatedPrincipal principal) {

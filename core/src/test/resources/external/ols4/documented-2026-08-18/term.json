@@ -1,0 +1,1 @@
+{"iri":"https://example.org/T1","ontology_name":"test","ontology_iri":"https://example.org/test.owl","label":"Term","synonyms":["Term synonym"],"description":["Term definition"],"type":"class","is_obsolete":true,"term_replaced_by":["https://example.org/T2"]}

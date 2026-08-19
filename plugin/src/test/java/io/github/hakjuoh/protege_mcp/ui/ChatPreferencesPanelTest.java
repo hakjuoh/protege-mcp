@@ -292,6 +292,8 @@ class ChatPreferencesPanelTest {
             JTextField antigravityPath = field(editors.get(2), "executablePath", JTextField.class);
             JTextField openCodePath = field(editors.get(3), "executablePath", JTextField.class);
             JTextField openCodeName = field(editors.get(3), "displayName", JTextField.class);
+            assertTrue(field(panel, "allowExternalTerms", JCheckBox.class).isSelected(),
+                    "project-approved terminology access is enabled by default");
             onEdt(() -> {
                 claudePath.setText("/tools/claude");
                 codexPath.setText("/tools/codex");
@@ -299,6 +301,7 @@ class ChatPreferencesPanelTest {
                 openCodePath.setText("/tools/opencode");
                 openCodeName.setText("Local Models");
                 fieldUnchecked(panel, "allowWrites", JCheckBox.class).setSelected(false);
+                fieldUnchecked(panel, "allowExternalTerms", JCheckBox.class).setSelected(false);
             });
             Object antigravityModels = field(editors.get(2), "models", Object.class);
             JTextField antigravityModelField = field(
@@ -323,6 +326,8 @@ class ChatPreferencesPanelTest {
             assertEquals(List.of("ollama/qwen3"),
                     ChatModelCatalog.load(preferences, "opencode"));
             assertFalse(preferences.getBoolean(McpConfig.KEY_CHAT_ALLOW_WRITES, true));
+            assertFalse(preferences.getBoolean(
+                    McpConfig.KEY_CHAT_ALLOW_EXTERNAL_TERMS, true));
             assertEquals(List.of("codex-model"), ChatModelCatalog.load(preferences, "codex"),
                     "renaming one client must not touch another client's catalog");
         } finally {

@@ -164,7 +164,7 @@ A completed policy violation is `gate=fail`; invalid configuration, wrong/
 unavailable reasoner, classification failure/timeout, malformed asset, inference degradation, or a skipped/
 errored required stage is `gate=error` and takes precedence over a separate failure. *Read-only.*
 The v2-only `provider_evidence` stage is recognized by the strict policy workflow on every QC surface.
-The 0.8.0 OLS4 executor serves the explicit external-term tools; it does not make provider evidence an
+The external-provider executors serve the explicit external-term tools; they do not make provider evidence an
 automatic QC stage. Requiring `provider_evidence` therefore fails closed with
 `provider_evidence_unavailable` on the current execution surfaces. It is never scheduled by default and is
 not added to the frozen legacy `run_qc_suite` eight-stage request vocabulary.

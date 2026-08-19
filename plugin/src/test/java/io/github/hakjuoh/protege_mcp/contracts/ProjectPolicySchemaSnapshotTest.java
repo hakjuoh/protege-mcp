@@ -19,7 +19,7 @@ class ProjectPolicySchemaSnapshotTest {
 
     @Test
     void versionTwoSchemaMatchesTheReviewedBaseline() throws Exception {
-        assertEquals("cd5bac8870193631ea975538e2cb62f066acfcc028fa4c6862815241d2c18e1b",
+        assertEquals("1a65332a3ce6aae67f7a43d7f353ffd0606c82e18ecdf390b344d3755a3df922",
                 digest("/schema/project-policy-v2.schema.json"));
     }
 

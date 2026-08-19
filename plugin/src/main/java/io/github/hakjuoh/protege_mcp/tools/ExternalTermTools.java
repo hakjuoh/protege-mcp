@@ -356,6 +356,7 @@ public final class ExternalTermTools {
             McpSyncServerExchange exchange, Map<String, Object> args, String providerId) {
         DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(context, exchange,
                 Tools.optString(args, "policy_path"))
+                .forExternalTermsNetwork()
                 .withRequestNetwork(Tools.optString(args, "network"));
         ProjectPolicy policy = rules.policy();
         if (!policy.loaded() || policy.version() != 2) {
@@ -384,7 +385,7 @@ public final class ExternalTermTools {
                     "The requested provider is disabled by project policy.", false);
         }
         String profile = requiredString(selected, "profile");
-        if (!"ols4".equals(profile)) {
+        if (!context.externalProviders().supportsProfile(profile)) {
             throw new ToolArgException("provider_profile_unsupported",
                     "The requested provider profile is not supported by this release.", false);
         }
@@ -593,7 +594,7 @@ public final class ExternalTermTools {
         private void authorizeNetwork(ToolContext context, McpSyncServerExchange exchange,
                 Map<String, Object> args, URI exactOrigin) {
             resolveProvider(context, exchange, args, providerId).rules
-                    .authorizeNetwork(exactOrigin, false);
+                    .authorizeExternalProviderOrigin(exactOrigin);
         }
     }
 }

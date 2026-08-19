@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.server;
 
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -375,11 +376,12 @@ public final class McpServerController implements ManagedServer {
 
     /**
      * Mint one non-persisted, non-refreshable credential for a single Assistant turn. The writable
-     * profile deliberately excludes server administration, external files, network, and local-admin
-     * compatibility; global read-only mode can only narrow it further.
+     * profile deliberately excludes server administration, external files, general network, and
+     * local-admin compatibility. A separate flag may add read-only external-terminology egress,
+     * still constrained by project policy; global read-only mode can only narrow writes.
      */
     public AssistantCredential issueAssistantCredential(String provider, String chatIdentity,
-            boolean allowWrites) {
+            boolean allowWrites, boolean allowExternalTerms) {
         OAuthStore store = oauthStore;
         if (!running || store == null) {
             throw new IllegalStateException("MCP server is not running");
@@ -391,13 +393,31 @@ public final class McpServerController implements ManagedServer {
             throw new IllegalArgumentException("invalid Assistant chat identity");
         }
         String clientId = "assistant-" + assistantWindowId + "-" + chatIdentity;
-        Set<String> capabilities = allowWrites && !isReadOnly() ? ASSISTANT_WRITE : ASSISTANT_READ;
+        Set<String> capabilities = assistantCapabilities(
+                allowWrites && !isReadOnly(), allowExternalTerms);
         AuthenticatedPrincipal principal = new AuthenticatedPrincipal(1, "assistant:" + provider,
                 clientId, "Ontology Assistant (" + provider + ")", capabilities,
                 "assistant-grant-" + UUID.randomUUID());
         OAuthStore.EphemeralToken issued = store.issueEphemeralToken(
                 principal, ASSISTANT_TOKEN_TTL_MS);
         return new AssistantCredential(issued.token(), issued.expiresAt(), issued.principal());
+    }
+
+    /** Backward-compatible Assistant profile; legacy callers never receive terminology egress. */
+    public AssistantCredential issueAssistantCredential(String provider, String chatIdentity,
+            boolean allowWrites) {
+        return issueAssistantCredential(provider, chatIdentity, allowWrites, false);
+    }
+
+    private static Set<String> assistantCapabilities(boolean allowWrites,
+            boolean allowExternalTerms) {
+        Set<String> capabilities = new LinkedHashSet<>(
+                allowWrites ? ASSISTANT_WRITE : ASSISTANT_READ);
+        if (allowExternalTerms) {
+            capabilities.add(Capability.FILESYSTEM_PROJECT_READ.value());
+            capabilities.add(Capability.EXTERNAL_TERMS_READ.value());
+        }
+        return Collections.unmodifiableSet(capabilities);
     }
 
     /** Revoke a turn credential immediately; idempotent across stop/restart races. */

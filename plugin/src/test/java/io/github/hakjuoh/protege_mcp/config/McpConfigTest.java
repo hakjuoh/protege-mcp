@@ -113,6 +113,7 @@ class McpConfigTest {
         assertEquals("chatReasoningEffortClaude", McpConfig.KEY_CHAT_REASONING_EFFORT_CLAUDE);
         assertEquals("chatReasoningEffortCodex", McpConfig.KEY_CHAT_REASONING_EFFORT_CODEX);
         assertEquals("chatAllowWrites", McpConfig.KEY_CHAT_ALLOW_WRITES);
+        assertEquals("chatAllowExternalTerms", McpConfig.KEY_CHAT_ALLOW_EXTERNAL_TERMS);
     }
 
     // ---- prefs() --------------------------------------------------------------------------------

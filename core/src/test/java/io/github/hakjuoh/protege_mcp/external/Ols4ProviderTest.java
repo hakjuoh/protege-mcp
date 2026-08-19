@@ -53,6 +53,22 @@ class Ols4ProviderTest {
     }
 
     @Test
+    void searchEvidencePreservesAnOwnerBaseThatContainsApiSegments() throws Exception {
+        ProviderPage page = new Ols4Provider().search(new ProviderSearchRequest(
+                "custom", "cell", List.of("efo"), "en", 1, null), request ->
+                        new ProviderResponse("""
+                                {"response":{"numFound":1,"start":0,"docs":[{
+                                  "iri":"https://example.org/EFO_1","ontology_name":"efo",
+                                  "label":"Cell","type":"class"}]}}
+                                """.getBytes(StandardCharsets.UTF_8),
+                                URI.create("https://registry.example/api/tenant/api/search"),
+                                FETCHED, 0));
+
+        assertTrue(page.items().get(0).sourceUrl().toString().startsWith(
+                "https://registry.example/api/tenant/api/ontologies/efo/terms/"));
+    }
+
+    @Test
     void searchDeduplicatesAcrossPagesAndPreservesGlobalProviderOrder() throws Exception {
         List<ProviderRequest> requests = new ArrayList<>();
         ProviderTransport transport = request -> {

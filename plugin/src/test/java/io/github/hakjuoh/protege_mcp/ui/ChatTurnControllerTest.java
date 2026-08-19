@@ -168,7 +168,7 @@ class ChatTurnControllerTest {
         setControllerField(server, "toolContext", context);
         setControllerRunning(server, true);
         McpServerController.AssistantCredential credential =
-                server.issueAssistantCredential("codex", "turn-1", true);
+                server.issueAssistantCredential("codex", "turn-1", true, false);
         setControllerRunning(server, false);
 
         ChatTurnController controller = new ChatTurnController(new RecordingHost());

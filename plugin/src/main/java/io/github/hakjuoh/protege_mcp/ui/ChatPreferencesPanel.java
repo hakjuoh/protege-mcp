@@ -34,6 +34,7 @@ public class ChatPreferencesPanel extends PreferencesPanel {
     private final List<ChatClientEditor> clientEditors = new ArrayList<>();
     private JTabbedPane clientTabs;
     private JCheckBox allowWrites;
+    private JCheckBox allowExternalTerms;
 
     @Override
     public void initialise() throws Exception {
@@ -80,20 +81,30 @@ public class ChatPreferencesPanel extends PreferencesPanel {
                         "Allow the Ontology Assistant to edit the ontology and project",
                         p.getBoolean(McpConfig.KEY_CHAT_ALLOW_WRITES, true));
         panel.addGroupComponent(allowWrites);
+        allowExternalTerms =
+                new JCheckBox(
+                        "Allow the Ontology Assistant to use project-approved terminology registries",
+                        p.getBoolean(McpConfig.KEY_CHAT_ALLOW_EXTERNAL_TERMS, true));
+        panel.addGroupComponent(allowExternalTerms);
         panel.addHelpText(
                 "Each chat turn receives its own short-lived credential. Disabling this keeps chat"
                     + " usable for ontology reads but rejects edits. When enabled, the credential"
-                    + " is still limited to ontology/project operations: it has no server-admin,"
-                    + " external-file, network, or unrestricted local-admin authority. MCP"
-                    + " read-only and confirm-write settings remain hard limits.");
+                    + " is still limited to ontology/project operations. Terminology access is a"
+                    + " separate read-only permission restricted by the active project policy's"
+                    + " enabled providers and each provider's exact owner-bound HTTPS origin; it"
+                    + " does not grant general"
+                    + " network, server-admin, external-file, or unrestricted local-admin authority."
+                    + " MCP read-only and confirm-write settings remain hard limits.");
 
         panel.addGroup("Privacy");
         panel.addHelpText(
                 "The chat sends your prompts, any attachments or pasted content you include, and"
                     + " the ontology content the assistant reads to your model provider via the"
                     + " CLI. Switching providers also sends the conversation turns the newly active"
-                    + " provider missed. Edits obey the MCP server's read-only / confirm-write"
-                    + " settings (Preferences ▸ MCP).");
+                    + " provider missed. When terminology access is enabled, searches and requested"
+                    + " ontology/language filters are also sent to the project-approved registry."
+                    + " Edits obey the MCP server's read-only / confirm-write settings"
+                    + " (Preferences ▸ MCP).");
 
         JPanel root = new JPanel(new BorderLayout());
         root.add(panel, BorderLayout.NORTH);
@@ -107,6 +118,7 @@ public class ChatPreferencesPanel extends PreferencesPanel {
             editor.save(p);
         }
         p.putBoolean(McpConfig.KEY_CHAT_ALLOW_WRITES, allowWrites.isSelected());
+        p.putBoolean(McpConfig.KEY_CHAT_ALLOW_EXTERNAL_TERMS, allowExternalTerms.isSelected());
         // Last, so an open Assistant re-reads settled catalogs and repaints renamed clients. A model
         // selection this edit deleted has already been cleared and must fall back to (default).
         ChatModelCatalog.fireChanged();

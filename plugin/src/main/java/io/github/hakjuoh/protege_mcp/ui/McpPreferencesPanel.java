@@ -1,12 +1,20 @@
 package io.github.hakjuoh.protege_mcp.ui;
 
-import java.awt.Color;
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Point;
+import java.awt.event.HierarchyEvent;
 
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
-import javax.swing.JTextArea;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
+import javax.swing.JTabbedPane;
+import javax.swing.JTextArea;
+import javax.swing.JOptionPane;
+import javax.swing.SwingUtilities;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -14,19 +22,27 @@ import javax.swing.text.JTextComponent;
 
 import org.protege.editor.core.prefs.Preferences;
 import org.protege.editor.core.ui.preferences.PreferencesPanel;
+
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
 import io.github.hakjuoh.protege_mcp.server.EmbeddedHttpServer;
+import io.github.hakjuoh.protege_mcp.external.ProviderFailure;
 
 /**
- * Preferences tab for the MCP server: listen port (or ephemeral), bind address, shared broker and
- * its idle linger, auto-start, read-only mode and write confirmation. Values are persisted via the
- * Protégé {@link Preferences} store; the server reads a fresh snapshot when it (re)starts, while
- * read-only / confirm toggles apply live and the linger reaches a running broker per heartbeat.
+ * Preferences panel for MCP server settings, divided into sub-tabs:
+ * <ul>
+ *   <li><b>Server</b>: Listen port, bind address, shared broker, autostart, read-only, and safety.</li>
+ *   <li><b>Externals</b>: External terminology registries, owner credential management, hardened
+ *       connection probes, and a clearly non-functional publication-planning overview.</li>
+ * </ul>
  */
 public class McpPreferencesPanel extends PreferencesPanel {
 
     private static final long serialVersionUID = 1L;
 
+    private static final int PREFERRED_EDITOR_WIDTH = 600;
+    private static final int PREFERRED_EDITOR_HEIGHT = 520;
+
+    private JTabbedPane mainTabs;
     private JSpinner portSpinner;
     private JCheckBox ephemeralCheck;
     private JComboBox<String> bindCombo;
@@ -38,10 +54,50 @@ public class McpPreferencesPanel extends PreferencesPanel {
     private JCheckBox confirmWritesCheck;
     private JCheckBox unrestrictedNoPolicyPathsCheck;
 
+    private TerminologyRegistriesPanel terminologyRegistriesPanel;
+    private boolean initialScrollPositioned;
+
     @Override
     public void initialise() throws Exception {
         setLayout(new BorderLayout());
         Preferences p = McpConfig.prefs();
+
+        mainTabs = new JTabbedPane();
+        mainTabs.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+
+        mainTabs.addTab("Server", createServerTab(p));
+        mainTabs.addTab("Externals", createExternalsTab());
+
+        mainTabs.setPreferredSize(new Dimension(
+                PREFERRED_EDITOR_WIDTH,
+                Math.max(PREFERRED_EDITOR_HEIGHT, mainTabs.getPreferredSize().height)));
+
+        add(mainTabs, BorderLayout.CENTER);
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                SwingUtilities.invokeLater(this::positionInitialScrollAtTop);
+            } else if ((event.getChangeFlags() & HierarchyEvent.PARENT_CHANGED) != 0) {
+                scheduleInitialScrollToTop();
+            }
+        });
+        scheduleInitialScrollToTop();
+    }
+
+    /** Preferences owns the outer scroll pane, so reset it once this panel has been attached. */
+    private void scheduleInitialScrollToTop() {
+        if (!initialScrollPositioned) SwingUtilities.invokeLater(this::positionInitialScrollAtTop);
+    }
+
+    void positionInitialScrollAtTop() {
+        JScrollPane scrollPane = (JScrollPane) SwingUtilities.getAncestorOfClass(
+                JScrollPane.class, this);
+        if (scrollPane == null) return;
+        scrollPane.getViewport().setViewPosition(new Point(0, 0));
+        scrollPane.getVerticalScrollBar().setValue(0);
+        initialScrollPositioned = true;
+    }
+
+    private JPanel createServerTab(Preferences p) {
         int port = p.getInt(McpConfig.KEY_PORT, McpConfig.DEFAULT_PORT);
         boolean ephemeral = port == 0;
 
@@ -155,7 +211,40 @@ public class McpPreferencesPanel extends PreferencesPanel {
                 "Read-only, confirmation, and the no-policy path compatibility switch apply "
                         + "immediately, without a restart. Disable the compatibility switch to require "
                         + "a project policy before any caller-selected local path or document URL.");
-        add(panel, BorderLayout.NORTH);
+
+        JPanel container = new JPanel(new BorderLayout());
+        container.add(panel, BorderLayout.NORTH);
+        return container;
+    }
+
+    private JPanel createExternalsTab() {
+        ResponsivePreferencesLayoutPanel panel = new ResponsivePreferencesLayoutPanel();
+        panel.addGroup("Terminology Registries");
+        panel.addHelpText(
+                "Register external ontology registry origins, aliases, and credentials. Policy v2 "
+                + "supports OLS4 and OntoPortal-compatible registries; BioPortal and AgroPortal "
+                + "are editable endpoint presets for the single ontoportal profile. "
+                + "Origins and API keys are owner-only and shared project files contain references only.");
+
+        try {
+            terminologyRegistriesPanel = new TerminologyRegistriesPanel();
+            panel.addGroupComponent(terminologyRegistriesPanel);
+        } catch (ProviderFailure failure) {
+            panel.addHelpText("Terminology registry settings are unavailable ("
+                    + failure.code() + "). Correct the owner-only provider configuration and "
+                    + "reopen Preferences. Server settings remain available.");
+        }
+
+        panel.addSeparator();
+        panel.addGroup("Publishing Repositories");
+        panel.addHelpText(
+                "Remote knowledge graphs and publication repositories (GraphDB, Stardog, TopBraid "
+                + "EDG, generic SPARQL endpoints). This M8B section is an informational planning "
+                + "overview; it does not store repository credentials or publish release bundles.");
+
+        JPanel container = new JPanel(new BorderLayout());
+        container.add(panel, BorderLayout.NORTH);
+        return container;
     }
 
     /** Show the exposure warning exactly while the (possibly still uncommitted) text is non-loopback. */
@@ -171,6 +260,21 @@ public class McpPreferencesPanel extends PreferencesPanel {
 
     @Override
     public void applyChanges() {
+        saveServerPreferences();
+        if (terminologyRegistriesPanel != null) {
+            try {
+                terminologyRegistriesPanel.applyChanges();
+            } catch (ProviderFailure failure) {
+                JOptionPane.showMessageDialog(this,
+                        "Terminology registry settings could not be saved (" + failure.code()
+                                + "). " + failure.getMessage(),
+                        "MCP preferences", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+    }
+
+    private void saveServerPreferences() {
         Preferences p = McpConfig.prefs();
         int port = ephemeralCheck.isSelected() ? 0 : (Integer) portSpinner.getValue();
         p.putInt(McpConfig.KEY_PORT, port);
@@ -187,6 +291,6 @@ public class McpPreferencesPanel extends PreferencesPanel {
 
     @Override
     public void dispose() throws Exception {
-        // nothing to release
+        if (terminologyRegistriesPanel != null) terminologyRegistriesPanel.disposePanel();
     }
 }

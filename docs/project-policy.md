@@ -53,8 +53,11 @@ Start from the example closest to the project:
 
 Version 2 retains every v1 field and adds four fail-closed blocks:
 
-- `external_terms.providers` names the supported `ols4` profile, a stable provider id, and an
-  owner-local `origin_alias`. Endpoint URLs and secret values are rejected. `credential_id` is an opaque
+- `external_terms.providers` names the supported `ols4` or `ontoportal` profile, a stable
+  provider id, and an owner-local `origin_alias`. Endpoint URLs and secret values are rejected.
+  That alias may resolve owner-locally to any compatible exact HTTPS base URL; it is the provider's
+  endpoint allowlist and is not duplicated in the project's general `network.allowed_hosts`.
+  `credential_id` is an opaque
   reference only; its binding and generation stay in owner-local configuration. A provider may require
   evidence for `reuse`, `mint`, or the explicitly scoped `provider_evidence` validation stage; that stage
   names declared provider ids under `validation.provider_evidence.providers` and defaults to fresh evidence.
@@ -315,6 +318,12 @@ satisfy an HTTP ontology IRI while offline only when its resolved document passe
 filesystem policy. Direct `file:` imports are checked and pinned to their authorized canonical path;
 nested `jar:` sources are refused because they obscure the filesystem/host boundary. When a host allowlist
 is active, redirects are disabled because OWLAPI does not expose a policy callback for the redirect target.
+External terminology tools instead use each enabled policy provider's owner-local `origin_alias` as
+their exact endpoint allowlist. They accept the narrower `external-terms:read` capability, honor an
+explicit request-level `network=deny`, and recheck live requests, redirects, and cached evidence against
+the resolved HTTPS origin. This authority cannot load documents or imports and does not weaken the
+general network controls above. General `network:access` implies this narrower permission for existing
+clients.
 
 The document-loading operations (`load_ontology`, `merge_ontology_document`, `add_import`, and the
 `right_document` side of `diff_ontologies`/`semantic_diff`) additionally accept a request-level

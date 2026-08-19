@@ -121,6 +121,7 @@ caller-selected project files. Advanced clients may request one or more exact ca
 | `ontology:release` | Run release gates and preparation. |
 | `filesystem:project:read` / `filesystem:project:write` | Read/write project-confined files; required in addition to the tool's ontology capability. |
 | `filesystem:external` | Permit an outside-project path only when project policy also opts in. |
+| `external-terms:read` | Query only `search_external_terms`, `inspect_external_term`, and `propose_term_reuse`; also requires `ontology:read`, `filesystem:project:read`, and an enabled policy provider whose alias resolves to an exact owner-bound HTTPS origin. It does not imply `network:access`. |
 | `network:access` | Permit a network-capable request only when request and project policy also allow it. |
 | `server:admin` | Server administration operations. |
 

@@ -63,6 +63,88 @@ class ProviderOwnerConfigTest {
                 """);
         assertEquals("X-Api-Key", ProviderOwnerConfig.load(apiRoot)
                 .resolve("x", "x", "ols4", "c", "project").credential().header());
+
+        Path ontoPortalRoot = temporary.resolve("ontoportal-key");
+        write(ontoPortalRoot, """
+                {"version":1,"origins":[{"alias":"ncbo","profile":"ontoportal",
+                 "origin":"https://data.bioontology.org"}],"credentials":[
+                 {"id":"ncbo-key","provider_id":"ncbo","origin_alias":"ncbo",
+                  "scheme":"ontoportal_api_key"}]}
+                """);
+        ProviderOwnerConfig.CredentialBinding ontoPortal = ProviderOwnerConfig.load(ontoPortalRoot)
+                .resolve("ncbo", "ncbo", "ontoportal", "ncbo-key", "project")
+                .credential();
+        assertEquals("Authorization", ontoPortal.header());
+        assertEquals(ProviderOwnerConfig.AuthScheme.ONTOPORTAL_API_KEY, ontoPortal.scheme());
+        assertEquals("provider_credential_unbound", assertThrows(ProviderFailure.class,
+                () -> ProviderOwnerConfig.load(ontoPortalRoot)
+                        .resolve("ncbo", "ncbo", "ontoportal", null, "project")).code());
+
+        Path bearerOntoPortalScheme = temporary.resolve("bearer-ontoportal-key");
+        write(bearerOntoPortalScheme, """
+                {"version":1,"origins":[{"alias":"ncbo","profile":"ontoportal",
+                 "origin":"https://data.bioontology.org"}],"credentials":[
+                 {"id":"ncbo-key","provider_id":"ncbo","origin_alias":"ncbo",
+                  "scheme":"bearer"}]}
+                """);
+        assertEquals(ProviderOwnerConfig.AuthScheme.BEARER,
+                ProviderOwnerConfig.load(bearerOntoPortalScheme)
+                        .resolve("ncbo", "ncbo", "ontoportal", "ncbo-key", "project")
+                        .credential().scheme());
+
+        Path headerOntoPortalScheme = temporary.resolve("header-ontoportal-key");
+        write(headerOntoPortalScheme, """
+                {"version":1,"origins":[{"alias":"custom","profile":"ontoportal",
+                 "origin":"https://registry.example.org/base"}],"credentials":[
+                 {"id":"custom-key","provider_id":"custom","origin_alias":"custom",
+                  "scheme":"api_key","header":"X-Registry-Key"}]}
+                """);
+        ProviderOwnerConfig.CredentialBinding customHeader =
+                ProviderOwnerConfig.load(headerOntoPortalScheme)
+                        .resolve("custom", "custom", "ontoportal", "custom-key", "project")
+                        .credential();
+        assertEquals(ProviderOwnerConfig.AuthScheme.API_KEY, customHeader.scheme());
+        assertEquals("X-Registry-Key", customHeader.header());
+    }
+
+    @Test
+    void ontoPortalAcceptsApiKeyQueryPlacementAndRejectsRemovedVerbatimScheme() throws Exception {
+        Path root = temporary.resolve("flexible-ontoportal-auth");
+        write(root, """
+                {"version":1,"origins":[{"alias":"ncbo","profile":"ontoportal",
+                 "origin":"https://data.bioontology.org"}],"credentials":[
+                 {"id":"query-key","provider_id":"ncbo","origin_alias":"ncbo",
+                  "scheme":"query_api_key"}]}
+                """);
+
+        ProviderOwnerConfig config = ProviderOwnerConfig.load(root);
+        ProviderOwnerConfig.CredentialBinding query = config.resolve(
+                "ncbo", "ncbo", "ontoportal", "query-key", "project").credential();
+        assertNull(query.header());
+        assertEquals("apikey", query.parameter());
+        Path roundTripRoot = temporary.resolve("flexible-ontoportal-round-trip");
+        ProviderOwnerConfig.save(roundTripRoot, config);
+        assertEquals(config.credentials(), ProviderOwnerConfig.load(roundTripRoot).credentials());
+
+        Path invalid = temporary.resolve("invalid-query-placement");
+        write(invalid, """
+                {"version":1,"origins":[{"alias":"ncbo","profile":"ontoportal",
+                 "origin":"https://data.bioontology.org"}],"credentials":[
+                 {"id":"query-key","provider_id":"ncbo","origin_alias":"ncbo",
+                  "scheme":"query_api_key","parameter":"token"}]}
+                """);
+        assertEquals("provider_configuration_invalid", assertThrows(ProviderFailure.class,
+                () -> ProviderOwnerConfig.load(invalid)).code());
+
+        Path removed = temporary.resolve("removed-verbatim-scheme");
+        write(removed, """
+                {"version":1,"origins":[{"alias":"ncbo","profile":"ontoportal",
+                 "origin":"https://data.bioontology.org"}],"credentials":[
+                 {"id":"header-value","provider_id":"ncbo","origin_alias":"ncbo",
+                  "scheme":"authorization_value"}]}
+                """);
+        assertEquals("provider_configuration_invalid", assertThrows(ProviderFailure.class,
+                () -> ProviderOwnerConfig.load(removed)).code());
     }
 
     @Test
@@ -70,6 +152,14 @@ class ProviderOwnerConfigTest {
         assertInvalid("""
                 {"version":1,"origins":[{"alias":"x","profile":"ols4",
                  "origin":"http://example.org/ols4"}],"credentials":[]}
+                """);
+        assertInvalid("""
+                {"version":1,"origins":[{"alias":"x","profile":"ols4",
+                 "origin":"https://example.org/ols4/%252e%252e/outside"}],"credentials":[]}
+                """);
+        assertInvalid("""
+                {"version":1,"origins":[{"alias":"x","profile":"ols4",
+                 "origin":"https://example.org/ols4/%255c..%255coutside"}],"credentials":[]}
                 """);
         assertInvalid("""
                 {"version":1,"origins":[{"alias":"x","profile":"ols4",

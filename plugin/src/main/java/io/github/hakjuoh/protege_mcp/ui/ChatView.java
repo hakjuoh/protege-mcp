@@ -476,6 +476,8 @@ public class ChatView extends AbstractOWLViewComponent {
         boolean reasoningOn = showThinking != null && showThinking.isSelected();
         boolean assistantWrites =
                 McpConfig.prefs().getBoolean(McpConfig.KEY_CHAT_ALLOW_WRITES, true);
+        boolean assistantExternalTerms = McpConfig.prefs().getBoolean(
+                McpConfig.KEY_CHAT_ALLOW_EXTERNAL_TERMS, true);
         turnController.start(
                 new ChatTurnController.StartRequest(
                         provider,
@@ -485,6 +487,7 @@ public class ChatView extends AbstractOWLViewComponent {
                         providerControls.selectedReasoningEffort(),
                         reasoningOn,
                         assistantWrites,
+                        assistantExternalTerms,
                         preparedAttachments.attachments(),
                         preparedAttachments.droppedCount()));
     }

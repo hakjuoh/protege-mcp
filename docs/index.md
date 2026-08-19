@@ -59,7 +59,8 @@ Everything an AI client does flows through Protégé's own model manager, so:
   with one keystroke. The AI can never escalate past the gates you set.
 - **Reason and query.** Run the reasoner, explain entailments, find unsatisfiable classes, and run
   **SPARQL 1.1** over the active ontology and its imports — all through tools.
-- **Reuse and materialize with evidence.** Govern SSSOM mappings, inspect OLS4 terms through explicit
+- **Reuse and materialize with evidence.** Govern SSSOM mappings, inspect OLS4 or experimental OntoPortal
+  terms through explicit BioPortal, AgroPortal, or custom compatible endpoint configuration and
   reuse proposals, validate SWRL rules against an exact reasoner profile, preview bounded inferences, and
   run cancellable owner-scoped jobs where the live plugin supports them.
 - **Govern your project.** Audit modelling quality and **project-governance policy** (OWL 2 profile

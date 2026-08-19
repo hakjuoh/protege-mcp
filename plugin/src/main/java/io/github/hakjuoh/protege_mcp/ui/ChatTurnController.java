@@ -61,6 +61,7 @@ final class ChatTurnController {
             String reasoningEffort,
             boolean showReasoning,
             boolean assistantWrites,
+            boolean assistantExternalTerms,
             List<ChatAttachment> attachments,
             int droppedAttachments) {
         StartRequest {
@@ -175,7 +176,8 @@ final class ChatTurnController {
             issued =
                     request.server()
                             .issueAssistantCredential(
-                                    request.provider().id(), identity, request.assistantWrites());
+                                    request.provider().id(), identity, request.assistantWrites(),
+                                    request.assistantExternalTerms());
             McpEndpoint endpoint =
                     new McpEndpoint(request.server().getEndpointUrl(), issued.token());
             ChatRequest chatRequest =

@@ -23,10 +23,22 @@ class ToolCapabilityCatalogTest {
         assertFalse(CapabilityAuthorizer.allows(Set.of(Capability.ONTOLOGY_READ.value()),
                 Capability.ONTOLOGY_ADMIN.value()));
         Set<String> providerRead = Set.of(Capability.ONTOLOGY_READ.value(),
-                Capability.FILESYSTEM_PROJECT_READ.value(), Capability.NETWORK_ACCESS.value());
+                Capability.FILESYSTEM_PROJECT_READ.value(),
+                Capability.NETWORK_ACCESS.value());
         assertEquals(providerRead, ToolCapabilityCatalog.required("search_external_terms"));
         assertEquals(providerRead, ToolCapabilityCatalog.required("inspect_external_term"));
         assertEquals(providerRead, ToolCapabilityCatalog.required("propose_term_reuse"));
+        Set<String> assistantProviderRead = Set.of(Capability.ONTOLOGY_READ.value(),
+                Capability.FILESYSTEM_PROJECT_READ.value(),
+                Capability.EXTERNAL_TERMS_READ.value());
+        assertTrue(ToolCapabilityCatalog.missingForTool("search_external_terms",
+                assistantProviderRead, providerRead).isEmpty());
+        assertEquals(assistantProviderRead, ToolCapabilityCatalog.authorizationRequirements(
+                "search_external_terms", assistantProviderRead, providerRead));
+        assertEquals(providerRead, ToolCapabilityCatalog.authorizationRequirements(
+                "search_external_terms", providerRead, providerRead));
+        assertFalse(ToolCapabilityCatalog.missingForTool("load_ontology",
+                assistantProviderRead, Set.of(Capability.NETWORK_ACCESS.value())).isEmpty());
         Set<String> materializationCommit = Set.of(
                 Capability.ONTOLOGY_ADMIN.value(), Capability.ONTOLOGY_CURATE.value(),
                 Capability.FILESYSTEM_PROJECT_READ.value());

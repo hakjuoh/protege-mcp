@@ -10,14 +10,40 @@ nav_order: 12
 Discover external terminology evidence, create immutable reuse proposals, and accept one proposal
 explicitly. Discovery and proposal calls require a valid project policy version 2 with an enabled provider
 declaration, the matching owner-controlled origin binding, and ontology read, project read, and network
-capabilities. Acceptance uses the captured evidence without another network request and has its own curation
-and project-write gate. Version 0.8.0 supports the `ols4` profile. Endpoint URLs and credentials never come
-from project files or tool arguments.
+authority. The narrow capability is `external-terms:read`; the established general `network:access`
+capability implies it for backward compatibility, but the reverse is not true. Acceptance uses the captured
+evidence without another network request and has its own curation and project-write gate. Runtime profiles
+are `ols4` and `ontoportal`. BioPortal and AgroPortal are editable endpoint presets for the single
+`ontoportal` profile, not separate profiles. Endpoint URLs and credentials never come from project files or
+tool arguments.
+
+## Compatibility status
+
+The OntoPortal deployments do not expose a stable API-version identifier on these REST surfaces. The
+BioPortal and AgroPortal preset endpoints are therefore evaluated independently against exact official
+`ontologies_api` source commits; a date is not treated as a vendor version.
+
+| Profile | Tested surface | Authentication | Status and limitations |
+| --- | --- | --- | --- |
+| `ols4` | EBI OLS4 `/api/search`, `/api/ontologies/{id}`, and `/api/ontologies/{id}/terms/{double-encoded-iri}`; snapshot 2026-08-18 | Anonymous | Production-supported. OLS localization is preserved when supplied; absent optional metadata remains absent. |
+| `ontoportal` | Common `/search`, `/ontologies/{acronym}`, `/classes/{single-encoded-iri}`, and `/latest_submission` surface. BioPortal preset: `https://data.bioontology.org`, evaluated at `ncbo/ontologies_api@1c59646038f6dd8b5acde2e11ae62dc7a990e801`. AgroPortal preset: `https://data.agroportal.eu`, independently evaluated at `agroportal/ontologies_api@e0dcb4f741d13bb476b754220d2c7051da867c06`. | `Authorization: apikey token=<key>` | Experimental evaluation pending live-canary history. The URL remains editable for compatible deployments. Search labels/synonyms have no language tag and are reported as `und`; scores are deterministic positional scores, not vendor relevance equivalence. Inspection needs three successful bounded requests. |
+
+All conformance fixtures are sanitized representative documents derived from the pinned official source
+contracts, not live response captures. They are offline inputs under `core/src/test/resources/external`; ordinary
+`mvn clean verify` never calls these services. This build runs no live provider canary; any separately
+scheduled canary must stay outside the ordinary build and does not by itself change the compatibility statement.
+OntoPortal pagination follows the returned `page`, `pageCount`, and `nextPage` metadata and therefore tolerates
+a deployment clamping the requested page size, while still bounding each response to the caller's limit.
 
 ## Owner setup
 
-The owner must bind every endpoint locally before a project can use it. For the anonymous EBI OLS4
-profile, create `~/.protege-mcp/providers/config.json` with owner-only permissions:
+The built-in Ontology Assistant enables project-approved terminology lookup by default under
+**Settings → Ontology Assistant → General**. Turn credentials receive `external-terms:read`, not general
+network access. External MCP clients may request either that exact capability or the broader
+`network:access`, together with ontology and project read.
+
+External terminology registries can be configured directly in Protégé via **Preferences → MCP → Externals**,
+or by writing `~/.protege-mcp/providers/config.json` with owner-only permissions:
 
 ```sh
 install -d -m 700 ~/.protege-mcp/providers
@@ -40,16 +66,14 @@ install -m 600 /dev/null ~/.protege-mcp/providers/config.json
 
 The origin is an exact HTTPS base with no trailing slash, query, fragment, user information, or
 relative segments. The runtime rejects symlinks, non-regular files, duplicate JSON keys, unknown
-fields, and group/world-accessible state. On first use it creates the cache under
+fields, and group/world-accessible state. Merely opening Preferences creates no provider directory. On
+the first save or provider use it creates the required owner-only state and cache under
 `~/.protege-mcp/providers/cache`; cache entries are HMAC-bound to the current owner binding,
 credential generation, canonical project root, and policy digest.
 
 Then enable the same alias in the project's policy v2 file:
 
 ```yaml
-network:
-  default: allow
-  allowed_hosts: [www.ebi.ac.uk]
 external_terms:
   providers:
     - id: ebi-ols
@@ -63,25 +87,53 @@ external_terms:
       max_results: 25
 ```
 
-The policy can only select an owner alias; it cannot supply or override an endpoint. Language order
-is meaningful: the first authored language is the default. `ttl_seconds: 0` disables cache reads and
+The policy can only select an owner alias; it cannot supply or override an endpoint. The selected
+owner-local alias is the provider allowlist: it may name any exact HTTPS base URL compatible with the
+selected profile, and does not need to repeat its host in `network.allowed_hosts`. Live requests,
+redirects, and cached evidence are rechecked against that exact owner-bound origin. The global
+`network.default` and `network.allowed_hosts` settings remain separate controls for document and import
+fetching. Language order is meaningful: the first authored language is the default. `ttl_seconds: 0` disables cache reads and
 writes; positive values through 86400 seconds are honored. `fresh_required` disables both cache reads
 and writes so fresh-only evidence does not consume owner cache capacity.
 
-Credential records are optional and are not needed by the supported anonymous EBI OLS4 workflow.
-Secrets live in owner-only binary records under `~/.protege-mcp/providers/credentials`, are rotated by
-the local owner credential service, and are never accepted through MCP, policy, logs, errors, cache
-payloads, or URLs. A credential binding in `config.json` names `id`, `provider_id`, `origin_alias`,
-`scheme` (`bearer` or `api_key`), optional `header`, and optional `project_fingerprint`. Deleting or
-rotating its local record immediately invalidates in-flight publication and old cache scope. Do not add
-`credential_id` to project policy unless that owner-local record has already been provisioned.
+Credential records are optional for anonymous OLS4 and required by the documented OntoPortal preset
+surfaces. Secrets live in separate owner-only `<credential-id>.cred` binary records under
+`~/.protege-mcp/providers/credentials`; they are never accepted through MCP, policy, logs, errors, cache
+payloads, or returned source URLs. A credential binding in `config.json` names `id`, `provider_id`,
+`origin_alias`, `scheme`, its constrained header or query parameter, and optional `project_fingerprint`.
+The supported placements are:
+
+- `query_api_key`: add the stored value as the outbound `apikey` query parameter. This documented fallback
+  is confined to the HTTPS request; it is excluded from cache identity, evidence URLs, errors, and logs.
+- `ontoportal_api_key`: the OntoPortal default; it stores only the key and constructs
+  `Authorization: apikey token=<key>`.
+- `bearer` and `api_key`: compatibility modes for a prefixed Authorization bearer value or a constrained
+  non-Authorization API-key header.
+
+The Preferences editor preserves multiple credentials per origin and their provider/project scopes.
+Metadata and secret changes are coordinated under one owner lock; a
+failed metadata commit restores the prior records or reports that manual verification is required.
+
+OntoPortal requests explicitly select `format=json`, omit JSON-LD context with `display_context=false`,
+retain required hypermedia links with `display_links=true`, and use the documented `include`, `page`, and
+`pagesize` fields. Search excludes ontology views with `include_views=false`. `download_format` is not sent
+because the current provider contract never calls an ontology download endpoint.
+
+The **Test Connection** action is a non-mutating liveness request. It uses the same HTTPS-only transport,
+DNS/address checks, redirect rules, response bounds, retries, credential redaction, and query-free returned
+source URL as provider calls. It does not bypass policy for a project operation: it is an explicit local-owner
+configuration action and therefore has no project policy context. Saving Preferences is not required to test
+a newly entered secret, and temporary secret bytes are wiped after the probe.
+While the probe is running, the editor displays an animated status and disables its actions. A probe that
+has not completed within 10 seconds is cancelled with guidance to check the origin and credential inputs.
 
 ### Troubleshooting
 
 - `provider_origin_unbound`: the policy alias is absent, the profile differs, or the exact origin is
   invalid. Check `config.json`, its permissions, and the no-trailing-slash rule.
-- `provider_network_denied`: the effective project/request network policy does not allow the exact
-  origin. `network: allow` on a request cannot widen a denied project policy.
+- `provider_network_denied`: the request denies network use, the external-terminology capability is
+  absent, or the request/cache evidence escaped the exact owner-bound origin. `network: allow` cannot
+  widen any of those constraints.
 - `provider_credential_unbound` or `provider_credential_missing`: remove the policy credential reference
   for anonymous OLS4 or repair the owner-local binding/record.
 - `provider_policy_changed`, `provider_authority_changed`, or `provider_acquisition_stale`: policy,

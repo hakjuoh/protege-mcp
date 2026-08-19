@@ -9,7 +9,7 @@ nav_order: 9
 Protégé MCP 0.8.0 can build and verify a release bundle for exchange with commercial ontology and
 knowledge-graph platforms, but it does **not** ship a vendor-specific connector. The supported boundary
 is a versioned RO-Crate project profile, deterministic offline project QC, import locking, governed SSSOM
-mapping sidecars, live-plugin OLS4 term evidence, release manifests/reports, verified file exchange, and
+mapping sidecars, live-plugin external term evidence, release manifests/reports, verified file exchange, and
 user-maintained target automation. Live bidirectional synchronization, remote revision mapping, vendor
 publication, and cross-product transactions remain roadmap work.
 
@@ -29,7 +29,7 @@ licensing can change; an entry here is neither a compatibility certification nor
 | Asserted semantic comparison | Yes | Export two documents and use `semantic_diff`, or the headless CLI `diff`. The headless comparison deliberately excludes imported axioms and does not perform inferred comparison. |
 | Policy validation in CI | Yes | The headless CLI `validate` runs the full offline project gate with the maintained HermiT baseline; reusable CI preserves JSON, JUnit, SARIF, import-lock, and release-preview evidence. Commercial products need not consume the YAML execution overlay. |
 | SSSOM mapping sidecar | Yes | `list_mappings`, `validate_mappings`, and the guarded import/export/mutation tools work through the live plugin and headless surfaces. The sidecar is a Protégé MCP governance/interchange record, not OWL equivalence axioms or a remote revision. |
-| External term evidence | Yes, live plugin only | The supported `ols4` profile provides policy-governed search/inspection and explicit reuse proposals. Provider networking is not exposed by headless stdio or the one-shot CLI, and no provider result publishes to a commercial platform. |
+| External term evidence | Yes, live plugin only | The production `ols4` and experimental `ontoportal` profiles provide policy-governed search/inspection and explicit reuse proposals. BioPortal and AgroPortal are endpoint presets for `ontoportal`. Provider networking is not exposed by headless stdio or the one-shot CLI, and no provider result publishes to a commercial platform. |
 | Verified release preparation | Yes, locally | `run_release_gate`/`prepare_release` and CLI `release` produce a checksum-verified ontology artifact, manifest, reports, policy snapshot, validation assets, and crate metadata through a failure-atomic workspace transaction. |
 | Target upload/publication | Manually or with user automation | Uploading a verified bundle through a vendor REST, RDF repository, command-line, or import interface is outside the product contract. An HTTP success is not semantic read-back verification. |
 | Fingerprint v2 and import lock | As attached evidence | These remain Protégé MCP contracts, distinct from the standard RDFC dataset fingerprint. A target may store them as release metadata but must not reinterpret them as its native revision or dependency lock. |

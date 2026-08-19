@@ -1,0 +1,1 @@
+{"@id":"https://example.org/T1","@type":"http://www.w3.org/2002/07/owl#Class","prefLabel":"Term","synonym":["Term synonym"],"definition":["Term definition"],"obsolete":true,"properties":{"http://purl.obolibrary.org/obo/IAO_0100001":["https://example.org/T2"]},"links":{"ontology":"https://data.bioontology.org/ontologies/TEST"}}

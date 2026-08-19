@@ -1,6 +1,7 @@
 package io.github.hakjuoh.protege_mcp.external;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -161,10 +162,13 @@ class DefaultExternalProviderGatewayTest {
                 config.getBytes(StandardCharsets.UTF_8));
         MutableClock clock = new MutableClock(Instant.parse("2026-07-21T00:00:00Z"));
         AtomicInteger networkCalls = new AtomicInteger();
+        AtomicReference<ProviderNetworkExecutor.NetworkGate> boundGate = new AtomicReference<>();
         DefaultExternalProviderGateway gateway = new DefaultExternalProviderGateway(
                 new ProviderCursorStore(clock, Duration.ofMinutes(5), 32, 128, 512 * 1_024),
                 new DefaultExternalProviderGateway.RuntimeRoots(providers, credentials, cache),
                 (authority, store, gate, acquisition) -> request -> {
+                    boundGate.set(gate);
+                    gate.authorize(authority.origin().origin());
                     networkCalls.incrementAndGet();
                     acquisition.recordSuccess(authority, authority.cacheScopeFingerprint(null),
                             authority.origin().origin());
@@ -206,6 +210,10 @@ class DefaultExternalProviderGatewayTest {
                 inspect, ignored -> invocation);
 
         assertEquals(1, first.page().items().size());
+        boundGate.get().authorize(URI.create("https://example.org"));
+        ProviderFailure outsideOrigin = assertThrows(ProviderFailure.class,
+                () -> boundGate.get().authorize(URI.create("https://outside.example")));
+        assertEquals("provider_origin_unbound", outsideOrigin.code());
         assertTrue(cached.cacheHit(), "a 15-minute policy TTL must survive ten minutes");
         assertEquals("Cell", inspected.result().labels().get(0).value());
         assertTrue(cachedInspect.cacheHit());
@@ -379,6 +387,65 @@ class DefaultExternalProviderGatewayTest {
                 throw new AssertionError("inspect call must not run");
             }
         };
+    }
+
+    @Test
+    void customRegistryRejectsAnUnregisteredProfile() throws Exception {
+        Path providers = temporary.resolve("providers-unsupported");
+        Path credentials = temporary.resolve("credentials-unsupported");
+        Path cache = temporary.resolve("cache-unsupported");
+        String config = "{\"version\":1,\"origins\":[{\"alias\":\"custom\","
+                + "\"profile\":\"custom_profile\",\"origin\":\"https://example.org/custom\"}],"
+                + "\"credentials\":[]}";
+        OwnerOnlyFiles.write(providers, ProviderOwnerConfig.FILE_NAME,
+                config.getBytes(StandardCharsets.UTF_8));
+
+        DefaultExternalProviderGateway gateway = new DefaultExternalProviderGateway(
+                new ProviderCursorStore(),
+                new DefaultExternalProviderGateway.RuntimeRoots(providers, credentials, cache),
+                (authority, store, gate, acquisition) -> request -> {
+                    throw new AssertionError("network must not run for unsupported profile");
+                },
+                Clock.systemUTC(),
+                ExternalTermProviderRegistry.of(new Ols4Provider())); // only ols4, not custom_profile
+
+        ProviderInspectRequest inspectRequest = new ProviderInspectRequest(
+                "ols", "efo", "https://example.org/term", "en");
+
+        ExternalProviderGateway.Invocation invocation = new ExternalProviderGateway.Invocation(
+                "ols", "custom_profile", "custom", null,
+                "sha256:" + "0".repeat(64), Duration.ZERO, false,
+                List.of("efo"), List.of("en"), 10,
+                authority -> authority.projectFingerprint(), origin -> { });
+
+        ProviderFailure unsupported = assertThrows(ProviderFailure.class,
+                () -> gateway.inspect(inspectRequest, ignored -> invocation));
+        assertEquals("provider_profile_unsupported", unsupported.code());
+    }
+
+    @Test
+    void unsupportedProfileFailsBeforeOwnerStoresAreOpened() throws Exception {
+        Path providers = temporary.resolve("providers-must-remain-absent");
+        Path credentials = temporary.resolve("credentials-must-remain-absent");
+        Path cache = temporary.resolve("cache-must-remain-absent");
+        DefaultExternalProviderGateway gateway = new DefaultExternalProviderGateway(
+                new ProviderCursorStore(),
+                new DefaultExternalProviderGateway.RuntimeRoots(providers, credentials, cache),
+                (authority, store, gate, acquisition) -> request -> {
+                    throw new AssertionError("network must not run");
+                }, Clock.systemUTC(), ExternalTermProviderRegistry.defaultRegistry());
+        ExternalProviderGateway.Invocation invocation = new ExternalProviderGateway.Invocation(
+                "custom", "not-installed", "missing", null, "project", Duration.ZERO, false,
+                List.of(), List.of(), 10, authority -> authority.projectFingerprint(), ignored -> { });
+
+        ProviderFailure failure = assertThrows(ProviderFailure.class, () -> gateway.inspect(
+                new ProviderInspectRequest("custom", "efo", "https://example.org/T", "en"),
+                ignored -> invocation));
+
+        assertEquals("provider_profile_unsupported", failure.code());
+        assertFalse(java.nio.file.Files.exists(providers));
+        assertFalse(java.nio.file.Files.exists(credentials));
+        assertFalse(java.nio.file.Files.exists(cache));
     }
 
     private static ExternalProviderGateway.Invocation invocation(List<String> ontologies,

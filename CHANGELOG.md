@@ -34,6 +34,22 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
   provider/model ids, reasoning events, usage/cost reporting, and a deny-by-default inline MCP
   configuration. Its short-lived Protégé token is supplied by environment substitution, never argv;
   owner-only config isolation prevents pre-existing MCP children or plugins from inheriting it.
+- Added the fail-closed `ExternalTermProviderRegistry` with an experimental `ontoportal` profile and editable
+  BioPortal/AgroPortal endpoint presets. Independently pinned vendor fixtures cover search, exact inspection,
+  pagination, metadata, malformed responses, and the real bounded 429 retry path;
+  OntoPortal credentials default to the documented `Authorization: apikey token=...` grammar and also
+  support the documented `apikey` query parameter placement.
+- Added sub-tab structure to **Settings ▸ MCP** dividing settings into **Server** (port, bind address, broker,
+  startup, safety) and **Externals** (Terminology Registries table editor with GUI credential persistence,
+  owner-only multi-scope credential persistence, hardened non-destructive liveness probes, and the
+  informational Publishing Repositories overview).
+- Added Architecture Decision Record `docs/adr/0.8-private-terminology-services.md` detailing OntoPortal
+  compatibility boundaries and owner-bound credential isolation.
+- Added an independently configurable, default-enabled Ontology Assistant permission for querying
+  project-approved terminology registries. Assistant turns receive the narrow `external-terms:read`
+  capability rather than general `network:access`; each policy v2 provider declaration selects an
+  owner-bound exact HTTPS origin, so custom compatible registries do not require a duplicate global
+  host-allowlist entry.
 
 ### Fixed
 - Preserved provider-reported assistant-message boundaries across Codex item IDs, Claude Code

@@ -1,0 +1,1 @@
+{"response":{"numFound":2,"start":0,"docs":[{"iri":"https://example.org/T1","ontology_name":"test","label":"Term","synonym":["Term synonym"],"description":["Term definition"],"type":"class","is_obsolete":false}]}}

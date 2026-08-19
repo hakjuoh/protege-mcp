@@ -135,9 +135,12 @@ public final class ToolRegistry {
                     AuthenticatedPrincipal principal = principal(exchange);
                     Map<String, Object> arguments = request == null || request.arguments() == null
                             ? Map.of() : request.arguments();
+                    Set<String> authorizationRequired =
+                            ToolCapabilityCatalog.authorizationRequirements(name,
+                                    principal == null ? null : principal.capabilities(), required);
                     PrincipalExecutionGate.Lease lease = null;
                     try {
-                        requireAuthorized(principal, name, required);
+                        requireAuthorized(principal, name, authorizationRequired);
                         if (request != null) {
                             List<String> inputViolations = inputContract.violations(arguments);
                             if (!inputViolations.isEmpty()) {
@@ -154,7 +157,7 @@ public final class ToolRegistry {
                     } catch (RuntimeException denied) {
                         if (audit != null) {
                             try {
-                                audit.denied(name, principal, arguments, required,
+                                audit.denied(name, principal, arguments, authorizationRequired,
                                         mutationExpected(required));
                             } catch (RuntimeException auditFailure) {
                                 ToolArgException refusal = new ToolArgException(

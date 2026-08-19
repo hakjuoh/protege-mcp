@@ -13,8 +13,12 @@ final class ToolTestExchange {
     private ToolTestExchange() { }
 
     static McpSyncServerExchange localAdmin() {
+        return principal(AuthenticatedPrincipal.staticAdmin());
+    }
+
+    static McpSyncServerExchange principal(AuthenticatedPrincipal principal) {
         McpTransportContext context = McpTransportContext.create(Map.of(
-                AuthenticatedPrincipal.CONTEXT_KEY, AuthenticatedPrincipal.staticAdmin()));
+                AuthenticatedPrincipal.CONTEXT_KEY, principal));
         return new McpSyncServerExchange(new McpAsyncServerExchange(
                 "tool-test-session", null, null, null, context));
     }

@@ -166,6 +166,10 @@ The chat input accepts more than plain text (added in `0.3.1`):
 > that the newly active provider missed are sent to it as handoff context. This disclosure is also
 > available under **Settings ▸ Ontology Assistant ▸ Privacy**; sending does not open a modal dialog.
 
+When project-approved terminology access is enabled, the external registry additionally receives the
+search text and the requested ontology/language filters. Provider responses return through the local MCP
+server and may then be included in the model conversation.
+
 - Each attached file or image is copied into its **own private temp folder**, and only that single-file
   copy is exposed to the CLI — never the rest of its containing folder. The temp copies are deleted when
   the turn finishes.
@@ -175,9 +179,12 @@ The chat input accepts more than plain text (added in `0.3.1`):
 - **Cost and rate limits** are governed by your CLI's own subscription/account, not by Protégé.
 - **Edits obey the MCP preferences** (read-only, confirm-each-write). A **Confirm each edit** checkbox
   in the panel toggles confirmation live.
-- Assistant credentials never carry server-admin, external-filesystem, network, or unrestricted
-  local-admin authority. Their project/ontology write profile is controlled separately in
-  **Settings ▸ Ontology Assistant**; disabling it leaves read-only chat available.
+- Assistant credentials never carry server-admin, external-filesystem, general `network:access`, or
+  unrestricted local-admin authority. When enabled under **Settings ▸ Ontology Assistant ▸ General**,
+  they may carry the narrower `external-terms:read` permission plus project read so the Assistant can
+  query only terminology providers enabled by a valid policy v2 and bound to an exact owner-local
+  HTTPS origin. The project/ontology write profile remains a separate setting; disabling it leaves read-only chat and
+  terminology lookup available.
 
 ## Settings (Settings ▸ Ontology Assistant)
 
@@ -231,7 +238,11 @@ The chat input accepts more than plain text (added in `0.3.1`):
   the desired default variant in OpenCode itself.
 - **General ▸ Assistant access** — choose whether per-turn credentials may use the bounded
   ontology/project write profile. Disable it for read-only Assistant use. The MCP server's global
-  read-only setting always wins.
+  read-only setting always wins. A separate checkbox controls project-approved terminology lookup;
+  it is enabled by default and grants only `external-terms:read`, never general network access. The
+  owner registry binding, credential, and valid policy v2 provider declaration must all agree before
+  a request leaves the machine. The owner-bound exact HTTPS origin is the provider allowlist, so a
+  custom compatible registry does not also need a duplicate `network.allowed_hosts` entry.
 - **General ▸ Privacy** — a non-blocking summary of what is sent to the selected model provider.
 
 (The **Show reasoning** and **Confirm each edit** toggles live in the chat panel itself, next to

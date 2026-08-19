@@ -123,7 +123,7 @@ public final class OwnerProviderCache {
                     if (!beforeScope.equals(after.fingerprint())) return Optional.empty();
                     ProviderPage page = decodePage(payload);
                     validatePage(after.authority(), request, page);
-                    authorize(page.items());
+                    authorize(after.authority(), page.items());
                     return Optional.of(new SearchRead(page, after.fingerprint()));
                 }
             } finally {
@@ -164,7 +164,7 @@ public final class OwnerProviderCache {
                 if (!beforeScope.equals(after.fingerprint())) return Optional.empty();
                 ProviderResult result = decodeResult(payload);
                 validateResult(after.authority(), request, result);
-                authorize(List.of(result));
+                authorize(after.authority(), List.of(result));
                 return Optional.of(new InspectRead(result, after.fingerprint()));
             }
         } finally {
@@ -264,7 +264,7 @@ public final class OwnerProviderCache {
         try (ScopeLease first = revalidate(expected)) {
             authorize(first.authority().origin().origin());
             if (!publication.scope().equals(first.fingerprint())) throw staleAcquisition();
-            authorize(results);
+            authorize(first.authority(), results);
             if (!ProviderCacheSafety.safe(payload, first.secretInternal(), null)) {
                 throw redactionFailed();
             }
@@ -272,7 +272,7 @@ public final class OwnerProviderCache {
         }
         try (ScopeLease current = revalidate(expected)) {
             authorize(current.authority().origin().origin());
-            authorize(results);
+            authorize(current.authority(), results);
             if (!firstScope.equals(current.fingerprint())) throw staleAcquisition();
         }
     }
@@ -308,7 +308,7 @@ public final class OwnerProviderCache {
         try (ScopeLease current = revalidate(expected)) {
             authorize(current.authority().origin().origin());
             if (!scope.equals(current.fingerprint())) throw staleAcquisition();
-            authorize(results);
+            authorize(current.authority(), results);
             if (!ProviderCacheSafety.safe(payload, current.secretInternal(), null)) {
                 throw redactionFailed();
             }
@@ -348,6 +348,10 @@ public final class OwnerProviderCache {
                 authorize(live.authority().origin().origin());
                 acquisition.requireSnapshot(live.authority(), live.fingerprint());
                 if (!candidateScope.equals(live.fingerprint())) throw staleAcquisition();
+                if (!ProviderOriginBoundary.contains(live.authority(), target)) {
+                    throw new ProviderFailure("provider_network_denied",
+                            "Provider request escaped its exact owner origin", false);
+                }
                 URI targetOrigin = ProviderNetworkUris.origin(target);
                 authorize(targetOrigin);
                 acquisition.noteOrigin(targetOrigin);
@@ -422,11 +426,17 @@ public final class OwnerProviderCache {
         }
     }
 
-    private void authorize(List<ProviderResult> results) throws ProviderFailure {
+    private void authorize(ProviderOwnerConfig.ResolvedProvider authority,
+            List<ProviderResult> results) throws ProviderFailure {
         Set<URI> origins = new HashSet<>();
         for (ProviderResult result : results) {
             try {
+                if (!ProviderOriginBoundary.contains(authority, result.sourceUrl())) {
+                    throw cacheFailure("Provider cache source URL escaped its owner binding");
+                }
                 origins.add(ProviderNetworkUris.origin(result.sourceUrl()));
+            } catch (ProviderFailure typed) {
+                throw typed;
             } catch (RuntimeException invalid) {
                 throw cacheFailure("Provider cache source URL is invalid");
             }

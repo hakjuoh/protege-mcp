@@ -81,6 +81,19 @@ class AssistantSteeringTest {
     }
 
     @Test
+    void steeringRoutesExternalTermRequestsThroughProjectGovernance() {
+        assertAll(
+                () -> assertTrue(TEXT.contains("get_project_policy"),
+                        "discovers provider ids from reviewed project policy"),
+                () -> assertTrue(TEXT.contains("search_external_terms"),
+                        "uses the bounded provider search tool"),
+                () -> assertTrue(TEXT.contains("inspect_external_term"),
+                        "inspects exact evidence before reuse"),
+                () -> assertTrue(TEXT.contains("Never invent a provider id, endpoint, or credential"),
+                        "does not guess owner-controlled coordinates"));
+    }
+
+    @Test
     void everyToolTheSteeringNamesIsARegisteredTool() {
         // A typo'd or renamed tool in the steering would silently send every assistant session
         // chasing a tool that does not exist. Whitelist the underscore tokens that are argument or
@@ -90,6 +103,7 @@ class AssistantSteeringTest {
                 .map(io.modelcontextprotocol.spec.McpSchema.Tool::name)
                 .collect(Collectors.toSet());
         Set<String> nonTools = Set.of("change_set_id", "base_revision", "expected_revision",
+                "provider_id",
                 "revision_conflict");
         Matcher tokens = Pattern.compile("\\b[a-z]+(?:_[a-z]+)+\\b").matcher(TEXT);
         Set<String> matched = new java.util.LinkedHashSet<>();
@@ -109,6 +123,7 @@ class AssistantSteeringTest {
         assertTrue(matched.containsAll(Set.of("get_model_revision", "preview_change_set",
                         "commit_change_set", "discard_change_set", "create_terms", "create_properties",
                         "apply_changes", "add_axiom", "remove_axiom", "add_subclass_of",
+                        "get_project_policy", "search_external_terms", "inspect_external_term",
                         "rename_entity", "move_class",
                         "deprecate_entity", "delete_entity", "add_rule", "remove_rule")),
                 "the token scan must find every tool the steering names; found only: " + matched);

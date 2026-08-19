@@ -36,6 +36,21 @@ public final class ProviderOwnerConfig {
 
     private ProviderOwnerConfig(Map<String, OriginBinding> origins,
             Map<String, CredentialBinding> credentials) {
+        if (origins == null || credentials == null || origins.size() > 32
+                || credentials.size() > 64) {
+            throw new IllegalArgumentException("provider configuration exceeds its bounds");
+        }
+        origins.forEach((key, value) -> {
+            if (value == null || !value.alias().equals(key)) {
+                throw new IllegalArgumentException("origin map key does not match its binding");
+            }
+        });
+        credentials.forEach((key, value) -> {
+            if (value == null || !value.id().equals(key)
+                    || !origins.containsKey(value.originAlias())) {
+                throw new IllegalArgumentException("credential map does not match its binding");
+            }
+        });
         this.origins = Collections.unmodifiableMap(new LinkedHashMap<>(origins));
         this.credentials = Collections.unmodifiableMap(new LinkedHashMap<>(credentials));
     }
@@ -44,8 +59,68 @@ public final class ProviderOwnerConfig {
         return new ProviderOwnerConfig(Map.of(), Map.of());
     }
 
+    public static ProviderOwnerConfig of(Map<String, OriginBinding> origins,
+            Map<String, CredentialBinding> credentials) {
+        return new ProviderOwnerConfig(origins == null ? Map.of() : origins,
+                credentials == null ? Map.of() : credentials);
+    }
+
+    public static OriginBinding bindOrigin(String alias, String profile, URI origin) {
+        return new OriginBinding(alias, profile, origin,
+                origin != null && literalLoopback(origin.getHost()));
+    }
+
     public static ProviderOwnerConfig loadDefault() throws ProviderFailure {
         return load(ProviderLocalPaths.providers());
+    }
+
+    public static void saveDefault(ProviderOwnerConfig config) throws ProviderFailure {
+        save(ProviderLocalPaths.providers(), config);
+    }
+
+    public static void save(java.nio.file.Path root, ProviderOwnerConfig config) throws ProviderFailure {
+        java.nio.file.Path directory = OwnerOnlyFiles.prepareDirectory(root);
+        byte[] body = config.toJsonBytes();
+        try {
+            OwnerOnlyFiles.write(directory, FILE_NAME, body);
+        } finally {
+            java.util.Arrays.fill(body, (byte) 0);
+        }
+    }
+
+    public byte[] toJsonBytes() {
+        Map<String, Object> doc = new LinkedHashMap<>();
+        doc.put("version", 1);
+        List<Map<String, Object>> originsList = new ArrayList<>();
+        for (OriginBinding origin : origins.values()) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("alias", origin.alias());
+            map.put("profile", origin.profile());
+            map.put("origin", origin.origin().toASCIIString());
+            map.put("test_only_loopback", origin.testOnlyLoopback());
+            originsList.add(map);
+        }
+        doc.put("origins", originsList);
+        List<Map<String, Object>> credentialsList = new ArrayList<>();
+        for (CredentialBinding credential : credentials.values()) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("id", credential.id());
+            map.put("provider_id", credential.providerId());
+            map.put("origin_alias", credential.originAlias());
+            map.put("scheme", credential.scheme().name().toLowerCase(Locale.ROOT));
+            if (credential.header() != null) map.put("header", credential.header());
+            if (credential.parameter() != null) map.put("parameter", credential.parameter());
+            if (credential.projectFingerprint() != null && !credential.projectFingerprint().isBlank()) {
+                map.put("project_fingerprint", credential.projectFingerprint());
+            }
+            credentialsList.add(map);
+        }
+        doc.put("credentials", credentialsList);
+        try {
+            return JSON.writeValueAsBytes(doc);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to serialize ProviderOwnerConfig", e);
+        }
     }
 
     static ProviderOwnerConfig load(java.nio.file.Path root) throws ProviderFailure {
@@ -93,6 +168,11 @@ public final class ProviderOwnerConfig {
                         "Credential is not bound to this provider, origin, and project", false);
             }
         }
+        if (ontoPortalProfile(normalizedProfile)
+                && (credential == null || !credential.scheme().supportsOntoPortal())) {
+            throw new ProviderFailure("provider_credential_unbound",
+                    "This provider profile requires an authorized OntoPortal credential", false);
+        }
         return new ResolvedProvider(normalizedProvider, normalizedProject, origin, credential);
     }
 
@@ -128,22 +208,19 @@ public final class ProviderOwnerConfig {
         for (JsonNode value : values) {
             if (!value.isObject()) throw invalid();
             rejectUnknown(value, List.of("id", "provider_id", "origin_alias", "scheme",
-                    "header", "project_fingerprint"));
+                    "header", "parameter", "project_fingerprint"));
             String id = id(text(value, "id", 64), "credential id");
             String provider = id(text(value, "provider_id", 64), "provider id");
             String alias = id(text(value, "origin_alias", 64), "origin alias");
             if (!origins.containsKey(alias)) throw invalid();
             AuthScheme scheme = AuthScheme.parse(text(value, "scheme", 32));
             String header = optional(value, "header", 64);
-            if (header == null) header = scheme == AuthScheme.BEARER ? "Authorization" : "X-Api-Key";
-            if (!header.matches("[A-Za-z][A-Za-z0-9-]{0,63}") || forbiddenHeader(header)
-                    || scheme == AuthScheme.BEARER && !header.equalsIgnoreCase("Authorization")
-                    || scheme == AuthScheme.API_KEY && header.equalsIgnoreCase("Authorization")) {
-                throw invalid();
-            }
+            if (header == null) header = scheme.defaultHeader();
+            String parameter = optional(value, "parameter", 64);
+            if (parameter == null) parameter = scheme.defaultParameter();
             String fingerprint = optional(value, "project_fingerprint", 256);
             CredentialBinding binding = new CredentialBinding(id, provider, alias, scheme,
-                    header, fingerprint);
+                    header, parameter, fingerprint);
             if (result.putIfAbsent(id, binding) != null) throw invalid();
         }
         return result;
@@ -155,8 +232,7 @@ public final class ProviderOwnerConfig {
             if (!"https".equalsIgnoreCase(origin.getScheme()) || origin.isOpaque()
                     || origin.getHost() == null || origin.getUserInfo() != null
                     || origin.getRawQuery() != null || origin.getRawFragment() != null
-                    || origin.getRawPath() == null || origin.getRawPath().contains("..")
-                    || origin.getRawPath().toLowerCase(Locale.ROOT).contains("%2e")
+                    || !safeOriginPath(origin.getRawPath())
                     || origin.toASCIIString().endsWith("/")) {
                 throw invalid();
             }
@@ -191,6 +267,10 @@ public final class ProviderOwnerConfig {
                 "proxy-authorization", "proxy-connection", "connection", "content-length",
                 "keep-alive", "te",
                 "trailer", "transfer-encoding", "upgrade").contains(lower);
+    }
+
+    private static boolean ontoPortalProfile(String profile) {
+        return OntoPortalProvider.PROFILE.equals(profile);
     }
 
     private static void rejectUnknown(JsonNode object, List<String> allowed)
@@ -250,8 +330,31 @@ public final class ProviderOwnerConfig {
     }
 
     public enum AuthScheme {
-        BEARER,
-        API_KEY;
+        BEARER("Authorization", null),
+        API_KEY("X-Api-Key", null),
+        ONTOPORTAL_API_KEY("Authorization", null),
+        QUERY_API_KEY(null, "apikey");
+
+        private final String defaultHeader;
+        private final String defaultParameter;
+
+        AuthScheme(String defaultHeader, String defaultParameter) {
+            this.defaultHeader = defaultHeader;
+            this.defaultParameter = defaultParameter;
+        }
+
+        public String defaultHeader() {
+            return defaultHeader;
+        }
+
+        public String defaultParameter() {
+            return defaultParameter;
+        }
+
+        boolean supportsOntoPortal() {
+            return this == BEARER || this == API_KEY || this == ONTOPORTAL_API_KEY
+                    || this == QUERY_API_KEY;
+        }
 
         static AuthScheme parse(String value) throws ProviderFailure {
             try {
@@ -274,20 +377,38 @@ public final class ProviderOwnerConfig {
     }
 
     public record CredentialBinding(String id, String providerId, String originAlias,
-            AuthScheme scheme, String header, String projectFingerprint) {
+            AuthScheme scheme, String header, String parameter, String projectFingerprint) {
+        public CredentialBinding(String id, String providerId, String originAlias,
+                AuthScheme scheme, String header, String projectFingerprint) {
+            this(id, providerId, originAlias, scheme, header, null, projectFingerprint);
+        }
+
         public CredentialBinding {
             id = uncheckedId(id);
             providerId = uncheckedId(providerId);
             originAlias = uncheckedId(originAlias);
-            if (scheme == null || header == null
-                    || !header.matches("[A-Za-z][A-Za-z0-9-]{0,63}")
-                    || forbiddenHeader(header)
-                    || scheme == AuthScheme.BEARER && !header.equalsIgnoreCase("Authorization")
-                    || scheme == AuthScheme.API_KEY && header.equalsIgnoreCase("Authorization")
+            if (scheme == null || !(validHeaderPlacement(scheme, header, parameter)
+                            || validQueryPlacement(scheme, header, parameter))
                     || projectFingerprint != null && (projectFingerprint.isBlank()
                             || projectFingerprint.length() > 256)) {
                 throw new IllegalArgumentException("credential binding is invalid");
             }
+        }
+
+        private static boolean validHeaderPlacement(AuthScheme scheme, String header,
+                String parameter) {
+            return header != null && parameter == null
+                    && header.matches("[A-Za-z][A-Za-z0-9-]{0,63}")
+                    && !forbiddenHeader(header) && scheme != AuthScheme.QUERY_API_KEY
+                    && (scheme == AuthScheme.API_KEY
+                            ? !header.equalsIgnoreCase("Authorization")
+                            : header.equalsIgnoreCase("Authorization"));
+        }
+
+        private static boolean validQueryPlacement(AuthScheme scheme, String header,
+                String parameter) {
+            return header == null && "apikey".equals(parameter)
+                    && scheme == AuthScheme.QUERY_API_KEY;
         }
     }
 
@@ -352,7 +473,10 @@ public final class ProviderOwnerConfig {
                 }
                 values.add(credential.id());
                 values.add(credential.scheme().name());
-                values.add(credential.header().toLowerCase(Locale.ROOT));
+                values.add(credential.header() == null ? ""
+                        : credential.header().toLowerCase(Locale.ROOT));
+                values.add(credential.parameter() == null ? ""
+                        : credential.parameter().toLowerCase(Locale.ROOT));
                 values.add(credential.projectFingerprint() == null
                         ? "" : credential.projectFingerprint());
                 values.add(lease.scopeFingerprint());
@@ -380,9 +504,12 @@ public final class ProviderOwnerConfig {
         return "https".equalsIgnoreCase(value.getScheme()) && !value.isOpaque()
                 && value.getHost() != null && value.getUserInfo() == null
                 && value.getRawQuery() == null && value.getRawFragment() == null
-                && path != null && !path.contains("..")
-                && !path.toLowerCase(Locale.ROOT).contains("%2e")
+                && safeOriginPath(path)
                 && !value.toASCIIString().endsWith("/");
+    }
+
+    private static boolean safeOriginPath(String path) {
+        return path != null && (path.isEmpty() || ProviderRequest.safeRelativePath(path));
     }
 
     private static String digest(List<String> values) {

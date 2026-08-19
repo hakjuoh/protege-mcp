@@ -6,6 +6,11 @@ import java.util.List;
 /** Server-scoped provider execution boundary used by the public tool adapter. */
 public interface ExternalProviderGateway extends AutoCloseable {
 
+    /** Whether this runtime gateway has an executable adapter for the exact policy profile. */
+    default boolean supportsProfile(String profile) {
+        return ExternalTermProviderRegistry.defaultRegistry().supports(profile);
+    }
+
     SearchOutcome search(ProviderSessionScope scope, ProviderSearchRequest initialRequest,
             String cursor, InvocationResolver resolver) throws ProviderFailure;
 

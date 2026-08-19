@@ -84,6 +84,28 @@ class ProjectPolicyV2SchemaTest {
 
     @Test
     void rejectsSecretsEndpointsUnknownFieldsAndBoundsThatExceedProductMaxima() {
+        for (String profile : List.of("ontoportal")) {
+            Map<String, Object> missingCredential = base();
+            missingCredential.put("external_terms", Map.of("providers", List.of(Map.of(
+                    "id", profile, "profile", profile, "enabled", true,
+                    "origin_alias", profile))));
+            assertInvalid(missingCredential, profile + " requires an owner credential reference");
+
+            Map<String, Object> authenticated = base();
+            authenticated.put("external_terms", Map.of("providers", List.of(Map.of(
+                    "id", profile, "profile", profile, "enabled", true,
+                    "origin_alias", profile, "credential_id", profile + "-key"))));
+            assertValid(authenticated, profile + " accepts an owner credential reference");
+        }
+
+        for (String removedProfile : List.of("bioportal", "agroportal", "ontoserver")) {
+            Map<String, Object> policy = base();
+            policy.put("external_terms", Map.of("providers", List.of(Map.of(
+                    "id", "removed", "profile", removedProfile, "enabled", true,
+                    "origin_alias", "removed", "credential_id", "removed-key"))));
+            assertInvalid(policy, removedProfile + " is not a public profile");
+        }
+
         Map<String, Object> endpoint = base();
         endpoint.put("external_terms", Map.of("providers", List.of(Map.of(
                 "id", "ols", "profile", "ols4", "enabled", true,

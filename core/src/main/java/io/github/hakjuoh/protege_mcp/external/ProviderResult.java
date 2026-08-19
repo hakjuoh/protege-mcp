@@ -21,6 +21,9 @@ public record ProviderResult(String providerId, String profile, String sourceOnt
         String providerVersion, Instant providerTimestamp, URI sourceUrl,
         int retries, boolean deprecated, String replacedBy, String resultFingerprint) {
 
+    /** Maximum number of bounded transport requests represented by one normalized result. */
+    private static final int MAX_ACQUISITION_REQUESTS = 3;
+
     public ProviderResult {
         providerId = ProviderSearchRequest.identifier(providerId, "provider_id");
         profile = ProviderSearchRequest.identifier(profile, "profile");
@@ -49,7 +52,8 @@ public record ProviderResult(String providerId, String profile, String sourceOnt
                 || sourceUrl.getUserInfo() != null || sourceUrl.getRawQuery() != null
                 || sourceUrl.getRawFragment() != null
                 || sourceUrl.toASCIIString().length() > ProviderRequest.MAX_PATH_LENGTH
-                || retries < 0 || retries > ProviderResponse.MAX_RETRIES * 2) {
+                || retries < 0
+                || retries > ProviderResponse.MAX_RETRIES * MAX_ACQUISITION_REQUESTS) {
             throw new IllegalArgumentException("provider evidence metadata is invalid");
         }
         replacedBy = optionalAbsolute(replacedBy, "replaced_by");

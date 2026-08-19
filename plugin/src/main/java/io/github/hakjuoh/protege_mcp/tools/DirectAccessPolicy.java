@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
+import io.github.hakjuoh.protege_mcp.core.auth.Capability;
 import io.github.hakjuoh.protege_mcp.server.AuthenticatedPrincipal;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 
@@ -242,6 +243,7 @@ final class DirectAccessPolicy {
         private final boolean unrestrictedNoPolicyPaths;
         private final Path authorizedPolicyPath;
         private final boolean requestNetworkDeny;
+        private final String networkCapability;
 
         Rules(ProjectPolicy policy, AuthenticatedPrincipal principal) {
             this(policy, principal, true);
@@ -260,11 +262,25 @@ final class DirectAccessPolicy {
         private Rules(ProjectPolicy policy, AuthenticatedPrincipal principal,
                 boolean unrestrictedNoPolicyPaths, Path authorizedPolicyPath,
                 boolean requestNetworkDeny) {
+            this(policy, principal, unrestrictedNoPolicyPaths, authorizedPolicyPath,
+                    requestNetworkDeny, NETWORK);
+        }
+
+        private Rules(ProjectPolicy policy, AuthenticatedPrincipal principal,
+                boolean unrestrictedNoPolicyPaths, Path authorizedPolicyPath,
+                boolean requestNetworkDeny, String networkCapability) {
             this.policy = policy;
             this.principal = principal;
             this.unrestrictedNoPolicyPaths = unrestrictedNoPolicyPaths;
             this.authorizedPolicyPath = authorizedPolicyPath;
             this.requestNetworkDeny = requestNetworkDeny;
+            this.networkCapability = networkCapability;
+        }
+
+        /** Restrict this rule set to the read-only external-terminology egress authority. */
+        Rules forExternalTermsNetwork() {
+            return new Rules(policy, principal, unrestrictedNoPolicyPaths, authorizedPolicyPath,
+                    requestNetworkDeny, Capability.EXTERNAL_TERMS_READ.value());
         }
 
         /**
@@ -276,7 +292,8 @@ final class DirectAccessPolicy {
             if (!requestNetworkDenies(requested)) {
                 return this;
             }
-            return new Rules(policy, principal, unrestrictedNoPolicyPaths, authorizedPolicyPath, true);
+            return new Rules(policy, principal, unrestrictedNoPolicyPaths, authorizedPolicyPath,
+                    true, networkCapability);
         }
 
         ProjectPolicy policy() {
@@ -377,7 +394,10 @@ final class DirectAccessPolicy {
             }
             NetworkRule rule = networkRule(importFetch);
             if (!rule.capabilityAllowed()) {
-                throw new ToolArgException("Network document access requires capability " + NETWORK + ".");
+                String operation = NETWORK.equals(networkCapability)
+                        ? "Network document access" : "External terminology network access";
+                throw new ToolArgException(operation + " requires capability "
+                        + networkCapability + ".");
             }
             if (!rule.allowed()) {
                 if (rule.denialSource() == DenialSource.REQUEST) {
@@ -421,6 +441,38 @@ final class DirectAccessPolicy {
             }
         }
 
+        /**
+         * Authorize egress to the exact owner-bound origin of a project-declared terminology
+         * provider. The provider declaration and its owner-local origin alias are the allowlist for
+         * this path; requiring the same host again in {@code network.allowed_hosts} would duplicate
+         * authority and prevent owner-configured compatible registries. The provider gateway still
+         * binds this permission to that one resolved HTTPS origin before transport or cache access.
+         */
+        void authorizeExternalProviderOrigin(URI exactOwnerOrigin) {
+            requireValidPolicy();
+            if (!policy.loaded()) {
+                throw new ToolArgException("External providers require a loaded project policy.");
+            }
+            if (!Capability.EXTERNAL_TERMS_READ.value().equals(networkCapability)) {
+                throw new IllegalStateException("External provider authorization requires the "
+                        + "external-terminology rule set");
+            }
+            if (exactOwnerOrigin == null
+                    || !"https".equalsIgnoreCase(exactOwnerOrigin.getScheme())
+                    || exactOwnerOrigin.getHost() == null
+                    || exactOwnerOrigin.getUserInfo() != null) {
+                throw new ToolArgException("External provider origin must be an exact HTTPS origin.");
+            }
+            if (!has(Capability.EXTERNAL_TERMS_READ.value()) && !has(NETWORK)) {
+                throw new ToolArgException("External terminology network access requires capability "
+                        + Capability.EXTERNAL_TERMS_READ.value() + ".");
+            }
+            if (requestNetworkDeny) {
+                throw new ToolArgException("Network access is denied by the request argument "
+                        + "network=deny.");
+            }
+        }
+
         private NetworkRule networkRule(boolean importFetch) {
             NetworkRule base = baseNetworkRule(importFetch);
             if (!requestNetworkDeny || !base.allowed()) {
@@ -442,7 +494,10 @@ final class DirectAccessPolicy {
         }
 
         private NetworkRule baseNetworkRule(boolean importFetch) {
-            boolean capabilityAllowed = has(NETWORK);
+            boolean externalTermsRule =
+                    Capability.EXTERNAL_TERMS_READ.value().equals(networkCapability);
+            boolean capabilityAllowed = has(networkCapability)
+                    || externalTermsRule && has(NETWORK);
             if (policy.loaded() && !policy.valid()) {
                 // Import blockers consult this rule non-exceptionally; fail closed without throwing.
                 // The denial is the invalid policy itself — capabilityAllowed=false only mirrors the

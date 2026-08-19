@@ -9,7 +9,7 @@ final class ProviderLocalPaths {
 
     private ProviderLocalPaths() { }
 
-    static Path providers() throws ProviderFailure {
+    static Path providersLocation() throws ProviderFailure {
         String home = System.getProperty("user.home");
         if (home == null || home.isBlank()) {
             throw new ProviderFailure("provider_store_invalid",
@@ -17,12 +17,21 @@ final class ProviderLocalPaths {
         }
         try {
             Path realHome = Path.of(home).toRealPath(LinkOption.NOFOLLOW_LINKS);
-            Path application = OwnerOnlyFiles.prepareDirectory(realHome.resolve(".protege-mcp"));
-            return OwnerOnlyFiles.prepareDirectory(application.resolve("providers"));
+            return realHome.resolve(".protege-mcp").resolve("providers");
         } catch (IOException | IllegalArgumentException invalid) {
             throw new ProviderFailure("provider_store_invalid",
                     "Owner home directory is invalid", false);
         }
+    }
+
+    static Path providers() throws ProviderFailure {
+        Path root = providersLocation();
+        Path application = OwnerOnlyFiles.prepareDirectory(root.getParent());
+        return OwnerOnlyFiles.prepareDirectory(application.resolve(root.getFileName()));
+    }
+
+    static Path credentialsLocation() throws ProviderFailure {
+        return providersLocation().resolve("credentials");
     }
 
     static Path credentials() throws ProviderFailure {

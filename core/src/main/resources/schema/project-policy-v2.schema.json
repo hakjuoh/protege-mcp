@@ -535,7 +535,7 @@
             "additionalProperties": false,
             "properties": {
               "id": {"$ref": "#/$defs/providerId"},
-              "profile": {"enum": ["ols4"]},
+              "profile": {"enum": ["ols4", "ontoportal"]},
               "enabled": {"type": "boolean"},
               "origin_alias": {"$ref": "#/$defs/providerId"},
               "ontologies": {
@@ -565,7 +565,16 @@
               },
               "credential_id": {"$ref": "#/$defs/credentialId"},
               "max_results": {"type": "integer", "minimum": 1, "maximum": 100, "default": 25}
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": ["profile"],
+                  "properties": {"profile": {"const": "ontoportal"}}
+                },
+                "then": {"required": ["credential_id"]}
+              }
+            ]
           },
           "default": []
         }

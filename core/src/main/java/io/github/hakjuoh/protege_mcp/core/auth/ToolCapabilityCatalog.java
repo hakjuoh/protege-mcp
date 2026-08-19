@@ -3,11 +3,15 @@ package io.github.hakjuoh.protege_mcp.core.auth;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /** Complete capability declaration for the public in-Protege MCP tool catalog. */
 public final class ToolCapabilityCatalog {
+
+    private static final Set<String> EXTERNAL_TERM_TOOLS = Set.of(
+            "search_external_terms", "inspect_external_term", "propose_term_reuse");
 
     private static final Map<String, Set<String>> REQUIRED = declarations();
 
@@ -22,6 +26,33 @@ public final class ToolCapabilityCatalog {
         Set<String> required = REQUIRED.get(toolName);
         if (required == null) throw new IllegalArgumentException("Unknown built-in tool: " + toolName);
         return required;
+    }
+
+    /**
+     * Resolve missing grants while preserving the released public contract. External terminology
+     * tools continue to advertise general {@code network:access}, but may be satisfied by the
+     * narrower {@code external-terms:read} grant used by the built-in Assistant.
+     */
+    public static List<String> missingForTool(String toolName, Set<String> granted,
+            Set<String> required) {
+        return CapabilityAuthorizer.missing(granted,
+                authorizationRequirements(toolName, granted, required));
+    }
+
+    /** Exact capabilities to attribute for one authorization decision and its audit event. */
+    public static Set<String> authorizationRequirements(String toolName, Set<String> granted,
+            Set<String> required) {
+        if (required == null) throw new IllegalArgumentException("required capabilities must not be null");
+        if (!EXTERNAL_TERM_TOOLS.contains(toolName)
+                || !required.contains(Capability.NETWORK_ACCESS.value())
+                || CapabilityAuthorizer.allows(granted, Capability.NETWORK_ACCESS.value())
+                || !CapabilityAuthorizer.allows(granted, Capability.EXTERNAL_TERMS_READ.value())) {
+            return required;
+        }
+        Set<String> effective = new LinkedHashSet<>(required);
+        effective.remove(Capability.NETWORK_ACCESS.value());
+        effective.add(Capability.EXTERNAL_TERMS_READ.value());
+        return Collections.unmodifiableSet(effective);
     }
 
     private static Set<String> access(Capability... capabilities) {

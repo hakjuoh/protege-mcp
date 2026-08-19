@@ -672,16 +672,12 @@ class OwnerProviderCacheTest {
     }
 
     @Test
-    void refusesCachingAnonymousCrossOriginRedirectEvidenceWithoutPersistentProvenance()
+    void refusesAnonymousCrossOriginRedirectBeforePersistentProvenance()
             throws Exception {
         Fixture fixture = fixture("redirect-provenance", false, "project-a", 16,
                 Duration.ofMinutes(5));
-        AtomicBoolean redirectAllowed = new AtomicBoolean(true);
-        ProviderNetworkExecutor.NetworkGate gate = origin -> {
-            if (origin.getHost().equals("redirect.example") && !redirectAllowed.get()) {
-                throw new ProviderFailure("revoked", "redirect origin revoked", false);
-            }
-        };
+        List<URI> authorizedOrigins = new ArrayList<>();
+        ProviderNetworkExecutor.NetworkGate gate = authorizedOrigins::add;
         OwnerProviderCache cache = fixture.cache(gate);
         ProviderOwnerConfig.ResolvedProvider authority = fixture.authority();
         ProviderSearchRequest request = search("redirected empty query");
@@ -698,12 +694,31 @@ class OwnerProviderCacheTest {
                     return new ProviderNetworkExecutor.RawResponse(200, Map.of(),
                             "{}".getBytes(StandardCharsets.UTF_8));
                 }, fixture.clock(), duration -> { }, acquisition);
-        executor.get(new ProviderRequest("/api", Map.of()));
+        ProviderFailure denied = assertThrows(ProviderFailure.class,
+                () -> executor.get(new ProviderRequest("/api", Map.of())));
 
-        ProviderPage empty = new ProviderPage(List.of(), 0, null, NOW, 0);
-        assertFalse(cache.putSearch(authority, acquisition, request, empty));
-        redirectAllowed.set(false);
+        assertEquals("provider_redirect_refused", denied.code());
+        assertFalse(authorizedOrigins.isEmpty());
+        assertTrue(authorizedOrigins.stream()
+                .allMatch(URI.create("https://example.org")::equals));
         assertTrue(cache.getSearch(authority, request).isEmpty());
+        assertFalse(Files.exists(fixture.cacheRoot().resolve("responses.bin")));
+    }
+
+    @Test
+    void rejectsCachedEvidenceOutsideTheExactOwnerBasePath() throws Exception {
+        Fixture fixture = fixture("source-boundary", false, "project-a", 16,
+                Duration.ofMinutes(5));
+        OwnerProviderCache cache = fixture.cache(uri -> { });
+        ProviderOwnerConfig.ResolvedProvider authority = fixture.authority();
+
+        for (String source : List.of("https://example.org/outside",
+                "https://example.org/ols4/%252e%252e/outside")) {
+            ProviderFailure denied = assertThrows(ProviderFailure.class,
+                    () -> putSearch(cache, fixture, authority, search("source " + source),
+                            page(resultAtSource(source))));
+            assertEquals("provider_cache_invalid", denied.code());
+        }
         assertFalse(Files.exists(fixture.cacheRoot().resolve("responses.bin")));
     }
 
@@ -947,6 +962,17 @@ class OwnerProviderCacheTest {
                 license, "OLS4", "exact label", 1.0, "2026-07", NOW,
                 URI.create("https://example.org/ols4/api/ontologies/efo/terms/EFO_0001"),
                 retries, false, null);
+    }
+
+    private static ProviderResult resultAtSource(String source) {
+        ProviderResult original = result("Visible", List.of(), null, 0);
+        return ProviderResult.create(original.providerId(), original.profile(),
+                original.sourceOntology(), original.sourceOntologyIri(), original.entityIri(),
+                original.entityType(), original.labels(), original.synonyms(),
+                original.descriptions(), original.license(), original.provenance(),
+                original.matchExplanation(), original.score(), original.providerVersion(),
+                original.providerTimestamp(), URI.create(source), original.retries(),
+                original.deprecated(), original.replacedBy());
     }
 
     private static void assertPublicationRedacted(
