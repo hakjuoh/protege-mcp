@@ -185,14 +185,46 @@
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
+                                        <!-- The shaded executable owns its final manifest. Maven
+                                             coordinates and ProGuard hints are build metadata, not
+                                             runtime resources for this non-obfuscated CLI. -->
+                                        <exclude>META-INF/MANIFEST.MF</exclude>
+                                        <exclude>META-INF/maven/**</exclude>
+                                        <exclude>META-INF/proguard/**</exclude>
                                         <exclude>module-info.class</exclude>
                                         <exclude>META-INF/versions/*/module-info.class</exclude>
                                     </excludes>
                                 </filter>
                             </filters>
                             <transformers>
+                                <!-- Preserve rather than discard duplicate legal metadata. These
+                                     transformers consolidate the dependency notices and licenses
+                                     into deterministic resources in the executable jar. -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/LICENSE</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/LICENSE.txt</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/DEPENDENCIES</resource>
+                                </transformer>
+                                <!-- Axiom contributes independent DOM and linked-list factories.
+                                     Merge their XML registries so both implementations remain
+                                     discoverable after flattening the dependency graph. -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.XmlAppendingTransformer">
+                                    <resource>META-INF/axiom.xml</resource>
+                                </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>io.github.hakjuoh.protege_mcp.cli.Main</mainClass>
+                                    <!-- The executable contains the reviewed HermiT runtime. Preserve
+                                         that identity explicitly after dependency manifests are
+                                         filtered, instead of relying on shade input ordering. -->
+                                    <manifestEntries>
+                                        <Implementation-Title>HermiT reasoner runtime</Implementation-Title>
+                                        <Implementation-Version>${hermit.version}</Implementation-Version>
+                                    </manifestEntries>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>

@@ -309,11 +309,24 @@
                         <!-- Export only our own API. -->
                         <Export-Package>io.github.hakjuoh.protege_mcp;version=${project.version}</Export-Package>
 
-                        <!-- Deliberately NO <Private-Package> override: maven-bundle-plugin's
-                             default keeps this module's own packages in the bundle, and an explicit
-                             value REPLACES that default (a kotlin-only value silently drops the
-                             whole plugin layer and turns it into optional self-imports). The Kotlin
-                             runtime is already private content via the inlined kotlin-stdlib. -->
+                        <!-- Keep every local package private by default and make the one intentional
+                             core/plugin split explicit. Both sources contribute different classes to
+                             external/**, so merge-first preserves this module's runtime bindings and
+                             fills the remaining package from protege-mcp-core without ambiguity. The
+                             {local-packages} macro is essential: an explicit Private-Package value
+                             otherwise replaces the plugin's generated local-package list. -->
+                        <Private-Package>
+                            io.github.hakjuoh.protege_mcp.external;-split-package:=merge-first,
+                            {local-packages}
+                        </Private-Package>
+
+                        <!-- Bnd 6.x analyzes valid META-INF/versions/* class overlays as if their
+                             paths were ordinary class names. The bundle is deliberately marked
+                             Multi-Release and the overlays are retained, so ignore only that known
+                             analyzer false positive instead of suppressing unrelated diagnostics. -->
+                        <_fixupmessages>
+                            Classes found in the wrong directory:*;is:=ignore
+                        </_fixupmessages>
 
                         <!-- Do NOT import the inlined libraries (they now live inside this bundle).
                              DO import the Protege / OWLAPI / Swing / AWT / Eclipse-registry runtime
@@ -366,7 +379,6 @@
                             org.slf4j;version="[1.7,2)",
                             com.google.common.*;version="[18.0,19)",
                             javax.swing.*,
-                            javax.swing.border.*,
                             java.awt.*,
                             org.eclipse.core.runtime;registry=split,
                             *;resolution:=optional
