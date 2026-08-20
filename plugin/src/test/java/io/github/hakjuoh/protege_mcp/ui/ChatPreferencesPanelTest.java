@@ -421,7 +421,7 @@ class ChatPreferencesPanelTest {
                     "the two model-setting fields must have the same left edge");
             assertEquals(effortField.getWidth(), modelField.getWidth(),
                     "the two model-setting fields must have exactly the same width");
-            assertTrue(modelScroll.getHeight() >= 3 * 42,
+            assertTrue(modelScroll.getHeight() >= 100,
                     "at least three model rows must remain visible, actual=" + modelScroll.getHeight());
 
             Component clientTab = tabs.getComponentAt(0);

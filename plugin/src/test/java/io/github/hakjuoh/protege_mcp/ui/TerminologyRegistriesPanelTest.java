@@ -331,7 +331,10 @@ class TerminologyRegistriesPanelTest {
 
     private static java.util.List<JButton> findButtons(java.awt.Component root) {
         java.util.List<JButton> result = new java.util.ArrayList<>();
-        if (root instanceof JButton button) result.add(button);
+        if (root instanceof JButton button && !(button instanceof javax.swing.plaf.UIResource)
+                && button.getText() != null && !button.getText().isBlank()) {
+            result.add(button);
+        }
         if (root instanceof java.awt.Container container) {
             for (java.awt.Component child : container.getComponents()) {
                 result.addAll(findButtons(child));

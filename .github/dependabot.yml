@@ -43,6 +43,8 @@ updates:
       - dependency-name: "com.apicatalog:titanium-rdfc"
         versions: ["[3.0.0,)"]
       - dependency-name: "org.apache.felix:maven-bundle-plugin"
+      # AutomataLib is pinned at 0.12.1 to match HermiT's reviewed bytecode fingerprint in headless mode.
+      - dependency-name: "net.automatalib:*"
 
   # GitHub Actions are safe to keep current; group them into a single PR to keep the noise down.
   - package-ecosystem: github-actions
