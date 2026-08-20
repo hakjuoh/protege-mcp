@@ -15,7 +15,6 @@ import org.junit.jupiter.api.io.TempDir;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import io.github.hakjuoh.protege_mcp.chat.AssistantSteering;
 import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientModelCatalog;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientPreferences;
@@ -80,7 +79,7 @@ class AntigravityCliProviderTest {
         List<String> command = AntigravityCliProvider.buildCommand("/opt/agy", request);
 
         assertEquals("/opt/agy", command.get(0));
-        assertAdjacent(command, "-p", AssistantSteering.SYSTEM_PROMPT + "\n\nhello");
+        assertAdjacent(command, "-p", "hello");
         assertAdjacent(command, "--output-format", "stream-json");
         assertTrue(command.contains("--sandbox"));
         assertAdjacent(command, "--model", "gemini-3");
@@ -89,7 +88,7 @@ class AntigravityCliProviderTest {
     }
 
     @Test
-    void resumeUsesConversationWithoutRepeatingSteering() {
+    void resumeUsesConversationWithProviderPrompt() {
         List<String> command = AntigravityCliProvider.buildCommand("agy",
                 new ChatRequest(null, "again", " conversation-7 ", ENDPOINT));
         assertAdjacent(command, "--conversation", "conversation-7");

@@ -11,6 +11,7 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,14 +19,21 @@ import java.util.Map;
 
 import org.semanticweb.owlapi.model.OWLOntology;
 
+import io.github.hakjuoh.protege_mcp.external.ProviderConfigurationStore;
+import io.github.hakjuoh.protege_mcp.external.ProviderFailure;
+import io.github.hakjuoh.protege_mcp.external.ProviderPolicyBindings;
 import io.github.hakjuoh.protege_mcp.policy.PolicyIssue;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader.CapturedPolicy;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader.PolicySourcePin;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 
 /** Policy discovery and validation tools; filesystem work always runs off the Protégé model thread. */
 public final class ProjectPolicyTools {
+
+    private static final Object[] POLICY_WRITE_LOCKS = writeLocks();
 
     private ProjectPolicyTools() {
     }
@@ -53,6 +61,8 @@ public final class ProjectPolicyTools {
                 });
         tools.tool("write_project_policy_template",
                 (ex, req) -> writeTemplate(ctx, ex, Tools.args(req)));
+        tools.tool("write_project_policy",
+                (ex, req) -> writePolicy(ctx, ex, Tools.args(req)));
     }
 
     /**
@@ -61,9 +71,8 @@ public final class ProjectPolicyTools {
      * place); the write is authorized like every other file-writing tool — read-only mode, the
      * confirm-write gate, the {@code filesystem:project:write} capability, and canonical containment
      * under {@code project_root} (or the local-admin no-policy compatibility path). The generated
-     * template names two files the user must still create (the {@code root_artifact} and the RO-Crate
-     * metadata), so it is honest about not being valid on its own: it returns a {@code validation_hint}
-     * and never claims {@code valid=true}.
+     * template uses the saved active ontology as {@code root_artifact}, creates matching RO-Crate
+     * metadata when absent, and validates the result before returning.
      */
     static CallToolResult writeTemplate(ToolContext ctx, McpSyncServerExchange ex,
             Map<String, Object> arguments) {
@@ -75,12 +84,12 @@ public final class ProjectPolicyTools {
         String configuredPath = Tools.optString(arguments, "path");
         String configuredProjectId = Tools.optString(arguments, "project_id");
         Object rawVersion = arguments.get("version");
-        int version = 1;
+        int version = 3;
         if (rawVersion != null) {
             if (!(rawVersion instanceof Number number)
                     || number.doubleValue() != number.intValue()
-                    || number.intValue() != 1 && number.intValue() != 2) {
-                return Tools.error("'version' must be the integer 1 or 2.");
+                    || number.intValue() < 1 || number.intValue() > 3) {
+                return Tools.error("'version' must be the integer 1, 2, or 3.");
             }
             version = number.intValue();
         }
@@ -107,39 +116,373 @@ public final class ProjectPolicyTools {
             target = authorizeTarget(rules, ex, null, defaultTarget);
         }
 
-        String rootOntology = live.activeOntologyIri();
-        String projectId = configuredProjectId != null && !configuredProjectId.isBlank()
-                ? configuredProjectId.trim()
-                : ProjectPolicyTemplate.deriveProjectId(rootOntology);
-        ProjectPolicyTemplate.Template template =
-                ProjectPolicyTemplate.render(profile, projectId, rootOntology, version);
-        byte[] bytes = template.yaml().getBytes(StandardCharsets.UTF_8);
+        ProjectPolicyScaffold.Scaffold scaffold = ProjectPolicyScaffold.prepare(target,
+                live.documentPath(), live.activeOntologyIri(), live.installedReasoners(),
+                live.selectedReasoner(), profile, configuredProjectId, version);
+        byte[] bytes = scaffold.policyBytes();
+        Path metadata = authorizeDerivedTarget(rules, ex, scaffold.metadataPath());
+        synchronized (policyWriteLock(target)) {
+            if (!overwrite && Files.exists(target)) {
+                return policyExists(target);
+            }
+            boolean createdMetadata = false;
+            ProjectPolicy candidate;
+            try {
+                if (!Files.exists(metadata)) {
+                    createdMetadata = createMetadata(metadata, scaffold.metadataBytes());
+                }
+                candidate = validateCandidate(target, bytes, live);
+            } catch (IOException e) {
+                rollbackCreatedMetadata(metadata, createdMetadata, scaffold.metadataBytes());
+                return Tools.error("Could not validate project policy template: " + e.getMessage());
+            }
 
+            List<Map<String, Object>> errors = new ArrayList<>();
+            List<Map<String, Object>> warnings = new ArrayList<>();
+            collectIssues(candidate, errors, warnings);
+            if (!candidate.valid()) {
+                rollbackCreatedMetadata(metadata, createdMetadata, scaffold.metadataBytes());
+                return templateWriteResult(false, target, scaffold, bytes,
+                        candidate, errors, warnings, metadata, false)
+                        .put("error_code", "policy_invalid")
+                        .put("note", "The generated candidate was rejected without modifying the "
+                                + "existing policy.")
+                        .result();
+            }
+            try {
+                atomicWrite(target, bytes, overwrite);
+            } catch (FileAlreadyExistsException exists) {
+                rollbackCreatedMetadata(metadata, createdMetadata, scaffold.metadataBytes());
+                return policyExists(target);
+            } catch (IOException e) {
+                rollbackCreatedMetadata(metadata, createdMetadata, scaffold.metadataBytes());
+                return Tools.error("Could not write project policy template: " + e.getMessage());
+            }
+
+            ProjectPolicy policy = ProjectPolicyLoader.load(target, live.documentPath(),
+                    live.activeOntologyIri(), live.installedReasoners());
+            errors.clear();
+            warnings.clear();
+            collectIssues(policy, errors, warnings);
+            return templateWriteResult(true, target, scaffold, bytes, policy,
+                    errors, warnings, metadata, createdMetadata)
+                    .put("note", "The generated policy is valid. Review and commit it like source code.")
+                    .result();
+        }
+    }
+
+    private static Tools.Json templateWriteResult(boolean written, Path target,
+            ProjectPolicyScaffold.Scaffold scaffold, byte[] bytes, ProjectPolicy policy,
+            List<Map<String, Object>> errors, List<Map<String, Object>> warnings,
+            Path metadata, boolean metadataCreated) {
+        Tools.Json result = Tools.json()
+                .put("written", written)
+                .put("path", target.toString())
+                .put("project_id", scaffold.projectId())
+                .put("profile", scaffold.profile())
+                .put("schema_version", scaffold.version())
+                .put("bytes", bytes.length)
+                .put("sha256", sha256(bytes))
+                .put("policy_loaded", policy.loaded())
+                .put("valid", policy.valid())
+                .put("errors", errors)
+                .put("warnings", warnings)
+                .put("root_artifact", scaffold.rootArtifact())
+                .put("metadata_path", metadata.toString())
+                .put("metadata_created", metadataCreated)
+                .put("validation_hint", ProjectPolicyTemplate.validationHint(scaffold.template()));
+        if (policy.digest() != null) {
+            result.put("policy_digest", policy.digest());
+        }
+        return result;
+    }
+
+    /**
+     * Write or update a .protege-mcp/project.yaml file from authored YAML content or a recursive
+     * merge patch. A patch merges objects, replaces arrays/scalars, and removes keys whose patch
+     * value is null. Only affected top-level YAML sections are rendered again, preserving comments,
+     * order, and bytes elsewhere. Every candidate is validated before the original file is changed.
+     */
+    static CallToolResult writePolicy(ToolContext ctx, McpSyncServerExchange ex,
+            Map<String, Object> arguments) {
+        String yaml = Tools.optString(arguments, "yaml");
+        Object rawPatch = arguments.get("patch");
+        if ((yaml == null) == (rawPatch == null)) {
+            return Tools.error("Pass exactly one of 'yaml' or 'patch'. Use patch for a recursive "
+                    + "partial update that preserves unaffected policy content.");
+        }
+        boolean overwrite = Tools.optBool(arguments, "overwrite", true);
+        String configuredPath = Tools.optString(arguments, "path");
+        DirectAccessPolicy.Rules rules = DirectAccessPolicy.resolve(ctx, ex);
+        CallToolResult denied = WriteTools.checkWriteAllowed(ctx, "write project policy"
+                + (configuredPath == null ? "" : " to " + configuredPath));
+        if (denied != null) {
+            return denied;
+        }
+
+        PolicyContext live = ctx.access().compute(ProjectPolicyTools::capture);
+        final Path target;
+        if (configuredPath != null) {
+            target = authorizeTarget(rules, ex, configuredPath, null);
+        } else {
+            Path defaultTarget = defaultTemplatePath(live);
+            if (defaultTarget == null) {
+                return Tools.error("The active ontology has no local document folder, so no default "
+                        + "policy location can be derived; pass 'path' to choose where to write the "
+                        + "policy.");
+            }
+            target = authorizeTarget(rules, ex, null, defaultTarget);
+        }
+
+        synchronized (policyWriteLock(target)) {
+            return writePolicyLocked(target, yaml, rawPatch, overwrite, live, rules, ex);
+        }
+    }
+
+    private static CallToolResult writePolicyLocked(Path target, String yaml, Object rawPatch,
+            boolean overwrite, PolicyContext live, DirectAccessPolicy.Rules rules,
+            McpSyncServerExchange ex) {
+        if (!overwrite && Files.exists(target)) {
+            return policyExists(target);
+        }
+        if (rawPatch != null && !Files.exists(target)) {
+            return writePatchedScaffold(target, rawPatch, live, rules, ex);
+        }
+        String updateMode = "replace";
+        CapturedPolicy captured = null;
+        byte[] sourceBytes = null;
+        if (rawPatch != null) {
+            if (!Files.isRegularFile(target)) {
+                return Tools.error("Patch mode requires an existing project policy; "
+                        + "create it first with write_project_policy_template.");
+            }
+            try {
+                PolicySourcePin pin = ProjectPolicyLoader.pinCanonicalPolicy(
+                        target.toAbsolutePath().normalize(),
+                        ProjectPolicyLoader.canonicalProjectAnchor(target));
+                captured = ProjectPolicyLoader.captureStablePolicy(pin);
+                sourceBytes = captured.bytes();
+                yaml = ProjectPolicyPatcher.apply(new String(sourceBytes, StandardCharsets.UTF_8),
+                        rawPatch);
+                updateMode = "patch";
+            } catch (IOException e) {
+                return Tools.error("Could not safely read existing project policy: " + e.getMessage());
+            } catch (IllegalArgumentException e) {
+                return Tools.error(e.getMessage());
+            }
+        }
+        byte[] bytes = yaml.getBytes(StandardCharsets.UTF_8);
+        ProjectPolicy candidate;
+        try {
+            candidate = validateCandidate(target, bytes, live);
+        } catch (IOException e) {
+            return Tools.error("Could not validate project policy candidate: " + e.getMessage());
+        }
+        List<Map<String, Object>> errors = new ArrayList<>();
+        List<Map<String, Object>> warnings = new ArrayList<>();
+        collectIssues(candidate, errors, warnings);
+        if (!candidate.valid()) {
+            return policyWriteResult(false, target, bytes, candidate, errors, warnings, updateMode,
+                    false)
+                    .put("error_code", "policy_invalid")
+                    .put("note", "The candidate was rejected without modifying the existing policy.")
+                    .result();
+        }
+        if (captured != null) {
+            try {
+                if (!captured.isCurrent()) {
+                    return policyChanged(target);
+                }
+                PolicySourcePin currentPin = ProjectPolicyLoader.pinCanonicalPolicy(
+                        target.toAbsolutePath().normalize(),
+                        ProjectPolicyLoader.canonicalProjectAnchor(target));
+                byte[] currentBytes = ProjectPolicyLoader.captureStablePolicy(currentPin).bytes();
+                if (!Arrays.equals(sourceBytes, currentBytes)) {
+                    return policyChanged(target);
+                }
+            } catch (IOException e) {
+                return policyChanged(target);
+            }
+        }
         try {
             atomicWrite(target, bytes, overwrite);
         } catch (FileAlreadyExistsException exists) {
-            return Tools.json()
-                    .put("written", false)
-                    .put("error_code", "policy_exists")
-                    .put("path", target.toString())
-                    .put("note", "A file already exists here; pass overwrite=true to replace it.")
-                    .result();
+            return policyExists(target);
         } catch (IOException e) {
-            return Tools.error("Could not write project policy template: " + e.getMessage());
+            return Tools.error("Could not write project policy: " + e.getMessage());
         }
 
-        return Tools.json()
-                .put("written", true)
+        ProjectPolicy policy = ProjectPolicyLoader.load(target, live.documentPath(),
+                live.activeOntologyIri(), live.installedReasoners());
+        errors.clear();
+        warnings.clear();
+        collectIssues(policy, errors, warnings);
+        return policyWriteResult(true, target, bytes, policy, errors, warnings, updateMode, false)
+                .result();
+    }
+
+    /** Build a v3 starter in memory, apply the caller's general patch, then publish only if valid. */
+    private static CallToolResult writePatchedScaffold(Path target, Object rawPatch,
+            PolicyContext live, DirectAccessPolicy.Rules rules, McpSyncServerExchange ex) {
+        ProjectPolicyScaffold.Scaffold scaffold = ProjectPolicyScaffold.prepare(target,
+                live.documentPath(), live.activeOntologyIri(), live.installedReasoners(),
+                live.selectedReasoner(), ProjectPolicyTemplate.GENERAL, null, 3);
+        final String yaml;
+        try {
+            yaml = ProjectPolicyPatcher.apply(
+                    new String(scaffold.policyBytes(), StandardCharsets.UTF_8), rawPatch);
+        } catch (IOException | IllegalArgumentException e) {
+            return Tools.error(e.getMessage());
+        }
+        byte[] bytes = yaml.getBytes(StandardCharsets.UTF_8);
+        Path metadata = authorizeDerivedTarget(rules, ex, scaffold.metadataPath());
+        boolean createdMetadata = false;
+        ProjectPolicy candidate;
+        try {
+            if (!Files.exists(metadata)) {
+                createdMetadata = createMetadata(metadata, scaffold.metadataBytes());
+            }
+            candidate = validateCandidate(target, bytes, live);
+        } catch (IOException e) {
+            rollbackCreatedMetadata(metadata, createdMetadata, scaffold.metadataBytes());
+            return Tools.error("Could not validate project policy candidate: " + e.getMessage());
+        }
+        List<Map<String, Object>> errors = new ArrayList<>();
+        List<Map<String, Object>> warnings = new ArrayList<>();
+        collectIssues(candidate, errors, warnings);
+        if (!candidate.valid()) {
+            rollbackCreatedMetadata(metadata, createdMetadata, scaffold.metadataBytes());
+            return policyWriteResult(false, target, bytes, candidate, errors, warnings, "patch", true)
+                    .put("metadata_path", metadata.toString())
+                    .put("metadata_created", false)
+                    .put("error_code", "policy_invalid")
+                    .put("note", "The scaffolded candidate was rejected without creating a policy.")
+                    .result();
+        }
+        try {
+            // A fresh scaffold never replaces a policy that appeared after the initial absence check.
+            atomicWrite(target, bytes, false);
+        } catch (FileAlreadyExistsException exists) {
+            rollbackCreatedMetadata(metadata, createdMetadata, scaffold.metadataBytes());
+            return policyChanged(target);
+        } catch (IOException e) {
+            rollbackCreatedMetadata(metadata, createdMetadata, scaffold.metadataBytes());
+            return Tools.error("Could not write project policy: " + e.getMessage());
+        }
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(target, live.documentPath(),
+                live.activeOntologyIri(), live.installedReasoners());
+        errors.clear();
+        warnings.clear();
+        collectIssues(policy, errors, warnings);
+        return policyWriteResult(true, target, bytes, policy, errors, warnings, "patch", true)
+                .put("metadata_path", metadata.toString())
+                .put("metadata_created", createdMetadata)
+                .put("note", "A valid v3 policy was scaffolded and patched in one operation.")
+                .result();
+    }
+
+    private static Tools.Json policyWriteResult(boolean written, Path target,
+            byte[] bytes, ProjectPolicy policy, List<Map<String, Object>> errors,
+            List<Map<String, Object>> warnings, String updateMode, boolean createdFromTemplate) {
+        Tools.Json result = Tools.json()
+                .put("written", written)
                 .put("path", target.toString())
-                .put("project_id", projectId)
-                .put("profile", profile)
-                .put("schema_version", version)
                 .put("bytes", bytes.length)
                 .put("sha256", sha256(bytes))
-                .put("validation_hint", ProjectPolicyTemplate.validationHint(template))
-                .put("note", "Review and commit this like source code; it is not valid until you "
-                        + "complete the items in validation_hint.")
+                .put("policy_loaded", policy.loaded())
+                .put("valid", policy.valid())
+                .put("schema_version", policy.version())
+                .put("errors", errors)
+                .put("warnings", warnings)
+                .put("update_mode", updateMode)
+                .put("preserved_existing_content", "patch".equals(updateMode)
+                        && !createdFromTemplate)
+                .put("created_from_template", createdFromTemplate);
+        if (policy.digest() != null) {
+            result.put("policy_digest", policy.digest());
+        }
+        return result;
+    }
+
+    private static void collectIssues(ProjectPolicy policy, List<Map<String, Object>> errors,
+            List<Map<String, Object>> warnings) {
+        for (PolicyIssue issue : policy.issues()) {
+            ("error".equals(issue.severity()) ? errors : warnings).add(issue.toJson());
+        }
+        capPublicIssues(errors, warnings);
+    }
+
+    private static CallToolResult policyExists(Path target) {
+        return Tools.json()
+                .put("written", false)
+                .put("error_code", "policy_exists")
+                .put("path", target.toString())
+                .put("note", "A file already exists here; pass overwrite=true to replace it.")
                 .result();
+    }
+
+    private static CallToolResult policyChanged(Path target) {
+        return Tools.json()
+                .put("written", false)
+                .put("error_code", "policy_changed")
+                .put("path", target.toString())
+                .put("note", "The policy changed while the patch was being prepared; read the "
+                        + "current policy and retry the patch.")
+                .result();
+    }
+
+    private static Object[] writeLocks() {
+        Object[] locks = new Object[64];
+        Arrays.setAll(locks, ignored -> new Object());
+        return locks;
+    }
+
+    static Object policyWriteLock(Path target) {
+        int index = Math.floorMod(target.toAbsolutePath().normalize().hashCode(),
+                POLICY_WRITE_LOCKS.length);
+        return POLICY_WRITE_LOCKS[index];
+    }
+
+    static boolean createMetadata(Path metadata, byte[] expected) throws IOException {
+        try {
+            atomicWrite(metadata, expected, false);
+            return true;
+        } catch (FileAlreadyExistsException concurrentlyCreated) {
+            return false;
+        }
+    }
+
+    /** Delete only the exact sidecar this call created; never remove a concurrent replacement. */
+    static void rollbackCreatedMetadata(Path metadata, boolean created, byte[] expected) {
+        if (!created) return;
+        try {
+            if (!Files.isSymbolicLink(metadata) && Files.isRegularFile(metadata)
+                    && Files.size(metadata) == expected.length
+                    && Arrays.equals(Files.readAllBytes(metadata), expected)) {
+                Files.deleteIfExists(metadata);
+            }
+        } catch (IOException ignored) {
+            // The policy itself was not written. A changed or unavailable sidecar belongs to another
+            // actor and must be preserved for explicit inspection.
+        }
+    }
+
+    static ProjectPolicy validateCandidate(Path target, byte[] bytes, PolicyContext live)
+            throws IOException {
+        Path parent = target.toAbsolutePath().normalize().getParent();
+        if (parent == null) {
+            throw new IOException("policy path has no parent directory: " + target);
+        }
+        Files.createDirectories(parent);
+        Path candidate = Files.createTempFile(parent, ".project-candidate.", ".yaml");
+        try {
+            Files.write(candidate, bytes);
+            return ProjectPolicyLoader.load(candidate, live.documentPath(),
+                    live.activeOntologyIri(), live.installedReasoners());
+        } finally {
+            Files.deleteIfExists(candidate);
+        }
     }
 
     /** The default beside-document location: {@code <document dir>/.protege-mcp/project.yaml}. */
@@ -174,6 +517,15 @@ public final class ProjectPolicyTools {
         return invalidDiscovered
                 ? bootstrapContainedPath(discovered, ex, defaultTarget.toString())
                 : rules.implicitPath(defaultTarget, true);
+    }
+
+    /** Authorize a sidecar path derived by this tool rather than supplied by the caller. */
+    private static Path authorizeDerivedTarget(DirectAccessPolicy.Rules rules,
+            McpSyncServerExchange ex, Path target) {
+        ProjectPolicy discovered = rules.policy();
+        return discovered.loaded() && !discovered.valid()
+                ? bootstrapContainedPath(discovered, ex, target.toString())
+                : rules.implicitPath(target, true);
     }
 
     /**
@@ -236,7 +588,7 @@ public final class ProjectPolicyTools {
      * {@code REPLACE_EXISTING}), surfacing {@link FileAlreadyExistsException} for the {@code policy_exists}
      * result; with it true the target is replaced.
      */
-    private static void atomicWrite(Path target, byte[] bytes, boolean overwrite) throws IOException {
+    static void atomicWrite(Path target, byte[] bytes, boolean overwrite) throws IOException {
         Path normalized = target.toAbsolutePath().normalize();
         Path parent = normalized.getParent();
         if (parent == null) {
@@ -301,7 +653,46 @@ public final class ProjectPolicyTools {
                 live.activeOntologyIri, live.installedReasoners);
         boolean compatibility = ctx.controller() == null
                 || ctx.controller().isUnrestrictedNoPolicyPathsAllowed();
-        return Tools.ok(toJson(policy, live, requirePolicy, compatibility));
+        Map<String, Object> result = toJson(policy, live, requirePolicy, compatibility);
+        appendOwnerProviderWarnings(result, policy);
+        return Tools.ok(result);
+    }
+
+    @SuppressWarnings("unchecked")
+    static void appendOwnerProviderWarnings(Map<String, Object> result, ProjectPolicy policy) {
+        if (policy == null || !policy.loaded() || policy.version() < 2
+                || providerCount(policy) == 0) {
+            return;
+        }
+        List<Map<String, Object>> errors = (List<Map<String, Object>>) result.get("errors");
+        List<Map<String, Object>> warnings = (List<Map<String, Object>>) result.get("warnings");
+        try {
+            appendOwnerProviderWarnings(result, policy, new ProviderConfigurationStore().load());
+            return;
+        } catch (ProviderFailure failure) {
+            warnings.add(new PolicyIssue("warning", "provider_configuration_unavailable",
+                    "external_terms.providers",
+                    "Owner terminology registry settings could not be read (" + failure.code()
+                            + "). Review Preferences ▸ MCP ▸ Externals.").toJson());
+        }
+        capPublicIssues(errors, warnings);
+    }
+
+    @SuppressWarnings("unchecked")
+    static void appendOwnerProviderWarnings(Map<String, Object> result, ProjectPolicy policy,
+            io.github.hakjuoh.protege_mcp.external.ProviderOwnerConfig owner) {
+        List<Map<String, Object>> errors = (List<Map<String, Object>>) result.get("errors");
+        List<Map<String, Object>> warnings = (List<Map<String, Object>>) result.get("warnings");
+        ProviderPolicyBindings.warnings(policy, owner).stream()
+                .map(PolicyIssue::toJson).forEach(warnings::add);
+        capPublicIssues(errors, warnings);
+    }
+
+    private static int providerCount(ProjectPolicy policy) {
+        Object external = policy.effective().get("external_terms");
+        if (!(external instanceof Map<?, ?> map)) return 0;
+        Object providers = map.get("providers");
+        return providers instanceof List<?> list ? list.size() : 0;
     }
 
     static PolicyContext capture(org.protege.editor.owl.model.OWLModelManager mm) {
@@ -351,6 +742,9 @@ public final class ProjectPolicyTools {
         json.put("path_mode", policy.loaded() ? "policy_confined"
                 : unrestrictedNoPolicyPaths ? "legacy_local_admin_unrestricted" : "policy_required");
         json.put("active_ontology_iri", live.activeOntologyIri);
+        if (live.documentPath != null) {
+            json.put("document_path", live.documentPath.toString());
+        }
         if (policy.path() != null) {
             json.put("policy_path", policy.path().toString());
         }

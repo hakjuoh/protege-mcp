@@ -20,7 +20,7 @@ public final class SssomPolicies {
             throw new IllegalArgumentException(
                     "Invalid project policy cannot authorize SSSOM validation");
         }
-        if (policy.version() != 2) return SssomValidationPolicy.structural();
+        if (policy.version() < 2) return SssomValidationPolicy.structural();
         try {
             Map<String, Object> mappings = object(policy.effective().get("mappings"));
             Map<String, String> cycles = stringsMap(mappings.get("directional_cycle_policy"));

@@ -1,6 +1,5 @@
 package io.github.hakjuoh.protege_mcp.chat.claude;
 
-import io.github.hakjuoh.protege_mcp.chat.AssistantSteering;
 import io.github.hakjuoh.protege_mcp.chat.ChatListener;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientPreferences;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientProfile;
@@ -318,10 +317,6 @@ public final class ClaudeCliProvider implements ChatProvider {
         cmd.add(mcpConfigPath);
         cmd.add("--allowedTools");
         cmd.add("mcp__" + McpEndpoint.SERVER_NAME);
-        // Every invocation, resumed or not: the system prompt is per-invocation state that --resume
-        // does not restore. Long-documented flag, unlike --thinking-display, so no version gate.
-        cmd.add("--append-system-prompt");
-        cmd.add(AssistantSteering.SYSTEM_PROMPT);
         if (req.showReasoning()) {
             // Without this, current CLIs put an EMPTY thinking block (encrypted signature only) in
             // stream-json — Claude 5-era models default their thinking display to "omitted" — so the

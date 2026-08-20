@@ -77,6 +77,7 @@ class PublicContractSnapshotTest {
     private static final String BASELINE = "0.5.0";
     private static final String V072_BASELINE = "0.7.2";
     private static final String V080_BASELINE = "0.8.0";
+    private static final String V081_BASELINE = "0.8.1";
     private static final String UPDATE_PROPERTY = "protege.contract.snapshot.update";
     private static final String OVERWRITE_PROPERTY = "protege.contract.snapshot.overwrite";
     private static final Pattern RELEASE = Pattern.compile("[0-9]+\\.[0-9]+\\.[0-9]+");
@@ -87,7 +88,8 @@ class PublicContractSnapshotTest {
     private static final Path PROMPT_DOC = Path.of("docs", "prompts.md");
     /** Explicit review point for a future release that intentionally changes tool guidance. */
     private static final Set<String> INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V050 = Set.of(
-            "apply_changes",
+            "add_axiom", "add_subclass_of", "apply_changes", "create_properties", "create_terms",
+            "remove_axiom",
             // list_reasoners now guarantees one row per factory even when display names collide,
             // preserving the ids needed to disambiguate selection.
             "list_reasoners", "load_ontology", "run_qc_suite", "save_ontology",
@@ -99,9 +101,18 @@ class PublicContractSnapshotTest {
             "search_entities");
     /** Reviewed additive 0.8 guidance; the immutable 0.7.2 snapshot itself is never rewritten. */
     private static final Set<String> INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V072 = Set.of(
-            "get_project_policy", "run_project_qc");
-    /** Explicit review point for titles, output schemas, annotations, metadata, or icons. */
-    private static final Set<String> INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050 = Set.of();
+            "add_axiom", "add_subclass_of", "apply_changes", "commit_change_set",
+            "create_properties", "create_terms", "get_project_policy", "preview_change_set",
+            "remove_axiom", "validate_project_policy", "run_project_qc",
+            // The template now creates the matching interoperability metadata and validates the
+            // saved active ontology immediately instead of advertising an intentionally invalid file.
+            "write_project_policy_template");
+    /**
+     * MCP 2025-11-25 standard ToolAnnotations are intentionally published for every tool in 0.8.1.
+     * Titles and icons remain independently frozen below so this allowance cannot hide other changes.
+     */
+    private static final Set<String> INTENTIONAL_TOOL_ANNOTATION_CHANGES_SINCE_V050 =
+            Set.copyOf(ToolCapabilityCatalog.names());
     /**
      * Explicit review point for {@code tool.argument} description text that changed guidance without
      * changing the argument's shape, type, or accepted values ({@code run_qc_suite.stages} now names
@@ -114,7 +125,10 @@ class PublicContractSnapshotTest {
             "create_terms.timeout_ms", "create_properties.timeout_ms",
             // The reasoner reference now documents the unique-or-fail resolution rule (a full
             // display name pins an exact version); still a plain string, same accepted values.
-            "set_reasoner.reasoner");
+            "set_reasoner.reasoner",
+            // Both starter labels now describe their actual behavior: they use the saved active
+            // ontology and only pin a reasoner when the installed selection is unambiguous.
+            "write_project_policy_template.profile");
     /** Explicit review point for a future release that intentionally rewrites workflow guidance. */
     private static final Set<String> INTENTIONAL_PROMPT_TEXT_CHANGES_SINCE_V050 = Set.of(
             "audit_ontology", "add_subclass_safely", "model_domain", "refactor_entity_safely",
@@ -135,6 +149,8 @@ class PublicContractSnapshotTest {
     private static Map<String, Object> v072Prompts;
     private static Map<String, Object> v080Tools;
     private static Map<String, Object> v080Prompts;
+    private static Map<String, Object> v081Tools;
+    private static Map<String, Object> v081Prompts;
 
     @BeforeAll
     static void captureAndOptionallyWrite() throws IOException {
@@ -156,6 +172,8 @@ class PublicContractSnapshotTest {
         v072Prompts = read(promptSnapshot(V072_BASELINE));
         v080Tools = read(toolSnapshot(V080_BASELINE));
         v080Prompts = read(promptSnapshot(V080_BASELINE));
+        v081Tools = read(toolSnapshot(V081_BASELINE));
+        v081Prompts = read(promptSnapshot(V081_BASELINE));
     }
 
     @Test
@@ -224,13 +242,13 @@ class PublicContractSnapshotTest {
                 assertEquals(oldTool.get("description"), now.get("description"),
                         () -> name + " changed its public tool description without review");
             }
-            if (!INTENTIONAL_TOOL_METADATA_CHANGES_SINCE_V050.contains(name)) {
-                for (String field : List.of("title", "annotations", "icons")) {
-                    // The baseline side is parsed JSON while the live side holds SDK records;
-                    // normalize both to trees so a future non-null value compares structurally.
-                    assertEquals(node(oldTool.get(field)), node(now.get(field)),
-                            () -> name + " changed public tool field " + field + " without review");
-                }
+            for (String field : List.of("title", "icons")) {
+                assertEquals(node(oldTool.get(field)), node(now.get(field)),
+                        () -> name + " changed public tool field " + field + " without review");
+            }
+            if (!INTENTIONAL_TOOL_ANNOTATION_CHANGES_SINCE_V050.contains(name)) {
+                assertEquals(node(oldTool.get("annotations")), node(now.get("annotations")),
+                        () -> name + " changed public tool annotations without review");
             }
 
             Set<String> oldFields = strings(oldTool.get("documented_result_fields"));
@@ -256,17 +274,29 @@ class PublicContractSnapshotTest {
     @Test
     void v080GoldensFreezeTheCompleteReleaseCandidateSurface() throws IOException {
         assertEquals(104, entries(v080Tools, "tools").size(),
-                "0.8.0 release candidate exposes 104 tools");
+                "0.8.0 published 104 tools");
         assertEquals(11, entries(v080Prompts, "prompts").size(),
                 "0.8.0 retains 11 prompts");
-        assertEquals(node(v080Tools.get("tools")), node(currentTools.get("tools")),
-                "the live tool contract drifted from the immutable 0.8.0 golden");
-        assertEquals(node(v080Prompts.get("prompts")), node(currentPrompts.get("prompts")),
-                "the live prompt contract drifted from the immutable 0.8.0 golden");
         assertEquals(canonical(v080Tools), Files.readString(toolSnapshot(V080_BASELINE)));
         assertEquals(canonical(v080Prompts), Files.readString(promptSnapshot(V080_BASELINE)));
         assertUnique(entries(v080Tools, "tools"));
         assertUnique(entries(v080Prompts, "prompts"));
+    }
+
+    @Test
+    void v081GoldensFreezeTheCurrentReleaseCandidateSurface() throws IOException {
+        assertEquals(105, entries(v081Tools, "tools").size(),
+                "0.8.1 release candidate exposes 105 tools");
+        assertEquals(11, entries(v081Prompts, "prompts").size(),
+                "0.8.1 retains 11 prompts");
+        assertEquals(node(v081Tools.get("tools")), node(currentTools.get("tools")),
+                "the live tool contract drifted from the 0.8.1 golden");
+        assertEquals(node(v081Prompts.get("prompts")), node(currentPrompts.get("prompts")),
+                "the live prompt contract drifted from the 0.8.1 golden");
+        assertEquals(canonical(v081Tools), Files.readString(toolSnapshot(V081_BASELINE)));
+        assertEquals(canonical(v081Prompts), Files.readString(promptSnapshot(V081_BASELINE)));
+        assertUnique(entries(v081Tools, "tools"));
+        assertUnique(entries(v081Prompts, "prompts"));
     }
 
     @Test
@@ -297,7 +327,7 @@ class PublicContractSnapshotTest {
     void versionEightDescriptionAllowancesArePinnedToTheirNewGuidance() {
         Map<String, Map<String, Object>> current = byName(entries(currentTools, "tools"));
         String policy = string(current.get("get_project_policy"), "description");
-        assertTrue(policy.contains("policy schema v1 or v2"), policy);
+        assertTrue(policy.contains("policy schema v1, v2, or v3"), policy);
         String projectQc = string(current.get("run_project_qc"), "description");
         assertTrue(projectQc.contains("v2 provider evidence"), projectQc);
         assertTrue(projectQc.contains("provider_evidence_unavailable"), projectQc);
@@ -565,7 +595,7 @@ class PublicContractSnapshotTest {
         if (!RELEASE.matcher(update).matches()) {
             throw new IllegalArgumentException(UPDATE_PROPERTY + " must be a major.minor.patch version");
         }
-        if (Set.of(BASELINE, V072_BASELINE).contains(update)) {
+        if (Set.of(BASELINE, V072_BASELINE, V080_BASELINE).contains(update)) {
             throw new IllegalArgumentException("Published baseline " + update + " is immutable");
         }
         if ((Files.exists(toolSnapshot(contractDir, update)) || Files.exists(promptSnapshot(contractDir, update)))
@@ -630,6 +660,8 @@ class PublicContractSnapshotTest {
                 "required_capabilities")) {
             if ("description".equals(field)
                     && INTENTIONAL_TOOL_DESCRIPTION_CHANGES_SINCE_V072.contains(name)) continue;
+            if ("annotations".equals(field)
+                    && INTENTIONAL_TOOL_ANNOTATION_CHANGES_SINCE_V050.contains(name)) continue;
             assertEquals(node(oldTool.get(field)), node(now.get(field)),
                     () -> name + " changed its 0.7.2 field " + field);
         }

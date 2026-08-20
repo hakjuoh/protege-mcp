@@ -103,10 +103,8 @@ class ClaudeCliProviderCoverageTest {
                 "--verbose",
                 "--strict-mcp-config",
                 "--mcp-config", CONFIG_PATH,
-                "--allowedTools", "mcp__protege",
-                "--append-system-prompt",
-                io.github.hakjuoh.protege_mcp.chat.AssistantSteering.SYSTEM_PROMPT),
-                cmd.subList(0, 13),
+                "--allowedTools", "mcp__protege"),
+                cmd.subList(0, 11),
                 "leading fixed argv must match the headless streaming invocation");
     }
 

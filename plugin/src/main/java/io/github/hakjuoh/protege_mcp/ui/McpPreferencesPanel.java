@@ -221,7 +221,7 @@ public class McpPreferencesPanel extends PreferencesPanel {
         ResponsivePreferencesLayoutPanel panel = new ResponsivePreferencesLayoutPanel();
         panel.addGroup("Terminology Registries");
         panel.addHelpText(
-                "Register external ontology registry origins, aliases, and credentials. Policy v2 "
+                "Register external ontology registry origins, aliases, and credentials. Policy v2+ "
                 + "supports OLS4 and OntoPortal-compatible registries; BioPortal and AgroPortal "
                 + "are editable endpoint presets for the single ontoportal profile. "
                 + "Origins and API keys are owner-only and shared project files contain references only.");
@@ -235,12 +235,16 @@ public class McpPreferencesPanel extends PreferencesPanel {
                     + "reopen Preferences. Server settings remain available.");
         }
 
+        /*
+         * The following lines would be completed by the plan M9.
+        /*
         panel.addSeparator();
         panel.addGroup("Publishing Repositories");
         panel.addHelpText(
                 "Remote knowledge graphs and publication repositories (GraphDB, Stardog, TopBraid "
                 + "EDG, generic SPARQL endpoints). This M8B section is an informational planning "
                 + "overview; it does not store repository credentials or publish release bundles.");
+         */
 
         JPanel container = new JPanel(new BorderLayout());
         container.add(panel, BorderLayout.NORTH);

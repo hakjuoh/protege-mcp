@@ -38,18 +38,35 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 /** End-to-end tests for write_project_policy_template over the headless Protégé adapter. */
 class WriteProjectPolicyTemplateTest {
 
+    @Test
+    void anonymousV3StarterDoesNotCreateAFalseLogicalOntologyBinding() {
+        ProjectPolicyTemplate.Template template = ProjectPolicyTemplate.render(
+                ProjectPolicyTemplate.GENERAL, "anonymous-project", null, 3);
+
+        assertTrue(template.yaml().contains("workspace:"));
+        assertTrue(template.yaml().contains("files: [ontology.ttl]"));
+        assertFalse(template.yaml().contains("  ontologies:"));
+        assertTrue(ProjectPolicyTemplate.validationHint(template).stream().anyMatch(hint ->
+                hint.contains("release/interoperability entry-point IRI")));
+        assertTrue(ProjectPolicyTemplate.validationHint(template).stream().anyMatch(hint ->
+                hint.contains("workspace.ontologies binding")));
+    }
+
     private static final String ONTOLOGY_IRI = "https://example.org/project";
     private static final String POLICY_RELATIVE = ".protege-mcp/project.yaml";
 
     private Preferences prefs;
     private boolean savedReadOnly;
     private boolean savedConfirm;
+    private boolean savedNoPolicyCompatibility;
 
     @BeforeEach
     void savePreferences() {
         prefs = McpConfig.prefs();
         savedReadOnly = prefs.getBoolean(McpConfig.KEY_READ_ONLY, false);
         savedConfirm = prefs.getBoolean(McpConfig.KEY_CONFIRM_WRITES, false);
+        savedNoPolicyCompatibility = prefs.getBoolean(
+                McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, true);
         prefs.putBoolean(McpConfig.KEY_READ_ONLY, false);
         prefs.putBoolean(McpConfig.KEY_CONFIRM_WRITES, false);
     }
@@ -58,10 +75,12 @@ class WriteProjectPolicyTemplateTest {
     void restorePreferences() {
         prefs.putBoolean(McpConfig.KEY_READ_ONLY, savedReadOnly);
         prefs.putBoolean(McpConfig.KEY_CONFIRM_WRITES, savedConfirm);
+        prefs.putBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS,
+                savedNoPolicyCompatibility);
     }
 
     @Test
-    void generalTemplateLoadsValidAfterItsNamedAssetsExist(@TempDir Path temp) throws Exception {
+    void generalTemplateIsImmediatelyValidForSavedOntology(@TempDir Path temp) throws Exception {
         ToolContext ctx = ctx(temp, ONTOLOGY_IRI);
 
         Map<String, Object> result = structured(call(ctx, Map.of("profile", "general")));
@@ -72,17 +91,54 @@ class WriteProjectPolicyTemplateTest {
         assertTrue(policyPath.endsWith(POLICY_RELATIVE), () -> "path: " + policyPath);
         String yaml = Files.readString(policyPath);
         assertTrue(yaml.contains("root_artifact: ontology.ttl"), yaml);
-        assertTrue(yaml.contains("reasoner: HermiT"), yaml);
+        assertFalse(yaml.contains("reasoning:"), yaml);
+        assertTrue(yaml.contains("required_stages: [interoperability, profile"), yaml);
         assertTrue(yaml.contains("audit:\n  retention_days: 90"), yaml);
-
-        // The bare template names files that do not exist yet, so it is NOT valid on its own.
-        assertFalse(ProjectPolicyLoader.load(policyPath, null).valid(),
-                "a scaffold naming non-existent assets must not validate before they are created");
-
-        // Materialize the two files the validation_hint tells the user to create, then it loads valid.
-        ProjectPolicyFixtures.materialize(policyPath, yaml);
+        assertTrue(yaml.contains("workspace:"), yaml);
+        assertTrue(yaml.contains("documents: [ontology.ttl]"), yaml);
+        assertEquals(3, result.get("schema_version"));
+        assertEquals(true, result.get("valid"), result::toString);
+        assertEquals(true, result.get("metadata_created"), result::toString);
+        assertTrue(Files.isRegularFile(temp.resolve("ro-crate-metadata.json")));
         ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
         assertTrue(policy.valid(), () -> "general: " + policy.issues());
+        assertEquals(3, policy.version());
+    }
+
+    @Test
+    void defaultTemplateBootstrapsWhenCallerSelectedNoPolicyPathsAreDisabled(@TempDir Path temp)
+            throws Exception {
+        prefs.putBoolean(McpConfig.KEY_ALLOW_UNRESTRICTED_NO_POLICY_PATHS, false);
+        ToolContext ctx = ctx(temp, ONTOLOGY_IRI);
+
+        Map<String, Object> result = structured(call(ctx, Map.of("version", 3)));
+
+        assertEquals(true, result.get("written"), result::toString);
+        assertEquals(true, result.get("valid"), result::toString);
+        assertTrue(Files.isRegularFile(temp.resolve(POLICY_RELATIVE)));
+        assertTrue(Files.isRegularFile(temp.resolve("ro-crate-metadata.json")));
+        String yaml = Files.readString(temp.resolve(POLICY_RELATIVE));
+        assertTrue(yaml.contains("workspace:"), yaml);
+        assertTrue(yaml.contains("documents: [ontology.ttl]"), yaml);
+    }
+
+    @Test
+    void incompatibleExistingMetadataRejectsTemplateWithoutWritingPolicy(@TempDir Path temp)
+            throws Exception {
+        Path metadata = temp.resolve("ro-crate-metadata.json");
+        Files.writeString(metadata, "{}\n");
+        ToolContext ctx = ctx(temp, ONTOLOGY_IRI);
+
+        Map<String, Object> result = structured(call(ctx, Map.of("version", 2)));
+
+        assertEquals(false, result.get("written"), result::toString);
+        assertEquals(false, result.get("valid"), result::toString);
+        assertEquals("policy_invalid", result.get("error_code"));
+        assertEquals(false, result.get("metadata_created"));
+        assertFalse(Files.exists(temp.resolve(POLICY_RELATIVE)),
+                "an invalid combined scaffold must not leave a policy behind");
+        assertEquals("{}\n", Files.readString(metadata),
+                "pre-existing metadata must never be replaced or rewritten");
     }
 
     @Test
@@ -95,10 +151,9 @@ class WriteProjectPolicyTemplateTest {
         assertEquals("obo", result.get("profile"));
         Path policyPath = temp.resolve(POLICY_RELATIVE);
         String yaml = Files.readString(policyPath);
-        assertTrue(yaml.contains("root_artifact: ontology-edit.owl"), yaml);
-        assertTrue(yaml.contains("reasoner: HermiT"), yaml);
+        assertTrue(yaml.contains("root_artifact: ontology.ttl"), yaml);
+        assertFalse(yaml.contains("reasoning:"), yaml);
 
-        ProjectPolicyFixtures.materialize(policyPath, yaml);
         ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
         assertTrue(policy.valid(), () -> "obo: " + policy.issues());
     }
@@ -122,7 +177,6 @@ class WriteProjectPolicyTemplateTest {
         assertFalse(yaml.contains("endpoint:"), yaml);
         assertFalse(yaml.contains("api_key:"), yaml);
 
-        ProjectPolicyFixtures.materialize(policyPath, yaml);
         ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
         assertTrue(policy.valid(), () -> "v2: " + policy.issues());
         assertEquals(2, policy.version());
@@ -136,7 +190,7 @@ class WriteProjectPolicyTemplateTest {
             throws Exception {
         ToolContext ctx = ctx(temp, ONTOLOGY_IRI);
 
-        for (Object invalid : List.of("garbage", "2", 2.9, 3, true)) {
+        for (Object invalid : List.of("garbage", "2", 2.9, 4, true)) {
             CallToolResult result = call(ctx, Map.of("version", invalid));
             assertEquals(Boolean.TRUE, result.isError(), () -> invalid + ": " + result.content());
             assertTrue(String.valueOf(result.content()).contains("invalid_request"),
@@ -218,6 +272,9 @@ class WriteProjectPolicyTemplateTest {
         String yaml = Files.readString(temp.resolve(POLICY_RELATIVE));
         assertTrue(yaml.contains("project_id: project"), yaml);
         assertTrue(yaml.contains("root_ontology: " + ONTOLOGY_IRI), yaml);
+        assertFalse(yaml.contains("MUST equal your ontology's IRI"), yaml);
+        assertTrue(yaml.contains("does not restrict which project or external ontology can be active"),
+                yaml);
     }
 
     @Test
@@ -236,13 +293,12 @@ class WriteProjectPolicyTemplateTest {
         assertTrue(hint instanceof List, () -> String.valueOf(hint));
         assertFalse(((List<?>) hint).isEmpty(), "validation_hint must list what to complete");
         assertTrue(((List<?>) hint).stream().anyMatch(
-                        line -> String.valueOf(line).contains("policy_bootstrap=true")),
-                () -> "the hint must name the explicit-path bootstrap that can create the root "
-                        + "artifact while the policy is still invalid: " + hint);
+                        line -> String.valueOf(line).contains("reasoner")),
+                () -> "the hint must explain the selected or omitted reasoner stage: " + hint);
         assertTrue(((List<?>) hint).stream().anyMatch(
                         line -> String.valueOf(line).contains("audit-export")),
                 () -> "the hint must explain VCS handling for explicit audit exports: " + hint);
-        assertFalse(result.containsKey("valid"), "a scaffold must not claim valid=true");
+        assertEquals(true, result.get("valid"), result::toString);
     }
 
     @Test
@@ -274,16 +330,16 @@ class WriteProjectPolicyTemplateTest {
     @Test
     void overwriteTrueReplacesTheExistingTemplateAtomically(@TempDir Path temp) throws Exception {
         ToolContext ctx = ctx(temp, ONTOLOGY_IRI);
-        assertEquals(true, structured(call(ctx, Map.of("project_id", "first"))).get("written"));
+        assertEquals(true, structured(call(ctx, Map.of("project_id", "same"))).get("written"));
         Path policyPath = temp.resolve(POLICY_RELATIVE);
 
         Map<String, Object> result = structured(call(ctx,
-                Map.of("project_id", "second", "overwrite", true)));
+                Map.of("project_id", "same", "profile", "obo", "overwrite", true)));
 
         assertEquals(true, result.get("written"), () -> result.toString());
         String after = Files.readString(policyPath);
-        assertTrue(after.contains("project_id: second"), after);
-        assertFalse(after.contains("project_id: first"), after);
+        assertTrue(after.contains("project_id: same"), after);
+        assertTrue(after.contains("#   format: obo"), after);
     }
 
     @Test
@@ -323,10 +379,12 @@ class WriteProjectPolicyTemplateTest {
         OWLOntologyManager manager = OWLManager.createOWLOntologyManager();
         OWLOntology ontology = manager.createOntology(IRI.create(ontologyIri));
         manager.setOntologyFormat(ontology, new TurtleDocumentFormat());
-        manager.setOntologyDocumentIRI(ontology, IRI.create(temp.resolve("ontology.ttl").toUri()));
+        Path document = temp.resolve("ontology.ttl");
+        manager.setOntologyDocumentIRI(ontology, IRI.create(document.toUri()));
         OWLDataFactory df = manager.getOWLDataFactory();
         manager.addAxiom(ontology, df.getOWLDeclarationAxiom(
                 df.getOWLClass(IRI.create(ontologyIri + "#Thing"))));
+        manager.saveOntology(ontology, new TurtleDocumentFormat(), IRI.create(document.toUri()));
         return new ToolContext(HeadlessAccess.over(FakeModelManager.over(ontology)),
                 new McpServerController(new OntologyAccess(null)));
     }

@@ -88,8 +88,10 @@ ROBOT-compatible `.rq` files for [`run_project_qc`](#run_project_qc); their lead
 
 Discover and return the effective project policy. An explicit local `policy_path` wins; otherwise the tool
 walks from the active ontology document upward for `.protege-mcp/project.yaml`. It strictly parses YAML,
-dispatches strict policy schema v1/v2, applies versioned deterministic defaults, and checks the active ontology IRI, installed required
-reasoner, CURIEs/regexes, referenced files, project-root confinement, and symlink escapes. With the
+dispatches strict policy schema v1, v2, or v3, applies versioned deterministic defaults, and checks installed
+required reasoners, CURIEs/regexes, referenced files, v3 workspace bindings, project-root confinement,
+and symlink escapes. Policy validation is project-scoped, so switching the active ontology does not
+invalidate the policy solely because its IRI differs from `root_ontology`. With the
 default preferences, no policy is a compatible interactive state: `policy_loaded=false` and
 `path_mode=legacy_local_admin_unrestricted` are reported explicitly. When **Allow unrestricted
 local-admin paths when no project policy is loaded** is disabled in Settings ▸ MCP, the same state
@@ -343,22 +345,22 @@ artifact, and uses the same containment-enforcing atomic writer as release evide
 
 Generate a commented, schema-valid **starter** `.protege-mcp/project.yaml` to review and commit like
 source code. This scaffolds a **new** policy file — it never mutates the ontology or an existing policy in
-place. The required blocks (`version`, `project_id`, `root_ontology`, `interoperability`) are populated
-from the active ontology; safe defaults are filled in (filesystem/network **deny**, unlocked imports, a
-named reasoner, the base QC stages); and every asset-referencing optional block (prefixes, modules,
-annotations, `iri_policy`, lifecycle, invariants/shacl/competency-questions, the imports lockfile,
-release) is commented out with guidance. The template also names a `root_artifact` and an RO-Crate
-metadata file you must still create, so **it is not valid on its own**: the result carries a
-`validation_hint` listing what to complete and never claims `valid=true`. The hint's first step directs
-you to create the `root_artifact` with `save_ontology` `policy_bootstrap=true` — the explicit-path save
-that stays authorized inside the project root while the starter policy is still invalid. The write honors Protégé's
+place. The required blocks (`version`, `project_id`, `root_ontology`, `interoperability`) use the saved
+active ontology document, and the writer creates matching minimal RO-Crate metadata when it is absent.
+Safe defaults are filled in (filesystem/network **deny**, unlocked imports, and the base QC stages).
+When one installed reasoner is uniquely selectable, it is named and the reasoner stage is required;
+otherwise both are omitted with an explanatory comment. Every asset-referencing optional block
+(prefixes, modules, annotations, `iri_policy`, lifecycle, invariants/shacl/competency-questions, the
+imports lockfile, release) remains commented out. The generated policy is validated before return and
+normally reports `valid=true` immediately. The write honors Protégé's
 **read-only** mode and the **confirm-write** gate, requires the `filesystem:project:write` capability,
 resolves the target under `project_root` (default `.protege-mcp/project.yaml` beside the active
 document), and lands atomically via a temp-file rename. `overwrite=false` refuses an existing file with
 `error_code: policy_exists` and writes nothing.
 
-The default remains `version=1` for compatibility. Passing `version=2` also emits reviewed, bounded
-`external_terms`, `mappings`, `jobs`, and `materialization` blocks. Provider endpoints and credential
+The default is `version=3`. Passing `version=1` retains the compatibility format; `version=2` emits
+reviewed, bounded `external_terms`, `mappings`, `jobs`, and `materialization` blocks; and `version=3`
+adds physical workspace membership and ontology/document bindings. Provider endpoints and credential
 bindings are deliberately not written because they are owner-local configuration.
 
 **Arguments**
@@ -367,8 +369,8 @@ bindings are deliberately not written because they are owner-local configuration
 | --- | --- | --- | --- | --- |
 | `path` | string | no | `.protege-mcp/project.yaml` beside the document | Explicit project-relative or absolute policy path to write. |
 | `project_id` | string | no | derived from the ontology IRI's last segment, else `my-project` | Project identifier written into the template. |
-| `profile` | string | no | `general` | Which starter to emit: `general` (OWL/Turtle, HermiT/DL) or `obo` (OBO edit file, ELK/EL). |
-| `version` | integer | no | `1` | Policy schema to emit: `1` or `2`. |
+| `profile` | string | no | `general` | Comment and optional-stage style: `general` or `obo`. Both use the saved active ontology and include a reasoner only when it is unambiguous. |
+| `version` | integer | no | `3` | Policy schema to emit: `1`, `2`, or `3`. |
 | `overwrite` | boolean | no | `false` | Replace an existing file; otherwise an existing target is refused with `policy_exists`. |
 
 **Returns**
@@ -377,12 +379,62 @@ bindings are deliberately not written because they are owner-local configuration
 - `path`: the canonical path the template was written to.
 - `project_id`: the identifier written into the template.
 - `profile`: the emitted profile (`general` or `obo`).
-- `schema_version`: the emitted policy schema (`1` or `2`).
+- `schema_version`: the emitted policy schema (`1`, `2`, or `3`).
 - `bytes`: the size in bytes of the written file.
 - `sha256`: the SHA-256 of the written bytes.
-- `validation_hint`: the ordered list of files to create and edits to make before the policy validates.
-- `note`: a reminder to review and commit the file and complete the `validation_hint` items.
-- `error_code`: `policy_exists` when a file already exists and `overwrite` is false (with `written: false`).
+- `valid`, `errors`, `warnings`: the immediate validation outcome.
+- `root_artifact`, `metadata_path`, `metadata_created`: the saved ontology artifact and matching
+  RO-Crate metadata setup.
+- `validation_hint`: the ordered review and validation guidance.
+- `note`: a reminder to review and commit the valid generated file.
+- `error_code`: `policy_exists` when a file already exists and `overwrite` is false, or
+  `policy_invalid` when the combined template and existing metadata cannot validate. In both cases
+  `written` is false and the policy is unchanged.
+
+## `write_project_policy`
+
+Write or update a `.protege-mcp/project.yaml` file from complete authored YAML or a recursive partial
+patch. Patch objects merge recursively, arrays and scalars replace, and `null` removes a field. Only
+affected top-level sections are rendered again, so comments, ordering, and bytes everywhere else are
+preserved. When patch mode finds no policy, it builds the same valid v3 starter and matching minimal
+RO-Crate metadata as `write_project_policy_template` in memory, applies the patch, and publishes only
+after the combined candidate validates. An invalid candidate leaves an existing policy unchanged, or
+leaves no generated policy/metadata behind on a fresh project. The write is authorized
+like every other file-writing tool (read-only mode, the confirm-write gate, the
+`filesystem:project:write` capability, and canonical containment under `project_root`). The written
+policy is validated immediately and the parsed outcome is returned.
+
+`overwrite=false` refuses an existing file with `error_code: policy_exists` and writes nothing.
+
+**Arguments**
+
+| Name | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `yaml` | string | conditional | — | Complete authored policy YAML. Mutually exclusive with `patch`. |
+| `patch` | object | conditional | — | Recursive partial update for any policy field. Mutually exclusive with `yaml`; scaffolds v3 internally when no policy exists. |
+| `path` | string | no | `.protege-mcp/project.yaml` beside the document | Explicit project-relative or absolute policy path to write. |
+| `overwrite` | boolean | no | `true` | Replace an existing file; otherwise an existing target is refused with `policy_exists`. |
+
+**Returns**
+
+- `written`: `true` when the policy landed, `false` on a refusal.
+- `path`: the canonical path the policy was written to.
+- `bytes`: the size in bytes of the written file.
+- `sha256`: the SHA-256 of the written bytes.
+- `policy_loaded`: whether the written policy file was read back.
+- `valid`: validation verdict of the written policy.
+- `policy_digest`: canonical digest of the effective policy.
+- `schema_version`: its schema version.
+- `errors`: structured validation errors.
+- `warnings`: non-fatal validation issues.
+- `update_mode`: `replace` or `patch`.
+- `preserved_existing_content`: `true` when patching an existing policy; `false` for a fresh scaffold.
+- `created_from_template`: `true` when patch mode created the v3 starter internally because no policy existed.
+- `metadata_path`, `metadata_created`: returned for the fresh-project patch path.
+- `error_code`: `policy_exists` when overwrite is refused, `policy_invalid` when validation rejects
+  a candidate, or `policy_changed` when the source changed while a patch was being prepared. None of
+  these cases modifies the existing file.
+- `note`: an explanation for a refusal.
 
 ## `run_qc_suite`
 

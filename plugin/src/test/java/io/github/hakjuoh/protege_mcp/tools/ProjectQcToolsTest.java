@@ -131,7 +131,7 @@ class ProjectQcToolsTest {
     }
 
     @Test
-    void noPolicyAndRootMismatchAreGateErrorsNotMcpTransportErrors(@TempDir Path temp) throws Exception {
+    void noPolicyIsAGateErrorButAnotherActiveProjectOntologyIsAllowed(@TempDir Path temp) throws Exception {
         Map<String, Object> noPolicy = structured(ProjectQcTools.run(context(temp, false), Map.of(), true));
         assertEquals("error", noPolicy.get("gate"));
         assertTrue(String.valueOf(noPolicy.get("findings")).contains("policy_not_found"));
@@ -148,8 +148,7 @@ class ProjectQcToolsTest {
                 + "validation:\n  required_stages: [structural]\n");
         Map<String, Object> result = structured(ProjectQcTools.run(context(temp, false),
                 Map.of("policy_path", mismatch.toString()), true));
-        assertEquals("error", result.get("gate"));
-        assertTrue(String.valueOf(result.get("errors")).contains("root_ontology_mismatch"));
+        assertFalse(String.valueOf(result.get("errors")).contains("root_ontology_mismatch"));
     }
 
     @Test
@@ -454,7 +453,7 @@ class ProjectQcToolsTest {
         ToolRegistry registry = new ToolRegistry();
         ProjectPolicyTools.register(registry, new ToolContext(null, null));
         assertEquals(List.of("get_project_policy", "validate_project_policy", "run_project_qc",
-                        "write_project_policy_template"),
+                        "write_project_policy_template", "write_project_policy"),
                 registry.build().stream().map(s -> s.tool().name()).toList());
         registry.build().forEach(spec -> assertFalse(
                 ((List<?>) spec.tool().inputSchema().getOrDefault("required", List.of()))

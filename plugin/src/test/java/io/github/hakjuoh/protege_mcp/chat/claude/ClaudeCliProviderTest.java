@@ -68,21 +68,16 @@ class ClaudeCliProviderTest {
     }
 
     @Test
-    void changeSetSteeringIsAppendedToTheSystemPromptOnEveryTurn() {
-        // Fresh turn: the steering rides --append-system-prompt, not the user prompt.
+    void doesNotInjectAnAssistantSystemPrompt() {
         List<String> fresh = ClaudeCliProvider.buildCommand("claude",
                 new ChatRequest("", "hello world", null, ENDPOINT), CONFIG_PATH);
-        assertAdjacent(fresh, "--append-system-prompt",
-                io.github.hakjuoh.protege_mcp.chat.AssistantSteering.SYSTEM_PROMPT);
+        assertFalse(fresh.contains("--append-system-prompt"));
         assertEquals("hello world", fresh.get(fresh.size() - 1),
-                "steering must not contaminate the user prompt positional");
+                "the provider prompt remains the user prompt positional");
 
-        // Resumed turn: --resume does not restore per-invocation system-prompt flags, so a resumed
-        // session that dropped the flag would silently lose the write-workflow contract.
         List<String> resumed = ClaudeCliProvider.buildCommand("claude",
                 new ChatRequest("", "again", "sess-9", ENDPOINT), CONFIG_PATH);
-        assertAdjacent(resumed, "--append-system-prompt",
-                io.github.hakjuoh.protege_mcp.chat.AssistantSteering.SYSTEM_PROMPT);
+        assertFalse(resumed.contains("--append-system-prompt"));
     }
 
     @Test

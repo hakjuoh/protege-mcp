@@ -63,7 +63,7 @@ class AgroPortalPresetCompatibilityTest {
         assertEquals("/search", requests.get(0).relativePath());
         assertEquals("AGROVOC", requests.get(0).query().get("ontologies"));
         assertEquals("10", requests.get(0).query().get("pagesize"));
-        assertTrue(requests.get(0).query().get("include").contains("links"));
+        assertFalse(requests.get(0).query().containsKey("include"));
         assertEquals("json", requests.get(0).query().get("format"));
         assertEquals("false", requests.get(0).query().get("include_views"));
         assertEquals("false", requests.get(0).query().get("display_context"));
@@ -128,7 +128,7 @@ class AgroPortalPresetCompatibilityTest {
                 "json".equals(request.query().get("format"))
                         && "false".equals(request.query().get("display_context"))
                         && "true".equals(request.query().get("display_links"))));
-        assertTrue(requests.stream().allMatch(request -> request.query().containsKey("include")));
+        assertTrue(requests.stream().noneMatch(request -> request.query().containsKey("include")));
         assertFalse(requests.stream().anyMatch(request ->
                 request.query().containsKey("download_format")));
     }

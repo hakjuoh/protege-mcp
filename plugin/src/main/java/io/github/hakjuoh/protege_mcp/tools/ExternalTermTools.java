@@ -1,10 +1,8 @@
 package io.github.hakjuoh.protege_mcp.tools;
 
 import java.net.URI;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -15,6 +13,7 @@ import java.util.Map;
 import io.github.hakjuoh.protege_mcp.external.ExternalProviderGateway;
 import io.github.hakjuoh.protege_mcp.external.ProviderFailure;
 import io.github.hakjuoh.protege_mcp.external.ProviderInspectRequest;
+import io.github.hakjuoh.protege_mcp.external.ProviderPolicyBindings;
 import io.github.hakjuoh.protege_mcp.external.ProviderResult;
 import io.github.hakjuoh.protege_mcp.external.ProviderSearchRequest;
 import io.github.hakjuoh.protege_mcp.external.ProviderSessionScope;
@@ -359,9 +358,9 @@ public final class ExternalTermTools {
                 .forExternalTermsNetwork()
                 .withRequestNetwork(Tools.optString(args, "network"));
         ProjectPolicy policy = rules.policy();
-        if (!policy.loaded() || policy.version() != 2) {
+        if (!policy.loaded() || policy.version() < 2) {
             throw new ToolArgException("provider_policy_required",
-                    "External providers require a valid project policy version 2.", false);
+                    "External providers require a valid project policy version 2 or later.", false);
         }
         if (!policy.valid()) {
             throw new ToolArgException("invalid_project_policy",
@@ -534,30 +533,12 @@ public final class ExternalTermTools {
     }
 
     private static String projectFingerprint(ProjectPolicy policy) {
-        if (policy == null || policy.projectRoot() == null || policy.digest() == null) {
+        String fingerprint = ProviderPolicyBindings.projectFingerprint(policy);
+        if (fingerprint == null) {
             throw new ToolArgException("invalid_project_policy",
                     "Project identity is unavailable for provider authorization.", false);
         }
-        final MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException("SHA-256 is unavailable", impossible);
-        }
-        List<String> values = List.of(policy.projectRoot().toString(), policy.digest());
-        digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(values.size()).array());
-        for (String value : values) {
-            byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-            digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(bytes.length).array());
-            digest.update(bytes);
-        }
-        StringBuilder result = new StringBuilder("sha256:");
-        for (byte value : digest.digest()) {
-            int unsigned = value & 0xff;
-            result.append(Character.forDigit(unsigned >>> 4, 16));
-            result.append(Character.forDigit(unsigned & 0x0f, 16));
-        }
-        return result.toString();
+        return fingerprint;
     }
 
     private record ProviderPolicy(String providerId, String profile, String originAlias,

@@ -59,7 +59,6 @@ public final class OntoPortalProvider implements ExternalTermProvider {
             query.put("page", Integer.toString(pageNumber));
             query.put("pagesize", Integer.toString(request.limit()));
             query.put("include_views", "false");
-            query.put("include", "prefLabel,synonym,definition,obsolete,properties,links");
 
             ProviderResponse response = transport.get(new ProviderRequest("/search", query));
             return mapSearch(request, cursor, response);
@@ -82,16 +81,11 @@ public final class OntoPortalProvider implements ExternalTermProvider {
                         "OntoPortal term IRI is too large for a bounded request", false);
             }
             Map<String, String> termQuery = jsonQuery();
-            termQuery.put("include",
-                    "prefLabel,synonym,definition,obsolete,properties,links");
             ProviderResponse termResponse = transport.get(new ProviderRequest(termPath, termQuery));
             Map<String, String> ontologyQuery = jsonQuery();
-            ontologyQuery.put("include", "acronym,name,links");
             ProviderResponse ontologyResponse = transport.get(new ProviderRequest(
                     "/ontologies/" + request.ontology().toUpperCase(Locale.ROOT), ontologyQuery));
             Map<String, String> submissionQuery = jsonQuery();
-            submissionQuery.put("include",
-                    "submissionId,version,released,creationDate,hasLicense,uri,links");
             ProviderResponse submissionResponse = transport.get(new ProviderRequest(
                     "/ontologies/" + request.ontology().toUpperCase(Locale.ROOT)
                             + "/latest_submission",

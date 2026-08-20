@@ -23,7 +23,7 @@ an assistant that edits it for you, without ever leaving Protégé.
 **Protégé MCP** is a plugin for [Protégé Desktop](https://protege.stanford.edu/) that runs a local
 **MCP ([Model Context Protocol](https://modelcontextprotocol.io/)) server** inside Protégé. It exposes
 the **live, active ontology** — the one you have open in the editor — to any MCP-compatible AI client,
-so the client can *explore it and make edits for you* through **104 structured tools** and **11 guided
+so the client can *explore it and make edits for you* through **105 structured tools** and **11 guided
 prompts**.
 
 Two ways to use it:
@@ -90,11 +90,11 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | [Installation](installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](connect/) | The server model (ports, OAuth vs. bearer token) and per-environment recipes for Claude Code, Codex CLI, VS Code, and Claude Desktop. |
 | [Ontology Assistant](ontology-assistant.html) | The in-Protégé chat: what it is, how it works, attachments, privacy, and settings. |
-| [Tools](tools/) | All 104 tools by category. |
+| [Tools](tools/) | All 105 tools by category. |
 | [Prompts](prompts/) | The 11 guided workflows available to MCP clients. |
 | [Headless CLI](cli.html) | Run policy validation, full project QC, releases, and asserted semantic diff without Protégé. |
 | [Ontology CI](ci.html) | Gate your own ontology repository's PRs with the reusable, fork-safe workflow: full project QC with JSON/JUnit/SARIF evidence, a dry-run release preview, and the asserted diff. |
-| [Project policy & QC](project-policy.html) | Policy v1/v2 discovery and validation, SSSOM/provider/job/materialization controls, fingerprints, persisted QC assets, examples, and strict gate semantics. |
+| [Project policy & QC](project-policy.html) | Policy v1/v2/v3 discovery and validation, workspace membership, SSSOM/provider/job/materialization controls, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [RO-Crate & RDFC](interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
 | [Commercial platforms](commercial-platforms.html) | The supported exchange boundary, product-specific caveats, and requirements for future connectors. |
 | [Contributing](contributing.html) | Build from source, run the tests, project layout, and how to add a tool. |

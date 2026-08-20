@@ -37,6 +37,11 @@ class McpCatalogTest {
         assertEquals(catalog.promptNames(), registeredPrompts,
                 "every JSON prompt definition must have exactly one renderer registration");
         catalog.toolNames().forEach(name -> {
+            assertTrue(catalog.tool(name).annotations() != null, name + " annotations");
+            assertTrue(catalog.tool(name).annotations().readOnlyHint() != null,
+                    name + " readOnlyHint");
+            assertTrue(catalog.tool(name).annotations().destructiveHint() != null,
+                    name + " destructiveHint");
             assertTrue(!catalog.tool(name).outputSchema().isEmpty(), name + " output schema");
             assertEquals(ToolContractSchemas.errorSchema(), catalog.tool(name).errorSchema());
         });
@@ -89,6 +94,7 @@ class McpCatalogTest {
     void parserRejectsUnknownFields() {
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"tools":[{"name":"a","description":"d",
+                 "annotations":{"title":"A","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},
                  "input_schema":{"type":"object","additionalProperties":false},"typo":true}],
                  "prompts":[{"name":"p","description":"d","arguments":[]}]}
                 """));
@@ -96,12 +102,33 @@ class McpCatalogTest {
     }
 
     @Test
+    void parserRequiresCompleteBooleanToolAnnotations() {
+        IllegalStateException missing = assertThrows(IllegalStateException.class, () -> parse("""
+                {"version":1,"tools":[{"name":"a","description":"d",
+                 "input_schema":{"type":"object","additionalProperties":false}}],
+                 "prompts":[{"name":"p","description":"d","arguments":[]}]}
+                """));
+        assertTrue(missing.getMessage().contains("annotations"));
+
+        IllegalStateException nonBoolean = assertThrows(IllegalStateException.class, () -> parse("""
+                {"version":1,"tools":[{"name":"a","description":"d",
+                 "annotations":{"title":"A","readOnlyHint":"true","destructiveHint":false,
+                   "idempotentHint":true,"openWorldHint":false},
+                 "input_schema":{"type":"object","additionalProperties":false}}],
+                 "prompts":[{"name":"p","description":"d","arguments":[]}]}
+                """));
+        assertTrue(nonBoolean.getMessage().contains("readOnlyHint must be a boolean"));
+    }
+
+    @Test
     void parserRejectsDuplicateNames() {
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"tools":[
-                 {"name":"a","description":"d","input_schema":{"type":"object","additionalProperties":false},
+                 {"name":"a","description":"d","annotations":{"title":"A","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},
+                 "input_schema":{"type":"object","additionalProperties":false},
                   "output_schema":{"type":"object","properties":{"ok":{"type":"boolean"}},"additionalProperties":false}},
-                 {"name":"a","description":"d","input_schema":{"type":"object","additionalProperties":false},
+                 {"name":"a","description":"d","annotations":{"title":"A","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},
+                 "input_schema":{"type":"object","additionalProperties":false},
                   "output_schema":{"type":"object","properties":{"ok":{"type":"boolean"}},"additionalProperties":false}}],
                  "prompts":[{"name":"p","description":"d","arguments":[]}]}
                 """));
@@ -112,6 +139,7 @@ class McpCatalogTest {
     void parserRequiresExplicitTypedOutputForPost072Tools() {
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"tools":[{"name":"brand_new_tool","description":"d",
+                 "annotations":{"title":"A","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},
                  "input_schema":{"type":"object","additionalProperties":false}}],
                  "prompts":[{"name":"p","description":"d","arguments":[]}]}
                 """));
@@ -122,6 +150,7 @@ class McpCatalogTest {
     void parserRejectsRequiredSchemaFieldsWithoutProperties() {
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"tools":[{"name":"a","description":"d",
+                 "annotations":{"title":"A","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},
                  "input_schema":{"type":"object","required":["missing"],"additionalProperties":false}}],
                  "prompts":[{"name":"p","description":"d","arguments":[]}]}
                 """));
@@ -132,6 +161,7 @@ class McpCatalogTest {
     void parserAcceptsTypedOutputAndRejectsInvalidNestedSchemas() {
         McpCatalog parsed = parse("""
                 {"version":1,"tools":[{"name":"a","description":"d",
+                 "annotations":{"title":"A","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},
                  "input_schema":{"type":"object","additionalProperties":false},
                  "output_schema":{"type":"object","properties":{"items":{"type":"array",
                    "items":{"type":"string"}}},"required":["items"],"additionalProperties":false}}],
@@ -143,6 +173,7 @@ class McpCatalogTest {
 
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"tools":[{"name":"a","description":"d",
+                 "annotations":{"title":"A","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},
                  "input_schema":{"type":"object","properties":{"nested":{"type":"object",
                    "required":["missing"],"properties":{}}},"additionalProperties":false}}],
                  "prompts":[{"name":"p","description":"d","arguments":[]}]}
@@ -161,6 +192,7 @@ class McpCatalogTest {
     void parserRejectsInternalRoadmapIdentifiersInPublicDescriptions() {
         IllegalStateException error = assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"tools":[{"name":"a","description":"See ADR 0006",
+                 "annotations":{"title":"A","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},
                  "input_schema":{"type":"object","additionalProperties":false}}],
                  "prompts":[{"name":"p","description":"public behavior","arguments":[]}]}
                 """));
@@ -168,6 +200,7 @@ class McpCatalogTest {
 
         assertThrows(IllegalStateException.class, () -> parse("""
                 {"version":1,"tools":[{"name":"a","description":"See §9.3",
+                 "annotations":{"title":"A","readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false},
                  "input_schema":{"type":"object","additionalProperties":false}}],
                  "prompts":[{"name":"p","description":"public behavior","arguments":[]}]}
                 """));

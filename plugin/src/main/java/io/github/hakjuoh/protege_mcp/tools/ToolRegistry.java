@@ -23,6 +23,7 @@ import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import io.modelcontextprotocol.spec.McpSchema.ToolAnnotations;
 
 /**
  * Collects the {@link SyncToolSpecification}s contributed by the {@link ToolProvider}s during catalog
@@ -63,7 +64,8 @@ public final class ToolRegistry {
         McpCatalog.ToolDefinition definition = McpCatalog.get().tool(name);
         Set<String> required = ToolCapabilityCatalog.required(name);
         return tool(definition.name(), definition.description(), definition.inputSchema(),
-                definition.outputSchema(), definition.errorSchema(), required, handler);
+                definition.outputSchema(), definition.errorSchema(), definition.annotations(),
+                required, handler);
     }
 
     /**
@@ -87,13 +89,21 @@ public final class ToolRegistry {
         }
         return tool(name, description, inputSchema,
                 ToolContractSchemas.legacySuccessSchema(), ToolContractSchemas.errorSchema(),
-                requiredCapabilities, handler);
+                null, requiredCapabilities, handler);
     }
 
     /** Register an extension with explicit typed success and shared error contracts. */
     public ToolRegistry tool(String name, String description, Map<String, Object> inputSchema,
             Map<String, Object> outputSchema, Map<String, Object> errorSchema,
             Set<String> requiredCapabilities,
+            BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
+        return tool(name, description, inputSchema, outputSchema, errorSchema, null,
+                requiredCapabilities, handler);
+    }
+
+    private ToolRegistry tool(String name, String description, Map<String, Object> inputSchema,
+            Map<String, Object> outputSchema, Map<String, Object> errorSchema,
+            ToolAnnotations annotations, Set<String> requiredCapabilities,
             BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
         if (handler == null) {
             // The guard wrapper would otherwise hide a null handler from the SDK builder's
@@ -236,7 +246,8 @@ public final class ToolRegistry {
                         return result;
                     }
                 });
-        specs.add(ToolSpecs.of(name, description, safeInput, safeOutput, safeError, guarded));
+        specs.add(ToolSpecs.of(name, description, safeInput, safeOutput, safeError,
+                annotations, guarded));
         return this;
     }
 

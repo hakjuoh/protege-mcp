@@ -1,6 +1,5 @@
 package io.github.hakjuoh.protege_mcp.chat.codex;
 
-import io.github.hakjuoh.protege_mcp.chat.AssistantSteering;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientPreferences;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientProfile;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientModelCatalog;
@@ -430,16 +429,7 @@ public final class CodexCliProvider implements ChatProvider {
             cmd.add(image.getAbsolutePath());
         }
         cmd.add("--");
-        // codex exec has no --append-system-prompt equivalent, so the write-workflow steering rides
-        // the FIRST message of a new thread; a resumed thread already carries it in its history, and
-        // repeating it there would push the real user message further from the model's attention.
-        // Resumable ids only exist in the in-memory ChatHistory of this Protégé run, and swapping in
-        // a new plugin jar requires a restart that clears them — so every resumed thread was seeded
-        // by this provider and no pre-steering thread can reach the resume branch.
-        boolean newSession = req.sessionId() == null || req.sessionId().isBlank();
-        cmd.add(newSession
-                ? AssistantSteering.SYSTEM_PROMPT + "\n\n" + req.providerPrompt()
-                : req.providerPrompt());
+        cmd.add(req.providerPrompt());
         return cmd;
     }
 

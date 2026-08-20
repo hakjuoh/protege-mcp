@@ -78,7 +78,7 @@ live in the core module under `core/src/main/java/`:
 | `server` | The embedded HTTP MCP server: lifecycle (`McpServerManager`, `McpServerController`), Jetty host (`EmbeddedHttpServer`), auth (`AccessTokenFilter`), and `OntologyAccess` (marshals tool work onto the EDT). |
 | `oauth` | The embedded OAuth authorization server (dynamic client registration, PKCE, consent, token store). |
 | `tools` | The tool implementations. Each `*Tools.java` registers its handlers into the shared `ToolRegistry`; `ToolCatalog` aggregates all providers. |
-| `catalog` | `McpCatalog` — loads and fail-fast-validates the `mcp-catalog.json` resource holding every built-in tool/prompt's name, description, input schema, and prompt arguments. |
+| `catalog` | `McpCatalog` — loads and fail-fast-validates the `mcp-catalog.json` resource holding every built-in tool/prompt's name, standard annotations, description, input schema, and prompt arguments. |
 | `prompts` | The guided MCP prompts. `Prompts.java` registers the templates; `PromptCatalog` aggregates the providers (mirrors the `tools` registry pattern). |
 | `contracts` (core module) | Versioned project/revision/finding/stage/gate records; matching JSON Schemas are packaged under `core/src/main/resources/schema`. |
 | `core` module | Compiles Protégé-free contracts, policy loading, fingerprints, and semantic diff for reuse by adapters; sources under `core/src/main/java/`. |
@@ -92,11 +92,13 @@ The plugin's extension points (views, tabs, preference panels, the editor-kit ho
 
 ## How to add a tool
 
-1. **Declare the metadata.** Add an entry (`name`, `description`, `input_schema`) to the shared
+1. **Declare the metadata.** Add an entry (`name`, `description`, `annotations`, `input_schema`) to the shared
    catalog resource
    [`mcp-catalog.json`](https://github.com/hakjuoh/protege-mcp/blob/main/plugin/src/main/resources/io/github/hakjuoh/protege_mcp/catalog/mcp-catalog.json):
    - `name` — a stable, snake_case tool name.
    - `description` — what it does and when to use it (LLM clients rely on this).
+   - `annotations` — all five standard MCP behavior fields: a non-blank `title` and boolean
+     `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint` values.
    - `input_schema` — a JSON Schema object. The catalog is validated fail-fast (unique names,
      well-formed schemas), and a handler registered under a name with no catalog entry fails server
      assembly with a clear error.

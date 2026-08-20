@@ -10,6 +10,7 @@ import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema.CallToolRequest;
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
+import io.modelcontextprotocol.spec.McpSchema.ToolAnnotations;
 
 /**
  * Factory for {@link SyncToolSpecification}s (a name + JSON-schema {@link Tool} plus its handler).
@@ -27,18 +28,25 @@ public final class ToolSpecs {
     static SyncToolSpecification of(String name, String description, Map<String, Object> inputSchema,
             BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
         return of(name, description, inputSchema, ToolContractSchemas.legacySuccessSchema(),
-                ToolContractSchemas.errorSchema(), handler);
+                ToolContractSchemas.errorSchema(), null, handler);
     }
 
     public static SyncToolSpecification of(String name, String description,
             Map<String, Object> inputSchema, Map<String, Object> outputSchema,
             Map<String, Object> errorSchema,
             BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
+        return of(name, description, inputSchema, outputSchema, errorSchema, null, handler);
+    }
+
+    public static SyncToolSpecification of(String name, String description,
+            Map<String, Object> inputSchema, Map<String, Object> outputSchema,
+            Map<String, Object> errorSchema, ToolAnnotations annotations,
+            BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> handler) {
         if (inputSchema == null) throw new IllegalArgumentException("input schema is required");
         Map<String, Object> input = ImmutableJson.map(inputSchema);
         Map<String, Object> output = ImmutableJson.map(outputSchema);
         Map<String, Object> error = ImmutableJson.map(errorSchema);
-        Tool tool = Tool.builder(name, input).description(description)
+        Tool tool = Tool.builder(name, input).description(description).annotations(annotations)
                 .outputSchema(ToolContractSchemas.wireOutputSchema(output))
                 .meta(Map.of(ToolContractSchemas.SUCCESS_SCHEMA_META_KEY, output,
                         ToolContractSchemas.ERROR_SCHEMA_META_KEY, error))

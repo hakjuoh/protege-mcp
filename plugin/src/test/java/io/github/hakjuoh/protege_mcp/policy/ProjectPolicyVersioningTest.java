@@ -93,9 +93,32 @@ class ProjectPolicyVersioningTest {
     }
 
     @Test
+    void v3WorkspaceDefaultsAndDigestHaveAFixedGolden(@TempDir Path temp) throws Exception {
+        Path policyPath = temp.resolve("v3.yaml");
+        ProjectPolicyFixtures.writePolicy(policyPath,
+                v1("v3").replace("version: 1", "version: 3")
+                        + "workspace:\n"
+                        + "  files: [ontology.ttl]\n"
+                        + "  ontologies:\n"
+                        + "    - iri: https://example.org/ontology\n"
+                        + "      documents: [ontology.ttl]\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, null);
+        ProjectPolicy repeat = ProjectPolicyLoader.load(policyPath, null);
+
+        assertTrue(policy.valid(), () -> policy.issues().toString());
+        assertEquals(3, policy.version());
+        assertEquals("sha256:859bb5d5cbb4428ebbb7d0f3c7d90bd46ea6b5f6825d39d3c289d9af5ef31a11",
+                policy.digest(),
+                "v3 workspace normalization is an immutable contract baseline");
+        assertEquals(policy.digest(), repeat.digest());
+        assertEquals(List.of("ontology.ttl"), object(policy.effective(), "workspace").get("files"));
+    }
+
+    @Test
     void versionDispatchFailsClosedAndV1CannotSmuggleV2Fields(@TempDir Path temp) throws Exception {
         Path future = temp.resolve("future.yaml");
-        Files.writeString(future, v1("future").replace("version: 1", "version: 3"));
+        Files.writeString(future, v1("future").replace("version: 1", "version: 4"));
         ProjectPolicy unsupported = ProjectPolicyLoader.load(future, null);
         assertFalse(unsupported.valid());
         assertTrue(unsupported.issues().stream().anyMatch(
@@ -307,12 +330,13 @@ class ProjectPolicyVersioningTest {
         Path semantic = temp.resolve("semantic-secret.yaml");
         ProjectPolicyFixtures.writePolicy(semantic, v1("semantic-secret").replace(
                 "https://example.org/ontology",
-                "https://user:" + semanticCanary + "@example.org/ontology"));
+                "https://user:" + semanticCanary + "@example.org/ontology")
+                + "reasoning:\n  reasoner: HermiT\n  required: true\n");
         ProjectPolicy semanticRejected = ProjectPolicyLoader.load(semantic, null,
-                "https://example.org/active", null);
+                "https://example.org/active", List.of());
         assertFalse(semanticRejected.valid());
         assertTrue(semanticRejected.issues().stream().anyMatch(
-                issue -> "root_ontology_mismatch".equals(issue.code())));
+                issue -> "reasoner_unavailable".equals(issue.code())));
         assertFalse(semanticRejected.issues().toString().contains(semanticCanary),
                 "semantic diagnostics must redact URL userinfo too");
         assertTrue(semanticRejected.issues().stream()

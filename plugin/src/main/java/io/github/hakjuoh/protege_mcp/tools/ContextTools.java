@@ -97,6 +97,9 @@ public final class ContextTools {
         active.put("ontology_iri", id.getOntologyIRI().isPresent() ? id.getOntologyIRI().get().toString() : null);
         active.put("version_iri", id.getVersionIRI().isPresent() ? id.getVersionIRI().get().toString() : null);
         active.put("anonymous", id.isAnonymous());
+        java.io.File docFile = SidecarPaths.toFile(mm.getOWLOntologyManager().getOntologyDocumentIRI(o));
+        active.put("document_path", docFile != null ? docFile.getAbsolutePath() : null);
+        active.put("saved_to_disk", docFile != null && docFile.exists());
 
         Map<String, Object> counts = new LinkedHashMap<>();
         counts.put("axioms", o.getAxiomCount());

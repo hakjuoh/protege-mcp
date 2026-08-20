@@ -410,11 +410,46 @@ class ProjectPolicyLoaderTest {
         ProjectPolicy curieResult = ProjectPolicyLoader.load(curie, null);
         assertCode(curieResult, "prefix_unknown");
 
-        Path mismatch = temp.resolve("mismatch.yaml");
-        write(mismatch, minimal("example"));
-        ProjectPolicy mismatchResult = ProjectPolicyLoader.load(mismatch, null,
+        Path differentActive = temp.resolve("different-active.yaml");
+        write(differentActive, minimal("example"));
+        ProjectPolicy mismatchResult = ProjectPolicyLoader.load(differentActive, null,
                 "https://example.org/another", List.of());
-        assertCode(mismatchResult, "root_ontology_mismatch");
+        assertTrue(mismatchResult.issues().stream().noneMatch(
+                issue -> "root_ontology_mismatch".equals(issue.code())),
+                "active modules and imports share the project policy without changing its validity");
+    }
+
+    @Test
+    void ontologyDocumentsMustAlsoBePhysicalWorkspaceMembers(@TempDir Path temp)
+            throws Exception {
+        Files.writeString(temp.resolve("ontology.ttl"), "");
+        Path policyPath = temp.resolve("project.yaml");
+        write(policyPath, minimal("workspace-membership").replace("version: 1", "version: 3")
+                + "workspace:\n"
+                + "  files: []\n"
+                + "  ontologies:\n"
+                + "    - iri: https://example.org/ontology\n"
+                + "      documents: [ontology.ttl]\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, temp.resolve("ontology.ttl"));
+        assertFalse(policy.valid());
+        assertCode(policy, "workspace_document_not_member");
+    }
+
+    @Test
+    void ontologyIriHasOneCanonicalWorkspaceBinding(@TempDir Path temp) throws Exception {
+        Files.writeString(temp.resolve("ontology.ttl"), "");
+        Path policyPath = temp.resolve("project.yaml");
+        write(policyPath, minimal("workspace-binding").replace("version: 1", "version: 3")
+                + "workspace:\n"
+                + "  files: [ontology.ttl]\n"
+                + "  ontologies:\n"
+                + "    - {iri: https://example.org/ontology, documents: [ontology.ttl]}\n"
+                + "    - {iri: https://example.org/ontology, documents: [ontology.ttl]}\n");
+
+        ProjectPolicy policy = ProjectPolicyLoader.load(policyPath, temp.resolve("ontology.ttl"));
+        assertFalse(policy.valid());
+        assertCode(policy, "workspace_ontology_duplicate");
     }
 
     @Test

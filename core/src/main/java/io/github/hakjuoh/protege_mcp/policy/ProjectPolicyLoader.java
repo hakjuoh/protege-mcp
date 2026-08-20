@@ -72,10 +72,12 @@ public final class ProjectPolicyLoader {
     private static final ObjectMapper YAML = yamlMapper();
     private static final Map<String, Object> SCHEMA_V1 = loadSchema(1);
     private static final Map<String, Object> SCHEMA_V2 = loadSchema(2);
+    private static final Map<String, Object> SCHEMA_V3 = loadSchema(3);
     private static final SchemaRegistry SCHEMA_REGISTRY =
             SchemaRegistry.withDialect(Dialects.getDraft202012());
     private static final Schema VALIDATOR_V1 = compiledSchema(SCHEMA_V1);
     private static final Schema VALIDATOR_V2 = compiledSchema(SCHEMA_V2);
+    private static final Schema VALIDATOR_V3 = compiledSchema(SCHEMA_V3);
 
     private ProjectPolicyLoader() {
     }
@@ -377,14 +379,15 @@ public final class ProjectPolicyLoader {
         Integer version = policyVersion(parsed);
         if (version == null) {
             issues.add(error("schema_invalid", "version",
-                    "Policy version must be the integer 1 or 2."));
+                    "Policy version must be the integer 1, 2, or 3."));
             return result(discovery.kind, path, discovery.trustedRoot, null,
                     Collections.emptyMap(),
                     Collections.emptyMap(), issues);
         }
-        if (version != 1 && version != 2) {
+        if (version != 1 && version != 2 && version != 3) {
             issues.add(error("unsupported_policy_version", "version",
-                    "Unsupported project policy version " + version + "; supported versions are 1 and 2."));
+                    "Unsupported project policy version " + version
+                            + "; supported versions are 1, 2, and 3."));
             return result(discovery.kind, path, discovery.trustedRoot, null,
                     Collections.emptyMap(),
                     Collections.emptyMap(), issues);
@@ -396,15 +399,20 @@ public final class ProjectPolicyLoader {
             return result(discovery.kind, path, discovery.trustedRoot, null,
                     Collections.emptyMap(), Collections.emptyMap(), issues);
         }
-        if (version == 2 && exceedsStructureBudget(parsed, MAX_POLICY_NODES)) {
+        if (version >= 2 && exceedsStructureBudget(parsed, MAX_POLICY_NODES)) {
             issues.add(error("policy_structure_too_large", null,
-                    "Policy v2 structure exceeds the maximum of " + MAX_POLICY_NODES
+                    "Policy v" + version + " structure exceeds the maximum of " + MAX_POLICY_NODES
                             + " parsed nodes."));
             return result(discovery.kind, path, discovery.trustedRoot, null,
                     Collections.emptyMap(), Collections.emptyMap(), issues);
         }
 
-        if (!schemaValid(version == 1 ? VALIDATOR_V1 : VALIDATOR_V2, parsed)) {
+        Schema validator = switch (version) {
+            case 1 -> VALIDATOR_V1;
+            case 2 -> VALIDATOR_V2;
+            default -> VALIDATOR_V3;
+        };
+        if (!schemaValid(validator, parsed)) {
             issues.add(error("schema_invalid", null,
                     "Policy does not conform to project-policy v" + version + " schema."));
             return result(discovery.kind, path, discovery.trustedRoot, null,
@@ -598,27 +606,68 @@ public final class ProjectPolicyLoader {
         boolean allowExternal = authoredAllowExternal && !forbidExternalPaths;
         AssetScanBudget assetBudget = new AssetScanBudget();
 
-        String rootIri = string(policy, "root_ontology");
-        if (activeOntologyIri != null && !activeOntologyIri.equals(rootIri)) {
-            issues.add(error("root_ontology_mismatch", "root_ontology", "Policy root_ontology " + rootIri
-                    + " does not match the active ontology IRI " + activeOntologyIri + "."));
-        }
+        // A policy governs the project rooted beside .protege-mcp, not whichever ontology happens
+        // to be active in Protege.  root_ontology remains the legacy interoperability entry point;
+        // switching to a project module or imported ontology must not invalidate the project.
 
         validateRegex(policy, issues);
         validateTermReferences(policy, issues);
         Path interopManifest = validateInteroperabilityAssets(policy, projectRoot, assets, issues);
         validateModules(policy, projectRoot, allowExternal, assets, issues);
+        if (policy.get("version") instanceof Number version && version.intValue() >= 3) {
+            validateWorkspace(policy, projectRoot, assets, issues);
+        }
         validateReasoner(policy, installedReasoners, issues);
         validateImports(policy, projectRoot, allowExternal, assets, issues);
         validateValidationAssets(policy, projectRoot, allowExternal, assets, issues, assetBudget);
         validateReleasePath(policy, projectRoot, allowExternal, assets, issues);
-        if (Integer.valueOf(2).equals(policyVersion(policy))) {
+        Integer policyVersion = policyVersion(policy);
+        if (policyVersion != null && policyVersion >= 2) {
             validateV2(policy, policyPath, projectRoot, assets, issues);
         }
         if (interopManifest != null) {
             RoCrateProjectManifest.inspect(interopManifest, policy, issues,
                     inferRoCrateVersion);
         }
+    }
+
+    private static void validateWorkspace(Map<String, Object> policy, Path projectRoot,
+            Map<String, List<Path>> assets, List<PolicyIssue> issues) {
+        if (!(policy.get("workspace") instanceof Map<?, ?>)) return;
+        Map<String, Object> workspace = object(policy, "workspace");
+        List<Path> files = new ArrayList<>();
+        int index = 0;
+        for (String configured : strings(workspace.get("files"))) {
+            Path resolved = resolveAsset(configured, projectRoot, false, true,
+                    "workspace.files[" + index++ + "]", issues);
+            if (resolved != null && requireRegularFile(resolved,
+                    "workspace.files[" + (index - 1) + "]", issues)) files.add(resolved);
+        }
+        Set<Path> declared = new LinkedHashSet<>(files);
+        Set<String> ontologyIris = new LinkedHashSet<>();
+        int ontologyIndex = 0;
+        for (Map<String, Object> ontology : objects(workspace.get("ontologies"))) {
+            String ontologyIri = string(ontology, "iri");
+            if (!ontologyIris.add(ontologyIri)) {
+                issues.add(error("workspace_ontology_duplicate",
+                        "workspace.ontologies[" + ontologyIndex + "].iri",
+                        "Each ontology IRI must have exactly one workspace binding row: "
+                                + ontologyIri));
+            }
+            int documentIndex = 0;
+            for (String configured : strings(ontology.get("documents"))) {
+                String field = "workspace.ontologies[" + ontologyIndex + "].documents["
+                        + documentIndex++ + "]";
+                Path resolved = resolveAsset(configured, projectRoot, false, true, field, issues);
+                if (resolved != null && requireRegularFile(resolved, field, issues)
+                        && !declared.contains(resolved)) {
+                    issues.add(error("workspace_document_not_member", field,
+                            "Ontology documents must also be listed in workspace.files: " + configured));
+                }
+            }
+            ontologyIndex++;
+        }
+        if (!files.isEmpty()) assets.put("workspace_files", List.copyOf(files));
     }
 
     private static Path validateInteroperabilityAssets(Map<String, Object> policy, Path projectRoot,

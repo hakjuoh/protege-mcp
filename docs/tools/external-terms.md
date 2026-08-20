@@ -8,7 +8,7 @@ nav_order: 12
 {: .no_toc }
 
 Discover external terminology evidence, create immutable reuse proposals, and accept one proposal
-explicitly. Discovery and proposal calls require a valid project policy version 2 with an enabled provider
+explicitly. Discovery and proposal calls require a valid project policy version 2 or later with an enabled provider
 declaration, the matching owner-controlled origin binding, and ontology read, project read, and network
 authority. The narrow capability is `external-terms:read`; the established general `network:access`
 capability implies it for backward compatibility, but the reverse is not true. Acceptance uses the captured
@@ -71,7 +71,7 @@ the first save or provider use it creates the required owner-only state and cach
 `~/.protege-mcp/providers/cache`; cache entries are HMAC-bound to the current owner binding,
 credential generation, canonical project root, and policy digest.
 
-Then enable the same alias in the project's policy v2 file:
+Then enable the same alias in the project's policy v2-or-later file:
 
 ```yaml
 external_terms:

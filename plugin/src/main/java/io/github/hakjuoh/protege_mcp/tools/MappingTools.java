@@ -152,10 +152,10 @@ public final class MappingTools {
     static ProposalState proposalState(ToolContext context, McpSyncServerExchange exchange,
             Map<String, Object> args) {
         Resolved captured = resolve(context, exchange, args, false, false);
-        if (!captured.policy.loaded() || captured.policy.version() != 2
+        if (!captured.policy.loaded() || captured.policy.version() < 2
                 || captured.policy.digest() == null) {
             throw new ToolArgException("provider_policy_required",
-                    "Reuse proposals require a valid project policy version 2.", false);
+                    "Reuse proposals require a valid project policy version 2 or later.", false);
         }
         try {
             SssomMappingStore store = new SssomMappingStore(captured.root, captured.target);
@@ -209,7 +209,7 @@ public final class MappingTools {
                     "reuse action does not contain a mapping operation");
         }
         Resolved resolved = resolveBeforeMutation(context, exchange, args, true, true);
-        if (!resolved.policy.loaded() || resolved.policy.version() != 2
+        if (!resolved.policy.loaded() || resolved.policy.version() < 2
                 || !proposal.inputIdentity().policyDigest().equals(resolved.policy.digest())) {
             throw effectsPrevented(new ToolArgException("proposal_input_changed",
                     "Project policy changed after the reuse proposal was issued.", true));
@@ -269,7 +269,7 @@ public final class MappingTools {
             throw new IllegalArgumentException("proposal and loaded policy are required");
         }
         Resolved current = resolve(context, exchange, args, false, false);
-        if (!current.policy.loaded() || current.policy.version() != 2
+        if (!current.policy.loaded() || current.policy.version() < 2
                 || !loadedPolicy.digest().equals(current.policy.digest())
                 || !canonicalIdentity(loadedPolicy.path()).equals(
                         canonicalIdentity(current.policy.path()))) {
@@ -353,18 +353,18 @@ public final class MappingTools {
         }
         String requested = Tools.optString(args, "path");
         String configured;
-        if (policy.loaded() && policy.version() == 2) {
+        if (policy.loaded() && policy.version() >= 2) {
             Object mappings = policy.effective().get("mappings");
             if (!(mappings instanceof Map<?, ?> map)
                     || !(map.get("path") instanceof String governed)) {
-                throw new ToolArgException("Policy v2 mappings.path is unavailable.");
+                throw new ToolArgException("Policy v2+ mappings.path is unavailable.");
             }
             configured = governed;
             if (requested != null) {
                 Path override = authorizeStorePath(rules, requested, writeStore);
                 Path expected = authorizeStorePath(rules, configured, writeStore);
                 if (!override.equals(expected)) {
-                    throw new ToolArgException("Policy v2 mapping path cannot be overridden.");
+                    throw new ToolArgException("Policy v2+ mapping path cannot be overridden.");
                 }
             }
         } else {

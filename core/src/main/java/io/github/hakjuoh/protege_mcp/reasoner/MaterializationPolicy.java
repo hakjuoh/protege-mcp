@@ -7,16 +7,16 @@ import java.util.Set;
 
 import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
 
-/** Strict version-2 policy gate shared by live and headless materialization adapters. */
+/** Strict version-2-or-later policy gate shared by live and headless materialization adapters. */
 public final class MaterializationPolicy {
     private MaterializationPolicy() {
     }
 
     public static void requireAllowed(ProjectPolicy policy, MaterializationRequest request,
             ReasonerIdentity reasoner) {
-        if (policy == null || !policy.loaded() || !policy.valid() || policy.version() != 2) {
+        if (policy == null || !policy.loaded() || !policy.valid() || policy.version() < 2) {
             throw failure("materialization_policy_required",
-                    "Inference materialization requires a valid version 2 project policy.");
+                    "Inference materialization requires a valid version 2 or later project policy.");
         }
         Map<String, Object> section = object(policy.effective().get("materialization"));
         Set<String> allowedCategories = Set.copyOf(strings(section.get("allowed_categories")));

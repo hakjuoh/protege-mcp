@@ -8,8 +8,9 @@ nav_order: 7
 
 Version 0.8.0 retains valid regular-file v1 normalization and digests byte for byte, and adds an explicitly
 selected policy v2 for external term providers, SSSOM mappings, bounded asynchronous jobs, and inference
-materialization. Rejected-input diagnostics are now bounded, redacted, and fail closed on policy-source
-symlinks. Both versions use the same filesystem, network, module-governance, and isolated-preflight boundaries.
+materialization. Policy v3 adds physical workspace membership and logical ontology/document bindings
+without changing the v2 contract. Rejected-input diagnostics are now bounded, redacted, and fail closed on policy-source
+symlinks. All three versions use the same filesystem, network, module-governance, and isolated-preflight boundaries.
 {: .fs-6 .fw-300 }
 
 For a user-focused setup guide, including a complete crate example and an explanation of the two
@@ -32,11 +33,26 @@ with `version: 2`, or generate a new reviewed scaffold with
 Plugin, headless MCP, and one-shot CLI policy-validation JSON all report `schema_version`; valid v1
 results also carry the same structured `migration` recommendation.
 
+Policy v3 retains every v2 capability and adds the project workspace contract. Generate it with
+`write_project_policy_template version=3`, or use the Project Explorer synchronization action to preview
+and upgrade a v1/v2 policy. The canonical schema is
+[`project-policy-v3.schema.json`](https://github.com/hakjuoh/protege-mcp/blob/main/core/src/main/resources/schema/project-policy-v3.schema.json).
+An interactive upgrade initializes membership from saved ontology documents currently loaded in
+Protégé and ignores documents outside `project_root`; the loader never rewrites a policy by itself.
+
 Policy parsing is fail-closed and bounded. YAML aliases are rejected, authored policy bytes and expanded
-scalar content are capped at 1 MiB, v2 parsed structure is capped at 10,000 nodes, and all configured asset
+scalar content are capped at 1 MiB, v2/v3 parsed structure is capped at 10,000 nodes, and all configured asset
 globs share one cumulative 10,000-entry scan budget. A policy-declared module larger than 64 MiB is rejected
 with `module_document_too_large` before OWLAPI parsing. These pathological-input security limits apply to
-both policy versions without changing the normalization or digest of an ordinary valid v1 policy.
+all policy versions without changing the normalization or digest of an ordinary valid v1 policy.
+
+For focused edits, `write_project_policy` accepts a general `patch` object for every policy section.
+Nested objects merge recursively, arrays and scalars replace, and `null` removes a field. Only affected
+top-level sections are rendered again; unrelated comments, ordering, and bytes are retained. The merged
+candidate must validate before it can replace the existing file, so a rejected patch is non-destructive.
+On a fresh saved project, the same patch call first renders the valid v3 starter and matching RO-Crate
+metadata in memory. This lets a caller add `external_terms.providers` in one operation without a separate
+template call; a rejected combined candidate leaves neither generated file behind.
 
 Start from the example closest to the project:
 
@@ -78,6 +94,14 @@ mapping sidecar may be absent until a confirmed mapping mutation creates it, but
 collide with the policy or another captured project asset. All relative paths remain confined to
 `project_root`.
 
+### Policy v3 workspace
+
+Version 3 retains all v2 fields and adds `workspace`. Its `files` array contains project-relative
+regular files, while `ontologies` independently maps one ontology `iri` to one or more `documents`.
+Every bound document must also be a workspace file, and each ontology IRI has exactly one binding row.
+`root_ontology` and `interoperability.root_artifact` remain release/interoperability entry points—not
+claims that a project contains only one ontology, namespace, or document.
+
 ### Standards interoperability contract
 
 Policy v1 separates the portable layer from the execution overlay:
@@ -115,12 +139,12 @@ or textual IPv6 addresses including the IPv4-mapped forms.
 
 The runtime loader adds checks JSON Schema cannot perform: referenced-file existence, canonical
 project-root containment (including symlink resolution), CURIE prefix resolution, Java-regex compilation,
-duplicate module coordinates, each module file's actual ontology IRI, active/root ontology agreement, and
-installed required-reasoner availability.
+duplicate module coordinates, each module file's actual ontology IRI, v3 workspace bindings, and installed
+required-reasoner availability. Switching the active ontology does not invalidate a project-level policy.
 It rejects duplicate YAML keys, trailing YAML documents, inputs over 1 MiB, policy-source symlinks,
 URL-shaped asset paths, missing glob matches, and assets escaping `project_root` unless the policy
-explicitly enables the local-admin external-path compatibility profile. New v2 policy structures are
-limited to 10,000 nodes and their collection fields use schema-specific bounds. Both versions keep the 1 MiB
+explicitly enables the local-admin external-path compatibility profile. New v2/v3 policy structures are
+limited to 10,000 nodes and their collection fields use schema-specific bounds. All versions keep the 1 MiB
 input boundary, reject YAML aliases, and reject expanded scalar content over 1 MiB; these pathological
 resource limits are the only valid-v1 parsing exception. Public validation output is capped at 128 issues with
 2,048-character diagnostics. Schema-invalid authored content is never returned as the effective policy,

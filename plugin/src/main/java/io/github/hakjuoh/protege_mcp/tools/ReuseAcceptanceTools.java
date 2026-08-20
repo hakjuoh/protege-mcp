@@ -220,7 +220,7 @@ final class ReuseAcceptanceTools {
                             "Reuse proposal changed before mint execution.", false);
                 }
                 ProjectPolicy policy = ChangeSetTools.effectivePolicy(mm, configuredPolicy);
-                if (!policy.loaded() || !policy.valid() || policy.version() != 2
+                if (!policy.loaded() || !policy.valid() || policy.version() < 2
                         || !proposal.inputIdentity().policyDigest().equals(policy.digest())) {
                     throw prevented("proposal_input_changed",
                             "Project policy changed after the reuse proposal was issued.", true);
@@ -315,7 +315,7 @@ final class ReuseAcceptanceTools {
             requireActiveProposal(claim);
             ProjectPolicy policy = ChangeSetTools.effectivePolicy(
                     mm, receipt.configuredPolicyPath());
-            if (!policy.loaded() || !policy.valid() || policy.version() != 2
+            if (!policy.loaded() || !policy.valid() || policy.version() < 2
                     || !proposal.inputIdentity().policyDigest().equals(policy.digest())) {
                 throw prevented("proposal_input_changed",
                         "Project policy changed before mint continuation verification.", true);

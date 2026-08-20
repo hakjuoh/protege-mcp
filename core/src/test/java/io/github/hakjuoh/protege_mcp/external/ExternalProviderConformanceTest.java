@@ -70,6 +70,11 @@ class ExternalProviderConformanceTest {
 
     private static ProviderTransport transport(ProfileCase profile) {
         return request -> {
+            if (!profile.ols4()) {
+                assertFalse(request.query().containsKey("include"),
+                        "OntoPortal rejects obsolete and links in include, while its default "
+                                + "representation supplies the complete reviewed fields");
+            }
             String fixture;
             if (request.relativePath().contains("/terms/")
                     || request.relativePath().contains("/classes/")) {

@@ -8,13 +8,14 @@ permalink: /tools/
 # Tools
 {: .no_toc }
 
-All **104 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
+All **105 tools** the MCP server exposes, grouped by task. Each category page documents every tool with
 its **arguments** and **returns**.
 {: .fs-6 .fw-300 }
 
-Version 0.8.0 adds governed SSSOM mappings, external-term reuse proposals, reasoner/materialization
-controls, and bounded asynchronous jobs to the 85-tool v0.7.2 surface while retaining its deterministic
-preview, impact, release, project-boundary, audit, and isolated-preflight guarantees.
+Version 0.8.1 adds the general `write_project_policy` updater to the 104-tool v0.8.0 surface. The server
+uses the latest Java MCP SDK and MCP 2025-11-25 tool contract: standard boolean annotations classify
+read-only, destructive, idempotent, and open-world behavior, while each tool and input-property
+description carries its exact workflow, argument mapping, and recovery guidance.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -57,7 +58,7 @@ interactive behavior remain compatible.
 | Transactional editing | [`rebase_change_set`](editing.html#rebase_change_set) | Deterministically re-resolve a cached preview at the current revision; a changed resolution fails closed for human review. |
 | Change review | [`analyze_change_impact`](context-validation.html#analyze_change_impact) | Syntactic impact analysis of a cached change set or asserted diff: affected entities and modules, referencing axioms, downstream terms, foreign re-axiomatization, deprecated terms in use, and validation assets naming changed IRIs. |
 | Release | [`run_release_gate`](quality.html#run_release_gate), [`prepare_release`](quality.html#prepare_release) | Run the strict QC gate plus the release-only checks (import provenance, version IRI, verified serialization round trip, fingerprint stability, optional baseline diff) read-only, then produce the manifest, reports, and RO-Crate bundle — dry-run by default, written atomically into the policy output directory on confirmation. |
-| Project policy & QC | [`write_project_policy_template`](quality.html#write_project_policy_template) | Scaffold a commented, schema-valid starter `.protege-mcp/project.yaml` from the active ontology — safe defaults filled in, asset-referencing blocks commented out, with a `validation_hint` for what to complete — to review and commit like source code. |
+| Project policy & QC | [`write_project_policy_template`](quality.html#write_project_policy_template), [`write_project_policy`](quality.html#write_project_policy) | Scaffold an immediately valid commented `.protege-mcp/project.yaml`, replace complete authored YAML, or recursively patch any policy field while preserving unaffected content. |
 
 ## New tools in 0.6.0
 
@@ -80,6 +81,11 @@ contract.
 
 These hold for every tool:
 
+- **MCP-native behavior and guidance.** Every tool publishes complete standard `ToolAnnotations`,
+  defined alongside its description and input schema in the single `mcp-catalog.json` source of truth.
+  Because those fields are boolean hints rather than procedural instructions, sequencing, exact argument
+  names, non-invention rules, and failure recovery live in the model-visible tool description and the
+  descriptions of the relevant input-schema properties.
 - **Structured JSON output.** Every tool returns a structured JSON object, delivered as MCP
   `structuredContent` and mirrored as a JSON text block — so every client, and a human reading the
   transcript, see the same result.
@@ -122,7 +128,7 @@ The top-level [Prompts](../prompts/) guide packages these flows for one-click us
 `validate_governance` · `diff_ontologies` · `semantic_diff` · `analyze_change_impact`
 
 ### [Safe authoring & QC](quality.html)
-`get_project_policy` · `validate_project_policy` · `run_project_qc` · `write_project_policy_template` ·
+`get_project_policy` · `validate_project_policy` · `run_project_qc` · `write_project_policy_template` · `write_project_policy` ·
 `run_release_gate` · `prepare_release` · `export_audit_log` · `verify_ontology` · `run_qc_suite` · `shacl_validate` · `add_competency_question` ·
 `list_competency_questions` · `remove_competency_question` · `run_competency_questions` *(plus
 `apply_changes verify=` and `search_entities` grounding — see their category pages)*

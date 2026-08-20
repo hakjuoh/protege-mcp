@@ -1,6 +1,5 @@
 package io.github.hakjuoh.protege_mcp.chat.codex;
 
-import io.github.hakjuoh.protege_mcp.chat.AssistantSteering;
 import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
 import io.github.hakjuoh.protege_mcp.chat.ChatRequest;
 import io.github.hakjuoh.protege_mcp.chat.CliSupport;
@@ -42,8 +41,7 @@ class CodexCliProviderTest {
         assertTrue(cmd.contains("mcp_servers.protege.default_tools_approval_mode=\"approve\""));
 
         assertEquals("--", cmd.get(cmd.size() - 2));
-        assertEquals(AssistantSteering.SYSTEM_PROMPT + "\n\nhi there", cmd.get(cmd.size() - 1),
-                "a new thread's first message leads with the write-workflow steering");
+        assertEquals("hi there", cmd.get(cmd.size() - 1));
     }
 
     @Test
@@ -57,27 +55,21 @@ class CodexCliProviderTest {
     }
 
     @Test
-    void resumedThreadDoesNotRepeatTheSteeringPreamble() {
-        // The preamble is already in the resumed thread's history; repeating it every turn would
-        // push the actual user message further from the model's attention.
+    void resumedThreadSendsOnlyTheProviderPrompt() {
         List<String> cmd = CodexCliProvider.buildCommand("codex",
                 new ChatRequest("", "again", "thread-7", ENDPOINT));
         assertEquals("again", cmd.get(cmd.size() - 1));
     }
 
     @Test
-    void newSessionSteeringPrecedesHandoffContextAndAttachments(@TempDir Path dir) throws Exception {
-        // Steering is developer policy: it must lead the first message, ahead of the handoff
-        // recap and the attachment appendix that providerPrompt() builds.
+    void newSessionPreservesHandoffContextAndAttachments(@TempDir Path dir) throws Exception {
         Path doc = Files.writeString(dir.resolve("notes.txt"), "x");
         ChatRequest req = new ChatRequest("", "see [File #1: notes.txt]", "", ENDPOINT,
                 List.of(ChatAttachment.file("File #1: notes.txt", doc.toFile(), null)),
                 false, "Earlier turns: ...");
         List<String> cmd = CodexCliProvider.buildCommand("codex", req);
         String prompt = cmd.get(cmd.size() - 1);
-        assertTrue(prompt.startsWith(AssistantSteering.SYSTEM_PROMPT + "\n\n"),
-                "steering must lead the first message");
-        assertEquals(AssistantSteering.SYSTEM_PROMPT + "\n\n" + req.providerPrompt(), prompt,
+        assertEquals(req.providerPrompt(), prompt,
                 "the provider prompt (handoff + message + attachments) must survive unchanged");
     }
 
@@ -583,8 +575,7 @@ class CodexCliProviderTest {
         List<String> cmd = CodexCliProvider.buildCommand("codex", req);
 
         assertAdjacent(cmd, "--image", image.toFile().getAbsolutePath());
-        assertEquals(AssistantSteering.SYSTEM_PROMPT + "\n\n" + req.providerPrompt(),
-                cmd.get(cmd.size() - 1));
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));
     }
 
     @Test
@@ -596,8 +587,7 @@ class CodexCliProviderTest {
         List<String> cmd = CodexCliProvider.buildCommand("codex", req);
 
         assertFalse(cmd.contains("--image"), "a plain file must not be passed via --image");
-        assertEquals(AssistantSteering.SYSTEM_PROMPT + "\n\n" + req.providerPrompt(),
-                cmd.get(cmd.size() - 1));
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));
     }
 
     private static void assertAdjacent(List<String> cmd, String flag, String value) {

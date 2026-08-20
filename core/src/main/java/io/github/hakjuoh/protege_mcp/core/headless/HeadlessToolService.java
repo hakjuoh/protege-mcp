@@ -414,7 +414,7 @@ public final class HeadlessToolService {
                     || !java.util.Objects.equals(captured.digest(), current.digest())
                     || current.projectRoot() == null
                     || !captured.projectRoot().toRealPath().equals(current.projectRoot().toRealPath());
-            if (!changed && current.version() == 2) {
+            if (!changed && current.version() >= 2) {
                 changed = !target.equals(mappingStorePath(current, Map.of(), current.projectRoot()));
             }
             if (changed) {
@@ -426,7 +426,7 @@ public final class HeadlessToolService {
     private static Path mappingStorePath(ProjectPolicy policy, Map<String, Object> args, Path root)
             throws IOException {
         String explicit = string(args, "path");
-        if (policy.version() == 2) {
+        if (policy.version() >= 2) {
             Object mappings = policy.effective().get("mappings");
             if (!(mappings instanceof Map<?, ?> map) || !(map.get("path") instanceof String configured)) {
                 throw new IllegalArgumentException("policy v2 mappings.path is unavailable");

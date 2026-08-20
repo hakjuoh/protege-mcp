@@ -29,16 +29,30 @@ public final class ExternalTermToolSchemas {
             return object(properties,
                     List.of("proposal_id", "proposal_fingerprint", "confirm"));
         }
-        properties.put("provider_id", identifier());
-        properties.put("policy_path", string(1, 4096));
+        properties.put("provider_id", described(identifier(),
+                "Exact enabled external_terms.providers[].id from project policy. This tool input "
+                + "is named provider_id, but the policy row field is id (not provider_id). If the "
+                + "provider is absent, call get_project_policy, then write_project_policy once with "
+                + "a patch containing the complete replacement providers array, and validate once; "
+                + "do not infer endpoints, credentials, or provider configuration from local files."));
+        properties.put("policy_path", described(string(1, 4096),
+                "Optional explicit project policy path. Normally omit it so project policy is "
+                + "discovered from the active ontology."));
         properties.put("network", Map.of("type", "string",
                 "enum", List.of("deny", "allow")));
         if ("search_external_terms".equals(name)) {
-            properties.put("query", string(1, 512));
-            properties.put("ontologies", array(identifier(), 16));
-            properties.put("language", language());
-            properties.put("limit", integer(1, 100));
-            properties.put("cursor", string(1, 512));
+            properties.put("query", described(string(1, 512),
+                    "Literal search text to send to the declared provider; never substitute a "
+                    + "locally inferred term."));
+            properties.put("ontologies", described(array(identifier(), 16),
+                    "Optional provider ontology IDs. Omit to use the provider's configured scope."));
+            properties.put("language", described(language(),
+                    "Optional BCP 47 language preference supported by the provider."));
+            properties.put("limit", described(integer(1, 100),
+                    "Maximum results requested from this provider call (1-100)."));
+            properties.put("cursor", described(string(1, 512),
+                    "Opaque next_cursor from an earlier result. When present, send cursor alone; "
+                    + "do not repeat provider_id, query, ontologies, language, or limit."));
             Map<String, Object> schema = new LinkedHashMap<>(object(properties, List.of()));
             schema.put("oneOf", List.of(
                     mode(properties, List.of("provider_id", "query"), "cursor"),
@@ -443,6 +457,13 @@ public final class ExternalTermToolSchemas {
 
     private static Map<String, Object> integer(long minimum, long maximum) {
         return Map.of("type", "integer", "minimum", minimum, "maximum", maximum);
+    }
+
+    private static Map<String, Object> described(Map<String, Object> schema,
+            String description) {
+        Map<String, Object> described = new LinkedHashMap<>(schema);
+        described.put("description", description);
+        return Map.copyOf(described);
     }
 
     private static Map<String, Object> mode(Map<String, Object> properties,

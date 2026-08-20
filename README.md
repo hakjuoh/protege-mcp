@@ -16,9 +16,9 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 | [Installation](https://hakjuoh.github.io/protege-mcp/installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
 | [Connecting a client](https://hakjuoh.github.io/protege-mcp/connect/) | The server model (ports, OAuth vs. token) + Claude Code, Codex CLI, VS Code, Claude Desktop recipes. |
 | [Ontology Assistant](https://hakjuoh.github.io/protege-mcp/ontology-assistant.html) | The in-Protégé chat: what it is, attachments, privacy, settings. |
-| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 104 tools by category. |
+| [Tools](https://hakjuoh.github.io/protege-mcp/tools/) | All 105 tools by category. |
 | [Prompts](https://hakjuoh.github.io/protege-mcp/prompts/) | The 11 guided workflows available to MCP clients. |
-| [Project policy & QC](https://hakjuoh.github.io/protege-mcp/project-policy.html) | Policy v1 discovery/validation, fingerprints, persisted QC assets, examples, and strict gate semantics. |
+| [Project policy & QC](https://hakjuoh.github.io/protege-mcp/project-policy.html) | Policy v1/v2/v3 discovery and validation, workspace membership, fingerprints, persisted QC assets, examples, and strict gate semantics. |
 | [RO-Crate & RDFC](https://hakjuoh.github.io/protege-mcp/interoperability/) | Package portable project metadata and produce a canonical RDF dataset identity. |
 | [Commercial platforms](https://hakjuoh.github.io/protege-mcp/commercial-platforms.html) | The supported exchange boundary, product-specific caveats, and requirements for future connectors. |
 | [Contributing](https://hakjuoh.github.io/protege-mcp/contributing.html) | Build from source, run the tests, and add a tool. |
@@ -28,7 +28,7 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 
 ## Highlights
 
-- **104 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
+- **105 structured tools + 11 guided prompts** over the live, active ontology — explore, edit, curate,
   govern, extract modules, run SWRL rules, SPARQL and SHACL, and reason.
 - **0.8.0 release capabilities** — governed SSSOM mappings, external-term reuse proposals, exact reasoner
   capability reports, preview-first inference materialization, and bounded asynchronous jobs.
@@ -36,7 +36,7 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
   with request-scoped filesystem capabilities, policy network/import controls block unapproved fetches,
   locked-import checksums are automatic gates, and verified rollback rejects a failing delta before it
   reaches the live ontology.
-- **Least-privilege OAuth** — all 104 tools declare and enforce ontology, release, filesystem, network,
+- **Least-privilege OAuth** — all 105 tools declare and enforce ontology, release, filesystem, network,
   and server capabilities from the propagated principal. Explicit `read` grants cannot mutate, release,
   or open caller-selected files; existing `mcp` grants and the static token retain the documented local-admin
   compatibility profile.

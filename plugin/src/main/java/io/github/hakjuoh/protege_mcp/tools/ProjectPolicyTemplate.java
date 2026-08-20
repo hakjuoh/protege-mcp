@@ -13,10 +13,10 @@ import java.util.Locale;
  * root_ontology, interoperability) are populated from the live ontology and whose OPTIONAL blocks are
  * either populated with safe, asset-free defaults (filesystem/audit/network/imports/reasoning/validation) or
  * commented out with guidance (prefixes, modules, annotations, iri_policy, lifecycle, the
- * asset-referencing validation stages, and release). The generated file references two files the user
- * must still create — the {@code root_artifact} and the RO-Crate metadata — so the bare template does
- * not validate on its own; {@link #validationHint(Template)} lists exactly what remains. Once those two
- * files exist, the emitted policy loads valid through {@code ProjectPolicyLoader}.
+ * asset-referencing validation stages, and release). The writing tool supplies the active ontology's
+ * existing project-relative document path as {@code root_artifact}, creates a matching RO-Crate
+ * metadata file when needed, and chooses a uniquely installed reasoner (or omits that optional stage),
+ * so the emitted policy validates immediately.
  *
  * <p>No Protégé types here: the caller captures the ontology IRI/document on the model thread and this
  * class renders off it.
@@ -73,50 +73,59 @@ final class ProjectPolicyTemplate {
     }
 
     static Template render(String profile, String projectId, String rootOntologyIri) {
-        return render(profile, projectId, rootOntologyIri, 1);
+        return render(profile, projectId, rootOntologyIri, 3);
     }
 
     static Template render(String profile, String projectId, String rootOntologyIri, int version) {
-        if (version != 1 && version != 2) {
-            throw new IllegalArgumentException("policy template version must be 1 or 2");
+        return render(profile, projectId, rootOntologyIri, version,
+                OBO.equals(profile) ? "ontology-edit.owl" : "ontology.ttl", "HermiT");
+    }
+
+    static Template render(String profile, String projectId, String rootOntologyIri, int version,
+            String rootArtifact, String reasoner) {
+        if (version < 1 || version > 3) {
+            throw new IllegalArgumentException("policy template version must be 1, 2, or 3");
         }
         boolean placeholder = rootOntologyIri == null;
         String rootOntology = placeholder ? PLACEHOLDER_IRI : rootOntologyIri;
         boolean obo = OBO.equals(profile);
-        String rootArtifact = obo ? "ontology-edit.owl" : "ontology.ttl";
-        String reasoner = "HermiT";
         String owlProfile = obo ? "EL" : "DL";
         String yaml = header(version)
                 + required(version, yamlScalar(projectId), yamlScalar(rootOntology), rootArtifact,
                         reasoner, owlProfile)
-                + validationBlock()
-                + (version == 2 ? v2Blocks() : "")
+                + workspaceBlock(version, yamlScalar(rootOntology), rootArtifact, placeholder)
+                + validationBlock(reasoner != null)
+                + (version >= 2 ? v2Blocks() : "")
                 + optionalBlocks(obo, rootOntology);
         return new Template(yaml, projectId, rootOntology, rootArtifact,
                 "ro-crate-metadata.json", reasoner, placeholder, profile, version);
     }
 
-    /** What the user must still create/edit before the generated policy validates. */
+    /** Review guidance for optional capabilities after the generated policy validates. */
     static List<String> validationHint(Template t) {
         List<String> hint = new ArrayList<>();
-        hint.add("Create the root artifact '" + t.rootArtifact() + "' by serializing your ontology to "
-                + "that project-relative path (save_ontology with policy_bootstrap=true — the "
-                + "explicit-path save stays authorized inside the project root while this policy "
-                + "is still invalid).");
-        hint.add("Create the RO-Crate metadata file '" + t.metadataPath() + "' — an ro-crate-1.1 crate "
-                + "whose root dataset references '" + t.rootArtifact() + "'.");
         if (t.rootOntologyPlaceholder()) {
-            hint.add("Set root_ontology to your ontology's IRI; it is currently the placeholder '"
-                    + t.rootOntology() + "' because the active ontology is anonymous.");
+            hint.add("Set root_ontology to the project's release/interoperability entry-point IRI; "
+                    + "it is currently the placeholder '" + t.rootOntology()
+                    + "' because the ontology used to create the starter is anonymous.");
+            if (t.version() >= 3) {
+                hint.add("After assigning the anonymous ontology its real IRI, add one matching "
+                        + "workspace.ontologies binding for its project document.");
+            }
         }
-        hint.add("Confirm reasoning.reasoner names a reasoner installed in Protégé (currently '"
-                + t.reasoner() + "'; a version-less name is resolved against the installed "
-                + "reasoners and must match exactly one).");
+        if (t.reasoner() != null) {
+            hint.add("The reasoner stage uses the uniquely installed reasoner '" + t.reasoner()
+                    + "'. Review that choice if project QC should use a different reasoner.");
+        } else {
+            hint.add("No uniquely selectable reasoner was installed, so the optional reasoner QC "
+                    + "stage was omitted. Add it after installing and selecting a reasoner.");
+        }
         hint.add("Uncomment and edit any optional blocks you need (prefixes, modules, entity_search, "
                 + "annotations, iri_policy, lifecycle, validation invariants/shacl/competency_questions, "
                 + "the imports lockfile, release) and create the files they reference.");
-        if (t.version() == 2) {
-            hint.add("Review the version 2 external_terms, mappings, jobs, and materialization bounds. "
+        if (t.version() >= 2) {
+            hint.add("Review the version " + t.version()
+                    + " external_terms, mappings, jobs, and materialization bounds. "
                     + "Provider origin aliases and credential bindings must be configured owner-locally; "
                     + "never put endpoint URLs or secret values in this policy.");
         }
@@ -151,7 +160,8 @@ final class ProjectPolicyTemplate {
                 # A stable identifier for this ontology project (any non-empty string).
                 project_id: %PROJECT_ID%
 
-                # The ontology IRI this project governs. It MUST equal your ontology's IRI.
+                # Release/interoperability entry point retained across Policy v1-v3. It seeds whole-project operations
+                # but does not restrict which project or external ontology can be active in Protégé.
                 root_ontology: %ROOT_ONTOLOGY%
 
                 # The project base directory, relative to the discovery anchor. For the conventional
@@ -159,9 +169,9 @@ final class ProjectPolicyTemplate {
                 # so your ontology and sources sit beside that directory rather than inside it.
                 project_root: .
 
-                # Standard interoperability contract (required). root_artifact and the RO-Crate metadata
-                # are files you must create in the project (see the validation hint returned with this
-                # template). RO-Crate 1.1 is the broad-compatibility default.
+                # Standard interoperability contract (required). root_artifact is the active ontology
+                # document and the template writer creates RO-Crate metadata for it when missing.
+                # RO-Crate 1.1 is the broad-compatibility default.
                 interoperability:
                   profile: %PROFILE_IRI%
                   additional_profiles: []
@@ -198,8 +208,52 @@ final class ProjectPolicyTemplate {
                   network: deny
                   # lockfile: imports.lock.json
 
-                # The reasoner used for reproducible QC. A version-less name (the convention) must
-                # resolve to exactly ONE installed reasoner; a full display name pins that version.
+                """)
+                .replace("%VERSION%", Integer.toString(version))
+                .replace("%PROJECT_ID%", projectId)
+                .replace("%ROOT_ONTOLOGY%", rootOntology)
+                .replace("%PROFILE_IRI%", ProjectInteroperability.PROFILE_IRI)
+                .replace("%ROOT_ARTIFACT%", yamlScalar(rootArtifact))
+                + reasonerBlock(reasoner, owlProfile);
+    }
+
+    private static String workspaceBlock(int version, String rootOntology, String rootArtifact,
+            boolean placeholderOntology) {
+        if (version < 3) return "";
+        if (placeholderOntology) {
+            return ("""
+                    # Physical project membership is known, but this anonymous ontology has no logical
+                    # IRI binding yet. Add one workspace.ontologies row after assigning its real IRI.
+                    workspace:
+                      files: [%ROOT_ARTIFACT%]
+
+                    """).replace("%ROOT_ARTIFACT%", yamlScalar(rootArtifact));
+        }
+        return ("""
+                # Physical project membership and logical ontology/document bindings are independent.
+                # One ontology IRI may have multiple project documents, but has one binding row.
+                workspace:
+                  files: [%ROOT_ARTIFACT%]
+                  ontologies:
+                    - iri: %ROOT_ONTOLOGY%
+                      documents: [%ROOT_ARTIFACT%]
+
+                """)
+                .replace("%ROOT_ONTOLOGY%", rootOntology)
+                .replace("%ROOT_ARTIFACT%", yamlScalar(rootArtifact));
+    }
+
+    private static String reasonerBlock(String reasoner, String owlProfile) {
+        if (reasoner == null) {
+            return """
+                    # No uniquely selectable reasoner was available when this template was generated.
+                    # Add a reasoning block and the reasoner validation stage after installing one.
+
+                    """;
+        }
+        return ("""
+                # The reasoner used for reproducible QC. The exact installed display name avoids an
+                # ambiguous version-less match when multiple reasoner plugins are installed.
                 reasoning:
                   reasoner: %REASONER%
                   owl_profile: %OWL_PROFILE%
@@ -207,12 +261,7 @@ final class ProjectPolicyTemplate {
                   timeout_ms: 120000
 
                 """)
-                .replace("%VERSION%", Integer.toString(version))
-                .replace("%PROJECT_ID%", projectId)
-                .replace("%ROOT_ONTOLOGY%", rootOntology)
-                .replace("%PROFILE_IRI%", ProjectInteroperability.PROFILE_IRI)
-                .replace("%ROOT_ARTIFACT%", rootArtifact)
-                .replace("%REASONER%", reasoner)
+                .replace("%REASONER%", yamlScalar(reasoner))
                 .replace("%OWL_PROFILE%", owlProfile);
     }
 
@@ -261,13 +310,13 @@ final class ProjectPolicyTemplate {
                 """;
     }
 
-    private static String validationBlock() {
-        return """
+    private static String validationBlock(boolean includeReasoner) {
+        return ("""
                 # QC stages that must run and the severity that fails the gate. Add invariants, cqs, or
                 # shacl to required_stages only after you configure (and create files for) the matching
                 # commented sub-blocks.
                 validation:
-                  required_stages: [interoperability, reasoner, profile, governance, structural]
+                  required_stages: [%REQUIRED_STAGES%]
                   fail_on: warning
                   structural:
                     disabled: []
@@ -280,7 +329,9 @@ final class ProjectPolicyTemplate {
                   #   convention: robot-sparql-dir
                   #   path: cqs
 
-                """;
+                """).replace("%REQUIRED_STAGES%", includeReasoner
+                        ? "interoperability, reasoner, profile, governance, structural"
+                        : "interoperability, profile, governance, structural");
     }
 
     private static String optionalBlocks(boolean obo, String rootOntology) {

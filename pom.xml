@@ -18,7 +18,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <!-- Java 17 is required: the MCP SDK 2.0.0 public types (Tool, CallToolRequest,
+        <!-- Java 17 is required: the MCP SDK 2.0.1 public types (Tool, CallToolRequest,
              SyncToolSpecification, ...) are records, so referencing them needs java.lang.Record
              (Java 16+) on the compile bootclasspath; the embedded MCP/Jetty bytecode is Java 17;
              and the plugin's OSGi manifest carries Require-Capability osgi.ee=JavaSE 17. Protege must
@@ -41,15 +41,15 @@
         <guava.version>18.0</guava.version>
         <slf4j.version>1.7.36</slf4j.version>
 
-        <!-- embedded MCP stack (versions exactly as resolved by the MCP 2.0.0 dependency tree).
+        <!-- Embedded MCP stack (versions aligned with the latest MCP 2.0.1 dependency tree).
              snakeyaml/reactivestreams/itu arrive transitively; their properties here are
              documentation-only pins of the embedded stack. -->
-        <mcp.version>2.0.0</mcp.version>
-        <jackson.version>2.20.1</jackson.version>
+        <mcp.version>2.0.1</mcp.version>
+        <jackson.version>2.21.1</jackson.version>
         <snakeyaml.version>2.4</snakeyaml.version>
         <reactor.version>3.7.0</reactor.version>
         <reactivestreams.version>1.0.4</reactivestreams.version>
-        <jsv.version>2.0.0</jsv.version>
+        <jsv.version>2.0.4</jsv.version>
         <itu.version>1.14.0</itu.version>
 
         <!-- embedded Jakarta-Servlet-6 host -->

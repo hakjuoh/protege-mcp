@@ -24,6 +24,38 @@ each section is also published as the body of its
 ## [0.8.1] - 2026-07-28
 
 ### Changed
+- Fixed the packaged OSGi manifest so Protégé/Felix can install the 0.8.1 bundle. Exact
+  signature-only Protégé imports now precede wildcard imports, preventing duplicate package clauses;
+  every `mvn package` now installs the produced jar into an isolated Felix 7.0.5 framework as a
+  release gate.
+- Aligned the Project Explorer tree with the chat transcript and moved its title plus compact
+  Policy/Create/Sync/Close icons into the shared top row. Ontology files use Protégé's ontology icon,
+  Policy workspace members render in bold, only the active ontology uses a theme-safe accessible color,
+  and External Ontologies are grouped into File, Memory, and conditional Unavailable sections. The
+  redundant logical Ontologies section is hidden.
+- Fixed active-ontology navigation so the first Project Explorer double-click stays in Ontology
+  Assistant, Protégé's existing change event is not emitted twice, and changes from either the explorer
+  or Protégé's top ontology dropdown are reported in the transcript and reflected in the tree.
+- Added Project Policy v3 workspace membership. Creating or synchronizing a Policy now upgrades v1/v2
+  to v3 and initializes `workspace` from every saved local ontology document currently loaded in
+  Protégé, while excluding external documents; a matching v3 Policy keeps Sync disabled.
+- Replaced the Ontology Assistant active-ontology dropdown with a collapsible, filesystem-watched
+  Project Explorer. It retains ontology IRI/document bindings in Policy and the internal snapshot while
+  showing project files plus external ontologies, and supports project-local saves and Policy membership
+  edits.
+- Updated the embedded Java MCP SDK to 2.0.1 and the MCP 2025-11-25 tool surface. Every tool now
+  loads standard boolean `ToolAnnotations` from the shared `mcp-catalog.json` source of truth;
+  model-visible tool and input-schema descriptions carry
+  the procedural guidance those hints cannot express, including exact project-policy/provider field
+  mappings, sequencing, one-shot recovery, and explicit prohibitions on configuration invention or local
+  source searching. The former Ontology Assistant steering class and injected system prompt were removed;
+  clients now operate directly from these self-contained MCP-native contracts.
+- Made project-policy setup converge in one pass: the template now uses the saved active ontology,
+  creates matching minimal RO-Crate metadata, omits unavailable reasoner requirements, and validates
+  before returning. `write_project_policy` now supports a general recursive patch for every policy
+  section while preserving unaffected content and rejecting invalid candidates without writing. In
+  patch mode it now also scaffolds a valid v3 policy and metadata internally when no policy exists, so
+  provider setup no longer needs a separate template call.
 - Split **Settings ▸ Ontology Assistant** into independent **Claude Code**, **Codex**, **Antigravity**,
   **OpenCode**, and **General** tabs. Each predefined client now owns its executable path and ordered model catalog, and its display
   name can be changed without changing the stable client identity used for sessions and preferences.
@@ -43,6 +75,10 @@ each section is also published as the body of its
   client metadata now lives alongside each runtime adapter under its client-specific `chat` package.
 
 ### Added
+- Added direct project-policy controls to the Ontology Assistant. The project row now reports owner-local
+  terminology binding drift as a warning and can create or atomically synchronize policy from saved
+  Preferences after an explicit preview, without spending an assistant turn. The sync control is disabled
+  when the policy already matches those settings.
 - Added Antigravity CLI (`agy`) support using its documented headless `stream-json` protocol, isolated
   Streamable HTTP MCP configuration, sandbox mode, and deny-by-default permissions. This follows
   Antigravity's official Gemini CLI migration path; no Gemini CLI profile is added.
@@ -68,6 +104,9 @@ each section is also published as the body of its
   host-allowlist entry.
 
 ### Fixed
+- Removed the unsupported `obsolete` and `links` values from OntoPortal `include` queries. BioPortal
+  and AgroPortal now return their reviewed default search representation instead of HTTP 400, while
+  retaining labels, synonyms, definitions when supplied, deprecation state, links, and provenance.
 - Preserved provider-reported assistant-message boundaries across Codex item IDs, Claude Code
   message lifecycles, Antigravity response-step indexes, and OpenCode message IDs. Consecutive
   progress messages now render as distinct Markdown blocks even when hidden reasoning or an

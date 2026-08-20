@@ -42,16 +42,11 @@ So the assistant reads and edits through **exactly the same tools** an external 
   not load the user's global `opencode.json` during a privileged turn; environment-based equivalents
   should be used for custom provider endpoints so unrelated MCP/plugin definitions cannot inherit the
   short-lived Protégé token.
-- **Axiom edits default to the transactional change-set path.** Each Claude turn appends a write-workflow
-  steering system prompt, and each new Codex, Antigravity, or OpenCode thread opens with the same preamble (a resumed thread
-  already carries it). It tells the model to preview each axiom edit with `preview_change_set` — or
-  `create_terms`/`create_properties` with `preview=true` — review the isolated policy/QC gate, and only
-  then `commit_change_set` against the exact revision it previewed. High-level operations without a
-  change-set equivalent (rename/move/deprecate/delete, document operations) keep their own previews, and
-  the direct axiom tools remain a disclosed fallback reserved for servers without the change-set tools
-  or an edit you explicitly direct; the steering grants no bypass — the read-only and confirm-each-write
-  gates apply to every write tool unchanged, whether the model follows it or not (the isolated QC and
-  revision re-checks are what the change-set path adds).
+- **Tool contracts are self-contained.** The Assistant injects no private steering system prompt. MCP
+  2025-11-25 `ToolAnnotations` are loaded from the shared `mcp-catalog.json` source of truth, while each tool description and relevant
+  input-property description supplies the exact sequencing, argument mapping, safety, and recovery guidance
+  needed by any MCP client. Server-side read-only, confirmation, authorization, isolated QC, and revision
+  checks remain authoritative even if a client ignores a hint.
 
 ## Prerequisites
 
@@ -68,6 +63,48 @@ So the assistant reads and edits through **exactly the same tools** an external 
 Only CLIs that are actually detected on your system are offered as providers.
 
 ## Using it
+
+The collapsible **Project Explorer** separates physical project files from logical ontology IRIs. Its
+title and icon-only Policy/Create/Sync/Close actions share the same top row as **New chat**, so the
+filesystem tree and transcript begin at the same vertical position even when the explorer is narrow. Its
+project tree shows every descendant of the directory containing `.protege-mcp` (except narrow OS noise
+such as `.DS_Store`), including catalogs, metadata, and alternate serializations. Dot-prefixed
+directories sort first, then ordinary directories, then files; each group is case-insensitive
+alphabetical. Scans are capped at 20,000 entries; a visible notice replaces silently incomplete output
+when that defensive limit is reached. Recursive live watching is capped at 10,000 directories and shows
+a separate degraded-state notice if exceeded. Symlinks remain visible but are non-actionable and never
+reclassify an outside document as a project ontology. Logical project bindings remain in Policy v3 but
+are not duplicated as a separate tree section. **External Ontologies** is split into **File** for saved
+local documents (shown by filename with extension) and **Memory** for loaded ontologies without a local
+file. An **Unavailable** group appears only when an unresolved import or binding has no loaded ontology.
+Loaded ontology rows use the same icon provider as Protégé's active-ontology dropdown; ordinary
+files have no textual type marker, every file included in Policy v3 `workspace.files` is bold, and only
+the current active ontology uses a theme-aware, contrast-checked color and an accessible active-state
+description. Double-click a loaded ontology or its project file to make it active. Right-click a
+project file to add or remove `workspace` membership, or right-click an external ontology to save it
+under the project root. The tree follows recursive filesystem changes and ontology save/load events
+without reopening the view. Explorer selections and Protégé's top ontology dropdown both report the new
+active ontology in the assistant transcript. Membership actions require a ready, valid policy v3 and are disabled otherwise.
+Closing the explorer returns a **Project Explorer** button to the top bar.
+
+Policy status and synchronization live at the top of the explorer. Policy validation is project-scoped:
+switching the active ontology to another project member or external import does not invalidate the
+policy merely because its IRI differs from the legacy v1/v2 `root_ontology` interoperability entry
+point. Long policy diagnostics open in a bounded, resizable, wrapping, scrollable window.
+
+The explorer validates both the portable policy and its owner-local terminology bindings. An active
+`external_terms` provider whose alias, profile, or credential no longer exists under **Settings ▸ MCP ▸
+Externals** is shown by the Policy warning icon without changing the portable policy digest. Use the
+Create icon when no project policy exists, or the Sync icon to preview and atomically synchronize
+the policy from saved Preferences. The synchronization button is disabled when the policy already matches
+Preferences. A v1/v2 policy always enables Sync because applying it upgrades to v3 and initializes
+workspace membership from all saved local ontology documents currently loaded in Protégé. Currently,
+synchronization also updates `external_terms.providers`; matching provider restrictions are retained.
+Apart from the v1/v2-to-v3 `version` and `workspace` upgrade, policy sections and comments outside
+`external_terms` remain untouched. Comments inside the replaced
+`external_terms` section may be reformatted. OntoPortal origins without a credential are listed as skipped
+rather than producing an invalid policy. An update is rejected if the policy changed after preview or if it
+would invalidate a project-scoped credential.
 
 1. Open the **Ontology Assistant** tab (a top-level tab), or add the **Ontology Assistant** view to any
    tab via **Window ▸ Views**.

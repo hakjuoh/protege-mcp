@@ -137,6 +137,8 @@ class ImportLockToolsLockPathTest {
         ProjectPolicyFixtures.writePolicy(
                 policy,
                 ProjectPolicyFixtures.minimalPolicy("lock-path", "https://example.org/other")
+                        + "annotations:\n"
+                        + "  required: [missing:source]\n"
                         + "validation:\n"
                         + "  required_stages: [structural]\n");
         ToolContext ctx = context(temp);
@@ -145,7 +147,7 @@ class ImportLockToolsLockPathTest {
                         ToolArgException.class,
                         () -> ImportLockTools.write(ctx, Map.of("policy_path", policy.toString())));
         assertTrue(
-                refusal.getMessage().contains("root_ontology_mismatch"),
+                refusal.getMessage().contains("prefix_unknown"),
                 "the refusal must name the policy error cause: " + refusal.getMessage());
         assertFalse(
                 Files.exists(temp.resolve("imports.lock.json")),

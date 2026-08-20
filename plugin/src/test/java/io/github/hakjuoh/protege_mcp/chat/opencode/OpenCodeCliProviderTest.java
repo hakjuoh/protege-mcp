@@ -14,7 +14,6 @@ import org.junit.jupiter.api.io.TempDir;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import io.github.hakjuoh.protege_mcp.chat.AssistantSteering;
 import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientModelCatalog;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientPreferences;
@@ -143,8 +142,7 @@ class OpenCodeCliProviderTest {
         assertTrue(command.contains("--thinking"));
         assertAdjacent(command, "--variant", "high");
         assertEquals("--", command.get(command.size() - 2));
-        assertEquals(AssistantSteering.SYSTEM_PROMPT + "\n\nhello",
-                command.get(command.size() - 1));
+        assertEquals("hello", command.get(command.size() - 1));
         assertTrue(command.stream().noneMatch(value -> value.contains("secret-token")));
     }
 

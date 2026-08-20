@@ -19,7 +19,7 @@ import javax.swing.JButton;
 /** Shared flat icons used by the chat composer and transcript affordances. */
 final class ChatIcons {
 
-    enum Glyph { PLUS, SEND, STOP, COPY, CHECK }
+    enum Glyph { PLUS, SEND, STOP, COPY, CHECK, FOLDER, CREATE, SYNC, WARNING, CLOSE }
 
     private ChatIcons() {
     }
@@ -67,6 +67,11 @@ final class ChatIcons {
                         case STOP -> drawStop(g, s);
                         case COPY -> drawCopy(g, s);
                         case CHECK -> drawCheck(g, s);
+                        case FOLDER -> drawFolder(g, s);
+                        case CREATE -> drawCreate(g, s);
+                        case SYNC -> drawSync(g, s);
+                        case WARNING -> drawWarning(g, s);
+                        case CLOSE -> drawClose(g, s);
                         default -> {
                         }
                     }
@@ -128,6 +133,89 @@ final class ChatIcons {
         check.lineTo(size * 0.43f, size * 0.72f);
         check.lineTo(size * 0.78f, size * 0.30f);
         g.draw(check);
+    }
+
+    private static void drawFolder(Graphics2D g, float size) {
+        g.setStroke(roundStroke(Math.max(1.3f, size * 0.08f)));
+        float x = size * 0.15f;
+        float y = size * 0.22f;
+        float w = size * 0.70f;
+        float h = size * 0.54f;
+        float tabW = size * 0.28f;
+        float tabH = size * 0.12f;
+        Path2D.Float folder = new Path2D.Float();
+        folder.moveTo(x, y + tabH);
+        folder.lineTo(x + tabW, y + tabH);
+        folder.lineTo(x + tabW + size * 0.07f, y);
+        folder.lineTo(x + w, y);
+        folder.lineTo(x + w, y + h);
+        folder.lineTo(x, y + h);
+        folder.closePath();
+        g.draw(folder);
+    }
+
+    private static void drawDocument(Graphics2D g, float size) {
+        g.setStroke(roundStroke(Math.max(1.2f, size * 0.08f)));
+        float left = size * 0.18f;
+        float top = size * 0.12f;
+        float right = size * 0.70f;
+        float bottom = size * 0.84f;
+        float fold = size * 0.18f;
+        Path2D.Float document = new Path2D.Float();
+        document.moveTo(left, top);
+        document.lineTo(right - fold, top);
+        document.lineTo(right, top + fold);
+        document.lineTo(right, bottom);
+        document.lineTo(left, bottom);
+        document.closePath();
+        document.moveTo(right - fold, top);
+        document.lineTo(right - fold, top + fold);
+        document.lineTo(right, top + fold);
+        g.draw(document);
+    }
+
+    private static void drawCreate(Graphics2D g, float size) {
+        drawDocument(g, size);
+        g.setStroke(roundStroke(Math.max(1.5f, size * 0.10f)));
+        float center = size * 0.73f;
+        float radius = size * 0.15f;
+        g.draw(new Line2D.Float(center, center - radius, center, center + radius));
+        g.draw(new Line2D.Float(center - radius, center, center + radius, center));
+    }
+
+    private static void drawSync(Graphics2D g, float size) {
+        g.setStroke(roundStroke(Math.max(1.4f, size * 0.09f)));
+        float left = size * 0.18f;
+        float right = size * 0.82f;
+        float top = size * 0.30f;
+        float bottom = size * 0.70f;
+        g.drawArc(Math.round(left), Math.round(size * 0.16f), Math.round(size * 0.64f),
+                Math.round(size * 0.52f), 30, 150);
+        g.drawArc(Math.round(left), Math.round(size * 0.32f), Math.round(size * 0.64f),
+                Math.round(size * 0.52f), 210, 150);
+        g.draw(new Line2D.Float(left, top, left + size * 0.04f, top - size * 0.15f));
+        g.draw(new Line2D.Float(left, top, left + size * 0.16f, top + size * 0.01f));
+        g.draw(new Line2D.Float(right, bottom, right - size * 0.04f, bottom + size * 0.15f));
+        g.draw(new Line2D.Float(right, bottom, right - size * 0.16f, bottom - size * 0.01f));
+    }
+
+    private static void drawWarning(Graphics2D g, float size) {
+        g.setStroke(roundStroke(Math.max(1.3f, size * 0.08f)));
+        Path2D.Float triangle = new Path2D.Float();
+        triangle.moveTo(size * 0.50f, size * 0.10f);
+        triangle.lineTo(size * 0.88f, size * 0.82f);
+        triangle.lineTo(size * 0.12f, size * 0.82f);
+        triangle.closePath();
+        g.draw(triangle);
+        g.draw(new Line2D.Float(size * 0.50f, size * 0.34f, size * 0.50f, size * 0.58f));
+        g.fill(new Ellipse2D.Float(size * 0.46f, size * 0.67f, size * 0.08f, size * 0.08f));
+    }
+
+    private static void drawClose(Graphics2D g, float size) {
+        g.setStroke(roundStroke(Math.max(1.5f, size * 0.10f)));
+        float margin = size * 0.27f;
+        g.draw(new Line2D.Float(margin, margin, size - margin, size - margin));
+        g.draw(new Line2D.Float(size - margin, margin, margin, size - margin));
     }
 
     private static BasicStroke roundStroke(float width) {

@@ -68,6 +68,7 @@ public final class ProviderConfigurationStore {
                 saveLocked(updated, secrets);
                 return null;
             });
+            ProviderConfigurationEvents.fireChanged();
         } finally {
             secrets.values().forEach(value -> Arrays.fill(value, (byte) 0));
             secrets.clear();

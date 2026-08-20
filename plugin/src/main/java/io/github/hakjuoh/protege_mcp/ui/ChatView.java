@@ -7,31 +7,65 @@ import io.github.hakjuoh.protege_mcp.chat.ChatProvider;
 import io.github.hakjuoh.protege_mcp.chat.ChatUsage;
 import io.github.hakjuoh.protege_mcp.chat.Providers;
 import io.github.hakjuoh.protege_mcp.config.McpConfig;
+import io.github.hakjuoh.protege_mcp.external.ProviderConfigurationEvents;
+import io.github.hakjuoh.protege_mcp.external.ProviderConfigurationStore;
+import io.github.hakjuoh.protege_mcp.external.ProviderFailure;
+import io.github.hakjuoh.protege_mcp.external.ProviderOwnerConfig;
+import io.github.hakjuoh.protege_mcp.external.ProviderPolicyBindings;
+import io.github.hakjuoh.protege_mcp.policy.PolicyIssue;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicy;
+import io.github.hakjuoh.protege_mcp.policy.ProjectPolicyLoader;
 import io.github.hakjuoh.protege_mcp.server.McpServerController;
 import io.github.hakjuoh.protege_mcp.server.McpServerRegistry;
+import io.github.hakjuoh.protege_mcp.tools.SidecarPaths;
+import io.github.hakjuoh.protege_mcp.tools.ProjectPolicyRegistrySync;
+import io.github.hakjuoh.protege_mcp.tools.ProjectPolicyMembershipService;
+import io.github.hakjuoh.protege_mcp.tools.WriteTools;
 import io.github.hakjuoh.protege_mcp.ui.ChatIcons.Glyph;
 import io.github.hakjuoh.protege_mcp.ui.ChatTranscriptPane.Kind;
 
+import org.protege.editor.owl.model.OWLModelManager;
+import org.protege.editor.owl.model.event.EventType;
+import org.protege.editor.owl.model.event.OWLModelManagerListener;
 import org.protege.editor.owl.ui.view.AbstractOWLViewComponent;
+import org.protege.editor.owl.ui.OWLIcons;
+import org.semanticweb.owlapi.model.IRI;
+import org.semanticweb.owlapi.model.OWLOntology;
+import org.semanticweb.owlapi.model.OWLOntologyID;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
+import java.awt.Desktop;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.Insets;
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
+import javax.swing.JFileChooser;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
 import javax.swing.JTextArea;
 import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 
 /**
@@ -64,6 +98,23 @@ public class ChatView extends AbstractOWLViewComponent {
     private JButton attachButton;
     private JButton stopButton;
     private JButton newChatButton;
+    private JButton projectExplorerButton;
+    private JButton policyStatusBadge;
+    private JButton policySyncButton;
+    private JPanel projectHeaderBar;
+    private ProjectExplorerPanel projectExplorer;
+    private JSplitPane workspaceSplit;
+    private volatile RecursiveProjectWatcher projectWatcher;
+    private Path watchedProjectRoot;
+    private volatile Path governingPolicyPath;
+    private OWLModelManagerListener modelManagerListener;
+    private ActiveOntologyEvents activeOntologyEvents;
+    private ExecutorService policyLoader;
+    private final AtomicLong policyRefreshGeneration = new AtomicLong();
+    private volatile PolicyBadgeSnapshot policySnapshot;
+    private boolean policySyncBusy;
+    private boolean disposed;
+    private final Runnable providerConfigurationListener = this::requestPolicyRefresh;
     private ChatProviderControls providerControls;
     private ChatAttachmentController attachmentController;
     private ChatTurnController turnController;
@@ -78,6 +129,12 @@ public class ChatView extends AbstractOWLViewComponent {
 
     @Override
     protected void initialiseOWLView() throws Exception {
+        disposed = false;
+        policyLoader = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "protege-policy-badge-loader");
+            thread.setDaemon(true);
+            return thread;
+        });
         setLayout(new BorderLayout(8, 8));
         setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
@@ -91,13 +148,76 @@ public class ChatView extends AbstractOWLViewComponent {
         // position or partial render is ever painted.
         JScrollPane scroll = new JScrollPane(transcript);
         scroll.setPreferredSize(new Dimension(560, 360));
-        add(scroll, BorderLayout.CENTER);
+        JPanel assistant = new JPanel(new BorderLayout(0, 8));
+        assistant.add(scroll, BorderLayout.CENTER);
+        assistant.add(buildInputBar(), BorderLayout.SOUTH);
 
-        add(buildInputBar(), BorderLayout.SOUTH);
+        projectExplorer = new ProjectExplorerPanel(OWLIcons.getIcon("ontology.png"),
+                ontology -> getOWLEditorKit().getWorkspace().getOWLIconProvider().getIcon(ontology),
+                new ProjectExplorerPanel.Listener() {
+                    @Override public void closeRequested() { setProjectExplorerVisible(false); }
+                    @Override public void activateOntology(OWLOntology ontology) {
+                        activateOntologyFromExplorer(ontology);
+                    }
+                    @Override public void saveOntologyIntoProject(OWLOntology ontology,
+                            Path projectRoot) {
+                        saveOntologyIntoProject(ontology, projectRoot);
+                    }
+                    @Override public void openFile(ProjectWorkspaceSnapshot.ProjectFile file) {
+                        openProjectFile(file);
+                    }
+                    @Override public void addToPolicy(ProjectWorkspaceSnapshot.ProjectFile file) {
+                        changePolicyMembership(file, true);
+                    }
+                    @Override public void removeFromPolicy(ProjectWorkspaceSnapshot.ProjectFile file) {
+                        changePolicyMembership(file, false);
+                    }
+                    @Override public boolean canOpenFile(
+                            ProjectWorkspaceSnapshot.ProjectFile file) {
+                        return canOpenProjectFile(file);
+                    }
+                    @Override public boolean canEditMembership() {
+                        PolicyBadgeSnapshot snapshot = policySnapshot;
+                        return !policySyncBusy && isCurrentPolicySnapshot(snapshot)
+                                && snapshot.policy().valid() && snapshot.policy().version() >= 3;
+                    }
+                });
+        workspaceSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, projectExplorer, assistant);
+        workspaceSplit.setContinuousLayout(true);
+        workspaceSplit.setResizeWeight(0.0);
+        workspaceSplit.setDividerLocation(285);
+        workspaceSplit.setDividerSize(6);
+        workspaceSplit.addPropertyChangeListener(JSplitPane.DIVIDER_LOCATION_PROPERTY,
+                event -> resizeProjectHeader(workspaceSplit.getDividerLocation()));
+        add(workspaceSplit, BorderLayout.CENTER);
+        setProjectExplorerVisible(McpConfig.prefs().getBoolean(
+                "chat.project_explorer.visible", true));
         turnController = buildTurnController();
 
         statusTimer = new Timer(1500, e -> refreshStatus());
         statusTimer.start();
+
+        activeOntologyEvents = new ActiveOntologyEvents(getOWLModelManager() == null
+                ? null : getOWLModelManager().getActiveOntology());
+        modelManagerListener = event -> {
+            EventType type = event.getType();
+            if (type == EventType.ACTIVE_ONTOLOGY_CHANGED) {
+                announceActiveOntologyChange();
+            }
+            if (type == EventType.ACTIVE_ONTOLOGY_CHANGED
+                    || type == EventType.ONTOLOGY_LOADED
+                    || type == EventType.ONTOLOGY_RELOADED
+                    || type == EventType.ONTOLOGY_CREATED
+                    || type == EventType.ONTOLOGY_SAVED) {
+                invalidatePolicySelection();
+                SwingUtilities.invokeLater(this::refreshOntologySelectorAndPolicy);
+            }
+        };
+        if (getOWLModelManager() != null) {
+            getOWLModelManager().addListener(modelManagerListener);
+        }
+        refreshOntologySelectorAndPolicy();
+        ProviderConfigurationEvents.addChangeListener(providerConfigurationListener);
 
         showIntro();
         if (Providers.available().isEmpty()) {
@@ -148,22 +268,76 @@ public class ChatView extends AbstractOWLViewComponent {
                                         McpConfig.KEY_CHAT_SHOW_THINKING,
                                         showThinking.isSelected()));
 
-        providerBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        JPanel optionsBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        optionsBar.setOpaque(false);
         if (available.isEmpty()) {
             JLabel none =
                     new JLabel(
                             "No coding-agent CLI found — install a configured client, then reopen");
             none.setForeground(new Color(0xB00020));
-            providerBar.add(none);
+            optionsBar.add(none);
         }
-        providerBar.add(newChatButton);
-        providerBar.add(confirmEdits);
-        providerBar.add(showThinking);
+        optionsBar.add(newChatButton);
+        optionsBar.add(confirmEdits);
+        optionsBar.add(showThinking);
+
+        Font small = new JLabel().getFont().deriveFont(Font.PLAIN, 11f);
+        Font smallBold = new JLabel().getFont().deriveFont(Font.BOLD, 11f);
+        Color muted = new Color(0x666666);
+
+        // The project filesystem and loaded ontology namespaces live in the left explorer.  The
+        // top bar only needs a compact affordance for reopening it after the user closes it.
+        JPanel projectBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        projectBar.setOpaque(false);
+        projectExplorerButton = new JButton("Project Explorer",
+                ChatIcons.icon(Glyph.FOLDER, 18, new Color(0x555555), null));
+        projectExplorerButton.setFont(smallBold);
+        projectExplorerButton.setToolTipText("Open Project Explorer");
+        projectExplorerButton.addActionListener(event -> setProjectExplorerVisible(true));
+
+        policyStatusBadge = iconButton(
+                icon(Glyph.WARNING, 17, new Color(0x795548), null),
+                "Click for project policy details");
+        policyStatusBadge.setMargin(new Insets(0, 0, 0, 0));
+        policyStatusBadge.setFocusPainted(true);
+        policyStatusBadge.getAccessibleContext().setAccessibleName("Project policy status");
+        policyStatusBadge.addActionListener(e -> onPolicyBadgeClicked());
+
+        policySyncButton = iconButton(
+                icon(Glyph.CREATE, 18, new Color(0x1A4F8B), null),
+                "Create or synchronize project policy from saved Preferences");
+        policySyncButton.setMargin(new Insets(0, 0, 0, 0));
+        policySyncButton.getAccessibleContext().setAccessibleName("Create project policy");
+        policySyncButton.addActionListener(e -> onSyncPolicyClicked());
+
+        JLabel explorerTitle = new JLabel("Project Explorer");
+        explorerTitle.setFont(smallBold.deriveFont(12f));
+        JPanel explorerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 1, 0));
+        explorerActions.setOpaque(false);
+        explorerActions.add(policyStatusBadge);
+        explorerActions.add(policySyncButton);
+        JButton closeExplorer = iconButton(
+                icon(Glyph.CLOSE, 15, new Color(0x444444), null),
+                "Close Project Explorer");
+        closeExplorer.setMargin(new Insets(0, 0, 0, 0));
+        closeExplorer.setBorder(BorderFactory.createEmptyBorder());
+        closeExplorer.getAccessibleContext().setAccessibleName("Close Project Explorer");
+        closeExplorer.addActionListener(event -> setProjectExplorerVisible(false));
+        explorerActions.add(closeExplorer);
+
+        projectHeaderBar = new JPanel(new BorderLayout(4, 0));
+        projectHeaderBar.setOpaque(false);
+        projectHeaderBar.add(explorerTitle, BorderLayout.CENTER);
+        projectHeaderBar.add(explorerActions, BorderLayout.EAST);
+        projectHeaderBar.setPreferredSize(new Dimension(285,
+                Math.max(newChatButton.getPreferredSize().height,
+                        explorerActions.getPreferredSize().height)));
+        projectBar.add(projectHeaderBar);
+        projectBar.add(projectExplorerButton);
+        projectExplorerButton.setVisible(false);
 
         // The live status strip is created here but laid out inside the composer's bottom row, so
         // the otherwise empty middle surfaces useful server, working, and token state.
-        Font small = new JLabel().getFont().deriveFont(Font.PLAIN, 11f);
-        Color muted = new Color(0x666666);
         statusLabel = new JLabel(" ");
         statusLabel.setFont(small);
         statusLabel.setForeground(muted);
@@ -175,7 +349,7 @@ public class ChatView extends AbstractOWLViewComponent {
         workingLabel.setForeground(new Color(0x1A4F8B));
         workingLabel.setHorizontalAlignment(JLabel.CENTER);
 
-        return providerBar;
+        return new ResponsiveTopBar(projectBar, optionsBar);
     }
 
     /**
@@ -333,6 +507,9 @@ public class ChatView extends AbstractOWLViewComponent {
                     public void setTurnRunning(boolean running) {
                         setInputEnabled(!running);
                         showStop(running);
+                        if (!running) {
+                            requestPolicyRefresh();
+                        }
                     }
 
                     @Override
@@ -559,8 +736,835 @@ public class ChatView extends AbstractOWLViewComponent {
         }
     }
 
+    private void setProjectExplorerVisible(boolean visible) {
+        if (projectExplorer == null || workspaceSplit == null) return;
+        projectExplorer.setVisible(visible);
+        workspaceSplit.setDividerSize(visible ? 6 : 0);
+        if (visible) {
+            int preferred = Math.max(210, projectExplorer.getPreferredSize().width);
+            workspaceSplit.setDividerLocation(preferred);
+            resizeProjectHeader(preferred);
+        } else {
+            workspaceSplit.setDividerLocation(0);
+        }
+        if (projectExplorerButton != null) projectExplorerButton.setVisible(!visible);
+        if (projectHeaderBar != null) projectHeaderBar.setVisible(visible);
+        McpConfig.prefs().putBoolean("chat.project_explorer.visible", visible);
+        revalidate();
+        repaint();
+    }
+
+    private void resizeProjectHeader(int width) {
+        if (projectHeaderBar == null || width <= 0) return;
+        Dimension current = projectHeaderBar.getPreferredSize();
+        projectHeaderBar.setPreferredSize(new Dimension(Math.max(210, width), current.height));
+        projectHeaderBar.revalidate();
+    }
+
+    private void openProjectFile(ProjectWorkspaceSnapshot.ProjectFile file) {
+        if (file.kind() == ProjectWorkspaceSnapshot.FileKind.ONTOLOGY) {
+            try {
+                OWLModelManager mm = getOWLModelManager();
+                OWLOntology ontology = mm.getOWLOntologyManager()
+                        .loadOntologyFromOntologyDocument(file.path().toFile());
+                mm.setActiveOntology(ontology);
+                mm.fireEvent(EventType.ONTOLOGY_LOADED);
+                return;
+            } catch (Exception failure) {
+                JOptionPane.showMessageDialog(this,
+                        "Could not load ontology document:\n" + file.path() + "\n\n"
+                                + failure.getMessage(),
+                        "Open Ontology", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+        try {
+            if (canOpenProjectFile(file)) {
+                Desktop.getDesktop().open(file.path().toFile());
+            } else {
+                JOptionPane.showMessageDialog(this,
+                        "Opening files is not supported by this desktop environment:\n" + file.path(),
+                        "Open Project File", JOptionPane.INFORMATION_MESSAGE);
+            }
+        } catch (IOException failure) {
+            JOptionPane.showMessageDialog(this,
+                    "Could not open file:\n" + file.path() + "\n\n" + failure.getMessage(),
+                    "Open Project File", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    static boolean canOpenProjectFile(ProjectWorkspaceSnapshot.ProjectFile file) {
+        if (file.kind() == ProjectWorkspaceSnapshot.FileKind.SYMLINK) return false;
+        if (file.kind() == ProjectWorkspaceSnapshot.FileKind.ONTOLOGY) return true;
+        return Desktop.isDesktopSupported()
+                && Desktop.getDesktop().isSupported(Desktop.Action.OPEN);
+    }
+
+    private void saveOntologyIntoProject(OWLOntology ontology, Path projectRoot) {
+        if (ontology == null || projectRoot == null) return;
+        JFileChooser chooser = new JFileChooser(projectRoot.toFile());
+        chooser.setDialogTitle("Save ontology into project");
+        chooser.setSelectedFile(projectRoot.resolve(suggestedOntologyFileName(ontology)).toFile());
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        Path selected;
+        try {
+            selected = secureProjectSavePath(projectRoot, chooser.getSelectedFile().toPath());
+        } catch (IOException | IllegalArgumentException unsafePath) {
+            JOptionPane.showMessageDialog(this,
+                    "This action saves external ontologies inside the current project:\n"
+                            + projectRoot.toAbsolutePath().normalize() + "\n\n"
+                            + unsafePath.getMessage(),
+                    "Save Ontology", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (Files.exists(selected)) {
+            int overwrite = JOptionPane.showConfirmDialog(this,
+                    "Replace existing file?\n" + selected, "Save Ontology",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (overwrite != JOptionPane.OK_OPTION) return;
+        }
+        try {
+            if (selected.getParent() != null) Files.createDirectories(selected.getParent());
+            selected = secureProjectSavePath(projectRoot, selected);
+            IRI documentIri = IRI.create(selected.toUri());
+            getOWLModelManager().getOWLOntologyManager().saveOntology(ontology, documentIri);
+            getOWLModelManager().getOWLOntologyManager().setOntologyDocumentIRI(
+                    ontology, documentIri);
+            getOWLModelManager().fireEvent(EventType.ONTOLOGY_SAVED);
+            requestPolicyRefresh();
+        } catch (Exception failure) {
+            JOptionPane.showMessageDialog(this,
+                    "Could not save ontology into the project:\n" + selected + "\n\n"
+                            + failure.getMessage(),
+                    "Save Ontology", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    static Path secureProjectSavePath(Path projectRoot, Path selected) throws IOException {
+        Path realRoot = projectRoot.toRealPath();
+        Path candidate = selected.toAbsolutePath().normalize();
+        Path normalizedRoot = projectRoot.toAbsolutePath().normalize();
+        if (candidate.startsWith(normalizedRoot)) {
+            candidate = realRoot.resolve(normalizedRoot.relativize(candidate)).normalize();
+        } else {
+            throw new IllegalArgumentException("The selected file is outside the project.");
+        }
+        if (Files.isSymbolicLink(candidate)) {
+            throw new IllegalArgumentException("A symbolic-link target cannot be replaced.");
+        }
+        Path existing = candidate;
+        while (existing != null && !Files.exists(existing, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            existing = existing.getParent();
+        }
+        if (existing == null || !existing.toRealPath().startsWith(realRoot)) {
+            throw new IllegalArgumentException("The selected path resolves outside the project.");
+        }
+        return candidate;
+    }
+
+    private static String suggestedOntologyFileName(OWLOntology ontology) {
+        String iri = ontology.getOntologyID().getOntologyIRI().isPresent()
+                ? ontology.getOntologyID().getOntologyIRI().get().toString() : "ontology";
+        String local = WriteTools.localName(iri);
+        if (local == null || local.isBlank()) local = "ontology";
+        return local.replaceAll("[^A-Za-z0-9._-]", "_") + ".owl";
+    }
+
+    private void changePolicyMembership(ProjectWorkspaceSnapshot.ProjectFile file,
+            boolean included) {
+        PolicyBadgeSnapshot snapshot = policySnapshot;
+        if (!isCurrentPolicySnapshot(snapshot)) {
+            requestPolicyRefresh();
+            return;
+        }
+        if (!snapshot.policy().loaded() || !snapshot.policy().valid()
+                || snapshot.policy().version() < 3) {
+            JOptionPane.showMessageDialog(this,
+                    "File membership requires a valid Project Policy v3. Create or update the "
+                            + "project policy first.",
+                    "Project Policy", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        String ontologyIri = file.loadedOntology() != null
+                && file.loadedOntology().getOntologyID().getOntologyIRI().isPresent()
+                ? file.loadedOntology().getOntologyID().getOntologyIRI().get().toString() : null;
+        setPolicySyncBusy(true, included ? "Adding…" : "Removing…");
+        policyLoader.execute(() -> {
+            try {
+                ProjectPolicyMembershipService.setMembership(snapshot.policy(), file.path(),
+                        ontologyIri, included);
+                SwingUtilities.invokeLater(() -> {
+                    if (disposed) return;
+                    setPolicySyncBusy(false, null);
+                    requestPolicyRefresh();
+                });
+            } catch (IOException | IllegalArgumentException failure) {
+                SwingUtilities.invokeLater(() -> {
+                    if (!disposed) finishPolicySyncFailure(failure.getMessage());
+                });
+            }
+        });
+    }
+
+    private void onPolicyBadgeClicked() {
+        PolicyBadgeSnapshot snapshot = policySnapshot;
+        if (snapshot == null) {
+            requestPolicyRefresh();
+            JOptionPane.showMessageDialog(this,
+                    "Project policy status is still loading.",
+                    "Project Policy Details",
+                    JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        ProjectPolicy policy = snapshot.policy();
+        Path docPath = snapshot.activeDocument();
+        List<PolicyIssue> allIssues = combinedIssues(policy, snapshot.ownerIssues());
+
+        PolicyDetailsDialog.show(this, policy, docPath, allIssues);
+    }
+
+    private void onSyncPolicyClicked() {
+        PolicyBadgeSnapshot snapshot = policySnapshot;
+        if (!isCurrentPolicySnapshot(snapshot)) {
+            requestPolicyRefresh();
+            return;
+        }
+        if (!snapshot.synchronizationRequired()) return;
+        if (snapshot.policyAnchorDocument() == null) {
+            JOptionPane.showMessageDialog(this,
+                    "Save the active ontology to disk before creating a project policy.",
+                    "Project Policy", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        OWLModelManager mm = getOWLModelManager();
+        List<String> reasoners = List.copyOf(getInstalledReasoners(mm));
+        setPolicySyncBusy(true, "Checking…");
+        policyLoader.execute(() -> {
+            try {
+                ProviderOwnerConfig owner = new ProviderConfigurationStore().load();
+                ProjectPolicyRegistrySync.Preview preview =
+                        ProjectPolicyRegistrySync.preview(snapshot.policyAnchorDocument(),
+                                snapshot.ontologyIri(), reasoners, snapshot.policy(), owner,
+                                snapshot.workspaceDocuments());
+                SwingUtilities.invokeLater(() -> {
+                    if (!isCurrentPolicySnapshot(snapshot)) {
+                        if (!disposed) setPolicySyncBusy(false, null);
+                        return;
+                    }
+                    if (!preview.synchronizationRequired()) {
+                        setPolicySyncBusy(false, null);
+                        requestPolicyRefresh();
+                        return;
+                    }
+                    confirmPolicySync(snapshot, reasoners, owner, preview);
+                });
+            } catch (IOException | IllegalArgumentException failure) {
+                SwingUtilities.invokeLater(() -> {
+                    if (isCurrentPolicySnapshot(snapshot)) {
+                        finishPolicySyncFailure(failure.getMessage());
+                    } else if (!disposed) {
+                        setPolicySyncBusy(false, null);
+                    }
+                });
+            }
+        });
+    }
+
+    private void confirmPolicySync(PolicyBadgeSnapshot snapshot, List<String> reasoners,
+            ProviderOwnerConfig owner, ProjectPolicyRegistrySync.Preview preview) {
+        if (!isCurrentPolicySnapshot(snapshot)) {
+            if (!disposed) setPolicySyncBusy(false, null);
+            return;
+        }
+        int choice = JOptionPane.showConfirmDialog(this,
+                formatPolicySyncPreview(preview, preview.target()),
+                preview.policyExists() ? "Synchronize Project Policy"
+                        : "Create Project Policy",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) {
+            setPolicySyncBusy(false, null);
+            return;
+        }
+        if (!isCurrentPolicySnapshot(snapshot)) {
+            setPolicySyncBusy(false, null);
+            requestPolicyRefresh();
+            return;
+        }
+        setPolicySyncBusy(true, preview.policyExists() ? "Syncing…" : "Creating…");
+        policyLoader.execute(() -> {
+            try {
+                ProjectPolicyRegistrySync.Result result = ProjectPolicyRegistrySync.apply(
+                        snapshot.policyAnchorDocument(), snapshot.ontologyIri(), reasoners,
+                        preview, owner);
+                SwingUtilities.invokeLater(() -> {
+                    if (disposed) return;
+                    requestPolicyRefresh();
+                    setPolicySyncBusy(false, null);
+                    String action = result.created() ? "Created" : "Updated";
+                    String note = result.omitted().isEmpty() ? ""
+                            : "\n\nSkipped:\n • " + String.join("\n • ", result.omitted());
+                    JOptionPane.showMessageDialog(this,
+                            action + " project policy:\n" + result.path() + note,
+                            "Project Policy", JOptionPane.INFORMATION_MESSAGE);
+                });
+            } catch (IOException | IllegalArgumentException failure) {
+                SwingUtilities.invokeLater(() -> {
+                    if (!disposed) finishPolicySyncFailure(failure.getMessage());
+                });
+            }
+        });
+    }
+
+    static String formatPolicySyncPreview(ProjectPolicyRegistrySync.Preview preview, Path target) {
+        StringBuilder message = new StringBuilder();
+        if (preview.policyExists()) {
+            if (preview.sourceVersion() < 3) {
+                message.append("Upgrade Project Policy v").append(preview.sourceVersion())
+                        .append(" to v3, initialize its workspace from the ontologies currently ")
+                        .append("loaded in Protégé, and apply saved Preference bindings?\n\n")
+                        .append("Loaded ontology documents considered: ")
+                        .append(preview.workspaceDocuments().size()).append("\n");
+            } else {
+                message.append("Replace the policy's external_terms.providers with the saved ")
+                        .append("Preference bindings?\n\n");
+            }
+            message.append("Current policy providers: ").append(preview.currentProviderCount())
+                    .append("\nConfigured providers to apply: ")
+                    .append(preview.providers().size());
+        } else {
+            message.append("Create a valid Project Policy v3, include the saved ontology files ")
+                    .append("currently loaded in Protégé, and apply the saved terminology ")
+                    .append("registry bindings?\n\nLoaded ontology documents considered: ")
+                    .append(preview.workspaceDocuments().size())
+                    .append("\nConfigured providers: ")
+                    .append(preview.providers().size());
+        }
+        if (!preview.omitted().isEmpty()) {
+            message.append("\n\nSkipped bindings:\n • ")
+                    .append(String.join("\n • ", preview.omitted()));
+        }
+        message.append("\n\nTarget policy:\n").append(target);
+        message.append("\n\nMatching provider restrictions are preserved. Apart from a v1/v2 ")
+                .append("upgrade's version and workspace fields, other policy sections are not changed.");
+        return message.toString();
+    }
+
+    private boolean isCurrentPolicySnapshot(PolicyBadgeSnapshot expected) {
+        return !disposed && expected != null && expected == policySnapshot
+                && policyLoader != null && !policyLoader.isShutdown();
+    }
+
+    private void finishPolicySyncFailure(String message) {
+        setPolicySyncBusy(false, null);
+        JOptionPane.showMessageDialog(this,
+                message == null || message.isBlank() ? "The project policy could not be updated."
+                        : message,
+                "Project Policy", JOptionPane.ERROR_MESSAGE);
+    }
+
+    private void setPolicySyncBusy(boolean busy, String label) {
+        if (policySyncButton == null) return;
+        policySyncBusy = busy;
+        if (label != null) policySyncButton.setToolTipText(label);
+        updatePolicySyncButton();
+    }
+
+    private void updatePolicySyncButton() {
+        if (policySyncButton == null) return;
+        PolicyBadgeSnapshot snapshot = policySnapshot;
+        boolean policyExists = snapshot != null && snapshot.policy().loaded();
+        if (policyStatusBadge != null) policyStatusBadge.setVisible(policyExists);
+        policySyncButton.setEnabled(!disposed && !policySyncBusy && snapshot != null
+                && snapshot.synchronizationRequired());
+        policySyncButton.setIcon(icon(policyExists ? Glyph.SYNC : Glyph.CREATE, 18,
+                policySyncButton.isEnabled() ? new Color(0x1A4F8B) : new Color(0x888888), null));
+        policySyncButton.getAccessibleContext().setAccessibleName(policyExists
+                ? "Synchronize project policy" : "Create project policy");
+        if (!policySyncBusy) {
+            if (snapshot != null && !snapshot.synchronizationRequired()) {
+                policySyncButton.setToolTipText(snapshot.omittedBindings().isEmpty()
+                        ? "Project policy already matches saved Preferences"
+                        : "No applicable policy changes; " + snapshot.omittedBindings().size()
+                                + " saved Preference binding(s) were skipped");
+            } else {
+                policySyncButton.setToolTipText(
+                        "Create or synchronize project policy from saved Preferences");
+            }
+        }
+    }
+
+    private void activateOntologyFromExplorer(OWLOntology ontology) {
+        if (ontology == null) return;
+        OWLModelManager mm = getOWLModelManager();
+        if (mm == null) return;
+        ActiveOntologyEvents.activate(mm, ontology);
+    }
+
+    private void announceActiveOntologyChange() {
+        OWLModelManager manager = getOWLModelManager();
+        OWLOntology active = manager == null ? null : manager.getActiveOntology();
+        if (activeOntologyEvents == null) activeOntologyEvents = new ActiveOntologyEvents(null);
+        if (!activeOntologyEvents.observe(active)) return;
+        append(Kind.SYSTEM, "Active ontology switched to: "
+                + formatOntologyLabel(manager, active) + "\n");
+    }
+
+    void refreshOntologySelectorAndPolicy() {
+        requestPolicyRefresh();
+    }
+
+    /**
+     * Capture the small amount of OWL UI state needed for policy resolution, then perform all
+     * filesystem discovery and validation on a single daemon worker. Results are generation-gated
+     * so a slower load for a previously active ontology can never overwrite the current badge.
+     */
+    private void requestPolicyRefresh() {
+        OWLModelManager mm = getOWLModelManager();
+        if (mm == null || policyStatusBadge == null || policyLoader == null
+                || policyLoader.isShutdown()) {
+            return;
+        }
+        OWLOntology active = mm.getActiveOntology();
+        IRI docIri = active != null && mm.getOWLOntologyManager() != null
+                ? mm.getOWLOntologyManager().getOntologyDocumentIRI(active) : null;
+        File docFile = SidecarPaths.toFile(docIri);
+        Path docPath = docFile != null ? docFile.toPath() : null;
+        String ontologyIri = active != null && active.getOntologyID().getOntologyIRI().isPresent()
+                ? active.getOntologyID().getOntologyIRI().get().toString() : null;
+        List<ProjectWorkspaceService.LoadedOntology> loadedOntologies = captureLoadedOntologies(mm);
+        List<String> installedReasoners = List.copyOf(getInstalledReasoners(mm));
+        Path previousPolicyPath = governingPolicyPath;
+        long generation = policyRefreshGeneration.incrementAndGet();
+        policySnapshot = null;
+        updatePolicySyncButton();
+        applyPolicyBadge("Policy: checking…", null);
+
+        policyLoader.execute(() -> {
+            ProjectPolicy policy = previousPolicyPath != null
+                    && (docPath == null || !Files.isRegularFile(docPath))
+                    ? ProjectPolicyLoader.load(previousPolicyPath, docPath, null, installedReasoners)
+                    : ProjectPolicyLoader.load(null, docPath, null, installedReasoners);
+            if (!policy.loaded() && previousPolicyPath != null && Files.isRegularFile(previousPolicyPath)) {
+                policy = ProjectPolicyLoader.load(previousPolicyPath, docPath, null, installedReasoners);
+            }
+            Path policyAnchorDocument = policyAnchorDocument(policy, docPath);
+            ProjectWorkspaceSnapshot builtWorkspace = new ProjectWorkspaceService().build(
+                    policy, policyAnchorDocument, loadedOntologies, active);
+            RecursiveProjectWatcher watcher = projectWatcher;
+            ProjectWorkspaceSnapshot workspace = builtWorkspace.withWatcherTruncated(
+                    watchesRoot(watcher, builtWorkspace.projectRoot())
+                            && watcher.registrationTruncated());
+            OwnerPolicyState ownerState = ownerPolicyState(policy);
+            List<PolicyIssue> ownerIssues = ownerState.issues();
+            PolicyBadgeSnapshot snapshot = new PolicyBadgeSnapshot(
+                    docPath, policyAnchorDocument, ontologyIri, policy, ownerIssues,
+                    ownerState.synchronizationRequired(), ownerState.omittedBindings(),
+                    workspaceDocuments(loadedOntologies),
+                    formatPolicyBadgeWithIssues(policy, ownerIssues),
+                    buildPolicyTooltip(docPath, ontologyIri, policy, ownerIssues));
+            SwingUtilities.invokeLater(() -> {
+                if (generation != policyRefreshGeneration.get() || policyLoader == null
+                        || policyLoader.isShutdown()) {
+                    return;
+                }
+                governingPolicyPath = snapshot.policy().loaded() ? snapshot.policy().path() : null;
+                policySnapshot = snapshot;
+                applyPolicyBadge(snapshot.badge(), snapshot.tooltip());
+                updatePolicySyncButton();
+                if (projectExplorer != null) projectExplorer.showSnapshot(workspace);
+                followProjectRoot(workspace.projectRoot());
+            });
+        });
+    }
+
+    private static Path policyAnchorDocument(ProjectPolicy policy, Path activeDocument) {
+        if (policy == null || !policy.loaded() || policy.projectRoot() == null) return activeDocument;
+        if (activeDocument != null && activeDocument.toAbsolutePath().normalize()
+                .startsWith(policy.projectRoot())) return activeDocument;
+        List<Path> roots = policy.assets().get("root_artifact");
+        return roots == null || roots.isEmpty() ? activeDocument : roots.get(0);
+    }
+
+    private static boolean watchesRoot(RecursiveProjectWatcher watcher, Path root) {
+        if (watcher == null || root == null) return false;
+        try {
+            return watcher.root().equals(root.toRealPath());
+        } catch (IOException unavailable) {
+            return false;
+        }
+    }
+
+    private static List<ProjectWorkspaceService.LoadedOntology> captureLoadedOntologies(
+            OWLModelManager mm) {
+        if (mm == null || mm.getOWLOntologyManager() == null) return List.of();
+        List<ProjectWorkspaceService.LoadedOntology> result = new ArrayList<>();
+        for (OWLOntology ontology : mm.getOntologies()) {
+            IRI documentIri = mm.getOWLOntologyManager().getOntologyDocumentIRI(ontology);
+            File local = SidecarPaths.toFile(documentIri);
+            Path path = local == null ? null : local.toPath().toAbsolutePath().normalize();
+            String iri = ontology.getOntologyID().getOntologyIRI().isPresent()
+                    ? ontology.getOntologyID().getOntologyIRI().get().toString() : null;
+            result.add(new ProjectWorkspaceService.LoadedOntology(ontology, iri,
+                    documentIri == null ? null : documentIri.toString(), path,
+                    path != null && Files.isRegularFile(path), ontology.getAxiomCount()));
+        }
+        return List.copyOf(result);
+    }
+
+    private static List<ProjectPolicyRegistrySync.WorkspaceDocument> workspaceDocuments(
+            List<ProjectWorkspaceService.LoadedOntology> loaded) {
+        return loaded.stream()
+                .filter(item -> item.localPath() != null && item.documentExists())
+                .map(item -> new ProjectPolicyRegistrySync.WorkspaceDocument(
+                        item.ontologyIri(), item.localPath()))
+                .toList();
+    }
+
+    private void followProjectRoot(Path root) {
+        Path normalized = root == null ? null : root.toAbsolutePath().normalize();
+        if (java.util.Objects.equals(normalized, watchedProjectRoot)) return;
+        if (projectWatcher != null) {
+            projectWatcher.close();
+            projectWatcher = null;
+        }
+        watchedProjectRoot = normalized;
+        if (normalized == null || !Files.isDirectory(normalized)) return;
+        try {
+            projectWatcher = new RecursiveProjectWatcher(normalized,
+                    () -> SwingUtilities.invokeLater(() -> {
+                        if (!disposed) requestPolicyRefresh();
+                    }));
+        } catch (IOException ignored) {
+            watchedProjectRoot = null;
+        }
+    }
+
+    private void applyPolicyBadge(String badge, String tooltip) {
+        if (badge.contains("Valid")) {
+            policyStatusBadge.setIcon(icon(Glyph.CHECK, 17, new Color(0x1B5E20), null));
+        } else if (badge.contains("Warning") || badge.contains("None")
+                || badge.contains("checking")) {
+            policyStatusBadge.setIcon(icon(Glyph.WARNING, 17, new Color(0xB26A00), null));
+        } else {
+            policyStatusBadge.setIcon(icon(Glyph.WARNING, 17, new Color(0xB71C1C), null));
+        }
+        policyStatusBadge.getAccessibleContext().setAccessibleName(badge);
+        policyStatusBadge.setToolTipText(tooltip != null
+                ? tooltip : "Project policy status is loading in the background");
+    }
+
+    private void invalidatePolicySelection() {
+        policySnapshot = null;
+        policyRefreshGeneration.incrementAndGet();
+        if (SwingUtilities.isEventDispatchThread()) {
+            updatePolicySyncButton();
+        } else {
+            SwingUtilities.invokeLater(() -> {
+                if (!disposed && policySnapshot == null) updatePolicySyncButton();
+            });
+        }
+    }
+
+    static String buildPolicyTooltip(Path docPath, String ontologyIri, ProjectPolicy policy) {
+        return buildPolicyTooltip(docPath, ontologyIri, policy, List.of());
+    }
+
+    static String buildPolicyTooltip(Path docPath, String ontologyIri, ProjectPolicy policy,
+            List<PolicyIssue> ownerIssues) {
+        StringBuilder tip = new StringBuilder("<html>");
+        tip.append("<b>Active Project / Ontology:</b> ")
+                .append(escapeHtml(ontologyIri != null ? ontologyIri : "(anonymous)"))
+                .append("<br>");
+        tip.append("<b>Document Location:</b> ");
+        if (docPath != null) {
+            tip.append(escapeHtml(docPath));
+        } else {
+            tip.append("<i>Unsaved (In-memory)</i>");
+        }
+        tip.append("<br>");
+        if (docPath != null && docPath.getParent() != null) {
+            tip.append("<b>Project Directory:</b> ")
+                    .append(escapeHtml(docPath.getParent())).append("<br>");
+        }
+        String badge = formatPolicyBadgeWithIssues(policy, ownerIssues);
+        tip.append("<b>Policy Status:</b> ").append(escapeHtml(badge)).append("<br>");
+        if (policy.loaded()) {
+            tip.append("<b>Policy Path:</b> ").append(escapeHtml(policy.path())).append("<br>");
+            tip.append("<b>Project Root:</b> ").append(escapeHtml(policy.projectRoot()))
+                    .append("<br>");
+            List<PolicyIssue> issues = combinedIssues(policy, ownerIssues);
+            if (!issues.isEmpty()) {
+                int count = issues.size();
+                tip.append("<b>Issues:</b> ").append(count).append(count == 1 ? " issue" : " issues").append("<br>");
+                for (PolicyIssue issue : issues) {
+                    tip.append("&nbsp;&nbsp;• [").append(escapeHtml(issue.code())).append("] ");
+                    if (issue.path() != null && !issue.path().isEmpty()) {
+                        tip.append("<code>").append(escapeHtml(issue.path())).append("</code>: ");
+                    }
+                    tip.append(escapeHtml(issue.message())).append("<br>");
+                }
+            }
+        } else {
+            tip.append("<i>No .protege-mcp/project.yaml found for this project.</i><br>");
+            tip.append("Save ontology to disk and create a Project Policy v3.");
+        }
+        tip.append("<i>Click for full details.</i>");
+        tip.append("</html>");
+        return tip.toString();
+    }
+
+    private static OwnerPolicyState ownerPolicyState(ProjectPolicy policy) {
+        try {
+            ProviderOwnerConfig owner = new ProviderConfigurationStore().load();
+            ProjectPolicyRegistrySync.SynchronizationStatus status =
+                    ProjectPolicyRegistrySync.synchronizationStatus(policy, owner);
+            return new OwnerPolicyState(ProviderPolicyBindings.warnings(policy, owner),
+                    status.required(), status.omitted());
+        } catch (ProviderFailure failure) {
+            List<PolicyIssue> issues = hasProviderRows(policy)
+                    ? List.of(new PolicyIssue("warning", "provider_configuration_unavailable",
+                            "external_terms.providers",
+                            "Owner terminology registry settings could not be read ("
+                                    + failure.code()
+                                    + "). Review Preferences ▸ MCP ▸ Externals."))
+                    : List.of();
+            return new OwnerPolicyState(issues, true, List.of());
+        } catch (IllegalArgumentException invalid) {
+            return new OwnerPolicyState(List.of(new PolicyIssue("warning",
+                    "provider_configuration_ambiguous", "external_terms.providers",
+                    invalid.getMessage())), true, List.of());
+        }
+    }
+
+    private static boolean hasProviderRows(ProjectPolicy policy) {
+        if (policy == null || !policy.loaded() || policy.version() < 2) return false;
+        Object external = policy.effective().get("external_terms");
+        if (!(external instanceof java.util.Map<?, ?> map)) return false;
+        Object providers = map.get("providers");
+        return providers instanceof List<?> list && !list.isEmpty();
+    }
+
+    private static List<PolicyIssue> combinedIssues(ProjectPolicy policy,
+            List<PolicyIssue> ownerIssues) {
+        List<PolicyIssue> result = new ArrayList<>(policy.issues());
+        result.addAll(ownerIssues);
+        return List.copyOf(result);
+    }
+
+    static String escapeHtml(Object value) {
+        if (value == null) {
+            return "";
+        }
+        return String.valueOf(value)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
+
+    static List<String> getInstalledReasoners(OWLModelManager mm) {
+        if (mm == null) {
+            return Collections.emptyList();
+        }
+        List<String> reasoners = new ArrayList<>();
+        try {
+            if (mm.getOWLReasonerManager() != null) {
+                for (var info : mm.getOWLReasonerManager().getInstalledReasonerFactories()) {
+                    if (info != null && info.getReasonerName() != null) {
+                        reasoners.add(info.getReasonerName());
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return reasoners;
+    }
+
+    static String formatOntologyLabel(OWLModelManager mm, OWLOntology o) {
+        if (o == null) {
+            return "None";
+        }
+        OWLOntologyID id = o.getOntologyID();
+        String ontologyIri = !id.isAnonymous() && id.getOntologyIRI().isPresent()
+                ? id.getOntologyIRI().get().toString() : null;
+        String local = ontologyIri != null ? WriteTools.localName(ontologyIri) : "";
+
+        File docFile = null;
+        if (mm != null && mm.getOWLOntologyManager() != null) {
+            IRI docIri = mm.getOWLOntologyManager().getOntologyDocumentIRI(o);
+            if (docIri != null) {
+                docFile = SidecarPaths.toFile(docIri);
+            }
+        }
+
+        if (docFile != null && docFile.exists()) {
+            String fileName = docFile.getName();
+            File parent = docFile.getParentFile();
+            String parentDir = parent != null ? parent.getName() : "";
+            String location = parentDir.isEmpty() ? fileName : parentDir + " / " + fileName;
+            if (ontologyIri != null) {
+                String shortName = !local.isEmpty() ? local : ontologyIri;
+                return location + " (" + shortName + ")";
+            }
+            return location + " (anonymous)";
+        }
+
+        // Unsaved / In-memory ontology
+        String name = ontologyIri != null ? (!local.isEmpty() ? local : ontologyIri) : "Anonymous Ontology";
+        return "[Unsaved] " + name + " · In-memory";
+    }
+
+    static String formatPolicyBadge(OWLModelManager mm, OWLOntology active) {
+        if (mm == null || active == null) {
+            return "Policy: None";
+        }
+        IRI docIri = mm.getOWLOntologyManager() != null
+                ? mm.getOWLOntologyManager().getOntologyDocumentIRI(active) : null;
+        File docFile = SidecarPaths.toFile(docIri);
+        Path docPath = docFile != null ? docFile.toPath() : null;
+        String ontologyIri = active.getOntologyID().getOntologyIRI().isPresent()
+                ? active.getOntologyID().getOntologyIRI().get().toString() : null;
+        List<String> installedReasoners = getInstalledReasoners(mm);
+        ProjectPolicy policy = ProjectPolicyLoader.load(null, docPath, ontologyIri, installedReasoners);
+        return formatPolicyBadge(policy);
+    }
+
+    private static String formatPolicyBadge(ProjectPolicy policy) {
+        return formatPolicyBadgeWithIssues(policy, List.of());
+    }
+
+    static String formatPolicyBadgeWithIssues(ProjectPolicy policy,
+            List<PolicyIssue> ownerIssues) {
+        if (!policy.loaded()) {
+            return "Policy: None";
+        }
+        if (policy.valid()) {
+            int warnings = (int) combinedIssues(policy, ownerIssues).stream()
+                    .filter(issue -> "warning".equals(issue.severity())).count();
+            if (warnings > 0) {
+                return "Policy: v" + (policy.version() > 0 ? policy.version() : "1")
+                        + " (Warning: " + warnings + ")";
+            }
+            return "Policy: v" + (policy.version() > 0 ? policy.version() : "1") + " (Valid)";
+        }
+        int count = combinedIssues(policy, ownerIssues).size();
+        String issueSuffix = count == 1 ? "1 issue" : count + " issues";
+        return "Policy: Invalid (" + issueSuffix + ")";
+    }
+
+    private record PolicyBadgeSnapshot(
+            Path activeDocument,
+            Path policyAnchorDocument,
+            String ontologyIri,
+            ProjectPolicy policy,
+            List<PolicyIssue> ownerIssues,
+            boolean synchronizationRequired,
+            List<String> omittedBindings,
+            List<ProjectPolicyRegistrySync.WorkspaceDocument> workspaceDocuments,
+            String badge,
+            String tooltip) {}
+
+    private record OwnerPolicyState(
+            List<PolicyIssue> issues,
+            boolean synchronizationRequired,
+            List<String> omittedBindings) {}
+
+    static final class ResponsiveTopBar extends JPanel {
+        private static final long serialVersionUID = 1L;
+        private final JComponent left;
+        private final JComponent right;
+
+        ResponsiveTopBar(JComponent left, JComponent right) {
+            this.left = left;
+            this.right = right;
+            setLayout(null);
+            setOpaque(false);
+            add(left);
+            add(right);
+            addComponentListener(new java.awt.event.ComponentAdapter() {
+                private boolean lastWrapped = false;
+
+                @Override
+                public void componentResized(java.awt.event.ComponentEvent e) {
+                    boolean wrapped = isWrapped(getWidth());
+                    if (wrapped != lastWrapped) {
+                        lastWrapped = wrapped;
+                        revalidate();
+                        repaint();
+                    }
+                }
+            });
+        }
+
+        boolean isWrapped(int width) {
+            int leftW = left.getPreferredSize().width;
+            int rightW = right.getPreferredSize().width;
+            return width > 0 && width < (leftW + rightW + 8);
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            int leftW = left.getPreferredSize().width;
+            int rightW = right.getPreferredSize().width;
+            int leftH = left.getPreferredSize().height;
+            int rightH = right.getPreferredSize().height;
+            int rowH = Math.max(leftH, rightH);
+            int parentW = getWidth();
+            if (parentW == 0 && getParent() != null) {
+                parentW = getParent().getWidth();
+            }
+            if (isWrapped(parentW)) {
+                return new Dimension(Math.max(leftW, rightW), rowH * 2 + 4);
+            }
+            return new Dimension(leftW + rightW + 8, rowH);
+        }
+
+        @Override
+        public Dimension getMinimumSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public void doLayout() {
+            Insets insets = getInsets();
+            int availW = getWidth() - insets.left - insets.right;
+            int leftW = left.getPreferredSize().width;
+            int rightW = right.getPreferredSize().width;
+            int leftH = left.getPreferredSize().height;
+            int rightH = right.getPreferredSize().height;
+            int rowH = Math.max(leftH, rightH);
+
+            if (isWrapped(availW)) {
+                left.setBounds(insets.left, insets.top, Math.min(leftW, availW), leftH);
+                right.setBounds(insets.left, insets.top + rowH + 4, Math.min(rightW, availW), rightH);
+            } else {
+                left.setBounds(insets.left, insets.top + (rowH - leftH) / 2, leftW, leftH);
+                int rightX = insets.left + availW - rightW;
+                right.setBounds(Math.max(insets.left + leftW + 6, rightX), insets.top + (rowH - rightH) / 2, rightW, rightH);
+            }
+        }
+    }
+
     @Override
     protected void disposeOWLView() {
+        disposed = true;
+        if (projectWatcher != null) {
+            projectWatcher.close();
+            projectWatcher = null;
+        }
+        watchedProjectRoot = null;
+        ProviderConfigurationEvents.removeChangeListener(providerConfigurationListener);
+        policyRefreshGeneration.incrementAndGet();
+        policySnapshot = null;
+        if (policyLoader != null) {
+            policyLoader.shutdownNow();
+            policyLoader = null;
+        }
+        if (modelManagerListener != null && getOWLModelManager() != null) {
+            getOWLModelManager().removeListener(modelManagerListener);
+            modelManagerListener = null;
+        }
         // First, so a catalog saved during teardown cannot rebuild pickers being dismantled.
         if (providerControls != null) {
             providerControls.stopFollowingCatalogEdits();

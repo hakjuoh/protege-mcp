@@ -26,13 +26,14 @@ import io.github.hakjuoh.protege_mcp.contracts.ExternalTermToolSchemas;
 import io.github.hakjuoh.protege_mcp.contracts.ReasonerToolSchemas;
 import io.github.hakjuoh.protege_mcp.contracts.JobToolSchemas;
 import io.modelcontextprotocol.spec.McpSchema.PromptArgument;
+import io.modelcontextprotocol.spec.McpSchema.ToolAnnotations;
 
 /**
  * The resource-backed source of truth for MCP tool and prompt metadata.
  *
  * <p>Handlers and prompt renderers register by name. This catalog supplies their descriptions,
- * input schemas and prompt arguments from one versioned JSON resource, and rejects malformed or
- * ambiguous metadata at startup.
+ * standard behavior annotations, input schemas and prompt arguments from one versioned JSON
+ * resource, and rejects malformed or ambiguous metadata at startup.
  */
 public final class McpCatalog {
 
@@ -128,11 +129,13 @@ public final class McpCatalog {
             JsonNode node = nodes.get(index);
             String path = "catalog.tools[" + index + "]";
             requireObject(node, path);
-            requireFields(node, path, Set.of("name", "description", "input_schema"),
+            requireFields(node, path, Set.of("name", "description", "annotations", "input_schema"),
                     Set.of("output_schema"));
             String name = requireName(node, path);
             String description = requireText(node, "description", path);
             rejectInternalReference(description, path + ".description");
+            ToolAnnotations annotations = parseAnnotations(
+                    required(node, "annotations", path), path + ".annotations");
             if (ReasonerToolSchemas.NAMES.contains(name)) {
                 description = ReasonerToolSchemas.description(name);
             } else if (JobToolSchemas.NAMES.contains(name)) {
@@ -185,7 +188,7 @@ public final class McpCatalog {
                 throw invalid(path + ".output_schema is required for every post-0.7.2 tool");
             }
             ToolDefinition previous = definitions.putIfAbsent(
-                    name, new ToolDefinition(name, description, schema, outputSchema,
+                    name, new ToolDefinition(name, description, annotations, schema, outputSchema,
                             ToolContractSchemas.errorSchema()));
             if (previous != null) {
                 throw invalid("duplicate tool name '" + name + "'");
@@ -236,6 +239,19 @@ public final class McpCatalog {
             arguments.add(new PromptArgument(name, description, required.booleanValue()));
         }
         return Collections.unmodifiableList(arguments);
+    }
+
+    private static ToolAnnotations parseAnnotations(JsonNode node, String path) {
+        requireObject(node, path);
+        requireFields(node, path, Set.of("title", "readOnlyHint", "destructiveHint",
+                "idempotentHint", "openWorldHint"));
+        return ToolAnnotations.builder()
+                .title(requireText(node, "title", path))
+                .readOnlyHint(requireBoolean(node, "readOnlyHint", path))
+                .destructiveHint(requireBoolean(node, "destructiveHint", path))
+                .idempotentHint(requireBoolean(node, "idempotentHint", path))
+                .openWorldHint(requireBoolean(node, "openWorldHint", path))
+                .build();
     }
 
     private static void validateInputSchema(JsonNode schema, String path) {
@@ -335,6 +351,14 @@ public final class McpCatalog {
         return value.intValue();
     }
 
+    private static boolean requireBoolean(JsonNode node, String field, String path) {
+        JsonNode value = required(node, field, path);
+        if (!value.isBoolean()) {
+            throw invalid(path + "." + field + " must be a boolean");
+        }
+        return value.booleanValue();
+    }
+
     private static JsonNode requireArray(JsonNode node, String field, String path) {
         JsonNode value = required(node, field, path);
         if (!value.isArray()) {
@@ -382,7 +406,7 @@ public final class McpCatalog {
     }
 
     /** Immutable metadata used to construct one MCP tool specification. */
-    public record ToolDefinition(String name, String description,
+    public record ToolDefinition(String name, String description, ToolAnnotations annotations,
             Map<String, Object> inputSchema, Map<String, Object> outputSchema,
             Map<String, Object> errorSchema) {
     }

@@ -128,7 +128,7 @@ public final class ToolCapabilityCatalog {
                 "create_ontology", "extract_module", "set_reasoner");
         declare(map, adminProjectRead, "load_ontology", "merge_ontology_document");
         declare(map, adminProjectWrite, "save_ontology", "write_catalog",
-                "write_project_policy_template");
+                "write_project_policy_template", "write_project_policy");
         declare(map, adminProjectReadWrite, "write_import_lock");
         declare(map, curateProjectReadWrite, "add_mapping", "remove_mapping", "import_sssom",
                 "accept_reuse_proposal");

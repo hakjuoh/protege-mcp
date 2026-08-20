@@ -48,7 +48,7 @@ public final class ProjectPolicyFixtures {
                 + "    timeout_ms: 120000\n";
     }
 
-    /** Write YAML and materialize its root artifact and matching RO-Crate for policy v1/v2. */
+    /** Write YAML and materialize its root artifact and matching RO-Crate for policy v1/v2/v3. */
     public static void writePolicy(Path policyPath, String yaml) throws IOException {
         Files.createDirectories(policyPath.getParent());
         Files.writeString(policyPath, yaml, StandardCharsets.UTF_8);
@@ -64,7 +64,8 @@ public final class ProjectPolicyFixtures {
             return;
         }
         if (!(parsed instanceof Map) || !(Integer.valueOf(1).equals(((Map<?, ?>) parsed).get("version"))
-                || Integer.valueOf(2).equals(((Map<?, ?>) parsed).get("version")))) {
+                || Integer.valueOf(2).equals(((Map<?, ?>) parsed).get("version"))
+                || Integer.valueOf(3).equals(((Map<?, ?>) parsed).get("version")))) {
             return;
         }
         Map<String, Object> policy = (Map<String, Object>) parsed;

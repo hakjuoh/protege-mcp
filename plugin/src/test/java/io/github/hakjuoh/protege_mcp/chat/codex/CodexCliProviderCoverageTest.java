@@ -101,10 +101,7 @@ class CodexCliProviderCoverageTest {
         ChatRequest req = new ChatRequest("", "final message", "", ENDPOINT);
         List<String> cmd = CodexCliProvider.buildCommand("codex", req);
         assertEquals("--", cmd.get(cmd.size() - 2), "'--' separates flags from the prompt");
-        // A blank sessionId is a NEW thread, so its first message leads with the steering preamble.
-        assertEquals(io.github.hakjuoh.protege_mcp.chat.AssistantSteering.SYSTEM_PROMPT
-                        + "\n\n" + req.providerPrompt(),
-                cmd.get(cmd.size() - 1),
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1),
                 "the provider prompt is the trailing argument");
     }
 
@@ -115,13 +112,7 @@ class CodexCliProviderCoverageTest {
         ChatRequest req = new ChatRequest("", "hi", null, ENDPOINT);
         List<String> cmd = CodexCliProvider.buildCommand("codex", req);
         assertFalse(cmd.contains("resume"), "a null sessionId starts a fresh exec run");
-        // Null is the PRODUCTION fresh-turn value (ChatHistory.sessionId returns null for a new
-        // conversation); the blank-string tests alone would let a null-mishandling refactor drop
-        // the steering from every real first turn.
-        assertEquals(io.github.hakjuoh.protege_mcp.chat.AssistantSteering.SYSTEM_PROMPT
-                        + "\n\n" + req.providerPrompt(),
-                cmd.get(cmd.size() - 1),
-                "a null sessionId is a NEW thread for the steering preamble too");
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));
     }
 
     @Test
@@ -136,12 +127,7 @@ class CodexCliProviderCoverageTest {
         ChatRequest req = new ChatRequest("", "hi", "   \t ", ENDPOINT);
         List<String> cmd = CodexCliProvider.buildCommand("codex", req);
         assertFalse(cmd.contains("resume"), "a whitespace-only sessionId is treated as blank");
-        // The steering predicate must agree with the resume predicate on every blankness form —
-        // a divergence would resume WITHOUT steering or seed WITH a resume.
-        assertEquals(io.github.hakjuoh.protege_mcp.chat.AssistantSteering.SYSTEM_PROMPT
-                        + "\n\n" + req.providerPrompt(),
-                cmd.get(cmd.size() - 1),
-                "a whitespace-only sessionId is a NEW thread for the steering preamble too");
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1));
     }
 
     @Test
@@ -263,9 +249,7 @@ class CodexCliProviderCoverageTest {
         List<String> cmd = CodexCliProvider.buildCommand("codex", req);
 
         assertFalse(cmd.contains("--image"), "pasted text travels in the prompt, not via --image");
-        assertEquals(io.github.hakjuoh.protege_mcp.chat.AssistantSteering.SYSTEM_PROMPT
-                        + "\n\n" + req.providerPrompt(),
-                cmd.get(cmd.size() - 1),
+        assertEquals(req.providerPrompt(), cmd.get(cmd.size() - 1),
                 "the enriched provider prompt (including pasted body) is the trailing argument");
     }
 
@@ -277,14 +261,10 @@ class CodexCliProviderCoverageTest {
     }
 
     @Test
-    void blankPromptOnANewThreadStillSendsTheSteeringPreamble() {
+    void blankPromptOnANewThreadRemainsBlank() {
         ChatRequest req = new ChatRequest("", "", "", ENDPOINT);
         List<String> cmd = CodexCliProvider.buildCommand("codex", req);
-        // Still a new thread: the steering preamble rides the first message, with the empty user
-        // prompt as its (blank) suffix — the trailing argument is emitted either way.
-        assertEquals(io.github.hakjuoh.protege_mcp.chat.AssistantSteering.SYSTEM_PROMPT + "\n\n",
-                cmd.get(cmd.size() - 1),
-                "a blank prompt still emits the steering preamble as the trailing argument");
+        assertEquals("", cmd.get(cmd.size() - 1));
     }
 
     // ---- startTurn: null-executable error branch (no prefs mutation needed) -----------------

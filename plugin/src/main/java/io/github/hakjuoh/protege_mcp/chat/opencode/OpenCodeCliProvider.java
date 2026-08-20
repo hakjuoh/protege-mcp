@@ -12,7 +12,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
-import io.github.hakjuoh.protege_mcp.chat.AssistantSteering;
 import io.github.hakjuoh.protege_mcp.chat.ChatAttachment;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientModelCatalog;
 import io.github.hakjuoh.protege_mcp.chat.ChatClientPreferences;
@@ -139,10 +138,7 @@ public final class OpenCodeCliProvider implements ChatProvider {
             }
         }
         command.add("--");
-        boolean newSession = request.sessionId() == null || request.sessionId().isBlank();
-        command.add(newSession
-                ? AssistantSteering.SYSTEM_PROMPT + "\n\n" + request.providerPrompt()
-                : request.providerPrompt());
+        command.add(request.providerPrompt());
         return List.copyOf(command);
     }
 

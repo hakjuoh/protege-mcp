@@ -108,6 +108,15 @@
             <version>${slf4j.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- The package-phase bundle verifier boots the same Felix version as Protégé and asks it
+             to install the produced jar. This catches manifest defects (for example duplicate
+             Import-Package clauses) that bnd itself can emit without failing the build. -->
+        <dependency>
+            <groupId>org.apache.felix</groupId>
+            <artifactId>org.apache.felix.framework</artifactId>
+            <version>7.0.5</version>
+            <scope>test</scope>
+        </dependency>
 
         <!-- ===================================================================== -->
         <!-- compile + embed: the MCP stack (inlined into the bundle)               -->
@@ -354,13 +363,14 @@
                             !okio.*,
                             !kotlin,
                             !kotlin.*,
-                            org.protege.editor.core.*,
-                            org.protege.editor.owl.*,
                             <!--
                               Force-import every package that appears ONLY in the method signatures of
                               the OWLModelManager / OWLEntityFinder interfaces we build a JDK dynamic
-                              Proxy for in IsolatedValidationSnapshot. bnd's org.protege.editor.owl.*
-                              wildcard imports only packages STATICALLY referenced in our bytecode; the
+                              Proxy for in IsolatedValidationSnapshot. These exact clauses MUST precede
+                              the broad Protégé wildcards: bnd permits a later exact clause to duplicate
+                              a package already selected by a wildcard, producing a manifest that Felix
+                              refuses to install. The wildcards import only packages STATICALLY
+                              referenced in our bytecode; the
                               proxy links every signature type of the whole interface at generation
                               time under the bundle classloader, so a signature-only package that
                               nothing else references is omitted and Proxy.newProxyInstance throws
@@ -376,6 +386,8 @@
                             org.protege.editor.owl.ui.error,
                             org.protege.editor.owl.ui.explanation,
                             org.protege.editor.owl.ui.renderer,
+                            org.protege.editor.core.*,
+                            org.protege.editor.owl.*,
                             org.semanticweb.owlapi.*,
                             uk.ac.manchester.cs.owlapi.modularity,
                             com.clarkparsia.owlapi.explanation,
@@ -389,6 +401,32 @@
                         </Import-Package>
                     </instructions>
                 </configuration>
+            </plugin>
+
+            <!-- `bundle` packaging writes the final manifest only in the package phase, after
+                 ordinary unit tests. Install that exact artifact into an isolated Felix framework
+                 before Maven can report package success. -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.6.3</version>
+                <executions>
+                    <execution>
+                        <id>verify-osgi-bundle-installation</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>java</goal>
+                        </goals>
+                        <configuration>
+                            <mainClass>io.github.hakjuoh.protege_mcp.packaging.BundleInstallationVerifier</mainClass>
+                            <classpathScope>test</classpathScope>
+                            <arguments>
+                                <argument>${project.build.directory}/${project.build.finalName}.jar</argument>
+                            </arguments>
+                            <cleanupDaemonThreads>false</cleanupDaemonThreads>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- Run the JUnit 5 tests (junit-jupiter) in the test phase. Tests run with the

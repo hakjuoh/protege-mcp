@@ -23,6 +23,12 @@ class ProjectPolicySchemaSnapshotTest {
                 digest("/schema/project-policy-v2.schema.json"));
     }
 
+    @Test
+    void versionThreeSchemaMatchesTheReviewedWorkspaceBaseline() throws Exception {
+        assertEquals("d05f6f7053e0614d91c4277e768482cc66587c994c08052065ffa3996724253d",
+                digest("/schema/project-policy-v3.schema.json"));
+    }
+
     private static String digest(String resource) throws Exception {
         try (InputStream input = ProjectPolicySchemaSnapshotTest.class.getResourceAsStream(resource)) {
             assertNotNull(input, () -> "missing schema resource " + resource);

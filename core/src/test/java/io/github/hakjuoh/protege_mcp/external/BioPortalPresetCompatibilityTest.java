@@ -198,7 +198,7 @@ class BioPortalPresetCompatibilityTest {
                 "json".equals(request.query().get("format"))
                         && "false".equals(request.query().get("display_context"))
                         && "true".equals(request.query().get("display_links"))));
-        assertTrue(requests.stream().allMatch(request -> request.query().containsKey("include")));
+        assertTrue(requests.stream().noneMatch(request -> request.query().containsKey("include")));
         assertFalse(requests.stream().anyMatch(request ->
                 request.query().containsKey("download_format")));
     }

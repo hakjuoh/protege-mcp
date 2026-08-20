@@ -705,7 +705,7 @@ public final class WriteTools {
         return EntityWriteService.joinNamespace(namespace, name);
     }
 
-    static String localName(String iri) {
+    public static String localName(String iri) {
         return EntityWriteService.localName(iri);
     }
 
