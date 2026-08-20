@@ -60,6 +60,12 @@ its [GitHub release](https://github.com/hakjuoh/protege-mcp/releases) by the rel
   client metadata now lives alongside each runtime adapter under its client-specific `chat` package.
 
 ### Added
+- Added global ontology development system instructions to the Ontology Assistant (`system-instruction.md`).
+  System instructions frame the assistant's role across the formal 7-phase ontology engineering lifecycle
+  (Specification, Conceptualization, Reuse, Formalization, Quality Assurance, Release, Maintenance), map
+  all 105 catalog tools to lifecycle tasks, prioritize live Protégé MCP tools over raw shell commands
+  (`bash`, `rg`, `grep`, `find`), and inject structured lifecycle guidance into every turn across Claude Code,
+  Codex, Antigravity, and OpenCode.
 - Added direct project-policy controls to the Ontology Assistant. The project row now reports owner-local
   terminology binding drift as a warning and can create or atomically synchronize policy from saved
   Preferences after an explicit preview, without spending an assistant turn. The sync control is disabled

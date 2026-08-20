@@ -25,6 +25,14 @@ description carries its exact workflow, argument mapping, and recovery guidance.
 
 ---
 
+## New tool in 0.8.1
+
+| Task | New tool | What it adds |
+| --- | --- | --- |
+| Project policy & metadata | [`write_project_policy`](quality.html#write_project_policy) | Scaffold a valid commented `.protege-mcp/project.yaml` with RO-Crate metadata, replace complete authored YAML, or recursively patch policy fields while preserving unaffected content and upgrading v1/v2 to v3. |
+
+---
+
 ## New tools in 0.8.0
 
 | Task | New tools | What they add |
@@ -58,7 +66,7 @@ interactive behavior remain compatible.
 | Transactional editing | [`rebase_change_set`](editing.html#rebase_change_set) | Deterministically re-resolve a cached preview at the current revision; a changed resolution fails closed for human review. |
 | Change review | [`analyze_change_impact`](context-validation.html#analyze_change_impact) | Syntactic impact analysis of a cached change set or asserted diff: affected entities and modules, referencing axioms, downstream terms, foreign re-axiomatization, deprecated terms in use, and validation assets naming changed IRIs. |
 | Release | [`run_release_gate`](quality.html#run_release_gate), [`prepare_release`](quality.html#prepare_release) | Run the strict QC gate plus the release-only checks (import provenance, version IRI, verified serialization round trip, fingerprint stability, optional baseline diff) read-only, then produce the manifest, reports, and RO-Crate bundle — dry-run by default, written atomically into the policy output directory on confirmation. |
-| Project policy & QC | [`write_project_policy_template`](quality.html#write_project_policy_template), [`write_project_policy`](quality.html#write_project_policy) | Scaffold an immediately valid commented `.protege-mcp/project.yaml`, replace complete authored YAML, or recursively patch any policy field while preserving unaffected content. |
+| Project policy & QC | [`write_project_policy_template`](quality.html#write_project_policy_template) | Scaffold an immediately valid commented `.protege-mcp/project.yaml` from the active ontology. |
 
 ## New tools in 0.6.0
 

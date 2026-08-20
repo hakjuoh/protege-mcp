@@ -32,12 +32,13 @@ Two ways to use it:
 
 **1. As an MCP server for an external client.**
 Point [Claude Code](connect/claude-code.html), [Codex CLI](connect/codex-cli.html),
+[Antigravity](connect/index.html), [OpenCode](connect/index.html),
 [VS Code](connect/vs-code.html), or [Claude Desktop](connect/claude-desktop.html) at
 `http://127.0.0.1:8123/mcp` and it can read and edit your ontology.
 
 **2. As an in-app assistant.**
 The built-in [**Ontology Assistant**](ontology-assistant.html) chat tab drives a coding-agent CLI you
-already have (Claude Code or Codex) back into the same MCP server — so you get a conversational editor
+already have (Claude Code, Codex, Antigravity, or OpenCode) back into the same MCP server — so you get a conversational editor
 *inside Protégé*, with no separate client to run.
 
 </div>
@@ -88,7 +89,7 @@ Everything an AI client does flows through Protégé's own model manager, so:
 | Section | What's inside |
 | --- | --- |
 | [Installation](installation.html) | Requirements (Java 17+), manual install, and *Check for plugins*. |
-| [Connecting a client](connect/) | The server model (ports, OAuth vs. bearer token) and per-environment recipes for Claude Code, Codex CLI, VS Code, and Claude Desktop. |
+| [Connecting a client](connect/) | The server model (ports, OAuth vs. bearer token) and per-environment recipes for Claude Code, Codex CLI, Antigravity, OpenCode, VS Code, and Claude Desktop. |
 | [Ontology Assistant](ontology-assistant.html) | The in-Protégé chat: what it is, how it works, attachments, privacy, and settings. |
 | [Tools](tools/) | All 105 tools by category. |
 | [Prompts](prompts/) | The 11 guided workflows available to MCP clients. |

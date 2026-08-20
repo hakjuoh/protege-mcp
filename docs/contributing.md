@@ -83,7 +83,7 @@ live in the core module under `core/src/main/java/`:
 | `contracts` (core module) | Versioned project/revision/finding/stage/gate records; matching JSON Schemas are packaged under `core/src/main/resources/schema`. |
 | `core` module | Compiles Protégé-free contracts, policy loading, fingerprints, and semantic diff for reuse by adapters; sources under `core/src/main/java/`. |
 | `cli` module | Headless executable adapter and shaded-JAR smoke tests. |
-| `chat` | The Ontology Assistant back end: the `ChatProvider` SPI and the Claude / Codex CLI providers + event parsers. |
+| `chat` | The Ontology Assistant back end: the `ChatProvider` SPI, system instructions, and the Claude / Codex / Antigravity / OpenCode CLI providers + event parsers. |
 | `ui` | Swing views/panels: `McpServerView`, `McpPreferencesPanel`, `ChatView`, `ChatTab`, `ChatPreferencesPanel`. |
 | `config` | `McpConfig` — the settings snapshot backed by Protégé's preferences store. |
 

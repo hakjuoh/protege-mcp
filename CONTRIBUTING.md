@@ -80,7 +80,7 @@ headless CLI under `cli/src/`:
 | `catalog` | `McpCatalog` — loads and fail-fast-validates the `mcp-catalog.json` resource holding every built-in tool/prompt's name, description, input schema, and prompt arguments. |
 | `prompts` | The guided MCP prompts. `Prompts.java` registers the templates; `PromptCatalog` aggregates the providers (mirrors the `tools` registry pattern). |
 | `contracts` (core module) | Versioned project/revision/finding/stage/gate records; matching JSON Schemas are packaged under `core/src/main/resources/schema`. |
-| `chat` | The Ontology Assistant back end: the `ChatProvider` SPI and the Claude / Codex CLI providers + event parsers. |
+| `chat` | The Ontology Assistant back end: the `ChatProvider` SPI, system instructions, and the Claude / Codex / Antigravity / OpenCode CLI providers + event parsers. |
 | `ui` | Swing views/panels: `McpServerView`, `McpPreferencesPanel`, `ChatView`, `ChatTab`, `ChatPreferencesPanel`. |
 | `config` | `McpConfig` — the settings snapshot backed by Protégé's preferences store. |
 

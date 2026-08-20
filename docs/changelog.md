@@ -41,8 +41,9 @@ each section is also published as the body of its
   Protégé, while excluding external documents; a matching v3 Policy keeps Sync disabled.
 - Replaced the Ontology Assistant active-ontology dropdown with a collapsible, filesystem-watched
   Project Explorer. It retains ontology IRI/document bindings in Policy and the internal snapshot while
-  showing project files plus external ontologies, and supports project-local saves and Policy membership
-  edits.
+  showing project files plus external ontologies; it supports active-ontology switching, project-local
+  saves, and atomic Policy membership edits, and keeps project Policy validity independent of the
+  currently active ontology.
 - Updated the embedded Java MCP SDK to 2.0.1 and the MCP 2025-11-25 tool surface. Every tool now
   loads standard boolean `ToolAnnotations` from the shared `mcp-catalog.json` source of truth;
   model-visible tool and input-schema descriptions carry
@@ -75,6 +76,12 @@ each section is also published as the body of its
   client metadata now lives alongside each runtime adapter under its client-specific `chat` package.
 
 ### Added
+- Added global ontology development system instructions to the Ontology Assistant (`system-instruction.md`).
+  System instructions frame the assistant's role across the formal 7-phase ontology engineering lifecycle
+  (Specification, Conceptualization, Reuse, Formalization, Quality Assurance, Release, Maintenance), map
+  all 105 catalog tools to lifecycle tasks, prioritize live Protégé MCP tools over raw shell commands
+  (`bash`, `rg`, `grep`, `find`), and inject structured lifecycle guidance into every turn across Claude Code,
+  Codex, Antigravity, and OpenCode.
 - Added direct project-policy controls to the Ontology Assistant. The project row now reports owner-local
   terminology binding drift as a warning and can create or atomically synchronize policy from saved
   Preferences after an explicit preview, without spending an assistant turn. The sync control is disabled

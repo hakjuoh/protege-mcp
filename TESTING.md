@@ -24,8 +24,8 @@ mvn -o test -Dtest=OAuthStoreTest      # a single class
   `Preferences` is isolated from the real user preference tree: a full `mvn verify` cannot read or write
   the settings a running Protégé owns. Tests take their node from `TestPreferences.cleared()`.
 
-At the time of writing: **4,384 JUnit tests** (3,661 plugin, 68 standalone-CLI,
-and 655 core tests), with zero failures/errors and three intentionally skipped opt-in performance tests,
+At the time of writing: **4,582 JUnit tests** (3,844 plugin, 68 standalone-CLI,
+and 670 core tests), with zero failures/errors and three intentionally skipped opt-in performance tests,
 across `tools`, `prompts`, `contracts`, `oauth`, `server`, `chat`, `config`, the
 pure helpers of `ui`, the headless CLI, and the extractable `ro_crate` interoperability package. Coverage is
 measured by **JaCoCo** (`mvn verify`). The plugin's `tools`/`server`/`oauth` layers, the core contract
@@ -56,11 +56,12 @@ boundary rather than indicating an unnoticed partial load.
 ## Public-contract and policy-schema harnesses
 
 - `PublicContractSnapshotTest` pins the immutable 0.5.0 baseline (66 tool registrations and 11
-  prompt registrations); the current 104-tool runtime surface is checked against it, allowing only
-  reviewed additive drift. Two later baselines freeze whole surfaces: 0.7.2 with all 85 tools and 11
-  prompts before the 0.8 additions, and 0.8.0 with all 104 tools and 11 prompts, which the live contract
-  must match exactly. `HeadlessContractSnapshotTest` separately freezes the eight-tool 0.7.2
-  stdio surface. The tool goldens combine all MCP registration metadata and input schemas with
+  prompt registrations); the current 105-tool runtime surface is checked against it, allowing only
+  reviewed additive drift. Three later baselines freeze whole surfaces: 0.7.2 with all 85 tools and 11
+  prompts before the 0.8 additions, 0.8.0 with 104 tools and 11 prompts, and 0.8.1 with all 105 tools and 11
+  prompts (adding `write_project_policy`), which the live contract must match exactly. `HeadlessContractSnapshotTest`
+  separately freezes the eight-tool 0.7.2 stdio surface and the eighteen-tool 0.8.0+ surface. The tool goldens combine
+  all MCP registration metadata and input schemas with
   the manual's documented result fields; prompt goldens also render every template with deterministic
   sentinel arguments. Compatibility checks allow additive optional surface while rejecting
   removed/changed arguments, new required prompt arguments, dropped result fields, unreviewed descriptions,

@@ -477,6 +477,10 @@ reasoner/materialization tools, and five asynchronous-job tools — bringing the
 tools, bringing it from eight tools to 18; external-provider networking and asynchronous jobs remain
 plugin-only. Immutable 0.8.0 plugin/headless snapshots protect both adapters' released contracts.
 
+Version 0.8.1 adds `write_project_policy` (scaffolding, creating, or patching policy v3 / RO-Crate metadata),
+bringing the live surface to 105 tools + 11 prompts. The headless surface retains 18 tools. Immutable 0.8.1
+snapshots protect the complete contract.
+
 Maintainers can generate a new historical baseline with:
 
 ```bash

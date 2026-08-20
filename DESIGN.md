@@ -12,10 +12,10 @@ in-Protégé Ontology Assistant and a headless CLI for reproducible project vali
 
 The design has three execution surfaces:
 
-- The **live plugin** serves 104 MCP tools and 11 prompts over authenticated Streamable HTTP. Reads and writes
+- The **live plugin** serves 105 MCP tools and 11 prompts over authenticated Streamable HTTP. Reads and writes
   operate on the active `OWLModelManager`; ontology changes are visible immediately and join Protégé's Undo
   stack, except for the explicit document-format prefix-map operations described in section 7.3.
-- The **Ontology Assistant** drives an installed `claude` or `codex` CLI back through the live plugin's MCP
+- The **Ontology Assistant** drives an installed `claude`, `codex`, `agy`, or `opencode` CLI back through the live plugin's MCP
   endpoint. Protégé stores no provider API key.
 - The **headless CLI** loads a policy-defined project from disk, runs the shared QC/release services, and can
   expose a deliberately small project-confined MCP subset over stdio. It has no GUI or Undo stack.
@@ -284,8 +284,8 @@ The `core` module groups reusable semantics by responsibility:
 
 - `contracts`: immutable revision, fingerprint, finding, stage, gate, artifact, and project-coordinate
   records plus canonical JSON handling.
-- `policy`: strict policy-v1 loading, schema/semantic validation, project-root confinement, search policy,
-  reasoner naming, module inspection, and RO-Crate settings.
+- `policy`: strict policy-v1/v2/v3 loading, physical workspace membership, schema/semantic validation,
+  project-root confinement, search policy, reasoner naming, module inspection, and RO-Crate settings.
 - `core.workspace`: captured project snapshots, offline catalog/import-lock resolution, fingerprints, and
   checksum-guarded single-file or release-directory transactions.
 - `core.qc`: structural, governance, invariant, CQ, SHACL, import-graph, and complete project-QC services.
@@ -309,7 +309,7 @@ one identity as interchangeable with another.
 
 ## 9. Tool and prompt surface
 
-The plugin catalog contains **104 tools and 11 prompts**. The authoritative metadata is the validated resource:
+The plugin catalog contains **105 tools and 11 prompts**. The authoritative metadata is the validated resource:
 
 `plugin/src/main/resources/io/github/hakjuoh/protege_mcp/catalog/mcp-catalog.json`
 
@@ -326,10 +326,12 @@ The complete user-facing inventory is maintained in [`docs/tools/index.md`](docs
 
 ## 10. Ontology Assistant
 
-The Assistant uses the `ChatProvider` SPI with two current implementations:
+The Assistant uses the `ChatProvider` SPI with four current implementations:
 
 - `ClaudeCliProvider` invokes the installed `claude` CLI.
 - `CodexCliProvider` invokes the installed `codex` CLI.
+- `AntigravityCliProvider` invokes the installed `agy` CLI.
+- `OpenCodeCliProvider` invokes the installed `opencode` CLI.
 
 Provider event parsers tolerate unknown JSONL event types and translate text, reasoning, tool activity,
 errors, and usage into a common stream. A worker pumps subprocess output into a thread-safe queue; a Swing
@@ -468,7 +470,7 @@ See [`TESTING.md`](TESTING.md), [`docs/performance.md`](docs/performance.md), an
 - Releases can be exported and verified, but there is no direct publishing adapter for commercial ontology or
   knowledge-graph platforms.
 - The headless stdio server intentionally exposes only the eighteen project/release tools above, not the live
-  104-tool editor surface or its ephemeral job ids.
+  105-tool editor surface or its ephemeral job ids.
 - A non-loopback bind is explicit plain-HTTP opt-in and is not a supported multi-user deployment model.
 
 Future work on these boundaries belongs in [`PLAN.md`](PLAN.md); completed behavior should update this design

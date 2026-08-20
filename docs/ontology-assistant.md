@@ -42,11 +42,14 @@ So the assistant reads and edits through **exactly the same tools** an external 
   not load the user's global `opencode.json` during a privileged turn; environment-based equivalents
   should be used for custom provider endpoints so unrelated MCP/plugin definitions cannot inherit the
   short-lived Protégé token.
-- **Tool contracts are self-contained.** The Assistant injects no private steering system prompt. MCP
-  2025-11-25 `ToolAnnotations` are loaded from the shared `mcp-catalog.json` source of truth, while each tool description and relevant
-  input-property description supplies the exact sequencing, argument mapping, safety, and recovery guidance
-  needed by any MCP client. Server-side read-only, confirmation, authorization, isolated QC, and revision
-  checks remain authoritative even if a client ignores a hint.
+- **Tool contracts and system instructions.** The Assistant injects global ontology development system
+  instructions (`system-instruction.md`) that frame the assistant's role across the formal 7-phase ontology
+  engineering lifecycle (Specification, Conceptualization, Reuse, Formalization, Quality Assurance, Release,
+  Maintenance), map all 105 catalog tools to lifecycle tasks, and prioritize live Protégé MCP tools over
+  raw shell commands. MCP 2025-11-25 `ToolAnnotations` are loaded from the shared `mcp-catalog.json` source of truth,
+  while each tool description and relevant input-property description supplies the exact sequencing,
+  argument mapping, safety, and recovery guidance needed by any MCP client. Server-side read-only,
+  confirmation, authorization, isolated QC, and revision checks remain authoritative even if a client ignores a hint.
 
 ## Prerequisites
 
@@ -219,7 +222,7 @@ server and may then be included in the model conversation.
 - Assistant credentials never carry server-admin, external-filesystem, general `network:access`, or
   unrestricted local-admin authority. When enabled under **Settings ▸ Ontology Assistant ▸ General**,
   they may carry the narrower `external-terms:read` permission plus project read so the Assistant can
-  query only terminology providers enabled by a valid policy v2 and bound to an exact owner-local
+  query only terminology providers enabled by a valid policy v2/v3 and bound to an exact owner-local
   HTTPS origin. The project/ontology write profile remains a separate setting; disabling it leaves read-only chat and
   terminology lookup available.
 
@@ -277,7 +280,7 @@ server and may then be included in the model conversation.
   ontology/project write profile. Disable it for read-only Assistant use. The MCP server's global
   read-only setting always wins. A separate checkbox controls project-approved terminology lookup;
   it is enabled by default and grants only `external-terms:read`, never general network access. The
-  owner registry binding, credential, and valid policy v2 provider declaration must all agree before
+  owner registry binding, credential, and valid policy v2/v3 provider declaration must all agree before
   a request leaves the machine. The owner-bound exact HTTPS origin is the provider allowlist, so a
   custom compatible registry does not also need a duplicate `network.allowed_hosts` entry.
 - **General ▸ Privacy** — a non-blocking summary of what is sent to the selected model provider.

@@ -1,6 +1,6 @@
-# Protégé MCP Post-0.8.0 Roadmap
+# Protégé MCP Post-0.8.1 Roadmap
 
-> Status: roadmap for work after 0.8.0. Shipped behavior belongs in [`CHANGELOG.md`](CHANGELOG.md),
+> Status: roadmap for work after 0.8.1. Shipped behavior belongs in [`CHANGELOG.md`](CHANGELOG.md),
 > the user manual, and [`DESIGN.md`](DESIGN.md).
 
 ## 1. Shared product constraints
@@ -21,64 +21,15 @@ All future work must preserve these boundaries:
 - Large results are bounded, pageable, or artifact-backed. Cancellation never permits a stale result to
   mutate the workspace or become current evidence.
 
-## 2. M8B — External terminology provider expansion
+## 2. M8C — Deterministic ontology-template compilation
 
-This is the first implementation priority after 0.8.0. Broaden the released OLS4-only discovery surface
-before adding term-lifecycle or remote-publication workflows. Keep the existing provider-neutral evidence,
-proposal, acceptance, cache, credential, and egress contracts; a new provider profile must not introduce a
-weaker path around them.
+This is the first implementation priority after 0.8.1. Add reproducible, first-class template ingestion
+following external terminology expansion. Treat ROBOT Template and OTTR as distinct formats with separate
+conformance profiles: ROBOT Template is a tabular ontology-authoring format, while OTTR defines templates
+and instances with its own expansion semantics. Do not describe arbitrary LLM-produced TSV-to-JSON conversion
+as standards-compatible template execution.
 
-### 2.1 Provider delivery order
-
-1. Replace the fixed OLS4-only registry with an explicit, tested provider-profile registry while preserving
-   fail-closed rejection of unknown profiles.
-2. Add one authenticated `ontoportal` profile with normalized search and exact-term inspection mapped onto
-   the existing `ProviderPage` and `ProviderResult` contracts.
-3. Provide BioPortal and AgroPortal as editable endpoint presets for that profile. Independently pin and test
-   each deployment against its official API revision; shared OntoPortal ancestry alone is not conformance
-   evidence, and vendor names are not separate runtime or policy profiles.
-4. Keep API-incompatible terminology protocols out of the registry and Preferences until they have a
-   separately reviewed adapter, identity model, policy contract, and fixtures. Do not reserve selectable
-   profiles or liveness probes for unimplemented protocols.
-5. Provide reproducible CI consumption of captured provider evidence without making ordinary headless builds
-   network-dependent. Direct headless provider networking requires a separate threat model and remains out of
-   scope until that contract is accepted.
-6. Structure the top-level `MCP` Preferences panel with internal sub-tabs (via `JTabbedPane`): keep existing
-   server port, bind address, token, and security settings on the `Server` sub-tab, and provide a dedicated
-   `Externals` sub-tab containing a "Terminology Registries" section so users can register, edit, and test
-   external ontology registry origins, aliases, profiles (OLS4 and OntoPortal), endpoint presets (BioPortal
-   and AgroPortal), and credentials directly in the GUI with connection liveness probes, without manually
-   editing owner-only JSON configuration files.
-   Distinguish this clearly from LLM/chat provider settings.
-
-The existing `search_external_terms`, `inspect_external_term`, `propose_term_reuse`, and
-`accept_reuse_proposal` tools remain the public workflow. Provider-specific fields are normalized into the
-shared evidence model or reported as explicit profile metadata; they do not leak vendor response shapes into
-the tool contracts.
-
-### 2.2 Completion conditions
-
-- Every supported profile, plus each advertised compatibility preset, has checked-in search, inspection,
-  pagination, deprecation/replacement, provenance, licensing, malformed-response, and rate-limit fixtures
-  derived from its documented API version.
-- Contract tests run the same normalized request and evidence assertions across OLS4 and every added profile.
-- Credentials, signed URLs, sensitive queries, and vendor error bodies remain absent from caches, logs, audit,
-  exceptions, and MCP results under redirects, retries, rotation, revocation, and concurrent policy changes.
-- Provider-specific ontology identifiers, language behavior, pagination, ranking, and missing metadata are
-  represented honestly; no adapter fabricates equivalence or completeness.
-- A provider outage or unsupported API version cannot block unrelated local editing, QC, or release work.
-- Scheduled network canaries are isolated from the ordinary offline-capable `mvn clean verify` path.
-- User documentation states the exact tested provider/API versions, authentication modes, limitations, and
-  whether a profile is supported for production use or experimental evaluation.
-
-## 3. M8C — Deterministic ontology-template compilation
-
-Add reproducible, first-class template ingestion after provider expansion. Treat ROBOT Template and OTTR as
-distinct formats with separate conformance profiles: ROBOT Template is a tabular ontology-authoring format,
-while OTTR defines templates and instances with its own expansion semantics. Do not describe arbitrary
-LLM-produced TSV-to-JSON conversion as standards-compatible template execution.
-
-### 3.1 Compilation architecture
+### 2.1 Compilation architecture
 
 - Parse a project-confined template source into a provider-independent intermediate representation with exact
   source, row, column, directive, prefix, datatype, and language-tag provenance.
@@ -101,7 +52,7 @@ Successful preview produces an ordinary immutable change-set reference committed
 `commit_change_set` path. The compiler reports generated entities and axioms, no-ops, collisions, unresolved
 references, warnings, and source-located errors without changing the live ontology.
 
-### 3.2 Delivery order
+### 2.2 Delivery order
 
 1. Implement a versioned ROBOT Template TSV/CSV profile with checked-in conformance fixtures and precise
    documentation of supported headers, directives, value expansion, quoting, prefixes, and error behavior.
@@ -112,7 +63,7 @@ references, warnings, and source-located errors without changing the live ontolo
 4. Add OTTR only as a named, versioned conformance profile. If full conformance is not feasible, expose an
    explicitly named subset rather than calling it general OTTR support.
 
-### 3.3 Completion conditions
+### 2.3 Completion conditions
 
 - Identical template bytes, dependencies, policy, and compiler profile produce the same normalized change
   plan and fingerprint across live and headless surfaces.
@@ -127,7 +78,7 @@ references, warnings, and source-located errors without changing the live ontolo
 - Documentation distinguishes supported ROBOT Template behavior, supported OTTR behavior, extensions, and
   known incompatibilities, with end-to-end examples for both interactive authoring and CI.
 
-## 4. M6B — Governed term lifecycle
+## 3. M6B — Governed term lifecycle
 
 Use the released external-term and mapping contracts to add a policy-defined term lifecycle:
 
@@ -156,14 +107,14 @@ Required completion conditions:
 - Lifecycle state, policy changes, authorization, audit, migration behavior, and user documentation have
   stable public contracts and compatibility coverage.
 
-## 5. M9 — External platform interoperability
+## 4. M9 — External platform interoperability
 
 M9 turns the documented manual exchange boundary in
 [`docs/commercial-platforms.md`](docs/commercial-platforms.md) into a governed delivery surface. It does
 not make Protégé MCP a triple-store server, reproduce a vendor authoring UI, or claim distributed
 transactions with another MCP server.
 
-### 5.1 Adapter contracts
+### 4.1 Adapter contracts
 
 Place vendor-neutral contracts outside the ontology-engineering core:
 
@@ -189,7 +140,7 @@ Configuration stores endpoint aliases, target coordinates, profile, and secret r
 pull, publish, replace, and administration need separate capabilities; the local-admin compatibility profile
 does not automatically gain remote-write access.
 
-### 5.2 Governed publication
+### 4.2 Governed publication
 
 The first workflow publishes a verified release artifact rather than issuing arbitrary remote triple edits:
 
@@ -210,7 +161,7 @@ with delete-then-add.
 `pull_snapshot` remains read-only. Applying a remote snapshot to the live Protégé workspace still requires
 local grounding, change-set preview, project QC, an exact expected revision, and explicit commit.
 
-### 5.3 Delivery order
+### 4.3 Delivery order
 
 1. Repeatable verified file/bundle exchange and read-back fixtures.
 2. A vendor-neutral RDF repository profile with create/stage/read-back behavior.
@@ -225,7 +176,7 @@ local grounding, change-set preview, project QC, an exact expected revision, and
 Product ordering is not an endorsement. Edition, API stability, licensing, and access to an isolated test
 environment are go/no-go inputs.
 
-### 5.4 Completion conditions
+### 4.4 Completion conditions
 
 - Contract tests prove that no adapter can mutate before plan, authorization/confirmation, local digest
   recheck, and remote-drift recheck succeed.
@@ -238,25 +189,20 @@ environment are go/no-go inputs.
 - Documentation never claims atomicity, shared authorization, or shared audit with a separate platform MCP
   server.
 
-## 6. Decisions required before future implementation
+## 5. Decisions required before future implementation
 
-Before a deferred track begins, create its applicable ADRs. Resolve provider-expansion decisions first:
+Before a deferred track begins, create its applicable ADRs:
 
-1. Provider-profile registration and version-negotiation contract, including unsupported-version behavior.
-2. Minimum common evidence fields versus explicit provider-specific metadata and missing-data semantics.
-3. Offline captured-evidence format, provenance, freshness, signing/integrity, and CI policy semantics.
-4. Whether and under which threat model headless execution may ever perform provider networking.
-5. ROBOT Template conformance version, supported directives, CSV/TSV dialect, and intermediate representation.
-6. OTTR implementation/library boundary, supported language profile, dependency resolution, and licensing.
-7. Template artifact retention, compiler identity, expansion limits, and change-set provenance contract.
-8. Governed-lifecycle state representation, transition authority, and audit/provenance model.
-9. Minimum remote concurrency primitive for a writable target profile.
-10. Mapping of ontology/release identity to repository, named graph, and vendor project coordinates.
-11. Whether the first reverse-flow slice stops at immutable `pull_snapshot` or includes governed local apply.
-12. Target-platform approval evidence and promote/rollback integration, limited to official maintainable APIs.
-13. Preferences GUI specification for the `MCP` panel's internal sub-tabs (`Server` sub-tab for local daemon/token controls, and `Externals` sub-tab covering Terminology Registries and Publishing Repositories sections), secure credential storage, and connection liveness probes.
+1. ROBOT Template conformance version, supported directives, CSV/TSV dialect, and intermediate representation.
+2. OTTR implementation/library boundary, supported language profile, dependency resolution, and licensing.
+3. Template artifact retention, compiler identity, expansion limits, and change-set provenance contract.
+4. Governed-lifecycle state representation, transition authority, and audit/provenance model.
+5. Minimum remote concurrency primitive for a writable target profile.
+6. Mapping of ontology/release identity to repository, named graph, and vendor project coordinates.
+7. Whether the first reverse-flow slice stops at immutable `pull_snapshot` or includes governed local apply.
+8. Target-platform approval evidence and promote/rollback integration, limited to official maintainable APIs.
 
-## 7. Testing and definition of done
+## 6. Testing and definition of done
 
 - Unit and property tests cover state machines, canonical fingerprints, authorization, redaction, bounds,
   ordering, and fail-closed aggregation.

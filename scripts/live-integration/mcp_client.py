@@ -280,9 +280,10 @@ def run(base_url: str, token: str, report_path: pathlib.Path,
         "list_mappings",
         "materialize_inferences",
         "start_job",
+        "write_project_policy",
     }
-    require(len(advertised_tools) == 104,
-            f"packaged server advertised {len(advertised_tools)} tools instead of 104")
+    require(len(advertised_tools) == 105,
+            f"packaged server advertised {len(advertised_tools)} tools instead of 105")
     require(required_names.issubset(advertised_names),
             f"packaged server omitted 0.8 tools: {sorted(required_names - advertised_names)}")
 

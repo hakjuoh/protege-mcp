@@ -5,9 +5,10 @@
 [![License: BSD-2-Clause](https://img.shields.io/badge/License-BSD%202--Clause-blue.svg)](LICENSE)
 
 **Protégé MCP** is a plugin for **Protégé Desktop** that runs a local **MCP (Model Context Protocol)
-server**. It gives MCP-compatible AI tools — such as **Claude Code** and **Codex** — live access to the
-ontology you have open in Protégé, so they can explore it and make edits for you. It also ships an
-in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI against the same server.
+server**. It gives MCP-compatible AI tools — such as **Claude Code**, **Codex**, **Antigravity**, and
+**OpenCode** — live access to the ontology you have open in Protégé, so they can explore it and make edits
+for you. It also ships an in-app **Ontology Assistant** chat that drives your own `claude` / `codex` /
+`agy` / `opencode` CLI against the same server.
 
 ## 📖 Documentation
 
@@ -68,8 +69,8 @@ in-app **Ontology Assistant** chat that drives your own `claude` / `codex` CLI a
 - **Safe by default** — a local server, bound to loopback (`127.0.0.1`) unless you change the
   bind-address preference, that requires **OAuth** or a **bearer token** on every request, with
   optional **read-only** mode and **confirm-each-write**.
-- **In-app Ontology Assistant** — chat that drives your existing `claude` / `codex` CLI back into the
-  server with one short-lived, attributable credential per turn instead of the static admin token;
+- **In-app Ontology Assistant** — chat that drives your existing `claude`, `codex`, `agy`, or `opencode` CLI
+  back into the server with one short-lived, attributable credential per turn instead of the static admin token;
   **no API key is stored by Protégé**.
 
 ## Requirements
@@ -95,7 +96,7 @@ including per-OS plugin paths, are in the
 1. **Settings ▸ MCP** — configure and start the server (default `http://127.0.0.1:8123/mcp`). The **MCP
    Server** view shows the bound URL and bearer token.
 2. Either **[connect an MCP client](https://hakjuoh.github.io/protege-mcp/connect/)** (Claude Code,
-   Codex CLI, VS Code, Claude Desktop) or open the **Ontology Assistant** tab and type a request —
+   Codex CLI, Antigravity, OpenCode, VS Code, Claude Desktop) or open the **Ontology Assistant** tab and type a request —
    *"What classes are in this ontology?"*, then *"Create a class FooBar under Thing."*
 
 ## Building from source

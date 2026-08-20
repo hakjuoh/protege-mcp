@@ -54,6 +54,14 @@ host are Java 17 bytecode, and the OSGi manifest declares
 
 <h4>v0.8.1</h4>
 <ul>
+    <li>The public surface is expanded to <b>105 tools and 11 prompts</b> with the addition of <code>write_project_policy</code>
+        for scaffolding, replacing, or patching Project Policy v3 and RO-Crate metadata.</li>
+    <li>Added Project Policy v3 with physical workspace membership (<code>workspace.files</code> and <code>workspace.ontologies</code>)
+        and a collapsible, filesystem-watched Project Explorer tree in the Ontology Assistant.</li>
+    <li>Added the <code>ExternalTermProviderRegistry</code> supporting OLS4 and OntoPortal (BioPortal and AgroPortal endpoint presets),
+        with owner-bound credentials and GUI administration under <b>Settings &#9656; MCP &#9656; Externals</b>.</li>
+    <li>Injected global 7-phase ontology engineering lifecycle system instructions (<code>system-instruction.md</code>) across all
+        assistant turns, mapping all 105 tools and prioritizing live Prot&#233;g&#233; tools over raw shell commands.</li>
     <li>The Ontology Assistant now separates Claude Code, Codex, Antigravity, and OpenCode into
         independent client tabs with editable names, executable paths, and model catalogs.</li>
     <li>Every predefined client tab includes a platform-appropriate installation command, copy action,
