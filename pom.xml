@@ -37,7 +37,7 @@
         <!-- Maintained generic NFA implementation behind the narrow rationals.* compatibility API
              required by HermiT's object-property inclusion manager. The CLI excludes HermiT's
              unmaintained, embedded JAutomata implementation from its executable. -->
-        <automatalib.version>0.12.1</automatalib.version>
+        <automatalib.version>13.0.0</automatalib.version>
         <guava.version>18.0</guava.version>
         <slf4j.version>1.7.36</slf4j.version>
 
