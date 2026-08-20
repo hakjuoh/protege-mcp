@@ -338,8 +338,10 @@ cleanup, and a turn is finalized only after queued output is drained.
 
 Each turn uses a bounded, short-lived principal tied to its window. Read-only Assistant mode receives only
 ontology-read capability; write-enabled mode receives the bounded ontology/project capabilities required by
-the built-in workflow, still subject to server policy and confirmation. Provider steering directs ordinary
-axiom work through preview/commit change sets and forbids bypassing a failed gate or revision conflict.
+the built-in workflow, still subject to server policy and confirmation. Global system instructions loaded
+from `resources/io/github/hakjuoh/protege_mcp/chat/system-instruction.md` frame the assistant's role across
+the formal ontology development lifecycle and map user tasks to MCP tools, directing ordinary axiom work
+through preview/commit change sets and forbidding bypassing a failed gate or revision conflict.
 
 Prompts, attachments, and ontology content read by the agent may leave the machine through the selected
 CLI's model provider. The UI discloses this egress and records consent. Attachments are copied into isolated

@@ -20,28 +20,36 @@ import java.util.Set;
  *        see any reasoning.
  * @param handoffContext provider-neutral conversation turns this CLI session has not seen
  * @param reasoningEffort provider-specific effort, or blank to use the CLI's configured default
+ * @param systemInstruction provider-level or global system instruction framing the assistant's role
  */
 public record ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
         List<ChatAttachment> attachments, boolean showReasoning, String handoffContext,
-        String reasoningEffort) {
+        String reasoningEffort, String systemInstruction) {
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint) {
-        this(model, prompt, sessionId, endpoint, List.of(), false, "", "");
+        this(model, prompt, sessionId, endpoint, List.of(), false, "", "", "");
     }
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
             List<ChatAttachment> attachments) {
-        this(model, prompt, sessionId, endpoint, attachments, false, "", "");
+        this(model, prompt, sessionId, endpoint, attachments, false, "", "", "");
     }
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
             List<ChatAttachment> attachments, boolean showReasoning) {
-        this(model, prompt, sessionId, endpoint, attachments, showReasoning, "", "");
+        this(model, prompt, sessionId, endpoint, attachments, showReasoning, "", "", "");
     }
 
     public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
             List<ChatAttachment> attachments, boolean showReasoning, String handoffContext) {
-        this(model, prompt, sessionId, endpoint, attachments, showReasoning, handoffContext, "");
+        this(model, prompt, sessionId, endpoint, attachments, showReasoning, handoffContext, "", "");
+    }
+
+    public ChatRequest(String model, String prompt, String sessionId, McpEndpoint endpoint,
+            List<ChatAttachment> attachments, boolean showReasoning, String handoffContext,
+            String reasoningEffort) {
+        this(model, prompt, sessionId, endpoint, attachments, showReasoning, handoffContext,
+                reasoningEffort, "");
     }
 
     public ChatRequest {
@@ -49,6 +57,7 @@ public record ChatRequest(String model, String prompt, String sessionId, McpEndp
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         handoffContext = handoffContext == null ? "" : handoffContext;
         reasoningEffort = reasoningEffort == null ? "" : reasoningEffort.trim();
+        systemInstruction = systemInstruction == null ? "" : systemInstruction.trim();
     }
 
     /**
@@ -57,10 +66,13 @@ public record ChatRequest(String model, String prompt, String sessionId, McpEndp
      * placeholders it sees in the user's message.
      */
     public String providerPrompt() {
-        if (attachments.isEmpty() && handoffContext.isBlank()) {
+        if (attachments.isEmpty() && handoffContext.isBlank() && systemInstruction.isBlank()) {
             return prompt;
         }
         StringBuilder sb = new StringBuilder();
+        if (!systemInstruction.isBlank()) {
+            sb.append(systemInstruction).append("\n\n");
+        }
         if (!handoffContext.isBlank()) {
             sb.append(handoffContext).append("\n\n");
         }

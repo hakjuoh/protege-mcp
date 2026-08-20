@@ -141,7 +141,7 @@ final class ProjectPolicyTemplate {
 
     private static String header(int version) {
         return ("""
-                # Protégé MCP project policy (v%VERSION%) — starter template.
+                # Protégé MCP project policy (v%VERSION%)
                 #
                 # This file is SOURCE CODE: review it, complete it, and commit it with your ontology.
                 # Protégé MCP discovers it at <project>/.protege-mcp/project.yaml by walking up from the

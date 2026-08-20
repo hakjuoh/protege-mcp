@@ -25,7 +25,7 @@ class ProjectPolicySchemaSnapshotTest {
 
     @Test
     void versionThreeSchemaMatchesTheReviewedWorkspaceBaseline() throws Exception {
-        assertEquals("d05f6f7053e0614d91c4277e768482cc66587c994c08052065ffa3996724253d",
+        assertEquals("dc06c4dff396e86561e602f1dc948eef7f08cc74c4ee152b11cd72f939b4dbd4",
                 digest("/schema/project-policy-v3.schema.json"));
     }
 

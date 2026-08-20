@@ -41,6 +41,12 @@ class ChatRequestTest {
     }
 
     @Test
+    void providerPromptPrependsSystemInstruction() {
+        ChatRequest req = new ChatRequest("", "user request", null, ENDPOINT, List.of(), false, "", "", "SYSTEM INSTRUCTION");
+        assertEquals("SYSTEM INSTRUCTION\n\nuser request", req.providerPrompt());
+    }
+
+    @Test
     void fileAttachmentExpandsToPathAndDirectory(@TempDir Path dir) throws Exception {
         Path doc = Files.writeString(dir.resolve("notes.txt"), "hello");
         ChatRequest req = new ChatRequest("", "see [File #1: notes.txt]", null, ENDPOINT,

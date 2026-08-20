@@ -45,6 +45,14 @@ public interface ChatProvider {
     String defaultModel();
 
     /**
+     * System instruction text passed to the provider for every turn, framing the assistant's role
+     * within the structured ontology development lifecycle and mapping user tasks to MCP tools.
+     */
+    default String systemInstruction() {
+        return SystemInstructions.get();
+    }
+
+    /**
      * Spawn the CLI for one turn and stream its output to {@code listener}. Returns immediately with a
      * handle to cancel the in-flight turn. Must be called off the EDT (it starts a process).
      */

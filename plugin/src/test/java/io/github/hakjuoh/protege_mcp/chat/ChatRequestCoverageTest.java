@@ -249,6 +249,18 @@ class ChatRequestCoverageTest {
     }
 
     @Test
+    void nullSystemInstructionNormalizesToEmpty() {
+        ChatRequest req = new ChatRequest("m", "p", "s", ENDPOINT, List.of(), false, "", "", null);
+        assertEquals("", req.systemInstruction());
+    }
+
+    @Test
+    void nonNullSystemInstructionIsTrimmed() {
+        ChatRequest req = new ChatRequest("m", "p", "s", ENDPOINT, List.of(), false, "", "", "  instructions  ");
+        assertEquals("instructions", req.systemInstruction());
+    }
+
+    @Test
     void toStringMentionsComponentValues() {
         ChatRequest req = new ChatRequest("mdl", "hello", "sess", ENDPOINT, List.of());
         String s = req.toString();

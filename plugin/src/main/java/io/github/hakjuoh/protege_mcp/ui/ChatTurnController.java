@@ -189,7 +189,8 @@ final class ChatTurnController {
                             request.attachments(),
                             request.showReasoning(),
                             handoff,
-                            request.reasoningEffort());
+                            request.reasoningEffort(),
+                            request.provider().systemInstruction());
             ChatProcess started =
                     request.provider()
                             .startTurn(chatRequest, providerListener(request.provider().id()));
