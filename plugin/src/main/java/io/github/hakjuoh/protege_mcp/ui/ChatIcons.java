@@ -27,6 +27,7 @@ final class ChatIcons {
     static JButton iconButton(Icon icon, String tooltip) {
         JButton button = new JButton(icon);
         button.setToolTipText(tooltip);
+        button.getAccessibleContext().setAccessibleName(tooltip);
         button.setBorderPainted(false);
         button.setContentAreaFilled(false);
         button.setFocusPainted(false);

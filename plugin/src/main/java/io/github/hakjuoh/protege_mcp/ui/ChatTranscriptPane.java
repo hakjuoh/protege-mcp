@@ -61,6 +61,7 @@ final class ChatTranscriptPane extends JTextPane {
     ChatTranscriptPane(BooleanSupplier turnActive) {
         this.turnActive = Objects.requireNonNull(turnActive);
         setEditable(false);
+        getAccessibleContext().setAccessibleName("Conversation transcript");
         installLinkHandlers();
         installContextMenu();
     }

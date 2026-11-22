@@ -379,6 +379,7 @@ public class ChatView extends AbstractOWLViewComponent {
 
     private JComponent buildInputBar() {
         input = new JTextArea(3, 40);
+        input.getAccessibleContext().setAccessibleName("Message composer");
         input.setLineWrap(true);
         input.setWrapStyleWord(true);
         // Enter sends; Shift+Enter inserts a newline.
