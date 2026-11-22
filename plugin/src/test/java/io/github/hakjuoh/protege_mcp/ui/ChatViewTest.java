@@ -22,6 +22,32 @@ import io.github.hakjuoh.protege_mcp.tools.ProjectPolicyRegistrySync;
 class ChatViewTest {
 
     @Test
+    void messageComposerExposesAnAccessibleName() throws Exception {
+        onEdt(() -> {
+            ChatView view = bareInstance();
+            setField(view, "providerControls", view.buildProviderControls(List.of()));
+            setField(view, "statusLabel", new javax.swing.JLabel());
+            setField(view, "workingLabel", new javax.swing.JLabel());
+            setField(view, "usageLabel", new javax.swing.JLabel());
+
+            Method build = ChatView.class.getDeclaredMethod("buildInputBar");
+            build.setAccessible(true);
+            build.invoke(view);
+            Field inputField = ChatView.class.getDeclaredField("input");
+            inputField.setAccessible(true);
+            javax.swing.JTextArea composer = (javax.swing.JTextArea) inputField.get(view);
+            assertEquals("Message composer", composer.getAccessibleContext().getAccessibleName());
+            assertEquals(3, composer.getRows());
+            assertEquals(40, composer.getColumns());
+
+            Field controllerField = ChatView.class.getDeclaredField("attachmentController");
+            controllerField.setAccessible(true);
+            ((ChatAttachmentController) controllerField.get(view)).dispose();
+            return null;
+        });
+    }
+
+    @Test
     void externalOntologySaveTargetCannotEscapeProject(@org.junit.jupiter.api.io.TempDir
             java.nio.file.Path temp) throws Exception {
         java.nio.file.Path root = java.nio.file.Files.createDirectory(temp.resolve("project"));

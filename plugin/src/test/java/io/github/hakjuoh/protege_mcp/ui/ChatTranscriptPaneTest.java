@@ -28,6 +28,12 @@ class ChatTranscriptPaneTest {
     }
 
     @Test
+    void transcriptHasAccessibleName() {
+        assertEquals("Conversation transcript",
+                transcript().getAccessibleContext().getAccessibleName());
+    }
+
+    @Test
     void messageKindsKeepTheirExistingStyles() {
         SimpleAttributeSet user = ChatTranscriptPane.styleFor(Kind.USER);
         assertTrue(StyleConstants.isBold(user));
